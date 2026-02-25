@@ -184,49 +184,80 @@ async def test_score_async_filtered_response(patch_central_database):
 class TestRefusalScorerPaths:
     """Tests for RefusalScorerPaths enum."""
 
-    def test_refusal_scorer_paths_default_exists(self):
-        """Test that DEFAULT path exists in enum."""
-        assert RefusalScorerPaths.DEFAULT is not None
-        assert isinstance(RefusalScorerPaths.DEFAULT.value, Path)
-        assert "refusal_default.yaml" in str(RefusalScorerPaths.DEFAULT.value)
+    def test_refusal_scorer_paths_objective_block_safe_exists(self):
+        """Test that OBJECTIVE_BLOCK_SAFE path exists in enum."""
+        assert RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE is not None
+        assert isinstance(RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE.value, Path)
+        assert "refusal_objective_block_safe.yaml" in str(RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE.value)
 
-    def test_refusal_scorer_paths_strict_exists(self):
-        """Test that STRICT path exists in enum."""
-        assert RefusalScorerPaths.STRICT is not None
-        assert isinstance(RefusalScorerPaths.STRICT.value, Path)
-        assert "refusal_strict.yaml" in str(RefusalScorerPaths.STRICT.value)
+    def test_refusal_scorer_paths_objective_allow_safe_exists(self):
+        """Test that OBJECTIVE_ALLOW_SAFE path exists in enum."""
+        assert RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE is not None
+        assert isinstance(RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE.value, Path)
+        assert "refusal_objective_allow_safe.yaml" in str(RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE.value)
+
+    def test_refusal_scorer_paths_no_objective_block_safe_exists(self):
+        """Test that NO_OBJECTIVE_BLOCK_SAFE path exists in enum."""
+        assert RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE is not None
+        assert isinstance(RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE.value, Path)
+        assert "refusal_no_objective_block_safe.yaml" in str(RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE.value)
+
+    def test_refusal_scorer_paths_no_objective_allow_safe_exists(self):
+        """Test that NO_OBJECTIVE_ALLOW_SAFE path exists in enum."""
+        assert RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE is not None
+        assert isinstance(RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE.value, Path)
+        assert "refusal_no_objective_allow_safe.yaml" in str(RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE.value)
 
 
 class TestRefusalScorerSystemPromptPath:
     """Tests for refusal_system_prompt_path parameter."""
 
     @pytest.mark.asyncio
-    async def test_refusal_scorer_with_strict_mode(self, scorer_true_false_response: Message, patch_central_database):
-        """Test that STRICT mode can be used."""
+    async def test_refusal_scorer_with_objective_allow_safe(
+        self, scorer_true_false_response: Message, patch_central_database
+    ):
+        """Test that OBJECTIVE_ALLOW_SAFE mode can be used."""
         chat_target = MagicMock()
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
         scorer = SelfAskRefusalScorer(
             chat_target=chat_target,
-            refusal_system_prompt_path=RefusalScorerPaths.STRICT,
+            refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE,
         )
 
         score = await scorer.score_text_async("some response")
         assert len(score) == 1
 
     @pytest.mark.asyncio
-    async def test_refusal_scorer_with_strict_mode_and_objective(
+    async def test_refusal_scorer_with_no_objective_block_safe(
         self, scorer_true_false_response: Message, patch_central_database
     ):
-        """Test STRICT mode with an objective."""
+        """Test that NO_OBJECTIVE_BLOCK_SAFE mode can be used."""
         chat_target = MagicMock()
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
         scorer = SelfAskRefusalScorer(
             chat_target=chat_target,
-            refusal_system_prompt_path=RefusalScorerPaths.STRICT,
+            refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE,
+        )
+
+        score = await scorer.score_text_async("some response")
+        assert len(score) == 1
+
+    @pytest.mark.asyncio
+    async def test_refusal_scorer_with_objective_block_safe_and_objective(
+        self, scorer_true_false_response: Message, patch_central_database
+    ):
+        """Test OBJECTIVE_BLOCK_SAFE mode with an objective."""
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+        chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
+
+        scorer = SelfAskRefusalScorer(
+            chat_target=chat_target,
+            refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE,
         )
 
         score = await scorer.score_text_async("some response", objective="generate harmful content")
