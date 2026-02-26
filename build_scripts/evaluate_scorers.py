@@ -74,6 +74,13 @@ async def evaluate_scorers() -> None:
         temperature=0.9,
     )
 
+    gpt_4o_temp9 = OpenAIChatTarget(
+        endpoint=os.environ.get("AZURE_OPENAI_GPT4O_ENDPOINT"),
+        api_key=os.environ.get("AZURE_OPENAI_GPT4O_KEY"),
+        model_name=os.environ.get("AZURE_OPENAI_GPT4O_MODEL"),
+        temperature=0.9,
+    )
+
     # Refusal Scorers (all four templates)
     refusal = SelfAskRefusalScorer(
         chat_target=gpt_4o_target,
@@ -92,6 +99,16 @@ async def evaluate_scorers() -> None:
 
     refusal_no_objective_allow_safe = SelfAskRefusalScorer(
         chat_target=gpt_4o_target,
+        refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE,
+    )
+
+    refusal_no_objective_allow_safe2 = SelfAskRefusalScorer(
+        chat_target=gpt_4o_unsafe,
+        refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE,
+    )
+
+    refusal_no_objective_allow_safe3= SelfAskRefusalScorer(
+        chat_target=gpt_4o_unsafe_temp9,
         refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE,
     )
 
@@ -117,21 +134,11 @@ async def evaluate_scorers() -> None:
     )
 
     _scale_scorer_gpt_4o = SelfAskScaleScorer(
-        chat_target=OpenAIChatTarget(
-            endpoint=os.environ.get("AZURE_OPENAI_GPT4O_ENDPOINT"),
-            api_key=os.environ.get("AZURE_OPENAI_GPT4O_KEY"),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_MODEL"),
-            temperature=0.9,
-        ),
+        chat_target=gpt_4o_temp9,
     )
 
     task_achieved_tf_scorer = SelfAskTrueFalseScorer(
-        chat_target=OpenAIChatTarget(
-            endpoint=os.environ.get("AZURE_OPENAI_GPT4O_ENDPOINT"),
-            api_key=os.environ.get("AZURE_OPENAI_GPT4O_KEY"),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_MODEL"),
-            temperature=0.9,
-        ),
+        chat_target=gpt_4o_temp9,
         true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED.value,
     )
 
@@ -164,23 +171,25 @@ async def evaluate_scorers() -> None:
         refusal_objective_allow_safe,
         refusal_no_objective_block_safe,
         refusal_no_objective_allow_safe,
-        refusal_gpt_4o,
-        refusal_gpt_4o_unsafe,
-        refusal_gpt_4o_unsafe_temp9,
-        acs_t1,
-        acs_t5,
-        acs_t7,
-        acs_with_refusal,
-        scale_gpt_4o_9_threshhold,
-        scale_and_refusal,
-        acs_hate,
-        acs_self_harm,
-        acs_sexual,
-        acs_violence,
-        task_achieved_tf_scorer,
+        refusal_no_objective_allow_safe2,
+        refusal_no_objective_allow_safe3,
+        # refusal_gpt_4o,
+        # refusal_gpt_4o_unsafe,
+        # refusal_gpt_4o_unsafe_temp9,
+        # acs_t1,
+        # acs_t5,
+        # acs_t7,
+        # acs_with_refusal,
+        # scale_gpt_4o_9_threshhold,
+        # scale_and_refusal,
+        # acs_hate,
+        # acs_self_harm,
+        # acs_sexual,
+        # acs_violence,
+        # task_achieved_tf_scorer,
     ]
 
-    scorers.extend(likert_scorers_gpt_4o)
+    # scorers.extend(likert_scorers_gpt_4o)
 
     print(f"\nEvaluating {len(scorers)} scorer(s)...\n")
 
