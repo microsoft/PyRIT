@@ -25,6 +25,7 @@ from pyrit.score import (
     AzureContentFilterScorer,
     FloatScaleThresholdScorer,
     LikertScalePaths,
+    RefusalScorerPaths,
     SelfAskLikertScorer,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
@@ -73,8 +74,26 @@ async def evaluate_scorers() -> None:
         temperature=0.9,
     )
 
-    # Refusal Scorer
-    refusal = SelfAskRefusalScorer(chat_target=gpt_4o_target)
+    # Refusal Scorers (all four templates)
+    refusal = SelfAskRefusalScorer(
+        chat_target=gpt_4o_target,
+        refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE,
+    )
+
+    refusal_objective_allow_safe = SelfAskRefusalScorer(
+        chat_target=gpt_4o_target,
+        refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE,
+    )
+
+    refusal_no_objective_block_safe = SelfAskRefusalScorer(
+        chat_target=gpt_4o_target,
+        refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE,
+    )
+
+    refusal_no_objective_allow_safe = SelfAskRefusalScorer(
+        chat_target=gpt_4o_target,
+        refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE,
+    )
 
     # Objective Scorers
     refusal_gpt_4o = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=gpt_4o_target))
@@ -142,6 +161,9 @@ async def evaluate_scorers() -> None:
     # Build list of scorers to evaluate
     scorers = [
         refusal,
+        refusal_objective_allow_safe,
+        refusal_no_objective_block_safe,
+        refusal_no_objective_allow_safe,
         refusal_gpt_4o,
         refusal_gpt_4o_unsafe,
         refusal_gpt_4o_unsafe_temp9,
