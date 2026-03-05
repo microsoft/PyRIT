@@ -25,6 +25,7 @@ from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.score import (
+    RefusalScorerPaths,
     SelfAskRefusalScorer,
     TrueFalseInverterScorer,
     TrueFalseScorer,
@@ -209,7 +210,8 @@ class Jailbreak(Scenario):
                     endpoint=endpoint,
                     api_key=get_azure_openai_auth(endpoint),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                )
+                ),
+                refusal_system_prompt_path = RefusalScorerPaths.STRICT
             )
         )
 
