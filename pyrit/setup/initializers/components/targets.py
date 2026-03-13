@@ -114,6 +114,14 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         underlying_model_var="AZURE_OPENAI_GPT4_CHAT_UNDERLYING_MODEL",
     ),
     TargetConfig(
+        registry_name="azure_openai_gpt5_4",
+        target_class=OpenAIChatTarget,
+        endpoint_var="AZURE_OPENAI_GPT5_4_ENDPOINT",
+        key_var="AZURE_OPENAI_GPT5_4_KEY",
+        model_var="AZURE_OPENAI_GPT5_4_MODEL",
+        underlying_model_var="AZURE_OPENAI_GPT5_4_UNDERLYING_MODEL",
+    ),
+    TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat",
         target_class=OpenAIChatTarget,
         endpoint_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
@@ -381,6 +389,7 @@ class TargetInitializer(PyRITInitializer):
     - AZURE_OPENAI_INTEGRATION_TEST_* - Integration test endpoint
     - AZURE_OPENAI_GPT3_5_CHAT_* - Azure OpenAI GPT-3.5
     - AZURE_OPENAI_GPT4_CHAT_* - Azure OpenAI GPT-4
+    - AZURE_OPENAI_GPT5_4_* - Azure OpenAI GPT-5.4
     - AZURE_OPENAI_GPT4O_UNSAFE_CHAT_* - Azure OpenAI GPT-4o unsafe
     - AZURE_OPENAI_GPT4O_UNSAFE_CHAT_*2 - Azure OpenAI GPT-4o unsafe secondary
     - AZURE_FOUNDRY_DEEPSEEK_* - Azure AI Foundry DeepSeek
