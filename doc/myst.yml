@@ -168,6 +168,7 @@ project:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
         - file: api/pyrit_common.md
+        - file: api/pyrit_datasets.md
         - file: api/pyrit_embedding.md
         - file: api/pyrit_exceptions.md
         - file: api/pyrit_executor_attack.md
@@ -207,6 +208,7 @@ project:
         - file: api/pyrit_setup.md
           children:
             - file: api/pyrit_setup_initializers.md
+        - file: api/pyrit_ui.md
     - file: blog/README.md
       children:
         - file: blog/2025_06_06.md
