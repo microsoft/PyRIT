@@ -75,6 +75,32 @@ export interface CreateTargetRequest {
   params: Record<string, unknown>
 }
 
+// --- Converters ---
+
+export interface ConverterInstance {
+  converter_id: string
+  converter_type: string
+  display_name?: string | null
+  supported_input_types: string[]
+  supported_output_types: string[]
+  converter_specific_params?: Record<string, unknown> | null
+  sub_converter_ids?: string[] | null
+}
+
+export interface ConverterListResponse {
+  items: ConverterInstance[]
+}
+
+export interface ConverterCatalogEntry {
+  converter_type: string
+  supported_input_types: string[]
+  supported_output_types: string[]
+}
+
+export interface ConverterCatalogResponse {
+  items: ConverterCatalogEntry[]
+}
+
 // --- Attacks ---
 
 export interface TargetInfo {

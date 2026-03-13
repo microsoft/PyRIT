@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
 import { Message, TargetInfo, TargetInstance } from "../../types";
-import { attacksApi } from "../../services/api";
+import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
 jest.mock("../../services/api", () => ({
@@ -16,6 +16,11 @@ jest.mock("../../services/api", () => ({
     createConversation: jest.fn(),
     changeMainConversation: jest.fn(),
   },
+  convertersApi: {
+    listConverterCatalog: jest.fn(),
+    listConverters: jest.fn(),
+    getConverter: jest.fn(),
+  },
   labelsApi: {
     getLabels: jest.fn().mockImplementation(() => new Promise(() => {})),
   },
@@ -27,6 +32,7 @@ jest.mock("../../utils/messageMapper", () => ({
 }));
 
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
+const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>;
 const mockedMapper = messageMapper as jest.Mocked<typeof messageMapper>;
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
@@ -240,6 +246,12 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getConversations.mockResolvedValue({
       conversations: [],
       main_conversation_id: null,
+    });
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [],
+    });
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [],
     });
   });
 
@@ -2093,6 +2105,99 @@ describe("ChatWindow Integration", () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId("conversation-panel")).not.toBeInTheDocument();
+    });
+  });
+
+  it("should toggle converter panel when convert button is clicked", async () => {
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-converter-panel"
+          conversationId="conv-converter-panel"
+          activeConversationId="conv-converter-panel"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("converter-panel")).not.toBeInTheDocument();
+
+    const toggleBtn = screen.getByTestId("toggle-converter-panel-btn");
+    await userEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+    });
+
+    await userEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("converter-panel")).not.toBeInTheDocument();
+    });
+  });
+
+  it("should load and display converters in the converter panel", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [
+        {
+          converter_type: "Base64Converter",
+          supported_input_types: ["text"],
+          supported_output_types: ["text"],
+        },
+      ],
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-converter-list"
+          conversationId="conv-converter-list"
+          activeConversationId="conv-converter-list"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel-list")).toBeInTheDocument();
+      expect(screen.getByText("Base64Converter")).toBeInTheDocument();
+      expect(screen.getByText("In: text")).toBeInTheDocument();
+      expect(screen.getByText("Out: text")).toBeInTheDocument();
+    });
+  });
+
+  it("should allow converter and conversation panels to be open at the same time", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      main_conversation_id: "conv-both-panels",
+      conversations: [
+        { conversation_id: "conv-both-panels", is_main: true, message_count: 1, created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-both-panels"
+          conversationId="conv-both-panels"
+          activeConversationId="conv-both-panels"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+    await userEvent.click(screen.getByTestId("toggle-panel-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
   });
 

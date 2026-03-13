@@ -3,6 +3,10 @@ import { toApiError } from './errors'
 import type {
   TargetInstance,
   TargetListResponse,
+  ConverterCatalogEntry,
+  ConverterCatalogResponse,
+  ConverterInstance,
+  ConverterListResponse,
   CreateTargetRequest,
   CreateAttackRequest,
   CreateAttackResponse,
@@ -101,6 +105,23 @@ export const targetsApi = {
 
   createTarget: async (request: CreateTargetRequest): Promise<TargetInstance> => {
     const response = await apiClient.post('/targets', request)
+    return response.data
+  },
+}
+
+export const convertersApi = {
+  listConverterCatalog: async (): Promise<ConverterCatalogResponse> => {
+    const response = await apiClient.get('/converters/catalog')
+    return response.data
+  },
+
+  listConverters: async (): Promise<ConverterListResponse> => {
+    const response = await apiClient.get('/converters')
+    return response.data
+  },
+
+  getConverter: async (converterId: string): Promise<ConverterInstance> => {
+    const response = await apiClient.get(`/converters/${encodeURIComponent(converterId)}`)
     return response.data
   },
 }

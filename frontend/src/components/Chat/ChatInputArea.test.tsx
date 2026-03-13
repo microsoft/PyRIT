@@ -26,12 +26,31 @@ describe("ChatInputArea", () => {
   it("should render input area and send button", () => {
     render(
       <TestWrapper>
-        <ChatInputArea {...defaultProps} />
+        <ChatInputArea {...defaultProps} onToggleConverterPanel={jest.fn()} />
       </TestWrapper>
     );
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(getSendButton()).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /convert/i })).toBeInTheDocument();
+  });
+
+  it("should call converter panel toggle handler when convert button is clicked", async () => {
+    const user = userEvent.setup();
+    const onToggleConverterPanel = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          onToggleConverterPanel={onToggleConverterPanel}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /convert/i }));
+
+    expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
   it("should call onSend with input value when send button clicked", async () => {

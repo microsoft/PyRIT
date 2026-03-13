@@ -9,6 +9,7 @@ import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
+import ConverterPanel from './ConverterPanel'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
@@ -65,6 +66,7 @@ export default function ChatWindow({
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
 
@@ -458,6 +460,9 @@ export default function ChatWindow({
 
   return (
     <div className={styles.root}>
+      {isConverterPanelOpen && (
+        <ConverterPanel onClose={() => setIsConverterPanelOpen(false)} />
+      )}
       <div className={styles.chatArea}>
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
@@ -527,6 +532,8 @@ export default function ChatWindow({
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
           onConfigureTarget={!activeTarget ? () => onNavigate?.('config') : undefined}
+          onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
+          isConverterPanelOpen={isConverterPanelOpen}
         />
       </div>
       {isPanelOpen && (

@@ -1,10 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, KeyboardEvent } from 'react'
 import {
   Button,
-  tokens,
   Caption1,
   Tooltip,
   Text,
+  tokens,
 } from '@fluentui/react-components'
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular } from '@fluentui/react-icons'
 import { MessageAttachment, TargetInstance } from '../../types'
@@ -68,9 +68,11 @@ interface ChatInputAreaProps {
   attackOperator?: string
   noTargetSelected?: boolean
   onConfigureTarget?: () => void
+  onToggleConverterPanel?: () => void
+  isConverterPanelOpen?: boolean
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -261,6 +263,15 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               disabled={disabled}
               title="Attach files"
             />
+            <Button
+              className={styles.convertButton}
+              appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
+              onClick={onToggleConverterPanel}
+              disabled={disabled || !onToggleConverterPanel}
+              data-testid="toggle-converter-panel-btn"
+            >
+              Convert
+            </Button>
             </div>
           <textarea
             ref={textareaRef}

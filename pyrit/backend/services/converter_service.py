@@ -19,6 +19,8 @@ from typing import Any, Optional
 from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.models.converters import (
+    ConverterCatalogEntry,
+    ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
@@ -92,6 +94,31 @@ class ConverterService:
             for entry in self._registry.get_all_instances()
         ]
         return ConverterInstanceListResponse(items=items)
+
+    async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
+        """
+        List all available converter types from the backend converter registry.
+
+        Returns:
+            ConverterCatalogResponse containing all available converter classes.
+        """
+        items: list[ConverterCatalogEntry] = []
+        for converter_type, converter_class in sorted(_CONVERTER_CLASS_REGISTRY.items()):
+            if converter_type in ("PromptConverter", "ConverterResult") or "Strategy" in converter_type:
+                continue
+
+            supported_input_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_INPUT_TYPES", ())]
+            supported_output_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_OUTPUT_TYPES", ())]
+
+            items.append(
+                ConverterCatalogEntry(
+                    converter_type=converter_type,
+                    supported_input_types=supported_input_types,
+                    supported_output_types=supported_output_types,
+                )
+            )
+
+        return ConverterCatalogResponse(items=items)
 
     async def get_converter_async(self, *, converter_id: str) -> Optional[ConverterInstance]:
         """

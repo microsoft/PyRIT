@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 from pyrit.models import PromptDataType
 
 __all__ = [
+    "ConverterCatalogEntry",
+    "ConverterCatalogResponse",
     "ConverterInstance",
     "ConverterInstanceListResponse",
     "CreateConverterRequest",
@@ -22,6 +24,29 @@ __all__ = [
     "ConverterPreviewResponse",
     "PreviewStep",
 ]
+
+
+# ============================================================================
+# Converter Catalog (Available Types)
+# ============================================================================
+
+
+class ConverterCatalogEntry(BaseModel):
+    """A converter type available from the backend registry."""
+
+    converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
+    supported_input_types: list[str] = Field(
+        default_factory=list, description="Input data types supported by this converter type"
+    )
+    supported_output_types: list[str] = Field(
+        default_factory=list, description="Output data types produced by this converter type"
+    )
+
+
+class ConverterCatalogResponse(BaseModel):
+    """Response for listing available converter types from the registry."""
+
+    items: list[ConverterCatalogEntry] = Field(..., description="List of available converter types")
 
 
 # ============================================================================
