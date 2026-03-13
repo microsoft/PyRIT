@@ -2164,11 +2164,62 @@ describe("ChatWindow Integration", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("converter-panel-list")).toBeInTheDocument();
-      expect(screen.getByText("Base64Converter")).toBeInTheDocument();
+      expect(screen.getByTestId("converter-panel-select")).toBeInTheDocument();
+      expect(screen.getByTestId("converter-item-Base64Converter")).toBeInTheDocument();
       expect(screen.getByText("In: text")).toBeInTheDocument();
       expect(screen.getByText("Out: text")).toBeInTheDocument();
+      expect(screen.getByTestId("converter-output")).toBeInTheDocument();
+      expect(screen.getByText("Converted output will appear here.")).toBeInTheDocument();
     });
   });
+
+  it("should switch converter details when a different dropdown option is selected", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [
+        {
+          converter_type: "Base64Converter",
+          supported_input_types: ["text"],
+          supported_output_types: ["text"],
+        },
+        {
+          converter_type: "CharSwapConverter",
+          supported_input_types: ["text"],
+          supported_output_types: ["text"],
+        },
+      ],
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-converter-select"
+          conversationId="conv-converter-select"
+          activeConversationId="conv-converter-select"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+
+    // Wait for initial render with first converter selected
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-item-Base64Converter")).toBeInTheDocument();
+    });
+
+    // Click combobox to open the dropdown listbox
+    const input = screen.getByRole("combobox");
+    await userEvent.click(input);
+
+    // Find and click the second converter option
+    const option = await screen.findByRole("option", { name: "CharSwapConverter" });
+    await userEvent.click(option);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-item-CharSwapConverter")).toBeInTheDocument();
+    });
+  }, 15000);
 
   it("should allow converter and conversation panels to be open at the same time", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
