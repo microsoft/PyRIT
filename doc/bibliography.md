@@ -24,13 +24,13 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Yi Zeng, Hongpeng Lin, Jingwen Zhang, Diyi Yang, Ruoxi Jia, Weiyan Shi.** "How Johnny Can Persuade LLMs to Jailbreak Them: Rethinking Persuasion to Challenge AI Safety by Humanizing LLMs." *arXiv:2401.06373*, 2024. [Paper](https://arxiv.org/abs/2401.06373)
 
-- **Yupei Gong, Stephen Moskal, Seth Tice, Humphrey Hines.** "FigStep: Jailbreaking Large Vision-Language Models via Typographic Visual Prompts." (Transparency Attacks) *arXiv:2401.15817*, 2024. [Paper](https://arxiv.org/abs/2401.15817)
+- **Forrest McKee, David Noever.** "Transparency Attacks: How Imperceptible Image Layers Can Fool AI Perception." *arXiv:2401.15817*, 2024. [Paper](https://arxiv.org/abs/2401.15817)
 
 - **Yue Li, Hao Zhang, Houqiang Li, Hai-Tao Zheng.** "FlipAttack: Jailbreak LLMs via Flipping." *arXiv:2410.02832*, 2024. [Paper](https://arxiv.org/abs/2410.02832)
 
-- **Zile Liu, Zhihao Yu, Hongchao Li, Kaidi Liu.** "MathPrompt: Mathematical Reasoning to Circumvent LLM Safety Mechanisms." *arXiv:2409.11445*, 2024. [Paper](https://arxiv.org/abs/2409.11445)
+- **Emet Bethany, Mazal Bethany, Juan Arturo Nolazco Flores, Sumit Kumar Jha, Peyman Najafirad.** "MathPrompt: Mathematical Reasoning to Circumvent LLM Safety Mechanisms." *arXiv:2409.11445*, 2024. [Paper](https://arxiv.org/abs/2409.11445)
 
-- **Emet Bethany Liu, Neel Jiang, Idan Barak, Nathalie Baracaldo.** "Jailbreaking Large Language Models with Symbolic Mathematics." *arXiv:2407.11969*, 2024. [Paper](https://arxiv.org/abs/2407.11969)
+- **Maksym Andriushchenko, Nicolas Flammarion.** "Does Refusal Training in LLMs Generalize to the Past Tense?" *arXiv:2407.11969*, 2024. Accepted at ICLR 2025. [Paper](https://arxiv.org/abs/2407.11969)
 
 - **Keegan Hines, Gary Lopez, Matthew Hall, Federico Stolfa, Shrimai Prabhumoye, Yair Livne, Manish Nagireddy, Arun Shankar Iyer, Kieran Dolan.** "Defending Against Indirect Prompt Injection Attacks With Spotlighting." *arXiv:2403.14720*, 2024. [Paper](https://arxiv.org/abs/2403.14720)
 
@@ -46,4 +46,4 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Adversa AI.** "Universal LLM Jailbreak: ChatGPT, GPT-4, Bard, Bing, Anthropic, and Beyond." 2023.
 
-- **Microsoft AI Red Team.** "AI Red Team Lessons." 2024. [Report](https://aka.ms/AIRTLessonsPaper)
+- **Blake Bullwinkel, Amanda Minnich, Shiven Chawla, Gary Lopez, Martin Pouliot, Whitney Maxwell, Joris de Gruyter, Katherine Pratt, Saphir Qi, Nina Chikanov, Roman Lutz, Raja Sekhar Rao Dheekonda, Bolor-Erdene Jagdagdorj, Eugenia Kim, Justin Song, Keegan Hines, Daniel Jones, Giorgio Severi, Richard Lundeen, Sam Vaughan, Victoria Westerhoff, Pete Bryan, Ram Shankar Siva Kumar, Yonatan Zunger, Chang Kawaguchi, Mark Russinovich.** "Lessons From Red Teaming 100 Generative AI Products." *arXiv:2501.07238*, 2024. Presented at the Red Teaming GenAI Workshop, NeurIPS 2024. [Paper](https://arxiv.org/abs/2501.07238) · [eBook](https://aka.ms/AIRTLessonsPaper)
