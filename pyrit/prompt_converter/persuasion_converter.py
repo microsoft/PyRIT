@@ -76,7 +76,9 @@ class PersuasionConverter(PromptConverter):
                 pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion" / f"{persuasion_technique}.yaml"
             )
         except FileNotFoundError:
-            raise ValueError(f"Persuasion technique '{persuasion_technique}' does not exist or is not supported.")
+            raise ValueError(
+                f"Persuasion technique '{persuasion_technique}' does not exist or is not supported."
+            ) from None
         self.system_prompt = str(prompt_template.value)
         self._persuasion_technique = persuasion_technique
 
@@ -167,4 +169,4 @@ class PersuasionConverter(PromptConverter):
             return str(parsed_response["mutated_text"])
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}") from None

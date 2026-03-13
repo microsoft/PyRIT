@@ -30,7 +30,7 @@ def video_converter_sample_video(patch_central_database):
         video_encoding = cv2.VideoWriter_fourcc(*"mp4v")
         output_video = cv2.VideoWriter(video_path, video_encoding, 1, (width, height))
         # Create a few frames for video
-        for i in range(10):
+        for _i in range(10):
             frame = np.zeros((height, width, 3), dtype=np.uint8)
             output_video.write(frame)
         output_video.release()

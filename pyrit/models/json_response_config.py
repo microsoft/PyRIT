@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # Would prefer StrEnum, but.... Python 3.10
 _METADATAKEYS = {
@@ -28,12 +28,12 @@ class _JsonResponseConfig:
     """
 
     enabled: bool = False
-    schema: Optional[Dict[str, Any]] = None
+    schema: Optional[dict[str, Any]] = None
     schema_name: str = "CustomSchema"
     strict: bool = True
 
     @classmethod
-    def from_metadata(cls, *, metadata: Optional[Dict[str, Any]]) -> _JsonResponseConfig:
+    def from_metadata(cls, *, metadata: Optional[dict[str, Any]]) -> _JsonResponseConfig:
         if not metadata:
             return cls(enabled=False)
 
@@ -46,8 +46,8 @@ class _JsonResponseConfig:
             if isinstance(schema_val, str):
                 try:
                     schema = json.loads(schema_val) if schema_val else None
-                except json.JSONDecodeError:
-                    raise ValueError(f"Invalid JSON schema provided: {schema_val}")
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON schema provided: {schema_val}") from e
             else:
                 schema = schema_val
 

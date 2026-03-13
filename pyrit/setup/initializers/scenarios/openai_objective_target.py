@@ -11,7 +11,6 @@ with OpenAI targets if you set OPENAI_CLI_ENDPOINT
 """
 
 import os
-from typing import List
 
 from pyrit.common.apply_defaults import set_default_value
 from pyrit.prompt_target import OpenAIChatTarget
@@ -42,7 +41,7 @@ class ScenarioObjectiveTargetInitializer(PyRITInitializer):
         )
 
     @property
-    def required_env_vars(self) -> List[str]:
+    def required_env_vars(self) -> list[str]:
         """Get list of required environment variables."""
         return [
             "DEFAULT_OPENAI_FRONTEND_ENDPOINT",

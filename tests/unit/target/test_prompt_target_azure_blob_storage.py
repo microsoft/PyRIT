@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

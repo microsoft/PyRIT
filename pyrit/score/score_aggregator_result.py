@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
-from typing import Dict, List, Union
+from typing import Union
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,5 +22,5 @@ class ScoreAggregatorResult:
     value: Union[bool, float]
     description: str
     rationale: str
-    category: List[str]
-    metadata: Dict[str, Union[str, int, float]]
+    category: list[str]
+    metadata: dict[str, Union[str, int, float]]

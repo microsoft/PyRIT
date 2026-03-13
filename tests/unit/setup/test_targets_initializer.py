@@ -2,33 +2,34 @@
 # Licensed under the MIT license.
 
 import os
+from unittest.mock import patch
 
 import pytest
 
 from pyrit.registry import TargetRegistry
-from pyrit.setup.initializers import AIRTTargetInitializer
-from pyrit.setup.initializers.airt_targets import TARGET_CONFIGS
+from pyrit.setup.initializers import TargetInitializer
+from pyrit.setup.initializers.components.targets import TARGET_CONFIGS
 
 
-class TestAIRTTargetInitializerBasic:
-    """Tests for AIRTTargetInitializer class - basic functionality."""
+class TestTargetInitializerBasic:
+    """Tests for TargetInitializer class - basic functionality."""
 
     def test_can_be_created(self):
-        """Test that AIRTTargetInitializer can be instantiated."""
-        init = AIRTTargetInitializer()
+        """Test that TargetInitializer can be instantiated."""
+        init = TargetInitializer()
         assert init is not None
-        assert init.name == "AIRT Target Initializer"
+        assert init.name == "Target Initializer"
         assert init.execution_order == 1
 
     def test_required_env_vars_is_empty(self):
         """Test that no env vars are required (initializer is optional)."""
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         assert init.required_env_vars == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAIRTTargetInitializerInitialize:
-    """Tests for AIRTTargetInitializer.initialize_async method."""
+class TestTargetInitializerInitialize:
+    """Tests for TargetInitializer.initialize_async method."""
 
     def setup_method(self) -> None:
         """Reset registry before each test."""
@@ -51,7 +52,7 @@ class TestAIRTTargetInitializerInitialize:
     @pytest.mark.asyncio
     async def test_initialize_runs_without_error_no_env_vars(self):
         """Test that initialize runs without errors when no env vars are set."""
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         await init.initialize_async()
 
         # No targets should be registered
@@ -65,7 +66,7 @@ class TestAIRTTargetInitializerInitialize:
         os.environ["PLATFORM_OPENAI_CHAT_API_KEY"] = "test_key"
         os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
 
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -81,7 +82,7 @@ class TestAIRTTargetInitializerInitialize:
         os.environ["PLATFORM_OPENAI_CHAT_API_KEY"] = "test_key"
         os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
 
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -94,7 +95,7 @@ class TestAIRTTargetInitializerInitialize:
         os.environ["PLATFORM_OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
         os.environ["PLATFORM_OPENAI_CHAT_GPT4O_MODEL"] = "gpt-4o"
 
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -113,7 +114,7 @@ class TestAIRTTargetInitializerInitialize:
         os.environ["OPENAI_IMAGE_API_KEY2"] = "test_image_key"
         os.environ["OPENAI_IMAGE_MODEL2"] = "dall-e-3"
 
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -125,10 +126,12 @@ class TestAIRTTargetInitializerInitialize:
     async def test_registers_azure_content_safety_without_model(self):
         """Test that PromptShieldTarget is registered without model_name (it doesn't use one)."""
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test.cognitiveservices.azure.com"
-        os.environ["AZURE_CONTENT_SAFETY_API_KEY"] = "test_safety_key"
 
-        init = AIRTTargetInitializer()
-        await init.initialize_async()
+        with patch(
+            "pyrit.setup.initializers.components.targets.get_azure_token_provider", return_value=lambda: "mock-token"
+        ):
+            init = TargetInitializer()
+            await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
         assert "azure_content_safety" in registry
@@ -136,13 +139,15 @@ class TestAIRTTargetInitializerInitialize:
     @pytest.mark.asyncio
     async def test_underlying_model_passed_when_set(self):
         """Test that underlying_model is passed to target when env var is set."""
-        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://my-deployment.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://my-deployment.openai.azure.com/openai/v1"
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "my-deployment-name"
         os.environ["AZURE_OPENAI_GPT4O_UNDERLYING_MODEL"] = "gpt-4o"
 
-        init = AIRTTargetInitializer()
-        await init.initialize_async()
+        with patch(
+            "pyrit.setup.initializers.components.targets.get_azure_openai_auth", return_value=lambda: "mock-token"
+        ):
+            init = TargetInitializer()
+            await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
         target = registry.get_instance_by_name("azure_openai_gpt4o")
@@ -156,7 +161,7 @@ class TestAIRTTargetInitializerInitialize:
         os.environ["OLLAMA_CHAT_ENDPOINT"] = "http://127.0.0.1:11434/v1"
         os.environ["OLLAMA_MODEL"] = "llama2"
 
-        init = AIRTTargetInitializer()
+        init = TargetInitializer()
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -165,9 +170,30 @@ class TestAIRTTargetInitializerInitialize:
         assert target is not None
         assert target._model_name == "llama2"
 
+    @pytest.mark.asyncio
+    async def test_azure_target_uses_entra_auth(self):
+        """Test that Azure targets use Entra auth (token provider) instead of API key."""
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://my-deployment.openai.azure.com/openai/v1"
+        os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
+
+        def mock_token_provider() -> str:
+            return "mock-token"
+
+        with patch(
+            "pyrit.setup.initializers.components.targets.get_azure_openai_auth", return_value=mock_token_provider
+        ):
+            init = TargetInitializer()
+            await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        target = registry.get_instance_by_name("azure_openai_gpt4o")
+        assert target is not None
+        # The token provider gets wrapped by _ensure_async_token_provider, so just verify it's callable
+        assert callable(target._api_key)
+
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAIRTTargetInitializerTargetConfigs:
+class TestTargetInitializerTargetConfigs:
     """Tests verifying TARGET_CONFIGS covers expected targets."""
 
     def test_target_configs_not_empty(self):
@@ -197,25 +223,115 @@ class TestAIRTTargetInitializerTargetConfigs:
         assert "google_gemini" in registry_names
 
 
-class TestAIRTTargetInitializerGetInfo:
-    """Tests for AIRTTargetInitializer.get_info_async method."""
+class TestTargetInitializerGetInfo:
+    """Tests for TargetInitializer.get_info_async method."""
 
     @pytest.mark.asyncio
     async def test_get_info_returns_expected_structure(self):
         """Test that get_info_async returns expected structure."""
-        info = await AIRTTargetInitializer.get_info_async()
+        info = await TargetInitializer.get_info_async()
 
         assert isinstance(info, dict)
-        assert info["name"] == "AIRT Target Initializer"
-        assert info["class"] == "AIRTTargetInitializer"
+        assert info["name"] == "Target Initializer"
+        assert info["class"] == "TargetInitializer"
         assert "description" in info
         assert isinstance(info["description"], str)
 
     @pytest.mark.asyncio
     async def test_get_info_required_env_vars_empty_or_not_present(self):
         """Test that get_info has empty or no required_env_vars (since none are required)."""
-        info = await AIRTTargetInitializer.get_info_async()
+        info = await TargetInitializer.get_info_async()
 
         # required_env_vars may be omitted or empty since this initializer has no requirements
         if "required_env_vars" in info:
             assert info["required_env_vars"] == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerTags:
+    """Tests for TargetInitializer tag filtering."""
+
+    def setup_method(self) -> None:
+        """Reset registry before each test."""
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        TargetRegistry.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_no_tags_registers_default_only(self) -> None:
+        """Test that no tags registers only default targets (not scorer variants)."""
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
+        os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()  # No tags = default only
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        # Default targets should be registered, scorer variants should not
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is None
+
+        # Clean up
+        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
+        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
+
+    @pytest.mark.asyncio
+    async def test_default_tag_excludes_scorer_targets(self) -> None:
+        """Test that tags=['default'] only registers default-tagged targets."""
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
+        os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer(tags=["default"])
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is None
+
+        # Clean up
+        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
+        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
+
+    @pytest.mark.asyncio
+    async def test_scorer_tag_only_registers_scorer_targets(self) -> None:
+        """Test that tags=['scorer'] only registers scorer-tagged targets."""
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
+        os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer(tags=["scorer"])
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is not None
+
+        # Clean up
+        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
+        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_tags_registers_matching(self) -> None:
+        """Test that multiple tags register targets matching any tag."""
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
+        os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer(tags=["default", "scorer"])
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is not None
+
+        # Clean up
+        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
+        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]

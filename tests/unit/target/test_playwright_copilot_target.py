@@ -404,7 +404,7 @@ class TestPlaywrightCopilotTarget:
         assert target.POLL_INTERVAL_MS == 2000
         assert target.RETRY_ATTEMPTS == 5
         assert target.RETRY_DELAY_MS == 500
-        assert target.SUPPORTED_DATA_TYPES == {"text", "image_path"}
+        assert {"text", "image_path"} == target.SUPPORTED_DATA_TYPES
 
 
 @pytest.mark.usefixtures("patch_central_database")

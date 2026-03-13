@@ -229,4 +229,4 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     scorer._score_value_with_llm = AsyncMock(return_value=score)
 
     await scorer.score_text_async(text="example text", objective="task")
-    assert scorer._score_value_with_llm.call_count == int(1)
+    assert scorer._score_value_with_llm.call_count == 1

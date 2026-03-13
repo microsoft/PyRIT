@@ -35,13 +35,12 @@ class TestURLWarnings:
         """Test old Azure chat URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/gpt-4/chat/completions?api-version=2024-02-15"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=old_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=old_url,
+                api_key="test-key",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -59,15 +58,14 @@ class TestURLWarnings:
         """Test old Azure completions URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/text-davinci-003/completions?api-version=2024-02-15"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                from pyrit.prompt_target import OpenAICompletionTarget
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            from pyrit.prompt_target import OpenAICompletionTarget
 
-                target = OpenAICompletionTarget(
-                    endpoint=old_url,
-                    api_key="test-key",
-                    model_name="text-davinci-003",
-                )
+            target = OpenAICompletionTarget(
+                endpoint=old_url,
+                api_key="test-key",
+                model_name="text-davinci-003",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -85,15 +83,14 @@ class TestURLWarnings:
         """Test old Azure images URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2024-02-15"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                from pyrit.prompt_target import OpenAIImageTarget
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            from pyrit.prompt_target import OpenAIImageTarget
 
-                target = OpenAIImageTarget(
-                    endpoint=old_url,
-                    api_key="test-key",
-                    model_name="dall-e-3",
-                )
+            target = OpenAIImageTarget(
+                endpoint=old_url,
+                api_key="test-key",
+                model_name="dall-e-3",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -111,15 +108,14 @@ class TestURLWarnings:
         """Test old Azure audio/speech URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/tts-1/audio/speech?api-version=2024-02-15"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                from pyrit.prompt_target import OpenAITTSTarget
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            from pyrit.prompt_target import OpenAITTSTarget
 
-                target = OpenAITTSTarget(
-                    endpoint=old_url,
-                    api_key="test-key",
-                    model_name="tts-1",
-                )
+            target = OpenAITTSTarget(
+                endpoint=old_url,
+                api_key="test-key",
+                model_name="tts-1",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -137,15 +133,14 @@ class TestURLWarnings:
         """Test old Azure responses URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/o1-preview/responses?api-version=2024-09-01"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                from pyrit.prompt_target import OpenAIResponseTarget
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            from pyrit.prompt_target import OpenAIResponseTarget
 
-                target = OpenAIResponseTarget(
-                    endpoint=old_url,
-                    api_key="test-key",
-                    model_name="o1-preview",
-                )
+            target = OpenAIResponseTarget(
+                endpoint=old_url,
+                api_key="test-key",
+                model_name="o1-preview",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -163,15 +158,14 @@ class TestURLWarnings:
         """Test old Azure videos URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/sora-2/videos?api-version=2024-12-01"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                from pyrit.prompt_target import OpenAIVideoTarget
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            from pyrit.prompt_target import OpenAIVideoTarget
 
-                target = OpenAIVideoTarget(
-                    endpoint=old_url,
-                    api_key="test-key",
-                    model_name="sora-2",
-                )
+            target = OpenAIVideoTarget(
+                endpoint=old_url,
+                api_key="test-key",
+                model_name="sora-2",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -189,13 +183,12 @@ class TestURLWarnings:
         """Test old Azure URL without api-version parameter triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/gpt-4/chat/completions"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=old_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=old_url,
+                api_key="test-key",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -210,13 +203,12 @@ class TestURLWarnings:
         """Test new Azure URL format remains unchanged with no warning logged."""
         new_url = "https://test.openai.azure.com/openai/v1"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=new_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=new_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == new_url
@@ -231,13 +223,12 @@ class TestURLWarnings:
         """Test platform OpenAI chat URL triggers warning about API path."""
         platform_url = "https://api.openai.com/v1/chat/completions"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == platform_url
@@ -252,13 +243,12 @@ class TestURLWarnings:
         """Test platform OpenAI completion URL triggers warning about API path."""
         platform_url = "https://api.openai.com/v1/completions"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAICompletionTarget(
-                    model_name="davinci-002",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAICompletionTarget(
+                model_name="davinci-002",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == platform_url
@@ -273,13 +263,12 @@ class TestURLWarnings:
         """Test platform OpenAI response URL triggers warning about API path."""
         platform_url = "https://api.openai.com/v1/responses"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIResponseTarget(
-                    model_name="gpt-4.1",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIResponseTarget(
+                model_name="gpt-4.1",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == platform_url
@@ -294,13 +283,12 @@ class TestURLWarnings:
         """Test platform OpenAI image URL triggers warning about API path."""
         platform_url = "https://api.openai.com/v1/images/generations"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIImageTarget(
-                    model_name="dall-e-3",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIImageTarget(
+                model_name="dall-e-3",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == platform_url
@@ -315,13 +303,12 @@ class TestURLWarnings:
         """Test platform OpenAI TTS URL triggers warning about API path."""
         platform_url = "https://api.openai.com/v1/audio/speech"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAITTSTarget(
-                    model_name="tts-1",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAITTSTarget(
+                model_name="tts-1",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == platform_url
@@ -336,13 +323,12 @@ class TestURLWarnings:
         """Test platform OpenAI video URL triggers warning about API path."""
         platform_url = "https://api.openai.com/v1/videos"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIVideoTarget(
-                    model_name="sora-2",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIVideoTarget(
+                model_name="sora-2",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == platform_url
@@ -357,13 +343,12 @@ class TestURLWarnings:
         """Test Azure Foundry URL remains unchanged."""
         foundry_url = "https://my-resource.models.ai.azure.com/chat/completions"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="deepseek-r1",
-                    endpoint=foundry_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="deepseek-r1",
+                endpoint=foundry_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == foundry_url
@@ -382,13 +367,12 @@ class TestURLWarnings:
         def mock_token_provider():
             return "mock-token"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=old_url,
-                    api_key=mock_token_provider,
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=old_url,
+                api_key=mock_token_provider,
+            )
 
         # Check URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -403,13 +387,12 @@ class TestURLWarnings:
         """Test that warning message includes link to Microsoft documentation."""
         old_url = "https://test.openai.azure.com/openai/deployments/gpt-4/chat/completions?api-version=2024-02-15"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=old_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=old_url,
+                api_key="test-key",
+            )
 
         # Check warning contains documentation link
         warning_logs = [record for record in caplog.records if record.levelno == logging.WARNING]
@@ -424,13 +407,12 @@ class TestURLWarnings:
             "https://test.openai.azure.com/openai/deployments/my-custom-gpt4/chat/completions?api-version=2024-02-15"
         )
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                OpenAIChatTarget(
-                    endpoint=old_url,
-                    api_key="test-key",
-                    model_name="my-custom-gpt4",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            OpenAIChatTarget(
+                endpoint=old_url,
+                api_key="test-key",
+                model_name="my-custom-gpt4",
+            )
 
         # Check warning contains deployment name
         warning_logs = [record for record in caplog.records if record.levelno == logging.WARNING]
@@ -499,13 +481,12 @@ class TestRealtimeURLWarnings:
         """Test old Azure realtime URL triggers warning but remains unchanged."""
         old_url = "wss://test.openai.azure.com/openai/deployments/gpt-4o-realtime/realtime?api-version=2024-10-01"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = RealtimeTarget(
-                    model_name="gpt-4o-realtime",
-                    endpoint=old_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = RealtimeTarget(
+                model_name="gpt-4o-realtime",
+                endpoint=old_url,
+                api_key="test-key",
+            )
 
         # Check that URL was NOT converted - kept as-is
         assert target._endpoint == old_url
@@ -530,13 +511,12 @@ class TestRealtimeURLWarnings:
         """Test https realtime URL is kept as-is (not converted to wss)."""
         url = "https://test.openai.azure.com/openai/v1"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = RealtimeTarget(
-                    model_name="gpt-4o-realtime",
-                    endpoint=url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = RealtimeTarget(
+                model_name="gpt-4o-realtime",
+                endpoint=url,
+                api_key="test-key",
+            )
 
         # URL should remain https (not converted to wss)
         assert target._endpoint == url
@@ -546,13 +526,12 @@ class TestRealtimeURLWarnings:
         """Test platform OpenAI realtime URL triggers warning about API path."""
         platform_url = "wss://api.openai.com/v1/realtime"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = RealtimeTarget(
-                    model_name="gpt-4o-realtime-preview",
-                    endpoint=platform_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = RealtimeTarget(
+                model_name="gpt-4o-realtime-preview",
+                endpoint=platform_url,
+                api_key="test-key",
+            )
 
         # Platform URL should remain unchanged
         assert target._endpoint == platform_url
@@ -570,13 +549,12 @@ class TestURLValidation:
         """Test that /chat/completions path triggers a warning but URL remains unchanged."""
         url = "https://test.openai.azure.com/openai/v1/chat/completions"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == url
@@ -590,13 +568,12 @@ class TestURLValidation:
         """Test that Azure Foundry URL with API path triggers a warning."""
         url = "https://test.models.ai.azure.com/chat/completions"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="deepseek-r1",
-                    endpoint=url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="deepseek-r1",
+                endpoint=url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == url
@@ -606,13 +583,12 @@ class TestURLValidation:
         """Test that old URL triggers warning but remains unchanged."""
         old_url = "https://test.openai.azure.com/openai/deployments/gpt-4/chat/completions?api-version=2024-02-15"
 
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                target = OpenAIChatTarget(
-                    model_name="gpt-4",
-                    endpoint=old_url,
-                    api_key="test-key",
-                )
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.WARNING):
+            target = OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint=old_url,
+                api_key="test-key",
+            )
 
         # URL should remain unchanged
         assert target._endpoint == old_url

@@ -22,9 +22,6 @@ class Base64Converter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    SUPPORTED_INPUT_TYPES = ("text",)
-    SUPPORTED_OUTPUT_TYPES = ("text",)
-
     EncodingFunc = Literal[
         "b64encode",
         "urlsafe_b64encode",

@@ -125,7 +125,7 @@ class TestMessageDuplication:
         duplicated_ids = [piece.id for piece in duplicated.message_pieces]
 
         # Verify new IDs are different from original
-        for orig_id, dup_id in zip(original_ids, duplicated_ids):
+        for orig_id, dup_id in zip(original_ids, duplicated_ids, strict=False):
             assert orig_id != dup_id
 
         # Verify duplicated IDs are unique
@@ -135,7 +135,7 @@ class TestMessageDuplication:
         """Test that duplicate_message preserves all content fields."""
         duplicated = message.duplicate_message()
 
-        for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces):
+        for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces, strict=False):
             assert orig_piece.original_value == dup_piece.original_value
             assert orig_piece.converted_value == dup_piece.converted_value
             assert orig_piece.api_role == dup_piece.api_role
@@ -147,7 +147,7 @@ class TestMessageDuplication:
         """Test that duplicate_message preserves original_prompt_id for tracing."""
         duplicated = message.duplicate_message()
 
-        for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces):
+        for orig_piece, dup_piece in zip(message.message_pieces, duplicated.message_pieces, strict=False):
             assert orig_piece.original_prompt_id == dup_piece.original_prompt_id
 
     def test_duplicate_message_creates_new_timestamp(self, message: Message) -> None:

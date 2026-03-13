@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -130,7 +130,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
     mock_complete_chat_async = AsyncMock(
         side_effect=HTTPStatusError(message="Bad Request", request=MagicMock(), response=response)
     )
-    setattr(aml_online_chat, "_complete_chat_async", mock_complete_chat_async)
+    aml_online_chat._complete_chat_async = mock_complete_chat_async
     message = Message(message_pieces=[MessagePiece(role="user", conversation_id="123", original_value="Hello")])
 
     with pytest.raises(HTTPStatusError) as bre:
@@ -154,7 +154,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_
     mock_complete_chat_async = AsyncMock(
         side_effect=HTTPStatusError(message="Rate Limit Reached", request=MagicMock(), response=response)
     )
-    setattr(aml_online_chat, "_complete_chat_async", mock_complete_chat_async)
+    aml_online_chat._complete_chat_async = mock_complete_chat_async
     message = Message(message_pieces=[MessagePiece(role="user", conversation_id="123", original_value="Hello")])
 
     with pytest.raises(RateLimitException) as rle:
@@ -172,7 +172,7 @@ async def test_send_prompt_async_rate_limit_exception_retries(aml_online_chat: A
     mock_complete_chat_async = AsyncMock(
         side_effect=RateLimitError("Rate Limit Reached", response=response, body="Rate limit reached")
     )
-    setattr(aml_online_chat, "_complete_chat_async", mock_complete_chat_async)
+    aml_online_chat._complete_chat_async = mock_complete_chat_async
     message = Message(message_pieces=[MessagePiece(role="user", conversation_id="12345", original_value="Hello")])
 
     with pytest.raises(RateLimitError):
@@ -188,7 +188,7 @@ async def test_send_prompt_async_empty_response_retries(aml_online_chat: AzureML
     mock_complete_chat_async = AsyncMock()
     mock_complete_chat_async.return_value = None
 
-    setattr(aml_online_chat, "_complete_chat_async", mock_complete_chat_async)
+    aml_online_chat._complete_chat_async = mock_complete_chat_async
     message = Message(message_pieces=[MessagePiece(role="user", conversation_id="12345", original_value="Hello")])
 
     with pytest.raises(EmptyResponseException):

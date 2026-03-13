@@ -10,12 +10,8 @@ This module provides the main entry point for the pyrit_backend command.
 import asyncio
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
+from pathlib import Path
 from typing import Optional
-
-# Ensure emoji and other Unicode characters don't crash on Windows consoles
-# that use legacy encodings like cp1252.
-sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
-sys.stderr.reconfigure(errors="replace")  # type: ignore[union-attr]
 
 from pyrit.cli import frontend_core
 
@@ -62,6 +58,12 @@ Examples:
         type=int,
         default=8000,
         help="Port to bind the server to (default: 8000)",
+    )
+
+    parser.add_argument(
+        "--config-file",
+        type=Path,
+        help=frontend_core.ARG_HELP["config_file"],
     )
 
     parser.add_argument(
@@ -117,7 +119,7 @@ Examples:
     return parser.parse_args(args)
 
 
-async def initialize_and_run(*, parsed_args: Namespace) -> int:
+async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
     """
     Initialize PyRIT and start the backend server.
 
@@ -146,29 +148,36 @@ async def initialize_and_run(*, parsed_args: Namespace) -> int:
             print(f"Error: {e}")
             return 1
 
-    # Resolve initializer instances if names provided
-    initializer_instances = None
-    if parsed_args.initializers:
-        from pyrit.registry import InitializerRegistry
-
-        registry = InitializerRegistry()
-        initializer_instances = []
-        for name in parsed_args.initializers:
-            try:
-                initializer_class = registry.get_class(name)
-                initializer_instances.append(initializer_class())
-            except Exception as e:
-                print(f"Error: Could not load initializer '{name}': {e}")
-                return 1
-
-    # Initialize PyRIT with the provided configuration
-    print("🔧 Initializing PyRIT...")
-    await initialize_pyrit_async(
-        memory_db_type=parsed_args.database,
+    # Create context using FrontendCore (handles config file merging)
+    context = frontend_core.FrontendCore(
+        config_file=parsed_args.config_file,
+        database=parsed_args.database,
         initialization_scripts=initialization_scripts,
-        initializers=initializer_instances,
+        initializer_names=parsed_args.initializers,
         env_files=env_files,
+        log_level=parsed_args.log_level,
     )
+
+    # Initialize PyRIT (loads registries, sets up memory)
+    print("🔧 Initializing PyRIT...")
+    await context.initialize_async()
+
+    # Run initializers up-front (backend runs them once at startup, not per-scenario)
+    initializer_instances = None
+    if context._initializer_names:
+        print(f"Running {len(context._initializer_names)} initializer(s)...")
+        initializer_instances = []
+        for name in context._initializer_names:
+            initializer_class = context.initializer_registry.get_class(name)
+            initializer_instances.append(initializer_class())
+
+        # Re-initialize with initializers applied
+        await initialize_pyrit_async(
+            memory_db_type=context._database,
+            initialization_scripts=context._initialization_scripts,
+            initializers=initializer_instances,
+            env_files=context._env_files,
+        )
 
     # Start uvicorn server
     import uvicorn
@@ -196,6 +205,11 @@ def main(*, args: Optional[list[str]] = None) -> int:
     Returns:
         int: Exit code (0 for success, 1 for error).
     """
+    # Ensure emoji and other Unicode characters don't crash on Windows consoles
+    # that use legacy encodings like cp1252.
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(errors="replace")  # type: ignore[union-attr]
+
     try:
         parsed_args = parse_args(args=args)
     except SystemExit as e:
@@ -203,13 +217,13 @@ def main(*, args: Optional[list[str]] = None) -> int:
 
     # Handle list-initializers command
     if parsed_args.list_initializers:
-        context = frontend_core.FrontendCore(log_level=parsed_args.log_level)
+        context = frontend_core.FrontendCore(config_file=parsed_args.config_file, log_level=parsed_args.log_level)
         scenarios_path = frontend_core.get_default_initializer_discovery_path()
         return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
 
     # Run the server
     try:
-        return asyncio.run(initialize_and_run(parsed_args=parsed_args))
+        return asyncio.run(initialize_and_run_async(parsed_args=parsed_args))
     except KeyboardInterrupt:
         print("\n🛑 Backend stopped")
         return 0

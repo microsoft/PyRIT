@@ -2,20 +2,20 @@
 # Licensed under the MIT license.
 
 import json
-from typing import IO, Any, Dict, List, cast
+from typing import IO, Any, cast
 
 
-def read_json(file: IO[Any]) -> List[Dict[str, str]]:
+def read_json(file: IO[Any]) -> list[dict[str, str]]:
     """
     Read a JSON file and return its content.
 
     Returns:
         List[Dict[str, str]]: Parsed JSON content.
     """
-    return cast(List[Dict[str, str]], json.load(file))
+    return cast("list[dict[str, str]]", json.load(file))
 
 
-def write_json(file: IO[Any], examples: List[Dict[str, str]]) -> None:
+def write_json(file: IO[Any], examples: list[dict[str, str]]) -> None:
     """
     Write a list of dictionaries to a JSON file.
 
@@ -26,7 +26,7 @@ def write_json(file: IO[Any], examples: List[Dict[str, str]]) -> None:
     json.dump(examples, file)
 
 
-def read_jsonl(file: IO[Any]) -> List[Dict[str, str]]:
+def read_jsonl(file: IO[Any]) -> list[dict[str, str]]:
     """
     Read a JSONL file and return its content.
 
@@ -36,7 +36,7 @@ def read_jsonl(file: IO[Any]) -> List[Dict[str, str]]:
     return [json.loads(line) for line in file]
 
 
-def write_jsonl(file: IO[Any], examples: List[Dict[str, str]]) -> None:
+def write_jsonl(file: IO[Any], examples: list[dict[str, str]]) -> None:
     """
     Write a list of dictionaries to a JSONL file.
 

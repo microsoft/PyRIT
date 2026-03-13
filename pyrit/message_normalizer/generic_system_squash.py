@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import List
 
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import Message
@@ -12,7 +11,7 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
     Normalizer that combines the first system message with the first user message using generic instruction tags.
     """
 
-    async def normalize_async(self, messages: List[Message]) -> List[Message]:
+    async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """
         Return messages with the first system message combined into the first user message.
 

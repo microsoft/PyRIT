@@ -3,8 +3,9 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def mark_messages_as_simulated(messages: Sequence[Message]) -> List[Message]:
+def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     """
     Mark assistant messages as simulated_assistant for traceability.
 
@@ -51,13 +52,13 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> List[Message]:
 
 
 def get_adversarial_chat_messages(
-    prepended_conversation: List[Message],
+    prepended_conversation: list[Message],
     *,
     adversarial_chat_conversation_id: str,
     attack_identifier: ComponentIdentifier,
     adversarial_chat_target_identifier: ComponentIdentifier,
-    labels: Optional[Dict[str, str]] = None,
-) -> List[Message]:
+    labels: Optional[dict[str, str]] = None,
+) -> list[Message]:
     """
     Transform prepended conversation messages for adversarial chat with swapped roles.
 
@@ -82,13 +83,13 @@ def get_adversarial_chat_messages(
     if not prepended_conversation:
         return []
 
-    role_swap: Dict[ChatMessageRole, ChatMessageRole] = {
+    role_swap: dict[ChatMessageRole, ChatMessageRole] = {
         "user": "assistant",
         "assistant": "user",
         "simulated_assistant": "user",
     }
 
-    result: List[Message] = []
+    result: list[Message] = []
 
     for message in prepended_conversation:
         for piece in message.message_pieces:
@@ -118,7 +119,7 @@ def get_adversarial_chat_messages(
     return result
 
 
-async def build_conversation_context_string_async(messages: List[Message]) -> str:
+async def build_conversation_context_string_async(messages: list[Message]) -> str:
     """
     Build a formatted context string from a list of messages.
 
@@ -139,7 +140,7 @@ async def build_conversation_context_string_async(messages: List[Message]) -> st
     return await normalizer.normalize_string_async(messages)
 
 
-def get_prepended_turn_count(prepended_conversation: Optional[List[Message]]) -> int:
+def get_prepended_turn_count(prepended_conversation: Optional[list[Message]]) -> int:
     """
     Count the number of turns (assistant responses) in a prepended conversation.
 
@@ -166,7 +167,7 @@ class ConversationState:
 
     # Scores from the last assistant message (for attack-specific interpretation)
     # Used by Crescendo to detect refusals and objective achievement
-    last_assistant_message_scores: List[Score] = field(default_factory=list)
+    last_assistant_message_scores: list[Score] = field(default_factory=list)
 
 
 class ConversationManager:
@@ -198,7 +199,7 @@ class ConversationManager:
         self._memory = CentralMemory.get_memory_instance()
         self._attack_identifier = attack_identifier
 
-    def get_conversation(self, conversation_id: str) -> List[Message]:
+    def get_conversation(self, conversation_id: str) -> list[Message]:
         """
         Retrieve a conversation by its ID.
 
@@ -244,7 +245,7 @@ class ConversationManager:
         target: PromptChatTarget,
         conversation_id: str,
         system_prompt: str,
-        labels: Optional[Dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Set or update the system prompt for a conversation.
@@ -268,10 +269,10 @@ class ConversationManager:
         context: "AttackContext[Any]",
         target: PromptTarget,
         conversation_id: str,
-        request_converters: Optional[List[PromptConverterConfiguration]] = None,
+        request_converters: Optional[list[PromptConverterConfiguration]] = None,
         prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
         max_turns: Optional[int] = None,
-        memory_labels: Optional[Dict[str, str]] = None,
+        memory_labels: Optional[dict[str, str]] = None,
     ) -> ConversationState:
         """
         Initialize attack context with prepended conversation and merged labels.
@@ -343,7 +344,7 @@ class ConversationManager:
         self,
         *,
         context: "AttackContext[Any]",
-        prepended_conversation: List[Message],
+        prepended_conversation: list[Message],
         config: Optional["PrependedConversationConfig"],
     ) -> ConversationState:
         """
@@ -412,9 +413,9 @@ class ConversationManager:
     async def add_prepended_conversation_to_memory_async(
         self,
         *,
-        prepended_conversation: List[Message],
+        prepended_conversation: list[Message],
         conversation_id: str,
-        request_converters: Optional[List[PromptConverterConfiguration]] = None,
+        request_converters: Optional[list[PromptConverterConfiguration]] = None,
         prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
         max_turns: Optional[int] = None,
     ) -> int:
@@ -493,9 +494,9 @@ class ConversationManager:
         self,
         *,
         context: "AttackContext[Any]",
-        prepended_conversation: List[Message],
+        prepended_conversation: list[Message],
         conversation_id: str,
-        request_converters: Optional[List[PromptConverterConfiguration]],
+        request_converters: Optional[list[PromptConverterConfiguration]],
         prepended_conversation_config: Optional["PrependedConversationConfig"],
         max_turns: Optional[int],
     ) -> ConversationState:
@@ -562,8 +563,8 @@ class ConversationManager:
         self,
         *,
         message: Message,
-        request_converters: List[PromptConverterConfiguration],
-        apply_to_roles: Optional[List[ChatMessageRole]],
+        request_converters: list[PromptConverterConfiguration],
+        apply_to_roles: Optional[list[ChatMessageRole]],
     ) -> None:
         """
         Apply converters to message pieces.

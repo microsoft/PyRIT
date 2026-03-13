@@ -104,7 +104,7 @@ print("----------")
 print_group(seed_groups[0])
 
 # Filter by SeedObjectives
-seed_groups = memory.get_seed_groups(dataset_name="pyrit_example_dataset", is_objective=True, group_length=[1])
+seed_groups = memory.get_seed_groups(dataset_name="pyrit_example_dataset", seed_type="objective", group_length=[1])
 print("First SeedObjective from pyrit_example_dataset without a seedprompt:")
 print("----------")
 print_group(seed_groups[0])

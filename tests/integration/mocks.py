@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Generator, Optional
+from collections.abc import Generator
+from typing import Optional
 
 from sqlalchemy import inspect
 
-from pyrit.identifiers import AttackIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptChatTarget, limit_requests_per_minute
@@ -38,9 +39,9 @@ def get_sqlite_memory() -> Generator[SQLiteMemory, None, None]:
 class MockPromptTarget(PromptChatTarget):
     prompt_sent: list[str]
 
-    def __init__(self, id=None, rpm=None) -> None:
+    def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
         super().__init__(max_requests_per_minute=rpm)
-        self.id = id
+        self.id = id  # noqa: A003
         self.prompt_sent = []
 
     def set_system_prompt(
@@ -48,7 +49,7 @@ class MockPromptTarget(PromptChatTarget):
         *,
         system_prompt: str,
         conversation_id: str,
-        attack_identifier: Optional[AttackIdentifier] = None,
+        attack_identifier: Optional[ComponentIdentifier] = None,
         labels: Optional[dict[str, str]] = None,
     ) -> None:
         self.system_prompt = system_prompt

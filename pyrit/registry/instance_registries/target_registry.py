@@ -47,7 +47,7 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
 
     def register_instance(
         self,
-        target: "PromptTarget",
+        target: PromptTarget,
         *,
         name: Optional[str] = None,
     ) -> None:
@@ -69,7 +69,7 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
         self.register(target, name=name)
         logger.debug(f"Registered target instance: {name} ({target.__class__.__name__})")
 
-    def get_instance_by_name(self, name: str) -> Optional["PromptTarget"]:
+    def get_instance_by_name(self, name: str) -> Optional[PromptTarget]:
         """
         Get a registered target instance by name.
 
@@ -83,7 +83,7 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
         """
         return self.get(name)
 
-    def _build_metadata(self, name: str, instance: "PromptTarget") -> ComponentIdentifier:
+    def _build_metadata(self, name: str, instance: PromptTarget) -> ComponentIdentifier:
         """
         Build metadata for a target instance.
 

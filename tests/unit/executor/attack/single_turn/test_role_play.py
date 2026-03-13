@@ -243,7 +243,6 @@ class TestRolePlayAttack:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=role_play_attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
 
@@ -280,7 +279,6 @@ class TestRolePlayAttack:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=role_play_attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
 

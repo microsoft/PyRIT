@@ -4,7 +4,8 @@
 import logging
 import mimetypes
 import os
-from typing import Any, Callable, Literal, Optional
+from collections.abc import Callable
+from typing import Any, Literal, Optional
 
 import httpx
 

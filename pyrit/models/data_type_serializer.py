@@ -17,11 +17,11 @@ from urllib.parse import urlparse
 import aiofiles
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.models.literals import PromptDataType
 from pyrit.models.storage_io import DiskStorageIO, StorageIO
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
+    from pyrit.models.literals import PromptDataType
 
 # Define allowed categories for validation
 AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries"]
@@ -33,7 +33,7 @@ def data_serializer_factory(
     value: Optional[str] = None,
     extension: Optional[str] = None,
     category: AllowedCategories,
-) -> "DataTypeSerializer":
+) -> DataTypeSerializer:
     """
     Create a DataTypeSerializer instance.
 
@@ -423,7 +423,7 @@ class URLDataTypeSerializer(DataTypeSerializer):
         self.value = prompt_text
         self.data_sub_directory = f"/{category}/urls"
         self.file_extension = extension if extension else "txt"
-        self.on_disk = not (prompt_text.startswith("http://") or prompt_text.startswith("https://"))
+        self.on_disk = not (prompt_text.startswith(("http://", "https://")))
 
     def data_on_disk(self) -> bool:
         """

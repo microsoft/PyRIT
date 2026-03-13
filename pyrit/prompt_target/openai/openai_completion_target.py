@@ -9,6 +9,7 @@ from pyrit.exceptions.exception_classes import (
 )
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 class OpenAICompletionTarget(OpenAITarget):
     """A prompt target for OpenAI completion endpoints."""
+
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=False)
 
     def __init__(
         self,

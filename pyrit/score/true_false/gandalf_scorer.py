@@ -133,7 +133,7 @@ class GandalfScorer(TrueFalseScorer):
             response = await self._prompt_target.send_prompt_async(message=request)
             response_text = response[0].get_value()
         except (RuntimeError, BadRequestError):
-            raise PyritException(message="Error in Gandalf Scorer. Unable to check for password in text.")
+            raise PyritException(message="Error in Gandalf Scorer. Unable to check for password in text.") from None
         if response_text.strip() == "NO":
             return ""
         return response_text

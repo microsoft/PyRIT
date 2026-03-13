@@ -9,6 +9,7 @@ import pytest
 
 from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, Message, MessagePiece, Score
 
@@ -67,7 +68,9 @@ def sample_float_score():
 def sample_attack_result():
     return AttackResult(
         objective="Test objective",
-        attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+        atomic_attack_identifier=build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+        ),
         conversation_id="test-conv-123",
         executed_turns=3,
         execution_time_ms=1500,

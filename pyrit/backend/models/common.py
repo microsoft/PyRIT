@@ -7,7 +7,7 @@ Common response models for the PyRIT API.
 Includes pagination, error handling (RFC 7807), and shared base models.
 """
 
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,7 +42,7 @@ class ProblemDetail(BaseModel):
     status: int = Field(..., description="HTTP status code")
     detail: str = Field(..., description="Human-readable explanation")
     instance: Optional[str] = Field(None, description="URI of the specific occurrence")
-    errors: Optional[List[FieldError]] = Field(None, description="Field-level errors for validation")
+    errors: Optional[list[FieldError]] = Field(None, description="Field-level errors for validation")
 
 
 # Sensitive field patterns to filter from identifiers

@@ -103,7 +103,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             # Attempt to use score_value if available
             raw_score_value = float(unvalidated_score.raw_score_value)
         except KeyError:
-            raise InvalidJsonException(message="Expected 'score_value' key missing in the JSON response")
+            raise InvalidJsonException(message="Expected 'score_value' key missing in the JSON response") from None
 
         # Convert UnvalidatedScore to Score, applying scaling and metadata
         score = unvalidated_score.to_score(

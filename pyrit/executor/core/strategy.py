@@ -12,18 +12,21 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncIterator, Dict, Generic, MutableMapping, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
 from pyrit.exceptions import clear_execution_context, get_execution_context
 from pyrit.models import StrategyResultT
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, MutableMapping
+
 StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
 
 
 @dataclass
-class StrategyContext(ABC):
+class StrategyContext(ABC):  # noqa: B024
     """Base class for all strategy contexts."""
 
     def duplicate(self: StrategyContextT) -> StrategyContextT:
@@ -96,7 +99,6 @@ class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             event_data: Data about the event that occurred.
         """
-        pass
 
 
 class StrategyLogAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
@@ -160,7 +162,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         """
         self._id = uuid.uuid4()
         self._context_type = context_type
-        self._event_handlers: Dict[str, StrategyEventHandler[StrategyContextT, StrategyResultT]] = {}
+        self._event_handlers: dict[str, StrategyEventHandler[StrategyContextT, StrategyResultT]] = {}
 
         if event_handler is not None:
             self._register_event_handler(event_handler)
@@ -172,7 +174,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
                 StrategyLogAdapter._STRATEGY_ID_KEY: str(self._id)[:8],
             },
         )
-        self._memory_labels: Dict[str, str] = ast.literal_eval(
+        self._memory_labels: dict[str, str] = ast.literal_eval(
             default_values.get_non_required_value(env_var_name="GLOBAL_MEMORY_LABELS") or "{}"
         )
 
@@ -198,7 +200,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Raises:
             Exception: If the context is invalid for this strategy.
         """
-        pass
 
     @abstractmethod
     async def _setup_async(self, *, context: StrategyContextT) -> None:
@@ -210,7 +211,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             context (StrategyContextT): The context for the strategy.
         """
-        pass
 
     @abstractmethod
     async def _perform_async(self, *, context: StrategyContextT) -> StrategyResultT:
@@ -224,7 +224,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Returns:
             StrategyResultT: The result of the strategy execution.
         """
-        pass
 
     @abstractmethod
     async def _teardown_async(self, *, context: StrategyContextT) -> None:
@@ -236,7 +235,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             context (StrategyContextT): The context for the strategy.
         """
-        pass
 
     async def _handle_event(
         self,

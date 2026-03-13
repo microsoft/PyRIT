@@ -14,7 +14,7 @@ import logging
 import uuid
 import warnings
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models.message import Message
@@ -23,6 +23,9 @@ from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +43,12 @@ class SeedGroup(YamlLoadable):
     All prompts in the group share the same `prompt_group_id`.
     """
 
-    seeds: List[Seed]
+    seeds: list[Seed]
 
     def __init__(
         self,
         *,
-        seeds: Sequence[Union[Seed, Dict[str, Any]]],
+        seeds: Sequence[Union[Seed, dict[str, Any]]],
     ):
         """
         Initialize a SeedGroup.
@@ -279,7 +282,7 @@ class SeedGroup(YamlLoadable):
         return self._get_objective()
 
     @property
-    def harm_categories(self) -> List[str]:
+    def harm_categories(self) -> list[str]:
         """
         Returns a deduplicated list of all harm categories from all seeds.
 
@@ -287,7 +290,7 @@ class SeedGroup(YamlLoadable):
             List of harm categories with duplicates removed.
 
         """
-        categories: List[str] = []
+        categories: list[str] = []
         for seed in self.seeds:
             if seed.harm_categories:
                 categories.extend(seed.harm_categories)
@@ -312,7 +315,7 @@ class SeedGroup(YamlLoadable):
     # =========================================================================
 
     @property
-    def prepended_conversation(self) -> Optional[List[Message]]:
+    def prepended_conversation(self) -> Optional[list[Message]]:
         """
         Returns Messages that should be prepended as conversation history.
 
@@ -369,7 +372,7 @@ class SeedGroup(YamlLoadable):
         return messages[0] if messages else None
 
     @property
-    def user_messages(self) -> List[Message]:
+    def user_messages(self) -> list[Message]:
         """
         Returns all prompts as user Messages, one per sequence.
 
@@ -399,7 +402,7 @@ class SeedGroup(YamlLoadable):
 
         return last_sequence_prompts[0].role if last_sequence_prompts else None
 
-    def _prompts_to_messages(self, prompts: Sequence[SeedPrompt]) -> List[Message]:
+    def _prompts_to_messages(self, prompts: Sequence[SeedPrompt]) -> list[Message]:
         """
         Convert a sequence of SeedPrompts to Messages.
 

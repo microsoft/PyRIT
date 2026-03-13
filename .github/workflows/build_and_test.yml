@@ -22,8 +22,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pre-commit-linux:
-    runs-on: ubuntu-latest
+  pre-commit:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     steps:
@@ -55,59 +59,7 @@ jobs:
         run: uv sync --extra dev --extra all
 
       - name: disk space
-        run: df -all -h
-
-      - name: Run pre-commit incrementally (on PR)
-        if: github.event_name == 'pull_request'
-        env:
-          RUN_LONG_PRECOMMIT: true
-        run: |
-          git fetch origin main
-          uv run pre-commit run --from-ref origin/main --to-ref HEAD
-
-      - name: Run pre-commit fully (on main)
-        if: github.ref == 'refs/heads/main'
-        env:
-          RUN_LONG_PRECOMMIT: true
-        run: |
-          uv run pre-commit run --all-files
-
-  pre-commit-windows:
-    runs-on: windows-latest
-    permissions:
-      contents: read
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: actions/setup-python@v3
-        with:
-          python-version: ${{ env.PRE_COMMIT_PYTHON_VERSION }}
-
-      - name: Cache pre-commit environments
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            pre-commit-${{ runner.os }}-
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          # Install a specific version of uv.
-          version: "0.9.17"
-          enable-cache: true
-          cache-dependency-glob: |
-            **/pyproject.toml
-            **/uv.lock
-
-      - name: Install dev extras
-        run: uv sync --extra dev --extra all
-
-      - name: disk space
+        shell: bash
         run: df -all -h
 
       - name: Run pre-commit incrementally (on PR)
@@ -130,7 +82,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.10", "3.11", "3.12", "3.13"]
         package_name: ["pyrit"]
         package_extras: ["dev", "dev_all"]

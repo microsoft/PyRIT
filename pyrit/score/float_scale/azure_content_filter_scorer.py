@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+import inspect
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 
 from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -15,7 +18,7 @@ from azure.ai.contentsafety.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from pyrit.auth import TokenProviderCredential
+from pyrit.auth import TokenProviderCredential, get_azure_token_provider
 from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
@@ -91,7 +94,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         self,
         *,
         endpoint: Optional[str | None] = None,
-        api_key: Optional[str | Callable[[], str | Awaitable[str]] | None] = None,
+        api_key: Optional[str | Callable[[], str] | None] = None,
         harm_categories: Optional[list[TextCategory]] = None,
         validator: Optional[ScorerPromptValidator] = None,
     ) -> None:
@@ -101,10 +104,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
         Args:
             endpoint (Optional[str | None]): The endpoint URL for the Azure Content Safety service.
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
-            api_key (Optional[str | Callable[[], str | Awaitable[str]] | None]):
+            api_key (Optional[str | Callable[[], str] | None]):
                 The API key for accessing the Azure Content Safety service,
-                or a callable that returns an access token. For Azure endpoints with Entra authentication,
-                pass a token provider from pyrit.auth
+                or a synchronous callable that returns an access token. Async token providers
+                are not supported. If not provided (via parameter
+                or environment variable), Entra ID authentication is used automatically.
+                You can also explicitly pass a token provider from pyrit.auth
                 (e.g., get_azure_token_provider('https://cognitiveservices.azure.com/.default')).
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
             harm_categories (Optional[list[TextCategory]]): The harm categories you want to query for as
@@ -112,7 +117,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
 
         Raises:
-            ValueError: If neither API key nor endpoint is provided, or if both are missing.
+            ValueError: If no endpoint is provided.
         """
         if harm_categories:
             self._harm_categories = harm_categories
@@ -123,13 +128,34 @@ class AzureContentFilterScorer(FloatScaleScorer):
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint or ""
         )
 
-        # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(
-            env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
-        )
+        # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
+        resolved_api_key: str | Callable[[], str]
+        if api_key is not None and callable(api_key):
+            if asyncio.iscoroutinefunction(api_key):
+                raise ValueError(
+                    "Async token providers are not supported by AzureContentFilterScorer. "
+                    "Use a synchronous token provider (e.g., get_azure_token_provider) instead."
+                )
+            # Guard against sync callables that return coroutines/awaitables (e.g., lambda: async_fn())
+            test_result = api_key()
+            if inspect.isawaitable(test_result):
+                if hasattr(test_result, "close"):
+                    test_result.close()  # prevent "coroutine was never awaited" warning
+                raise ValueError(
+                    "The provided token provider returns a coroutine/awaitable, which is not supported "
+                    "by AzureContentFilterScorer. Use a synchronous token provider instead."
+                )
+            resolved_api_key = api_key
+        else:
+            api_key_value = default_values.get_non_required_value(
+                env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
+            )
+            resolved_api_key = api_key_value or get_azure_token_provider("https://cognitiveservices.azure.com/.default")
+
+        self._api_key = resolved_api_key
 
         # Create ContentSafetyClient with appropriate credential
-        if self._api_key is not None and self._endpoint is not None:
+        if self._endpoint is not None:
             if callable(self._api_key):
                 # Token provider - create a TokenCredential wrapper
                 credential = TokenProviderCredential(self._api_key)
@@ -138,7 +164,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 # String API key
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._api_key))
         else:
-            raise ValueError("Please provide the Azure Content Safety endpoint and api_key")
+            raise ValueError("Please provide the Azure Content Safety endpoint")
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 

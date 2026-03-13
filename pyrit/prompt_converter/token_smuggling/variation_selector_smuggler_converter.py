@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
@@ -67,7 +67,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
             }
         )
 
-    def encode_message(self, message: str) -> Tuple[str, str]:
+    def encode_message(self, message: str) -> tuple[str, str]:
         """
         Encode the message using Unicode variation selectors.
 
@@ -87,15 +87,9 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         payload = ""
         data = message.encode("utf-8")
         for byte in data:
-            if byte < 16:
-                code_point = 0xFE00 + byte
-            else:
-                code_point = 0xE0100 + (byte - 16)
+            code_point = 65024 + byte if byte < 16 else 917760 + (byte - 16)
             payload += chr(code_point)
-        if self.embed_in_base:
-            encoded = self.utf8_base_char + payload
-        else:
-            encoded = self.utf8_base_char + " " + payload
+        encoded = self.utf8_base_char + payload if self.embed_in_base else self.utf8_base_char + " " + payload
         summary_parts = [f"Base char: U+{ord(self.utf8_base_char):X}"]
         for byte in data:
             if byte < 16:
@@ -144,7 +138,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         return decoded_text
 
     # Extension of Paul Butler's method
-    def encode_visible_hidden(self, visible: str, hidden: str) -> Tuple[str, str]:
+    def encode_visible_hidden(self, visible: str, hidden: str) -> tuple[str, str]:
         """
         Combine visible text with hidden text by encoding the hidden text using ``variation_selector_smuggler`` mode.
 
@@ -163,7 +157,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         return summary, combined
 
     # Extension of Paul Butler's method
-    def decode_visible_hidden(self, combined: str) -> Tuple[str, str]:
+    def decode_visible_hidden(self, combined: str) -> tuple[str, str]:
         """
         Extract the visible text and decodes the hidden text from a combined string.
 

@@ -220,10 +220,9 @@ class TestExecutionContextManager:
         """Test that context is preserved when an exception occurs."""
         context = ExecutionContext(component_role=ComponentRole.OBJECTIVE_TARGET)
 
-        with pytest.raises(ValueError):
-            with ExecutionContextManager(context=context):
-                assert get_execution_context() is context
-                raise ValueError("Test error")
+        with pytest.raises(ValueError), ExecutionContextManager(context=context):
+            assert get_execution_context() is context
+            raise ValueError("Test error")
 
         # Context should still be set after exception
         assert get_execution_context() is context
@@ -329,12 +328,14 @@ class TestExecutionContextFactory:
 
     def test_execution_context_preserves_on_exception(self):
         """Test that context is preserved on exception for error handling."""
-        with pytest.raises(RuntimeError):
-            with execution_context(
+        with (
+            pytest.raises(RuntimeError),
+            execution_context(
                 component_role=ComponentRole.OBJECTIVE_SCORER,
                 attack_strategy_name="TestAttack",
-            ):
-                raise RuntimeError("Scorer failed")
+            ),
+        ):
+            raise RuntimeError("Scorer failed")
 
         # Context should still be available for exception handlers
         ctx = get_execution_context()

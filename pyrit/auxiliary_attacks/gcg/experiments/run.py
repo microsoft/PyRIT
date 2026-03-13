@@ -3,7 +3,7 @@
 
 import argparse
 import os
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 import yaml
 
@@ -24,7 +24,7 @@ def _load_yaml_to_dict(config_path: str) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The parsed configuration dictionary.
     """
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         data: dict[str, Any] = yaml.safe_load(f)
     return data
 
@@ -52,7 +52,7 @@ def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parame
     hf_token = os.environ.get("HUGGINGFACE_TOKEN")
     if not hf_token:
         raise ValueError("Please set the HUGGINGFACE_TOKEN environment variable")
-    runtime_config: Dict[str, Union[str, bool, Any]] = {
+    runtime_config: dict[str, Union[str, bool, Any]] = {
         "train_data": (
             "https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv"
         ),

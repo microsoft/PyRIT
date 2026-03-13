@@ -3,11 +3,13 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Optional
 
 from PIL import Image
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -61,12 +63,12 @@ class LeakageStrategy(ScenarioStrategy):
     SENSITIVE_DATA = ("sensitive_data", {"sensitive_data"})  # Credentials, secrets, prompts
 
     # Single-turn strategies
-    FIRST_LETTER = ("first_letter", {"single_turn", "ip"})  # Good for copyright extraction
-    IMAGE = ("image", {"single_turn", "ip", "sensitive_data"})
-    ROLE_PLAY = ("role_play", {"single_turn", "sensitive_data"})  # Good for system prompt extraction
+    FirstLetter = ("first_letter", {"single_turn", "ip"})  # Good for copyright extraction
+    Image = ("image", {"single_turn", "ip", "sensitive_data"})
+    RolePlay = ("role_play", {"single_turn", "sensitive_data"})  # Good for system prompt extraction
 
     # Multi-turn strategies
-    CRESCENDO = ("crescendo", {"multi_turn", "ip", "sensitive_data"})
+    Crescendo = ("crescendo", {"multi_turn", "ip", "sensitive_data"})
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -80,7 +82,16 @@ class LeakageStrategy(ScenarioStrategy):
         return {"all", "single_turn", "multi_turn", "ip", "sensitive_data"}
 
 
-class LeakageScenario(Scenario):
+# Register deprecated ALL_CAPS member names that existed prior to 0.12.0
+LeakageStrategy.__deprecated_members__ = {  # type: ignore[attr-defined]
+    "FIRST_LETTER": ("FirstLetter", "0.13.0"),
+    "IMAGE": ("Image", "0.13.0"),
+    "ROLE_PLAY": ("RolePlay", "0.13.0"),
+    "CRESCENDO": ("Crescendo", "0.13.0"),
+}
+
+
+class Leakage(Scenario):
     """
     Leakage scenario implementation for PyRIT.
 
@@ -131,7 +142,7 @@ class LeakageScenario(Scenario):
         self,
         *,
         adversarial_chat: Optional[PromptChatTarget] = None,
-        objectives: Optional[List[str]] = None,
+        objectives: Optional[list[str]] = None,
         objective_scorer: Optional[TrueFalseScorer] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
@@ -160,7 +171,6 @@ class LeakageScenario(Scenario):
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
         super().__init__(
-            name="Leakage Scenario",
             version=self.VERSION,
             strategy_class=LeakageStrategy,
             objective_scorer=objective_scorer,
@@ -182,10 +192,11 @@ class LeakageScenario(Scenario):
         Returns:
             TrueFalseCompositeScorer: Default objective scorer with backstop and leakage evaluation.
         """
+        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         presence_of_leakage = SelfAskTrueFalseScorer(
             chat_target=OpenAIChatTarget(
-                endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+                endpoint=endpoint,
+                api_key=get_azure_openai_auth(endpoint),
                 model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             ),
             true_false_question_path=SCORER_SEED_PROMPT_PATH / "true_false_question" / "leakage.yaml",
@@ -197,8 +208,8 @@ class LeakageScenario(Scenario):
         backstop = TrueFalseInverterScorer(
             scorer=SelfAskRefusalScorer(
                 chat_target=OpenAIChatTarget(
-                    endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                    api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+                    endpoint=endpoint,
+                    api_key=get_azure_openai_auth(endpoint),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 )
             )
@@ -215,9 +226,10 @@ class LeakageScenario(Scenario):
         Returns:
             OpenAIChatTarget: Default adversarial target using an unfiltered endpoint.
         """
+        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
-            endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-            api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+            endpoint=endpoint,
+            api_key=get_azure_openai_auth(endpoint),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
@@ -354,7 +366,7 @@ class LeakageScenario(Scenario):
             attack_scoring_config=self._scorer_config,
         )
 
-    def _resolve_seed_groups(self) -> List[SeedAttackGroup]:
+    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
         Resolve objectives to SeedAttackGroup format required by AtomicAttack.
 
@@ -363,7 +375,7 @@ class LeakageScenario(Scenario):
         """
         return [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._objectives]
 
-    async def _get_atomic_attacks_async(self) -> List[AtomicAttack]:
+    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Generate atomic attacks for each strategy.
 
@@ -373,11 +385,26 @@ class LeakageScenario(Scenario):
         # Resolve objectives to seed groups format
         self._seed_groups = self._resolve_seed_groups()
 
-        atomic_attacks: List[AtomicAttack] = []
         strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
             composites=self._scenario_composites, strategy_type=LeakageStrategy
         )
 
-        for strategy in strategies:
-            atomic_attacks.append(await self._get_atomic_attack_from_strategy_async(strategy))
-        return atomic_attacks
+        return [await self._get_atomic_attack_from_strategy_async(strategy) for strategy in strategies]
+
+
+class LeakageScenario(Leakage):
+    """
+    Deprecated alias for Leakage.
+
+    This class is deprecated and will be removed in version 0.13.0.
+    Use `Leakage` instead.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize LeakageScenario with deprecation warning."""
+        print_deprecation_message(
+            old_item="LeakageScenario",
+            new_item="Leakage",
+            removed_in="0.13.0",
+        )
+        super().__init__(**kwargs)

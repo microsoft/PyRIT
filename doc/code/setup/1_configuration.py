@@ -52,29 +52,37 @@ await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInit
 #
 # The recommended step to setup PyRIT is that it needs access to secrets and endpoints. These can be loaded in environment variables or put in a `.env` file. See `.env_example` for how this file is formatted.
 #
-# Each target has default environment variables to look for. For example, `OpenAIChatTarget` looks for the `OPENAI_CHAT_ENDPOINT` for its endpoint, `OPENAI_CHAT_MODEL` for its model name, and `OPENAI_CHAT_KEY` for its key. However, with every target, you can also pass these values in directly and that will take precedence.
+# Each target has default environment variables to look for. For example, `OpenAIChatTarget` looks for the `OPENAI_CHAT_ENDPOINT` for its endpoint, `OPENAI_CHAT_MODEL` for its model name, and `OPENAI_CHAT_KEY` for its key. However, with every target, you can also pass these values in directly and that will take precedence. For Azure endpoints with Entra ID authentication, pass a token provider from `pyrit.auth` as the `api_key`.
 
 # %%
 import os
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-target1 = OpenAIChatTarget()
+# Using Entra auth (no API key needed, run `az login` first):
+endpoint1 = os.environ["OPENAI_CHAT_ENDPOINT"]
+target1 = OpenAIChatTarget(
+    endpoint=endpoint1,
+    api_key=get_azure_openai_auth(endpoint1),
+)
 
 # This is identical to target1 because "OPENAI_CHAT_ENDPOINT" are the names of the default environment variables for OpenAIChatTarget
+endpoint2 = os.getenv("OPENAI_CHAT_ENDPOINT")
 target2 = OpenAIChatTarget(
-    endpoint=os.getenv("OPENAI_CHAT_ENDPOINT"),
-    api_key=os.getenv("OPENAI_CHAT_KEY"),
+    endpoint=endpoint2,
+    api_key=get_azure_openai_auth(endpoint2),
     model_name=os.getenv("OPENAI_CHAT_MODEL"),
 )
 
 # This is (probably) different from target1 because the environment variables are different from the default
+azure_endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2")
 target3 = OpenAIChatTarget(
-    endpoint=os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"),
-    api_key=os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"),
+    endpoint=azure_endpoint,
+    api_key=get_azure_openai_auth(azure_endpoint),
     model_name=os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"),
 )
 
@@ -86,7 +94,6 @@ target3 = OpenAIChatTarget(
 # ```
 # OPENAI_CHAT_ENDPOINT = ${AZURE_OPENAI_GPT4O_ENDPOINT2}
 # OPENAI_CHAT_MODEL = ${AZURE_OPENAI_GPT4O_MODEL2}
-# OPENAI_CHAT_KEY = ${AZURE_OPENAI_GPT4O_KEY2}
 # ```
 #
 # ## Entra auth
@@ -124,6 +131,9 @@ target3 = OpenAIChatTarget(
 # The following example shows how to use PyRIT initializers. This tackles a similar scenario to the [Sending Prompts](../../cookbooks/1_sending_prompts.ipynb) but is much easier because defaults are set.
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import PYRIT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -168,7 +178,8 @@ objectives = [
 # This is similar to the cookbook "Sending a Million Prompts" but using defaults
 
 # Create target without extensive configuration (uses defaults from initializer)
-objective_target = OpenAIChatTarget()
+endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
+objective_target = OpenAIChatTarget(endpoint=endpoint, api_key=get_azure_openai_auth(endpoint))
 
 # TenseConverter automatically gets the default converter_target from our initializer
 converters = PromptConverterConfiguration.from_converters(converters=[TenseConverter(tense="past")])  # type: ignore

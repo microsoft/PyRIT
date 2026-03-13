@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+from contextlib import suppress
 
 from tenacity import RetryError
 
@@ -124,16 +125,14 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         def failing_function():
             nonlocal call_count
             call_count += 1
-            raise EmptyResponseException()
+            raise EmptyResponseException
 
         # Change the env var AFTER the decorator has been applied
         original_value = os.environ.get("RETRY_MAX_NUM_ATTEMPTS")
         os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "3"
 
-        try:
+        with suppress(EmptyResponseException):
             failing_function()
-        except EmptyResponseException:
-            pass  # Expected
 
         # Restore original value
         if original_value is not None:
@@ -157,16 +156,14 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         def failing_function():
             nonlocal call_count
             call_count += 1
-            raise InvalidJsonException()
+            raise InvalidJsonException
 
         # Change the env var AFTER the decorator has been applied
         original_value = os.environ.get("RETRY_MAX_NUM_ATTEMPTS")
         os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "4"
 
-        try:
+        with suppress(InvalidJsonException):
             failing_function()
-        except InvalidJsonException:
-            pass  # Expected
 
         # Restore original value
         if original_value is not None:
@@ -193,16 +190,14 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         def failing_function():
             nonlocal call_count
             call_count += 1
-            raise MissingPromptPlaceholderException()
+            raise MissingPromptPlaceholderException
 
         # Change the env var AFTER the decorator has been applied
         original_value = os.environ.get("RETRY_MAX_NUM_ATTEMPTS")
         os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "3"
 
-        try:
+        with suppress(MissingPromptPlaceholderException):
             failing_function()
-        except MissingPromptPlaceholderException:
-            pass  # Expected
 
         # Restore original value
         if original_value is not None:
@@ -232,10 +227,8 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         original_value = os.environ.get("CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS")
         os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "3"
 
-        try:
+        with suppress(RetryError):
             failing_function()
-        except RetryError:
-            pass  # Expected when all retries exhausted
 
         # Restore original value
         if original_value is not None:

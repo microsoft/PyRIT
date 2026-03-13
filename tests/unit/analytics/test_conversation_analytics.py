@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Sequence
+from collections.abc import Sequence
 from unittest.mock import MagicMock
 
 import pytest

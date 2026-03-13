@@ -3,7 +3,8 @@
 
 import os
 import uuid
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -369,7 +370,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
         assert retrieved_entry.original_value == "Test content"
         # For timestamp, you might want to check if it's close to the current time instead of an exact match
         assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 0.1
-        assert abs((retrieved_entry.timestamp - entry.timestamp).total_seconds()) < 0.1
+        assert abs((retrieved_entry.timestamp - entry.timestamp.replace(tzinfo=timezone.utc)).total_seconds()) < 0.1
 
         converter_identifiers = retrieved_entry.converter_identifiers
         assert len(converter_identifiers) == 1
@@ -547,3 +548,123 @@ def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conve
         # Verify that the entry with a different conversation_id was not updated
         other_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="other_id").first()
         assert other_entry.prompt_metadata == original_metadata  # Metadata should remain unchanged
+
+
+def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
+    """Test that get_conversation_stats returns empty dict for empty input."""
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[])
+    assert result == {}
+
+
+def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):
+    """Test that get_conversation_stats omits unknown conversation IDs."""
+    result = sqlite_instance.get_conversation_stats(conversation_ids=["nonexistent"])
+    assert result == {}
+
+
+def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
+    """Test that message_count reflects distinct sequence numbers, not raw rows."""
+    # Extract conversation IDs and sequences before inserting (entries get detached after commit)
+    from pyrit.models import Message
+    from unit.mocks import get_sample_conversations
+
+    conversations = get_sample_conversations()
+    pieces = Message.flatten_to_message_pieces(conversations)
+    expected: dict[str, set[int]] = {}
+    for p in pieces:
+        expected.setdefault(p.conversation_id, set()).add(p.sequence)
+
+    sqlite_instance._insert_entries(entries=sample_conversation_entries)
+
+    conv_ids = list(expected.keys())
+    result = sqlite_instance.get_conversation_stats(conversation_ids=conv_ids)
+
+    for conv_id in conv_ids:
+        if conv_id in result:
+            assert result[conv_id].message_count == len(expected[conv_id]), (
+                f"Conv {conv_id}: expected {len(expected[conv_id])}, got {result[conv_id].message_count}"
+            )
+
+
+def test_get_conversation_stats_returns_labels(sqlite_instance):
+    """Test that labels from the first piece with non-empty labels are returned."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    piece = MessagePiece(
+        role="user",
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+        labels={"env": "prod", "source": "gui"},
+    )
+    entry = PromptMemoryEntry(entry=piece)
+    sqlite_instance._insert_entry(entry)
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    assert conv_id in result
+    assert result[conv_id].labels == {"env": "prod", "source": "gui"}
+
+
+def test_get_conversation_stats_preview_truncates(sqlite_instance):
+    """Test that last_message_preview is truncated to 100 chars + ellipsis."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    long_text = "x" * 200
+    piece = MessagePiece(
+        role="assistant",
+        original_value=long_text,
+        original_value_data_type="text",
+        converted_value=long_text,
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    entry = PromptMemoryEntry(entry=piece)
+    sqlite_instance._insert_entry(entry)
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    assert conv_id in result
+    preview = result[conv_id].last_message_preview
+    assert preview is not None
+    assert len(preview) == 103  # 100 chars + "..."
+    assert preview.endswith("...")
+
+
+def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
+    """Test that a single call returns stats for multiple conversations."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_ids = [str(uuid.uuid4()) for _ in range(3)]
+    entries = []
+    for i, cid in enumerate(conv_ids):
+        for seq in range(i + 1):  # conv 0: 1 msg, conv 1: 2 msgs, conv 2: 3 msgs
+            piece = MessagePiece(
+                role="user",
+                original_value=f"msg-{seq}",
+                original_value_data_type="text",
+                converted_value=f"msg-{seq}",
+                converted_value_data_type="text",
+                conversation_id=cid,
+                sequence=seq,
+            )
+            entries.append(PromptMemoryEntry(entry=piece))
+
+    sqlite_instance._insert_entries(entries=entries)
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=conv_ids)
+
+    assert len(result) == 3
+    assert result[conv_ids[0]].message_count == 1
+    assert result[conv_ids[1]].message_count == 2
+    assert result[conv_ids[2]].message_count == 3

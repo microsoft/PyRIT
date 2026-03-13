@@ -181,7 +181,7 @@ async def test_send_prompt_async_invalid_request(target):
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=message)
 
-    assert "This target only supports text and audio_path prompt input. Received: image_path." == str(excinfo.value)
+    assert str(excinfo.value) == "This target only supports text and audio_path prompt input. Received: image_path."
 
 
 @pytest.mark.asyncio

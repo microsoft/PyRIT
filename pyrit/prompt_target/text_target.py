@@ -72,13 +72,13 @@ class TextTarget(PromptTarget):
                 labels = json.loads(labels_str) if labels_str else None
 
                 message_piece = MessagePiece(
-                    role=row["role"],  # type: ignore
+                    role=row["role"],  # type: ignore[arg-type]
                     original_value=row["value"],
-                    original_value_data_type=row.get["data_type", None],  # type: ignore
+                    original_value_data_type=row.get("data_type", None),  # type: ignore[arg-type]
                     conversation_id=row.get("conversation_id", None),
                     sequence=int(sequence_str) if sequence_str else None,
                     labels=labels,
-                    response_error=row.get("response_error", None),  # type: ignore
+                    response_error=row.get("response_error", None),  # type: ignore[arg-type]
                     prompt_target_identifier=self.get_identifier(),
                 )
                 message_pieces.append(message_piece)
@@ -92,4 +92,3 @@ class TextTarget(PromptTarget):
 
     async def cleanup_target(self) -> None:
         """Target does not require cleanup."""
-        pass

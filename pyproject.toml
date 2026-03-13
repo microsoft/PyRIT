@@ -48,7 +48,7 @@ dependencies = [
     "pillow>=12.1.1",
     "pydantic>=2.11.5",
     "pyodbc>=5.1.0",
-    "pypdf>=6.7.1",
+    "pypdf>=6.7.5",
     "python-docx>=1.1.0",
     "python-dotenv>=1.0.1",
     "reportlab>=4.4.4",
@@ -175,7 +175,13 @@ strict = false
 follow_imports = "silent"
 strict_optional = false
 disable_error_code = ["empty-body"]
-exclude = ["doc/code/"]
+exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
+
+[tool.uv]
+constraint-dependencies = [
+    "cryptography>=46.0.5",
+    "werkzeug>=3.1.6",
+]
 
 [build-system]
 requires = ["setuptools>=64.0.0", "wheel>=0.46.2"]
@@ -228,6 +234,7 @@ fixable = [
     "ISC",
     "NPY",
     "PD",
+    "PERF",
     "PGH",
     "PIE",
     "PL",
@@ -246,22 +253,52 @@ fixable = [
     "YTT",
 ]
 select = [
+    "A",  # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "B",  # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4",  # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
     "CPY001",  # missing-copyright-notice
     "D",  # https://docs.astral.sh/ruff/rules/#pydocstyle-d
     "DOC",  # https://docs.astral.sh/ruff/rules/#pydoclint-doc
+    "DTZ",  # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
+    "E",  # https://docs.astral.sh/ruff/rules/#pycodestyle-e
+    "ERA",  # https://docs.astral.sh/ruff/rules/#eradicate-era
+    "EXE",  # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
     "F401",  # unused-import
+    "FA",  # https://docs.astral.sh/ruff/rules/#flake8-future-annotations-fa
+    "FLY",  # https://docs.astral.sh/ruff/rules/#flynt-fly
     "I",  # isort
+    "ICN",  # https://docs.astral.sh/ruff/rules/#flake8-import-conventions-icn
+    "ISC",  # https://docs.astral.sh/ruff/rules/#flake8-implicit-str-concat-isc
+    "LOG",  # https://docs.astral.sh/ruff/rules/#flake8-logging-log
+    "N",  # https://docs.astral.sh/ruff/rules/#pep8-naming-n
+    "PERF",  # https://docs.astral.sh/ruff/rules/#perflint-perf
+    "PGH",  # https://docs.astral.sh/ruff/rules/#pygrep-hooks-pgh
+    "PIE",  # https://docs.astral.sh/ruff/rules/#flake8-pie-pie
+    "PLE",  # https://docs.astral.sh/ruff/rules/#pylint-ple
+    "Q",  # https://docs.astral.sh/ruff/rules/#flake8-quotes-q
     "RET",  # https://docs.astral.sh/ruff/rules/#flake8-return-ret
+    "RSE",  # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "SIM",  # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
+    "SLOT",  # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
+    "T10",  # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
+    "TCH",  # https://docs.astral.sh/ruff/rules/#flake8-type-checking-tch
+    "TID",  # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
+    "UP",  # https://docs.astral.sh/ruff/rules/#pyupgrade-up
     "W",  # https://docs.astral.sh/ruff/rules/#pycodestyle-w
+    "YTT",  # https://docs.astral.sh/ruff/rules/#flake8-2020-ytt
 ]
 ignore = [
+    "B903",  # class-as-data-structure (test helper classes use @apply_defaults pattern)
     "D100",  # Missing docstring in public module
     "D200",  # One-line docstring should fit on one line
     "D205",  # 1 blank line required between summary line and description
     "D212",  # Multi-line docstring summary should start at the first line
     "D301",  # Use r""" if any backslashes in a docstring
     "DOC502",  # Raised exception is not explicitly raised
+    "PERF203",  # try-except-in-loop (intentional per-item error handling)
+    "SIM117",  # multiple-with-statements (combining often exceeds line length)
+    "UP007",  # non-pep604-annotation-union (keep Union[X, Y] syntax)
+    "UP045",  # non-pep604-annotation-optional (keep Optional[X] syntax)
 ]
 extend-select = [
     "D204",  # 1 blank line required after class docstring
@@ -280,15 +317,25 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 [tool.ruff.lint.per-file-ignores]
 # Ignore D and DOC rules everywhere except for the pyrit/ directory
 "!pyrit/**.py" = ["D", "DOC"]
-# Ignore copyright check only in doc/ directory
-"doc/**" = ["CPY001"]
-# Temporary ignores for pyrit/ subdirectories until issue #1176
-# https://github.com/Azure/PyRIT/issues/1176 is fully resolved
-# TODO: Remove these ignores once the issues are fixed
-"pyrit/{auxiliary_attacks,ui}/**/*.py" = ["D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501"]
+# Ignore copyright, import-location (E402), line length (E501), type-checking, and blanket type-ignore (PGH003) rules in doc/ directory
+# E402: notebooks have imports in code cells, not at top of file
+# E501: markdown comments in notebooks can exceed line length
+# PGH003: blanket type: ignore in notebooks (not mypy-checked)
+# A: notebook code commonly uses builtins like id, dir, display
+# ERA001: jupytext markdown cells look like commented-out code
+# LOG: notebooks use root logger for convenience
+# PLE1142: top-level await is valid in Jupyter notebooks
+"doc/**" = ["CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
+"pyrit/{auxiliary_attacks,ui}/**/*.py" = ["B905", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501", "N", "PERF", "SIM101", "SIM108"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
-"pyrit/backend/**/*.py" = ["DOC501"]
+"pyrit/backend/**/*.py" = ["DOC501", "B008"]
+# Vendored GCG attack code — external project with its own style
+"pyrit/auxiliary_attacks/**/*.py" = ["A", "B905", "D", "DOC", "SIM101", "SIM108"]
+# UI code has incomplete docstrings (external contributor code)
+"pyrit/ui/**/*.py" = ["D", "DOC201", "DOC501"]
 "pyrit/__init__.py" = ["D104"]
+# Allow broad pytest.raises(Exception) in tests
+"tests/**/*.py" = ["B017"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import IO, Any, Dict, List
+from typing import IO, Any
 
 
-def read_txt(file: IO[Any]) -> List[Dict[str, str]]:
+def read_txt(file: IO[Any]) -> list[dict[str, str]]:
     """
     Read a TXT file and return its content.
 
@@ -14,7 +14,7 @@ def read_txt(file: IO[Any]) -> List[Dict[str, str]]:
     return [{"prompt": line.strip()} for line in file.readlines()]
 
 
-def write_txt(file: IO[Any], examples: List[Dict[str, str]]) -> None:
+def write_txt(file: IO[Any], examples: list[dict[str, str]]) -> None:
     """
     Write a list of dictionaries to a TXT file.
 

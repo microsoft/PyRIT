@@ -63,7 +63,7 @@ class ManualCopilotAuthenticator(Authenticator):
                 resolved_token, algorithms=["RS256"], options={"verify_signature": False}
             )
         except jwt.exceptions.DecodeError as e:
-            raise ValueError(f"Failed to decode access_token as JWT: {e}")
+            raise ValueError(f"Failed to decode access_token as JWT: {e}") from e
 
         required_claims = ["tid", "oid"]
         missing_claims = [claim for claim in required_claims if claim not in self._claims]

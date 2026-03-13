@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -49,7 +49,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_multimodal_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[List[SemanticCategory]] = None,
+        categories: Optional[list[SemanticCategory]] = None,
     ):
         """
         Initialize the HarmBench multimodal dataset loader.

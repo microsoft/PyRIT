@@ -52,7 +52,7 @@ def main():
     cache_file = os.path.join(cache_dir, f"pct_to_ipynb_{args.run_id}.cache")
     processed_files = set()
     if os.path.isfile(cache_file):
-        with open(cache_file, "r") as f:
+        with open(cache_file) as f:
             for file_path in f:
                 processed_files.add(file_path.strip())
 
@@ -87,7 +87,7 @@ def find_files(directory, file_extension):
         dir_path = os.path.join(directory, included_dir)
         if not os.path.exists(dir_path):
             continue
-        for root, dirs, files in os.walk(dir_path):
+        for root, _dirs, files in os.walk(dir_path):
             for file in files:
                 if file.endswith("_helpers.py"):
                     continue

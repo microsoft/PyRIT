@@ -33,7 +33,7 @@ def fetch_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
     source = "https://raw.githubusercontent.com/KutalVolkan/many-shot-jailbreaking-dataset/5eac855/examples.json"
     response = requests.get(source)
     response.raise_for_status()
-    return cast(list[dict[str, str]], response.json())
+    return cast("list[dict[str, str]]", response.json())
 
 
 class ManyShotJailbreakAttack(PromptSendingAttack):

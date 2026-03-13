@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Union, get_args
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
-from pyrit.models.score import Score
+
+if TYPE_CHECKING:
+    from pyrit.models.score import Score
 
 Originator = Literal["attack", "converter", "undefined", "scorer"]
 
@@ -32,23 +34,23 @@ class MessagePiece:
         original_value_sha256: Optional[str] = None,
         converted_value: Optional[str] = None,
         converted_value_sha256: Optional[str] = None,
-        id: Optional[uuid.UUID | str] = None,
+        id: Optional[uuid.UUID | str] = None,  # noqa: A002
         conversation_id: Optional[str] = None,
         sequence: int = -1,
-        labels: Optional[Dict[str, str]] = None,
-        prompt_metadata: Optional[Dict[str, Union[str, int]]] = None,
-        converter_identifiers: Optional[List[Union[ComponentIdentifier, Dict[str, str]]]] = None,
-        prompt_target_identifier: Optional[Union[ComponentIdentifier, Dict[str, Any]]] = None,
-        attack_identifier: Optional[Union[ComponentIdentifier, Dict[str, str]]] = None,
-        scorer_identifier: Optional[Union[ComponentIdentifier, Dict[str, str]]] = None,
+        labels: Optional[dict[str, str]] = None,
+        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+        converter_identifiers: Optional[list[Union[ComponentIdentifier, dict[str, str]]]] = None,
+        prompt_target_identifier: Optional[Union[ComponentIdentifier, dict[str, Any]]] = None,
+        attack_identifier: Optional[Union[ComponentIdentifier, dict[str, str]]] = None,
+        scorer_identifier: Optional[Union[ComponentIdentifier, dict[str, str]]] = None,
         original_value_data_type: PromptDataType = "text",
         converted_value_data_type: Optional[PromptDataType] = None,
         response_error: PromptResponseError = "none",
         originator: Originator = "undefined",
         original_prompt_id: Optional[uuid.UUID] = None,
         timestamp: Optional[datetime] = None,
-        scores: Optional[List[Score]] = None,
-        targeted_harm_categories: Optional[List[str]] = None,
+        scores: Optional[list[Score]] = None,
+        targeted_harm_categories: Optional[list[str]] = None,
     ):
         """
         Initialize a MessagePiece.
@@ -89,7 +91,7 @@ class MessagePiece:
         """
         self.id = id if id else uuid4()
 
-        if role not in ChatMessageRole.__args__:  # type: ignore
+        if role not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
             raise ValueError(f"Role {role} is not a valid role.")
 
         self._role: ChatMessageRole = role
@@ -106,12 +108,17 @@ class MessagePiece:
         self.conversation_id = conversation_id if conversation_id else str(uuid4())
         self.sequence = sequence
 
-        self.timestamp = timestamp if timestamp else datetime.now()
+        if timestamp is None:
+            self.timestamp = datetime.now(tz=timezone.utc)
+        elif timestamp.tzinfo is None:
+            self.timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            self.timestamp = timestamp
         self.labels = labels or {}
         self.prompt_metadata = prompt_metadata or {}
 
         # Handle converter_identifiers: normalize to ComponentIdentifier (handles dict with deprecation warning)
-        self.converter_identifiers: List[ComponentIdentifier] = (
+        self.converter_identifiers: list[ComponentIdentifier] = (
             [ComponentIdentifier.normalize(conv_id) for conv_id in converter_identifiers]
             if converter_identifiers
             else []
@@ -249,14 +256,20 @@ class MessagePiece:
             ValueError: If the role is not a valid ChatMessageRole.
 
         """
-        if value not in ChatMessageRole.__args__:  # type: ignore
+        if value not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
             raise ValueError(f"Role {value} is not a valid role.")
         self._role = value
 
-    def to_message(self) -> Message:  # type: ignore # noqa F821
+    def to_message(self) -> Message:  # type: ignore[name-defined] # noqa: F821
+        """
+        Convert this message piece into a Message.
+
+        Returns:
+            Message: A Message containing this piece.
+        """
         from pyrit.models.message import Message
 
-        return Message([self])  # noqa F821
+        return Message([self])  # noqa: F821
 
     def has_error(self) -> bool:
         """

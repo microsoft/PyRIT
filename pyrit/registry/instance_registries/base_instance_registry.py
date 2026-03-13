@@ -16,10 +16,13 @@ Examples include:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Generic, Iterator, List, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.base import RegistryProtocol
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 T = TypeVar("T")  # The type of instances stored
 MetadataT = TypeVar("MetadataT", bound=ComponentIdentifier)
@@ -42,7 +45,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
     """
 
     # Class-level singleton instances, keyed by registry class
-    _instances: Dict[type, "BaseInstanceRegistry[Any, Any]"] = {}
+    _instances: dict[type, BaseInstanceRegistry[Any, Any]] = {}
 
     @classmethod
     def get_registry_singleton(cls) -> BaseInstanceRegistry[T, MetadataT]:
@@ -71,8 +74,8 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
     def __init__(self) -> None:
         """Initialize the instance registry."""
         # Maps registry names to registered items
-        self._registry_items: Dict[str, T] = {}
-        self._metadata_cache: Optional[List[MetadataT]] = None
+        self._registry_items: dict[str, T] = {}
+        self._metadata_cache: Optional[list[MetadataT]] = None
 
     def register(
         self,
@@ -102,7 +105,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         return self._registry_items.get(name)
 
-    def get_names(self) -> List[str]:
+    def get_names(self) -> list[str]:
         """
         Get a sorted list of all registered names.
 
@@ -111,7 +114,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         return sorted(self._registry_items.keys())
 
-    def get_all_instances(self) -> Dict[str, T]:
+    def get_all_instances(self) -> dict[str, T]:
         """
         Get all registered instances as a name -> instance mapping.
 
@@ -123,9 +126,9 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
     def list_metadata(
         self,
         *,
-        include_filters: Optional[Dict[str, object]] = None,
-        exclude_filters: Optional[Dict[str, object]] = None,
-    ) -> List[MetadataT]:
+        include_filters: Optional[dict[str, object]] = None,
+        exclude_filters: Optional[dict[str, object]] = None,
+    ) -> list[MetadataT]:
         """
         List metadata for all registered instances, optionally filtered.
 

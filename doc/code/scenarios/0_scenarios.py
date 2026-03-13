@@ -84,7 +84,7 @@
 #
 # ### Example Structure
 # %%
-from typing import List, Optional, Type
+from typing import Optional
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -112,7 +112,7 @@ class MyScenario(Scenario):
 
     # A strategy defintion helps callers define how to run your scenario (e.g. from the front_end)
     @classmethod
-    def get_strategy_class(cls) -> Type[ScenarioStrategy]:
+    def get_strategy_class(cls) -> type[ScenarioStrategy]:
         return MyStrategy
 
     @classmethod
@@ -143,7 +143,7 @@ class MyScenario(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    async def _get_atomic_attacks_async(self) -> List[AtomicAttack]:
+    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Build atomic attacks based on selected strategies.
 

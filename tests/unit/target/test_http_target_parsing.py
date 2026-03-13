@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from typing import Callable
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest

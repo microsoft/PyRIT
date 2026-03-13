@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit (3.13.5)
-#     language: python
-#     name: python3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -18,7 +14,6 @@
 # This attack extracts information across multiple turns. This technique bypasses length-based filters or output truncation by asking for specific character ranges of a secret value.
 
 # %%
-
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ChunkedRequestAttack,

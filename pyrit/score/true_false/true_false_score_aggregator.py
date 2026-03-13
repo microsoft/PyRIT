@@ -3,7 +3,7 @@
 
 import functools
 import operator
-from typing import Callable, Iterable, List
+from collections.abc import Callable, Iterable
 
 from pyrit.models import Score
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
@@ -16,7 +16,7 @@ BinaryBoolOp = Callable[[bool, bool], bool]
 TrueFalseAggregatorFunc = Callable[[Iterable[Score]], ScoreAggregatorResult]
 
 
-def _build_rationale(scores: List[Score], *, result: bool, true_msg: str, false_msg: str) -> tuple[str, str]:
+def _build_rationale(scores: list[Score], *, result: bool, true_msg: str, false_msg: str) -> tuple[str, str]:
     """
     Build description and rationale for aggregated true/false scores.
 
@@ -42,7 +42,7 @@ def _build_rationale(scores: List[Score], *, result: bool, true_msg: str, false_
 def _create_aggregator(
     name: str,
     *,
-    result_func: Callable[[List[bool]], bool],
+    result_func: Callable[[list[bool]], bool],
     true_msg: str,
     false_msg: str,
 ) -> TrueFalseAggregatorFunc:

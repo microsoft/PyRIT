@@ -176,7 +176,7 @@ async def test_send_prompt_async():
     message = Message(message_pieces=[message_piece])
 
     # Use await to handle the asynchronous call
-    response = await hf_chat.send_prompt_async(message=message)  # type: ignore
+    response = await hf_chat.send_prompt_async(message=message)  # type: ignore[arg-type]
 
     # Access the response text via message_pieces
     assert len(response) == 1

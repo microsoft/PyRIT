@@ -77,7 +77,7 @@ class MarkdownInjectionScorer(TrueFalseScorer):
 
         return [
             Score(
-                score_value=str(True if matches else False),
+                score_value=str(bool(matches)),
                 score_value_description="True if markdown injection is detected, else False.",
                 score_metadata=None,
                 score_type="true_false",

@@ -4,7 +4,8 @@
 import base64
 import json
 import logging
-from typing import Any, Dict, MutableSequence, Optional
+from collections.abc import MutableSequence
+from typing import Any, Optional
 
 from pyrit.common import convert_local_image_to_data_url
 from pyrit.exceptions import (
@@ -157,10 +158,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         # Merge audio config into extra_body_parameters if provided
         if audio_response_config:
             audio_params = audio_response_config.to_extra_body_parameters()
-            if extra_body_parameters:
-                extra_body_parameters = {**audio_params, **extra_body_parameters}
-            else:
-                extra_body_parameters = audio_params
+            extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
 
@@ -346,16 +344,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             return True
 
         # Skip historical user audio if prefer_transcript_for_history is enabled and we have a transcript
-        if (
+        return bool(
             api_role == "user"
             and not is_last_message
             and has_text_piece
             and self._audio_response_config
             and self._audio_response_config.prefer_transcript_for_history
-        ):
-            return True
-
-        return False
+        )
 
     async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
         """
@@ -512,7 +507,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         for turn in conversation:
             if len(turn.message_pieces) != 1:
                 return False
-            if turn.message_pieces[0].converted_value_data_type != "text":
+            if turn.message_pieces[0].converted_value_data_type not in ("text", "error"):
                 return False
         return True
 
@@ -540,8 +535,11 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
             message_piece = message.message_pieces[0]
 
-            if message_piece.converted_value_data_type != "text":
-                raise ValueError("_build_chat_messages_for_text only supports text.")
+            if message_piece.converted_value_data_type not in ("text", "error"):
+                raise ValueError(
+                    f"_build_chat_messages_for_text only supports text and error data types."
+                    f" Received: {message_piece.converted_value_data_type}."
+                )
 
             chat_message = ChatMessage(role=message_piece.api_role, content=message_piece.converted_value)
             chat_messages.append(chat_message.model_dump(exclude_none=True))
@@ -586,13 +584,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 ):
                     continue
 
-                if message_piece.converted_value_data_type == "text":
+                if message_piece.converted_value_data_type in ("text", "error"):
                     entry = {"type": "text", "text": message_piece.converted_value}
                     content.append(entry)
                 elif message_piece.converted_value_data_type == "image_path":
                     data_base64_encoded_url = await convert_local_image_to_data_url(message_piece.converted_value)
                     image_url_entry = {"url": data_base64_encoded_url}
-                    entry = {"type": "image_url", "image_url": image_url_entry}  # type: ignore
+                    entry = {"type": "image_url", "image_url": image_url_entry}  # type: ignore[dict-item]
                     content.append(entry)
                 elif message_piece.converted_value_data_type == "audio_path":
                     ext = DataTypeSerializer.get_extension(message_piece.converted_value)
@@ -613,7 +611,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                     base64_data = await audio_serializer.read_data_base64()
                     audio_format = ext.lower().lstrip(".")
                     input_audio_entry = {"data": base64_data, "format": audio_format}
-                    entry = {"type": "input_audio", "input_audio": input_audio_entry}  # type: ignore
+                    entry = {"type": "input_audio", "input_audio": input_audio_entry}  # type: ignore[dict-item]
                     content.append(entry)
                 else:
                     raise ValueError(
@@ -649,8 +647,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         }
 
         if self._extra_body_parameters:
-            for key, value in self._extra_body_parameters.items():
-                body_parameters[key] = value
+            body_parameters.update(self._extra_body_parameters)
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
@@ -676,7 +673,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                     f"This target only supports text, image_path, and audio_path. Received: {prompt_data_type}."
                 )
 
-    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[Dict[str, Any]]:
+    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
         if not json_config.enabled:
             return None
 

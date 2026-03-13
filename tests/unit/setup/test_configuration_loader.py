@@ -135,7 +135,7 @@ class TestConfigurationLoader:
     def test_initializer_invalid_type_raises_error(self):
         """Test that invalid initializer type raises ValueError."""
         with pytest.raises(ValueError, match="must be a string or dict"):
-            ConfigurationLoader(initializers=[123])  # type: ignore
+            ConfigurationLoader(initializers=[123])  # type: ignore[arg-type]
 
     def test_from_dict_with_all_fields(self):
         """Test from_dict with all configuration fields."""

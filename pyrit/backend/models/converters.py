@@ -7,7 +7,7 @@ Converter-related request and response models.
 This module defines the Instance models and preview functionality.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -35,16 +35,16 @@ class ConverterInstance(BaseModel):
     converter_id: str = Field(..., description="Unique converter instance identifier")
     converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
     display_name: Optional[str] = Field(None, description="Human-readable display name")
-    supported_input_types: List[str] = Field(
+    supported_input_types: list[str] = Field(
         default_factory=list, description="Input data types supported by this converter"
     )
-    supported_output_types: List[str] = Field(
+    supported_output_types: list[str] = Field(
         default_factory=list, description="Output data types produced by this converter"
     )
-    converter_specific_params: Optional[Dict[str, Any]] = Field(
+    converter_specific_params: Optional[dict[str, Any]] = Field(
         None, description="Additional converter-specific parameters"
     )
-    sub_converter_ids: Optional[List[str]] = Field(
+    sub_converter_ids: Optional[list[str]] = Field(
         None, description="Converter IDs of sub-converters (for pipelines/composites)"
     )
 
@@ -52,7 +52,7 @@ class ConverterInstance(BaseModel):
 class ConverterInstanceListResponse(BaseModel):
     """Response for listing converter instances."""
 
-    items: List[ConverterInstance] = Field(..., description="List of converter instances")
+    items: list[ConverterInstance] = Field(..., description="List of converter instances")
 
 
 class CreateConverterRequest(BaseModel):
@@ -60,7 +60,7 @@ class CreateConverterRequest(BaseModel):
 
     type: str = Field(..., description="Converter type (e.g., 'Base64Converter')")
     display_name: Optional[str] = Field(None, description="Human-readable display name")
-    params: Dict[str, Any] = Field(
+    params: dict[str, Any] = Field(
         default_factory=dict,
         description="Converter constructor parameters",
     )
@@ -95,7 +95,7 @@ class ConverterPreviewRequest(BaseModel):
 
     original_value: str = Field(..., description="Text to convert")
     original_value_data_type: PromptDataType = Field(default="text", description="Data type of original value")
-    converter_ids: List[str] = Field(..., description="Converter instance IDs to apply")
+    converter_ids: list[str] = Field(..., description="Converter instance IDs to apply")
 
 
 class ConverterPreviewResponse(BaseModel):
@@ -105,4 +105,4 @@ class ConverterPreviewResponse(BaseModel):
     original_value_data_type: PromptDataType = Field(..., description="Data type of original value")
     converted_value: str = Field(..., description="Final converted text")
     converted_value_data_type: PromptDataType = Field(..., description="Data type of converted value")
-    steps: List[PreviewStep] = Field(..., description="Step-by-step conversion results")
+    steps: list[PreviewStep] = Field(..., description="Step-by-step conversion results")

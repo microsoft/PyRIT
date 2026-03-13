@@ -67,12 +67,12 @@ async def create_converter(request: CreateConverterRequest) -> CreateConverterRe
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create converter: {str(e)}",
-        )
+        ) from e
 
 
 @router.get(
@@ -126,9 +126,9 @@ async def preview_conversion(request: ConverterPreviewRequest) -> ConverterPrevi
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Converter preview failed: {str(e)}",
-        )
+        ) from e

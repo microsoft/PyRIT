@@ -5,7 +5,8 @@ import json
 import logging
 import os
 from abc import ABC
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from openai import RateLimitError
 from tenacity import (
@@ -112,7 +113,7 @@ class _DynamicWaitRandomExponential(wait_base):
         return wait_strategy(retry_state)
 
 
-class PyritException(Exception, ABC):
+class PyritException(Exception, ABC):  # noqa: N818
     """Base exception class for PyRIT components."""
 
     def __init__(self, *, status_code: int = 500, message: str = "An error occurred") -> None:
@@ -376,6 +377,6 @@ def handle_bad_request_exception(
             request=request, response_text_pieces=[resp_text], response_type="error", error="blocked"
         )
     else:
-        raise
+        raise  # noqa: PLE0704
 
     return response_entry

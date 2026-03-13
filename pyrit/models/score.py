@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union, get_args
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 if TYPE_CHECKING:
     from pyrit.identifiers.component_identifier import ComponentIdentifier
@@ -29,16 +29,16 @@ class Score:
     score_type: ScoreType
 
     # The harms categories (e.g. ["hate", "violence"]) – can be multiple
-    score_category: Optional[List[str]]
+    score_category: Optional[list[str]]
 
     # Extra data the scorer provides around the rationale of the score
     score_rationale: str
 
     # Custom metadata a scorer might use. This can vary by scorer.
-    score_metadata: Optional[Dict[str, Union[str, int, float]]]
+    score_metadata: Optional[dict[str, Union[str, int, float]]]
 
     # The identifier of the scorer class, including relevant information
-    scorer_class_identifier: "ComponentIdentifier"
+    scorer_class_identifier: ComponentIdentifier
 
     # This is the ID of the MessagePiece that the score is scoring
     # Note a scorer can generate an additional request. This is NOT that, but
@@ -59,10 +59,10 @@ class Score:
         score_type: ScoreType,
         score_rationale: str,
         message_piece_id: str | uuid.UUID,
-        id: Optional[uuid.UUID | str] = None,
-        score_category: Optional[List[str]] = None,
-        score_metadata: Optional[Dict[str, Union[str, int, float]]] = None,
-        scorer_class_identifier: Union["ComponentIdentifier", Dict[str, Any]],
+        id: Optional[uuid.UUID | str] = None,  # noqa: A002
+        score_category: Optional[list[str]] = None,
+        score_metadata: Optional[dict[str, Union[str, int, float]]] = None,
+        scorer_class_identifier: Union[ComponentIdentifier, dict[str, Any]],
         timestamp: Optional[datetime] = None,
         objective: Optional[str] = None,
     ):
@@ -90,7 +90,12 @@ class Score:
         from pyrit.identifiers.component_identifier import ComponentIdentifier
 
         self.id = id if id else uuid.uuid4()
-        self.timestamp = timestamp if timestamp else datetime.now()
+        if timestamp is None:
+            self.timestamp = datetime.now(tz=timezone.utc)
+        elif timestamp.tzinfo is None:
+            self.timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            self.timestamp = timestamp
 
         self.validate(score_type, score_value)
 
@@ -152,10 +157,10 @@ class Score:
                 score = float(score_value)
                 if not (0 <= score <= 1):
                     raise ValueError(f"Float scale scorers must have a score value between 0 and 1. Got {score_value}")
-            except ValueError:
-                raise ValueError(f"Float scale scorers require a numeric score value. Got {score_value}")
+            except ValueError as e:
+                raise ValueError(f"Float scale scorers require a numeric score value. Got {score_value}") from e
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert this score to a dictionary.
 
@@ -205,10 +210,10 @@ class UnvalidatedScore:
     raw_score_value: str
 
     score_value_description: str
-    score_category: Optional[List[str]]
+    score_category: Optional[list[str]]
     score_rationale: str
-    score_metadata: Optional[Dict[str, Union[str, int, float]]]
-    scorer_class_identifier: "ComponentIdentifier"
+    score_metadata: Optional[dict[str, Union[str, int, float]]]
+    scorer_class_identifier: ComponentIdentifier
     message_piece_id: uuid.UUID | str
     objective: Optional[str]
     id: Optional[uuid.UUID | str] = None

@@ -3,11 +3,12 @@
 
 import abc
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,11 @@ class PromptTarget(Identifiable):
 
     #: A list of PromptConverters that are supported by the prompt target.
     #: An empty list implies that the prompt target supports all converters.
-    supported_converters: List[Any]
+    supported_converters: list[Any]
 
     _identifier: Optional[ComponentIdentifier] = None
+
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities()
 
     def __init__(
         self,
@@ -35,6 +38,7 @@ class PromptTarget(Identifiable):
         endpoint: str = "",
         model_name: str = "",
         underlying_model: Optional[str] = None,
+        capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -48,6 +52,10 @@ class PromptTarget(Identifiable):
                 identification purposes. This is useful when the deployment name in Azure differs
                 from the actual model. If not provided, `model_name` will be used for the identifier.
                 Defaults to None.
+            capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Useful for targets whose capabilities depend on deployment
+                configuration (e.g., Playwright, HTTP). If None, uses the class-level
+                ``_DEFAULT_CAPABILITIES``. Defaults to None.
         """
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
@@ -55,6 +63,7 @@ class PromptTarget(Identifiable):
         self._endpoint = endpoint
         self._model_name = model_name
         self._underlying_model = underlying_model
+        self._capabilities = capabilities if capabilities is not None else type(self)._DEFAULT_CAPABILITIES
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
@@ -96,8 +105,8 @@ class PromptTarget(Identifiable):
     def _create_identifier(
         self,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        children: Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]] = None,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
     ) -> ComponentIdentifier:
         """
         Construct the target identifier.
@@ -120,19 +129,44 @@ class PromptTarget(Identifiable):
         """
         model_name = self._underlying_model or self._model_name or ""
 
-        # Late import to avoid circular dependency (PromptChatTarget inherits from PromptTarget)
-        from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-
-        all_params: Dict[str, Any] = {
+        all_params: dict[str, Any] = {
             "endpoint": self._endpoint,
             "model_name": model_name,
             "max_requests_per_minute": self._max_requests_per_minute,
-            "supports_conversation_history": isinstance(self, PromptChatTarget),
+            "supports_multi_turn": self.supports_multi_turn,
         }
         if params:
             all_params.update(params)
 
         return ComponentIdentifier.of(self, params=all_params, children=children)
+
+    @property
+    def capabilities(self) -> TargetCapabilities:
+        """
+        The capabilities of this target instance.
+
+        Defaults to the class-level ``_DEFAULT_CAPABILITIES``. Can be overridden
+        per instance via the ``capabilities`` constructor parameter, which is useful
+        for targets whose capabilities depend on deployment configuration
+        (e.g., Playwright, HTTP).
+
+        Returns:
+            TargetCapabilities: The capabilities for this target.
+        """
+        return self._capabilities
+
+    @property
+    def supports_multi_turn(self) -> bool:
+        """
+        Whether this target supports multi-turn conversations.
+
+        Convenience property that delegates to ``self.capabilities.supports_multi_turn``.
+
+        Returns:
+            bool: False by default. Subclasses declare multi-turn support by setting
+                ``_DEFAULT_CAPABILITIES`` or passing ``capabilities`` to the constructor.
+        """
+        return self._capabilities.supports_multi_turn
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

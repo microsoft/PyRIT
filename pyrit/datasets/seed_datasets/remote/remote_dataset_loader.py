@@ -7,8 +7,9 @@ import io
 import logging
 import tempfile
 from abc import ABC
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, TextIO, cast
+from typing import Any, Literal, Optional, TextIO, cast
 
 import requests
 from datasets import DownloadMode, disable_progress_bars, load_dataset
@@ -22,10 +23,10 @@ from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvid
 logger = logging.getLogger(__name__)
 
 # Define the type for the file handlers
-FileHandlerRead = Callable[[TextIO], List[Dict[str, str]]]
-FileHandlerWrite = Callable[[TextIO, List[Dict[str, str]]], None]
+FileHandlerRead = Callable[[TextIO], list[dict[str, str]]]
+FileHandlerWrite = Callable[[TextIO, list[dict[str, str]]], None]
 
-FILE_TYPE_HANDLERS: Dict[str, Dict[str, Callable[..., Any]]] = {
+FILE_TYPE_HANDLERS: dict[str, dict[str, Callable[..., Any]]] = {
     "json": {"read": read_json, "write": write_json},
     "jsonl": {"read": read_jsonl, "write": write_jsonl},
     "csv": {"read": read_csv, "write": write_csv},
@@ -75,7 +76,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
 
-    def _read_cache(self, *, cache_file: Path, file_type: str) -> List[Dict[str, str]]:
+    def _read_cache(self, *, cache_file: Path, file_type: str) -> list[dict[str, str]]:
         """
         Read data from cache.
 
@@ -91,9 +92,9 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         """
         self._validate_file_type(file_type)
         with cache_file.open("r", encoding="utf-8") as file:
-            return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](file))
+            return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](file))
 
-    def _write_cache(self, *, cache_file: Path, examples: List[Dict[str, str]], file_type: str) -> None:
+    def _write_cache(self, *, cache_file: Path, examples: list[dict[str, str]], file_type: str) -> None:
         """
         Write data to cache.
 
@@ -110,7 +111,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         with cache_file.open("w", encoding="utf-8") as file:
             FILE_TYPE_HANDLERS[file_type]["write"](file, examples)
 
-    def _fetch_from_public_url(self, *, source: str, file_type: str) -> List[Dict[str, str]]:
+    def _fetch_from_public_url(self, *, source: str, file_type: str) -> list[dict[str, str]]:
         """
         Fetch examples from a public URL.
 
@@ -129,16 +130,18 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         if response.status_code == 200:
             if file_type in FILE_TYPE_HANDLERS:
                 if file_type == "json":
-                    return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text)))
+                    return cast(
+                        "list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text))
+                    )
                 return cast(
-                    List[Dict[str, str]],
+                    "list[dict[str, str]]",
                     FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines()))),
                 )
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
         raise Exception(f"Failed to fetch examples from public URL. Status code: {response.status_code}")
 
-    def _fetch_from_file(self, *, source: str, file_type: str) -> List[Dict[str, str]]:
+    def _fetch_from_file(self, *, source: str, file_type: str) -> list[dict[str, str]]:
         """
         Fetch examples from a local file.
 
@@ -152,9 +155,9 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         Raises:
             ValueError: If the file_type is invalid.
         """
-        with open(source, "r", encoding="utf-8") as file:
+        with open(source, encoding="utf-8") as file:
             if file_type in FILE_TYPE_HANDLERS:
-                return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](file))
+                return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](file))
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
 
@@ -164,7 +167,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         source: str,
         source_type: Literal["public_url", "file"] = "public_url",
         cache: bool = True,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Fetch examples from a specified source with caching support.
 

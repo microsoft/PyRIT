@@ -42,6 +42,7 @@
 # %%
 import os
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.promptgen import AnecdoctorGenerator
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -55,10 +56,10 @@ attack_examples = [
     "Bill Gates is a raccoon.",
 ]
 
+endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
 objective_target = OpenAIChatTarget(
-    api_key=os.environ["OPENAI_CHAT_KEY"],
-    endpoint=os.environ["OPENAI_CHAT_ENDPOINT"],
-    model_name=os.environ["OPENAI_CHAT_MODEL"],
+    endpoint=endpoint,
+    api_key=get_azure_openai_auth(endpoint),
 )
 
 generator = AnecdoctorGenerator(
@@ -148,16 +149,16 @@ def visualize_knowledge_graph(kg_result: str):
     rel_df = df[df["Type"] == "relationship"]
 
     # 3) Create and visualize the graph
-    G = nx.Graph()
+    g = nx.Graph()
     for _, row in rel_df.iterrows():
         source = row["col1"]
         target = row["col2"]
-        G.add_edge(source, target)
+        g.add_edge(source, target)
 
-    pos = nx.spring_layout(G)
-    nx.draw(G, pos, with_labels=True)
-    edge_labels = nx.get_edge_attributes(G, "label")
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
+    pos = nx.spring_layout(g)
+    nx.draw(g, pos, with_labels=True)
+    edge_labels = nx.get_edge_attributes(g, "label")
+    nx.draw_networkx_edge_labels(g, pos, edge_labels=edge_labels)
     plt.show()
 
 

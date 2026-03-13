@@ -14,7 +14,7 @@ from pyrit.prompt_converter import ImageCompressionConverter
 def sample_image_bytes():
     """Sample RGB image for testing with configurable format and size."""
 
-    def _create_image(format="PNG", size=(200, 200)):
+    def _create_image(format="PNG", size=(200, 200)):  # noqa: A002
         img = Image.new("RGB", size, color=(125, 125, 125))
         img_bytes = BytesIO()
         img.save(img_bytes, format=format)
@@ -27,7 +27,7 @@ def sample_image_bytes():
 def sample_transparent_image_bytes():
     """Sample RGBA image with transparency for testing with configurable format."""
 
-    def _create_image(format="PNG"):
+    def _create_image(format="PNG"):  # noqa: A002
         img = Image.new("RGBA", (200, 200), color=(125, 125, 125, 128))
         img_bytes = BytesIO()
         img.save(img_bytes, format=format)
@@ -40,11 +40,11 @@ def test_image_compression_converter_initialization_output_format_validation():
     """Test validation of output_format parameter."""
     for unsupported_format in ["GIF", "BMP", "TIFF", "ICO", "WEBM", "SVG", "jpg", "png"]:
         with pytest.raises(ValueError, match="Output format must be one of 'JPEG', 'PNG', or 'WEBP'"):
-            ImageCompressionConverter(output_format=unsupported_format)  # type: ignore
+            ImageCompressionConverter(output_format=unsupported_format)  # type: ignore[arg-type]
 
     supported_formats = ["JPEG", "PNG", "WEBP"]
     for supported_format in supported_formats:
-        converter = ImageCompressionConverter(output_format=supported_format)  # type: ignore
+        converter = ImageCompressionConverter(output_format=supported_format)  # type: ignore[arg-type]
         assert converter._output_format == supported_format
 
     converter = ImageCompressionConverter(output_format=None)
@@ -117,7 +117,7 @@ def test_image_compression_converter_initialization_background_color_validation(
 
     for invalid_color in invalid_colors:
         with pytest.raises(ValueError, match="Background color must be a tuple of three integers between 0 and 255"):
-            ImageCompressionConverter(background_color=invalid_color)  # type: ignore
+            ImageCompressionConverter(background_color=invalid_color)  # type: ignore[arg-type]
 
     valid_colors = [
         (0, 0, 0),
@@ -370,7 +370,7 @@ async def test_image_compression_converter_corrupted_image_bytes():
         mock_serializer = AsyncMock()
         mock_serializer.read_data.return_value = corrupted_bytes
         mock_factory.return_value = mock_serializer
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             await converter.convert_async(prompt="corrupted.png", input_type="image_path")
 
 

@@ -4,7 +4,7 @@
 import logging
 import random
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DATASETS_PATH
@@ -37,7 +37,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         *,
         converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         system_prompt_template: Optional[SeedPrompt] = None,
-        languages: Optional[List[str]] = None,
+        languages: Optional[list[str]] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """

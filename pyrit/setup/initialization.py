@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 import logging
 import pathlib
+from collections.abc import Sequence
 
 # Import PyRITInitializer for type checking (with TYPE_CHECKING to avoid circular imports)
-from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 import dotenv
 

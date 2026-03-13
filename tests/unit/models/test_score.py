@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -26,7 +26,7 @@ async def test_score_to_dict():
         score_metadata={"key": "value"},
         scorer_class_identifier=scorer_identifier,
         message_piece_id=str(uuid.uuid4()),
-        timestamp=datetime.now(),
+        timestamp=datetime.now(tz=timezone.utc),
         objective="Task1",
     )
     result = sample_score.to_dict()

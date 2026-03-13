@@ -304,7 +304,7 @@ def test_validate_csv_columns_nan_in_human_score():
             "harm_category": ["hate_speech"],
         }
     )
-    with pytest.raises(ValueError, match="contains NaN values"):
+    with pytest.raises(ValueError, match="All human score cells must be filled."):
         HumanLabeledDataset._validate_csv_columns(eval_df=df, metrics_type=MetricsType.HARM)
 
 

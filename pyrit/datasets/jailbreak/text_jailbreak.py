@@ -5,7 +5,7 @@ import logging
 import random
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.models import SeedPrompt
@@ -18,11 +18,11 @@ class TextJailBreak:
     A class that manages jailbreak datasets (like DAN, etc.).
     """
 
-    _template_cache: Optional[Dict[str, List[Path]]] = None
+    _template_cache: Optional[dict[str, list[Path]]] = None
     _cache_lock: threading.Lock = threading.Lock()
 
     @classmethod
-    def _scan_template_files(cls) -> Dict[str, List[Path]]:
+    def _scan_template_files(cls) -> dict[str, list[Path]]:
         """
         Scan the jailbreak templates directory for YAML files.
 
@@ -32,14 +32,14 @@ class TextJailBreak:
         Returns:
             Dict[str, List[Path]]: Mapping of filename to list of matching paths.
         """
-        result: Dict[str, List[Path]] = {}
+        result: dict[str, list[Path]] = {}
         for path in JAILBREAK_TEMPLATES_PATH.rglob("*.yaml"):
             if "multi_parameter" not in path.parts:
                 result.setdefault(path.name, []).append(path)
         return result
 
     @classmethod
-    def _get_template_cache(cls) -> Dict[str, List[Path]]:
+    def _get_template_cache(cls) -> dict[str, list[Path]]:
         """
         Return the cached filename-to-path lookup, building it on first access.
 
@@ -80,7 +80,7 @@ class TextJailBreak:
         return paths[0]
 
     @classmethod
-    def _get_all_template_paths(cls) -> List[Path]:
+    def _get_all_template_paths(cls) -> list[Path]:
         """
         Return a flat list of all cached template file paths.
 
@@ -173,7 +173,7 @@ class TextJailBreak:
 
         raise ValueError("No jailbreak template with a single 'prompt' parameter found among available templates.")
 
-    def _validate_required_kwargs(self, kwargs: Dict[str, Any]) -> None:
+    def _validate_required_kwargs(self, kwargs: dict[str, Any]) -> None:
         """
         Verify that all template parameters (except 'prompt') are present in kwargs.
 
@@ -195,7 +195,7 @@ class TextJailBreak:
                 f"Required parameters (excluding 'prompt'): {required_params}"
             )
 
-    def _apply_extra_kwargs(self, kwargs: Dict[str, Any]) -> None:
+    def _apply_extra_kwargs(self, kwargs: dict[str, Any]) -> None:
         """
         Apply additional keyword arguments to the template, preserving the prompt placeholder.
 
@@ -208,7 +208,7 @@ class TextJailBreak:
             self.template.value = self.template.render_template_value_silent(**kwargs)
 
     @classmethod
-    def get_jailbreak_templates(cls, num_templates: Optional[int] = None) -> List[str]:
+    def get_jailbreak_templates(cls, num_templates: Optional[int] = None) -> list[str]:
         """
         Retrieve all jailbreaks from the JAILBREAK_TEMPLATES_PATH.
 
@@ -229,7 +229,8 @@ class TextJailBreak:
         if num_templates:
             if num_templates > len(jailbreak_template_names):
                 raise ValueError(
-                    f"Attempted to pull {num_templates} jailbreaks from a dataset with only {len(jailbreak_template_names)} jailbreaks!"
+                    f"Attempted to pull {num_templates} jailbreaks from a dataset"
+                    f" with only {len(jailbreak_template_names)} jailbreaks!"
                 )
             jailbreak_template_names = random.choices(jailbreak_template_names, k=num_templates)
         return jailbreak_template_names

@@ -173,7 +173,7 @@ resized = Image.open(sample_image).resize((1280, 720)).convert("RGB")
 
 import tempfile
 
-tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)  # noqa: SIM115
 resized.save(tmp, format="JPEG")
 tmp.close()
 image_path = tmp.name

@@ -45,9 +45,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 # Get prompt IDs of the prompts sent by evaluating results
-conversation_ids = []
-for result in results:
-    conversation_ids.append(result.conversation_id)
+conversation_ids = [result.conversation_id for result in results]
 
 memory = CentralMemory.get_memory_instance()
 
@@ -57,8 +55,7 @@ for id in conversation_ids:
         conversation_id=id,
     )
 
-    for piece in pieces:
-        prompt_ids.append(piece.id)
+    prompt_ids.extend(piece.id for piece in pieces)
 
 # %% [markdown]
 # Once the prompts are in the database (which again, is often automatic) we can use `BatchScorer` to score them with whatever scorers we want. It works in parallel with batches.
@@ -112,7 +109,6 @@ for score in scores:
 # - Converted Value SHA256
 
 # %%
-import uuid
 
 from pyrit.memory import CentralMemory
 from pyrit.prompt_target import OpenAIChatTarget
@@ -129,9 +125,9 @@ from pyrit.score import (  # noqa: F401
 prompt_target = OpenAIChatTarget()
 
 # These labels can be set as an environment variable (or via run_attacks_async as shown below), which will be associated with each prompt and assist in retrieving or scoring later.
-test_op_name = str(uuid.uuid4())
-test_user_name = str(uuid.uuid4())
-memory_labels = {"op_name": test_op_name, "username": test_user_name}
+operation = "op_trash_panda"
+operator = "roakey"
+memory_labels = {"operation": operation, "operator": operator}
 
 attack = PromptSendingAttack(objective_target=prompt_target)
 

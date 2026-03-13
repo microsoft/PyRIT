@@ -223,7 +223,7 @@ class TestTextJailBreakTemplateCache:
     def test_scan_template_files_excludes_multi_parameter(self) -> None:
         """Test that _scan_template_files excludes files under multi_parameter directories."""
         result = TextJailBreak._scan_template_files()
-        for filename, paths in result.items():
+        for paths in result.values():
             for path in paths:
                 assert "multi_parameter" not in path.parts
 

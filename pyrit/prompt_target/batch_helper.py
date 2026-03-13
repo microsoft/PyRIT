@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Callable, Generator, List, Optional, Sequence
+from collections.abc import Callable, Generator, Sequence
+from typing import Any, Optional
 
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
-def _get_chunks(*args: Sequence[Any], batch_size: int) -> Generator[List[Sequence[Any]], None, None]:
+def _get_chunks(*args: Sequence[Any], batch_size: int) -> Generator[list[Sequence[Any]], None, None]:
     """
     Split provided lists into chunks of specified batch size.
 

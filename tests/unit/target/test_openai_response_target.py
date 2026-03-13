@@ -3,8 +3,9 @@
 
 import json
 import os
+from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
-from typing import Any, MutableSequence
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -117,25 +118,22 @@ def openai_response_json() -> dict:
 
 
 def test_init_with_no_deployment_var_raises():
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError):
-            OpenAIResponseTarget()
+    with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
+        OpenAIResponseTarget()
 
 
 def test_init_with_no_endpoint_uri_var_raises():
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError):
-            OpenAIResponseTarget(
-                model_name="gpt-4",
-                endpoint="",
-                api_key="xxxxx",
-            )
+    with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
+        OpenAIResponseTarget(
+            model_name="gpt-4",
+            endpoint="",
+            api_key="xxxxx",
+        )
 
 
 def test_init_with_no_additional_request_headers_var_raises():
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError):
-            OpenAIResponseTarget(model_name="gpt-4", endpoint="", api_key="xxxxx", headers="")
+    with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
+        OpenAIResponseTarget(model_name="gpt-4", endpoint="", api_key="xxxxx", headers="")
 
 
 @pytest.mark.asyncio()
@@ -184,13 +182,13 @@ async def test_build_input_for_multi_modal(target: OpenAIResponseTarget):
 
     assert len(messages) == 3
     assert messages[0]["role"] == "user"
-    assert messages[0]["content"][0]["type"] == "input_text"  # type: ignore
-    assert messages[0]["content"][1]["type"] == "input_image"  # type: ignore
+    assert messages[0]["content"][0]["type"] == "input_text"  # type: ignore[method-assign]
+    assert messages[0]["content"][1]["type"] == "input_image"  # type: ignore[method-assign]
     assert messages[1]["role"] == "assistant"
-    assert messages[1]["content"][0]["type"] == "output_text"  # type: ignore
+    assert messages[1]["content"][0]["type"] == "output_text"  # type: ignore[method-assign]
     assert messages[2]["role"] == "user"
-    assert messages[2]["content"][0]["type"] == "input_text"  # type: ignore
-    assert messages[2]["content"][1]["type"] == "input_image"  # type: ignore
+    assert messages[2]["content"][0]["type"] == "input_text"  # type: ignore[method-assign]
+    assert messages[2]["content"][1]["type"] == "input_image"  # type: ignore[method-assign]
 
     os.remove(image_request.original_value)
 
@@ -572,7 +570,7 @@ async def test_send_prompt_async_content_filter(target: OpenAIResponseTarget):
 
 def test_validate_request_unsupported_data_types(target: OpenAIResponseTarget):
     image_piece = get_image_message_piece()
-    image_piece.converted_value_data_type = "new_unknown_type"  # type: ignore
+    image_piece.converted_value_data_type = "new_unknown_type"  # type: ignore[method-assign]
     message = Message(
         message_pieces=[
             MessagePiece(

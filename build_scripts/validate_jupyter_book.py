@@ -20,19 +20,18 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import List, Set, Tuple
 
 import yaml
 
 
-def parse_api_rst(api_rst_path: Path) -> List[Tuple[str, List[str]]]:
+def parse_api_rst(api_rst_path: Path) -> list[tuple[str, list[str]]]:
     """
     Parse api.rst file to extract module names and their autosummary members.
 
     Returns:
         List of tuples: (module_name, [member_names])
     """
-    with open(api_rst_path, "r", encoding="utf-8") as f:
+    with open(api_rst_path, encoding="utf-8") as f:
         content = f.read()
 
     modules = []
@@ -61,7 +60,7 @@ def parse_api_rst(api_rst_path: Path) -> List[Tuple[str, List[str]]]:
     return modules
 
 
-def validate_api_rst_modules(modules: List[Tuple[str, List[str]]], repo_root: Path) -> List[str]:
+def validate_api_rst_modules(modules: list[tuple[str, list[str]]], repo_root: Path) -> list[str]:
     """
     Validate that modules exist and autosummary members are defined.
 
@@ -110,7 +109,7 @@ def validate_api_rst_modules(modules: List[Tuple[str, List[str]]], repo_root: Pa
             if module_file:
                 # Read the source file and check for member definitions
                 try:
-                    with open(module_file, "r", encoding="utf-8") as f:
+                    with open(module_file, encoding="utf-8") as f:
                         source_content = f.read()
 
                     for member in members:
@@ -141,14 +140,14 @@ def validate_api_rst_modules(modules: List[Tuple[str, List[str]]], repo_root: Pa
     return errors
 
 
-def parse_toc_yml(toc_path: Path) -> Set[str]:
+def parse_toc_yml(toc_path: Path) -> set[str]:
     """
     Parse _toc.yml file to extract all file references.
 
     Returns:
         Set of file paths (relative to doc/ directory, without extensions)
     """
-    with open(toc_path, "r", encoding="utf-8") as f:
+    with open(toc_path, encoding="utf-8") as f:
         toc_data = yaml.safe_load(f)
 
     files = set()
@@ -169,7 +168,7 @@ def parse_toc_yml(toc_path: Path) -> Set[str]:
     return files
 
 
-def validate_toc_yml_files(toc_files: Set[str], doc_root: Path) -> List[str]:
+def validate_toc_yml_files(toc_files: set[str], doc_root: Path) -> list[str]:
     """
     Validate that all files referenced in _toc.yml exist.
 
@@ -198,7 +197,7 @@ def validate_toc_yml_files(toc_files: Set[str], doc_root: Path) -> List[str]:
     return errors
 
 
-def find_orphaned_doc_files(toc_files: Set[str], doc_root: Path) -> List[str]:
+def find_orphaned_doc_files(toc_files: set[str], doc_root: Path) -> list[str]:
     """
     Find documentation files that exist but are not referenced in _toc.yml.
 

@@ -288,16 +288,16 @@ def test_group_id_from_empty_group_set_equally():
 
 
 def test_group_id_set_equally_success():
-    id = uuid.uuid4()
+    group_id = uuid.uuid4()
     group = SeedGroup(
         seeds=[
-            SeedPrompt(value="Hello", data_type="text", prompt_group_id=id),
-            SeedPrompt(value="World", data_type="text", prompt_group_id=id),
+            SeedPrompt(value="Hello", data_type="text", prompt_group_id=group_id),
+            SeedPrompt(value="World", data_type="text", prompt_group_id=group_id),
         ]
     )
 
     assert len(group.prompts) == 2
-    assert group.prompts[0].prompt_group_id == id
+    assert group.prompts[0].prompt_group_id == group_id
 
 
 def test_group_id_set_unequally_raises():

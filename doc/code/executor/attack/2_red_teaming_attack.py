@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -119,6 +119,7 @@ await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ig
 # %%
 import os
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.datasets import TextJailBreak
 from pyrit.models import Message, MessagePiece
 
@@ -137,9 +138,10 @@ prepended_conversation = [
 
 
 # Testing against an AzureOpenAI deployed GPT 4 instance
+oai_endpoint = os.getenv("AZURE_OPENAI_GPT4_CHAT_ENDPOINT")
 oai_objective_target = OpenAIChatTarget(
-    api_key=os.getenv("AZURE_OPENAI_GPT4_CHAT_KEY"),
-    endpoint=os.getenv("AZURE_OPENAI_GPT4_CHAT_ENDPOINT"),
+    api_key=get_azure_openai_auth(oai_endpoint),
+    endpoint=oai_endpoint,
     model_name=os.getenv("AZURE_OPENAI_GPT4_CHAT_MODEL"),
 )
 

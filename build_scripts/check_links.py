@@ -34,7 +34,7 @@ GRID_LINK_PATTERN = re.compile(r"^:link:\s+(.+)$", re.MULTILINE)
 
 
 def extract_urls(file_path):
-    with open(file_path, "r", encoding="utf-8") as file:
+    with open(file_path, encoding="utf-8") as file:
         content = file.read()
     matches = URL_PATTERN.findall(content)
     # Flatten the list of tuples and filter out empty strings
@@ -89,8 +89,7 @@ def check_url(url, retries=2, delay=2):
         or any(url.endswith(reference) for reference in custom_myst_references)
         or os.path.isfile(url)
         or os.path.isdir(url)
-        or url.startswith("mailto:")
-        or url.startswith("attachment:")
+        or url.startswith(("mailto:", "attachment:"))
     ):
         return url, True
 
@@ -161,7 +160,7 @@ def check_all_links_parallel(file_urls, max_workers=20):
     # Check all unique URLs in parallel
     url_results = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(check_url, url): url for url in url_to_files.keys()}
+        futures = {executor.submit(check_url, url): url for url in url_to_files}
         for future in as_completed(futures):
             url = futures[future]
             _, is_valid = future.result()

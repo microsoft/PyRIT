@@ -144,7 +144,7 @@ async def test_math_prompt_converter_invalid_input_type():
     # Test with an invalid input type
     with pytest.raises(ValueError, match="Input type not supported"):
         # Use type: ignore to suppress the type error for testing invalid input
-        await converter.convert_async(prompt="Test prompt", input_type="unsupported")  # type: ignore
+        await converter.convert_async(prompt="Test prompt", input_type="unsupported")  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

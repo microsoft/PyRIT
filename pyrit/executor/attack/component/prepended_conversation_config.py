@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, get_args
+from typing import Literal, Optional, get_args
 
 from pyrit.message_normalizer import (
     ConversationContextNormalizer,
@@ -28,7 +28,7 @@ class PrependedConversationConfig:
     # Roles for which request converters should be applied to prepended messages.
     # By default, converters are applied to all roles.
     # Example: ["user"] to apply converters only to user messages.
-    apply_converters_to_roles: List[ChatMessageRole] = field(default_factory=lambda: list(get_args(ChatMessageRole)))
+    apply_converters_to_roles: list[ChatMessageRole] = field(default_factory=lambda: list(get_args(ChatMessageRole)))
 
     # Optional normalizer to format conversation history into a single text block.
     # Must implement MessageStringNormalizer (e.g., TokenizerTemplateNormalizer or ConversationContextNormalizer).
@@ -75,7 +75,7 @@ class PrependedConversationConfig:
         cls,
         *,
         message_normalizer: Optional[MessageStringNormalizer] = None,
-        apply_converters_to_roles: Optional[List[ChatMessageRole]] = None,
+        apply_converters_to_roles: Optional[list[ChatMessageRole]] = None,
     ) -> PrependedConversationConfig:
         """
         Create a configuration for use with non-chat targets.

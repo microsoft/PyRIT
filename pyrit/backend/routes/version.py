@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 import pyrit
+from pyrit.memory import CentralMemory
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class VersionResponse(BaseModel):
     commit: Optional[str] = None
     modified: Optional[bool] = None
     display: str
+    database_info: Optional[str] = None
 
 
 @router.get("", response_model=VersionResponse)
@@ -49,7 +51,7 @@ async def get_version_async() -> VersionResponse:
     build_info_path = Path("/app/build_info.json")
     if build_info_path.exists():
         try:
-            with open(build_info_path, "r") as f:
+            with open(build_info_path) as f:
                 build_info = json.load(f)
                 source = build_info.get("source")
                 commit = build_info.get("commit")
@@ -58,4 +60,23 @@ async def get_version_async() -> VersionResponse:
         except Exception as e:
             logger.warning(f"Failed to load build info: {e}")
 
-    return VersionResponse(version=version, source=source, commit=commit, modified=modified, display=display)
+    # Detect current database backend
+    database_info: Optional[str] = None
+    try:
+        memory = CentralMemory.get_memory_instance()
+        db_type = type(memory).__name__
+        db_name = None
+        if memory.engine.url.database:
+            db_name = memory.engine.url.database.split("?")[0]
+        database_info = f"{db_type} ({db_name})" if db_name else f"{db_type} (None)"
+    except Exception as e:
+        logger.debug(f"Could not detect database info: {e}")
+
+    return VersionResponse(
+        version=version,
+        source=source,
+        commit=commit,
+        modified=modified,
+        display=display,
+        database_info=database_info,
+    )

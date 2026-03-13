@@ -52,9 +52,7 @@ if __name__ == "__main__":
 
         ctypes.windll.kernel32.CreateMutexW(None, False, GLOBAL_MUTEX_NAME)
         last_error = ctypes.windll.kernel32.GetLastError()
-        if last_error == 183:  # ERROR_ALREADY_EXISTS
-            return False
-        return True
+        return bool(last_error != 183)  # ERROR_ALREADY_EXISTS
 
     if not create_mutex():
         print("Gradio UI is already running.")

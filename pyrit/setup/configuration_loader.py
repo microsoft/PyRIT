@@ -9,8 +9,9 @@ from YAML files and initializes PyRIT accordingly.
 """
 
 import pathlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
@@ -29,10 +30,10 @@ if TYPE_CHECKING:
 # Type alias for YAML-serializable values that can be passed as initializer args
 # This matches what YAML can represent: primitives, lists, and nested dicts
 YamlPrimitive = Union[str, int, float, bool, None]
-YamlValue = Union[YamlPrimitive, List["YamlValue"], Dict[str, "YamlValue"]]
+YamlValue = Union[YamlPrimitive, list["YamlValue"], dict[str, "YamlValue"]]
 
 # Mapping from snake_case config values to internal constants
-_MEMORY_DB_TYPE_MAP: Dict[str, str] = {
+_MEMORY_DB_TYPE_MAP: dict[str, str] = {
     "in_memory": IN_MEMORY,
     "sqlite": SQLITE,
     "azure_sql": AZURE_SQL,
@@ -50,7 +51,7 @@ class InitializerConfig:
     """
 
     name: str
-    args: Optional[Dict[str, YamlValue]] = None
+    args: Optional[dict[str, YamlValue]] = None
 
 
 @dataclass
@@ -90,9 +91,9 @@ class ConfigurationLoader(YamlLoadable):
     """
 
     memory_db_type: str = "sqlite"
-    initializers: List[Union[str, Dict[str, Any]]] = field(default_factory=list)
-    initialization_scripts: Optional[List[str]] = None
-    env_files: Optional[List[str]] = None
+    initializers: list[Union[str, dict[str, Any]]] = field(default_factory=list)
+    initialization_scripts: Optional[list[str]] = None
+    env_files: Optional[list[str]] = None
     silent: bool = False
 
     def __post_init__(self) -> None:
@@ -137,7 +138,7 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If an initializer entry is missing a 'name' field or has an invalid type.
         """
-        normalized: List[InitializerConfig] = []
+        normalized: list[InitializerConfig] = []
         for entry in self.initializers:
             if isinstance(entry, str):
                 # Simple string entry: normalize name to snake_case
@@ -159,7 +160,7 @@ class ConfigurationLoader(YamlLoadable):
         self._initializer_configs = normalized
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ConfigurationLoader":
+    def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
         """
         Create a ConfigurationLoader from a dictionary.
 
@@ -178,7 +179,7 @@ class ConfigurationLoader(YamlLoadable):
         config_file: Optional[pathlib.Path] = None,
         *,
         memory_db_type: Optional[str] = None,
-        initializers: Optional[Sequence[Union[str, Dict[str, Any]]]] = None,
+        initializers: Optional[Sequence[Union[str, dict[str, Any]]]] = None,
         initialization_scripts: Optional[Sequence[str]] = None,
         env_files: Optional[Sequence[str]] = None,
     ) -> "ConfigurationLoader":
@@ -213,7 +214,7 @@ class ConfigurationLoader(YamlLoadable):
         logger = logging.getLogger(__name__)
 
         # Start with defaults - None means "use defaults", [] means "load nothing"
-        config_data: Dict[str, Any] = {
+        config_data: dict[str, Any] = {
             "memory_db_type": "sqlite",
             "initializers": [],
             "initialization_scripts": None,  # None = use defaults
@@ -296,13 +297,12 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If an initializer name is not found in the registry.
         """
         from pyrit.registry import InitializerRegistry
-        from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
         if not self._initializer_configs:
             return []
 
         registry = InitializerRegistry()
-        resolved: List[PyRITInitializer] = []
+        resolved: list[PyRITInitializer] = []
 
         for config in self._initializer_configs:
             initializer_class = registry.get_class(config.name)
@@ -313,10 +313,7 @@ class ConfigurationLoader(YamlLoadable):
                 )
 
             # Instantiate with args if provided
-            if config.args:
-                instance = initializer_class(**config.args)
-            else:
-                instance = initializer_class()
+            instance = initializer_class(**config.args) if config.args else initializer_class()
 
             resolved.append(instance)
 
@@ -338,7 +335,7 @@ class ConfigurationLoader(YamlLoadable):
         if len(self.initialization_scripts) == 0:
             return []
 
-        resolved: List[pathlib.Path] = []
+        resolved: list[pathlib.Path] = []
         for script_str in self.initialization_scripts:
             script_path = pathlib.Path(script_str)
             if not script_path.is_absolute():
@@ -363,7 +360,7 @@ class ConfigurationLoader(YamlLoadable):
         if len(self.env_files) == 0:
             return []
 
-        resolved: List[pathlib.Path] = []
+        resolved: list[pathlib.Path] = []
         for env_str in self.env_files:
             env_path = pathlib.Path(env_str)
             if not env_path.is_absolute():

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Any, Generic, List, Literal, Protocol, TypeVar
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 from pyrit.models import Message
 
@@ -36,7 +36,7 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
     """
 
     @abc.abstractmethod
-    async def normalize_async(self, messages: List[Message]) -> List[T]:
+    async def normalize_async(self, messages: list[Message]) -> list[T]:
         """
         Normalize the list of messages into a list of items.
 
@@ -47,7 +47,7 @@ class MessageListNormalizer(abc.ABC, Generic[T]):
             A list of normalized items of type T.
         """
 
-    async def normalize_to_dicts_async(self, messages: List[Message]) -> List[dict[str, Any]]:
+    async def normalize_to_dicts_async(self, messages: list[Message]) -> list[dict[str, Any]]:
         """
         Normalize the list of messages into a list of dictionaries.
 
@@ -71,7 +71,7 @@ class MessageStringNormalizer(abc.ABC):
     """
 
     @abc.abstractmethod
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Normalize the list of messages into a string representation.
 
@@ -83,7 +83,7 @@ class MessageStringNormalizer(abc.ABC):
         """
 
 
-async def apply_system_message_behavior(messages: List[Message], behavior: SystemMessageBehavior) -> List[Message]:
+async def apply_system_message_behavior(messages: list[Message], behavior: SystemMessageBehavior) -> list[Message]:
     """
     Apply a system message behavior to a list of messages.
 

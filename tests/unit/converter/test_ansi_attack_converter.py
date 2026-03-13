@@ -66,7 +66,7 @@ async def test_convert_async_unescape_scenario():
             UNESCAPE_STUBS[0],  # from scenario 3
             ESCAPED_PAYLOADS[0],  # from scenario 3
             # Finally pick scenario 3 (unescape scenario) as final scenario
-            # scenario_choices: [scenario1, scenario2, scenario3]
+            # scenario_choices: [scenario1, scenario2, scenario3]  # noqa: ERA001
             # scenario 1: "ASKS ..."
             # scenario 2: "REPEAT..."
             # scenario 3: "UNESCAPE..."

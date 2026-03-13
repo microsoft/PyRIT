@@ -81,7 +81,7 @@ class MockPromptConverter(PromptConverter):
     def __init__(self) -> None:
         pass
 
-    def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:  # type: ignore
+    def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:  # type: ignore[arg-type]
         return ConverterResult(output_text=prompt, output_type="text")
 
     def input_supported(self, input_type: PromptDataType) -> bool:
@@ -175,8 +175,8 @@ async def test_send_prompt_async_request_response_added_to_memory(mock_memory_in
         == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
     )
     assert (
-        "test_response"
-        == mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        == "test_response"
     )
 
     assert mock_memory_instance.add_message_to_memory.call_args_list[1].called_after(prompt_target.send_prompt_async)
@@ -207,10 +207,10 @@ async def test_send_prompt_async_exception(mock_memory_instance, seed_group):
                 .original_value
             )
             assert (
-                "test_exception"
-                == mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"]
+                mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"]
                 .message_pieces[0]
                 .original_value
+                == "test_exception"
             )
 
 
@@ -245,7 +245,7 @@ async def test_send_prompt_async_mixed_sequence_types(mock_memory_instance):
     piece1 = MessagePiece(role="user", original_value="test1", sequence=1, conversation_id=conv_id)
     piece2 = MessagePiece(role="user", original_value="test2", sequence=1, conversation_id=conv_id)
     # Manually set different sequence to test validation
-    piece2.sequence = None  # type: ignore
+    piece2.sequence = None  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="Inconsistent sequences within the same message entry"):
         Message(message_pieces=[piece1, piece2])

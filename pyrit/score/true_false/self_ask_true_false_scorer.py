@@ -2,8 +2,9 @@
 # Licensed under the MIT license.
 
 import enum
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator, Optional, Union
+from typing import Any, Optional, Union
 
 import yaml
 
@@ -32,6 +33,8 @@ class TrueFalseQuestionPaths(enum.Enum):
     GANDALF = Path(TRUE_FALSE_QUESTIONS_PATH, "gandalf.yaml").resolve()
     YES_NO = Path(TRUE_FALSE_QUESTIONS_PATH, "yes_no_answer.yaml").resolve()
     TASK_ACHIEVED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved.yaml").resolve()
+    # This is an LLM-powered refinement of the TASK_ACHIEVED rubric
+    TASK_ACHIEVED_REFINED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved_refined.yaml").resolve()
 
 
 class TrueFalseQuestion:
@@ -146,7 +149,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         true_category = true_false_question["true_description"]
         false_category = true_false_question["false_description"]
 
-        metadata = true_false_question["metadata"] if "metadata" in true_false_question else ""
+        metadata = true_false_question["metadata"] if "metadata" in true_false_question else ""  # noqa: SIM401
 
         scoring_instructions_template = SeedPrompt.from_yaml_file(true_false_system_prompt_path)
 

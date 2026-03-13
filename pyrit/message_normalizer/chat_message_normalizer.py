@@ -4,7 +4,7 @@
 import base64
 import json
 import os
-from typing import Any, List, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from pyrit.common import convert_local_image_to_data_url
 from pyrit.message_normalizer.message_normalizer import (
@@ -14,8 +14,10 @@ from pyrit.message_normalizer.message_normalizer import (
     apply_system_message_behavior,
 )
 from pyrit.models import ChatMessage, DataTypeSerializer, Message
-from pyrit.models.literals import ChatMessageRole
 from pyrit.models.message_piece import MessagePiece
+
+if TYPE_CHECKING:
+    from pyrit.models.literals import ChatMessageRole
 
 # Supported audio formats for OpenAI input_audio
 # https://platform.openai.com/docs/guides/audio
@@ -56,7 +58,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         self.use_developer_role = use_developer_role
         self.system_message_behavior = system_message_behavior
 
-    async def normalize_async(self, messages: List[Message]) -> List[ChatMessage]:
+    async def normalize_async(self, messages: list[Message]) -> list[ChatMessage]:
         """
         Convert a list of Messages to a list of ChatMessages.
 
@@ -78,7 +80,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         # Apply system message preprocessing
         processed_messages = await apply_system_message_behavior(messages, self.system_message_behavior)
 
-        chat_messages: List[ChatMessage] = []
+        chat_messages: list[ChatMessage] = []
         for message in processed_messages:
             pieces = message.message_pieces
             role: ChatMessageRole = pieces[0].api_role
@@ -89,7 +91,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
             # Use simple string for single text piece, otherwise use content list
             if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
-                content: Union[str, List[dict[str, Any]]] = pieces[0].converted_value
+                content: Union[str, list[dict[str, Any]]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
 
@@ -97,7 +99,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
         return chat_messages
 
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Convert a list of Messages to a JSON string representation.
 

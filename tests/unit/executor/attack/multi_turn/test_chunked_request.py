@@ -8,7 +8,7 @@ This attack was developed based on techniques discovered and validated
 during Crucible CTF red teaming exercises using PyRIT.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -18,6 +18,8 @@ from pyrit.executor.attack.multi_turn import (
     ChunkedRequestAttackContext,
 )
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import Message, MessagePiece
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 
@@ -253,3 +255,34 @@ class TestChunkedRequestAttack:
         assert "the secret password" in prompts[1]
         assert "1-50" in prompts[0]
         assert "51-100" in prompts[1]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestChunkedRequestAttackExecution:
+    """Tests for the main attack execution logic."""
+
+    @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(self):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        mock_target = _make_mock_target()
+        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        sample_response = Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value="chunk response", original_value_data_type="text")
+            ]
+        )
+        mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
+
+        attack = ChunkedRequestAttack(
+            objective_target=mock_target,
+            prompt_normalizer=mock_normalizer,
+            chunk_size=100,
+            total_length=100,
+        )
+
+        context = ChunkedRequestAttackContext(params=AttackParameters(objective="Extract the secret"))
+        result = await attack._perform_async(context=context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()

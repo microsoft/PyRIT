@@ -12,10 +12,7 @@ from abc import abstractmethod
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
     Optional,
-    Sequence,
     Union,
     cast,
 )
@@ -37,16 +34,18 @@ from pyrit.models import (
     ScoreType,
     UnvalidatedScore,
 )
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyrit.prompt_target import PromptChatTarget, PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import (
         ScorerEvalDatasetFiles,
     )
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +55,9 @@ class Scorer(Identifiable, abc.ABC):
     Abstract base class for scorers.
     """
 
-    # Evaluation configuration - maps input dataset files to a result file
-    # Specifies glob patterns for datasets and a result file name
-    evaluation_file_mapping: Optional["ScorerEvalDatasetFiles"] = None
+    # Evaluation configuration - maps input dataset files to a result file.
+    # Specifies glob patterns for datasets and a result file name.
+    evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
 
     _identifier: Optional[ComponentIdentifier] = None
 
@@ -70,6 +69,22 @@ class Scorer(Identifiable, abc.ABC):
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
         """
         self._validator = validator
+
+    def get_eval_hash(self) -> str:
+        """
+        Compute a behavioral equivalence hash for evaluation grouping.
+
+        Delegates to ``ScorerEvaluationIdentifier`` which filters target children
+        (prompt_target, converter_target) to behavioral params only, so the same
+        scorer configuration on different deployments produces the same eval hash.
+
+        Returns:
+            str: A hex-encoded SHA256 hash suitable for eval registry keying.
+        """
+        # Deferred import to avoid circular dependency (evaluation_identifier → identifiers → …)
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+
+        return ScorerEvaluationIdentifier(self.get_identifier()).eval_hash
 
     @property
     def scorer_type(self) -> ScoreType:
@@ -98,8 +113,8 @@ class Scorer(Identifiable, abc.ABC):
     def _create_identifier(
         self,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        children: Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]] = None,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
     ) -> ComponentIdentifier:
         """
         Construct the scorer identifier.
@@ -120,7 +135,7 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
-        all_params: Dict[str, Any] = {
+        all_params: dict[str, Any] = {
             "scorer_type": self.scorer_type,
         }
         if params:
@@ -224,7 +239,7 @@ class Scorer(Identifiable, abc.ABC):
 
     @abstractmethod
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
         """
@@ -246,16 +261,16 @@ class Scorer(Identifiable, abc.ABC):
         Args:
             scores (list[Score]): The scores to be validated.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     async def evaluate_async(
         self,
-        file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
+        file_mapping: Optional[ScorerEvalDatasetFiles] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior" = None,
+        update_registry_behavior: RegistryUpdateBehavior = None,
         max_concurrency: int = 10,
-    ) -> Optional["ScorerMetrics"]:
+    ) -> Optional[ScorerMetrics]:
         """
         Evaluate this scorer against human-labeled datasets.
 
@@ -304,7 +319,7 @@ class Scorer(Identifiable, abc.ABC):
         )
 
     @abstractmethod
-    def get_scorer_metrics(self) -> Optional["ScorerMetrics"]:
+    def get_scorer_metrics(self) -> Optional[ScorerMetrics]:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 
@@ -412,7 +427,7 @@ class Scorer(Identifiable, abc.ABC):
         results = await batch_task_async(
             task_func=self.score_async,
             task_arguments=["message", "objective"],
-            prompt_target=cast(PromptTarget, prompt_target),
+            prompt_target=cast("PromptTarget", prompt_target),
             batch_size=batch_size,
             items_to_batch=[messages, objectives],
             role_filter=role_filter,
@@ -441,9 +456,8 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             ValueError: If the number of objectives does not match the number of image_paths.
         """
-        if objectives:
-            if len(objectives) != len(image_paths):
-                raise ValueError("The number of objectives must match the number of image_paths.")
+        if objectives and len(objectives) != len(image_paths):
+            raise ValueError("The number of objectives must match the number of image_paths.")
 
         if len(image_paths) == 0:
             return []
@@ -586,7 +600,11 @@ class Scorer(Identifiable, abc.ABC):
 
         response_json: str = ""
         try:
-            response_json = response[0].get_value()
+            # Get the text piece which contains the JSON response containing the score_value and rationale from the LLM
+            text_piece = next(
+                piece for piece in response[0].message_pieces if piece.converted_value_data_type == "text"
+            )
+            response_json = text_piece.converted_value
 
             response_json = remove_markdown_json(response_json)
             parsed_response = json.loads(response_json)
@@ -612,7 +630,7 @@ class Scorer(Identifiable, abc.ABC):
 
             # Normalize metadata to a dictionary with string keys and string/int/float values
             raw_md = parsed_response.get(metadata_output_key)
-            normalized_md: Optional[Dict[str, Union[str, int, float]]]
+            normalized_md: Optional[dict[str, Union[str, int, float]]]
             if raw_md is None:
                 normalized_md = None
             elif isinstance(raw_md, dict):
@@ -638,10 +656,10 @@ class Scorer(Identifiable, abc.ABC):
             )
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON response: {response_json}")
+            raise InvalidJsonException(message=f"Invalid JSON response: {response_json}") from None
 
         except KeyError:
-            raise InvalidJsonException(message=f"Invalid JSON response, missing Key: {response_json}")
+            raise InvalidJsonException(message=f"Invalid JSON response, missing Key: {response_json}") from None
 
         return score
 
@@ -680,11 +698,11 @@ class Scorer(Identifiable, abc.ABC):
         *,
         response: Message,
         objective_scorer: Optional[Scorer] = None,
-        auxiliary_scorers: Optional[List[Scorer]] = None,
+        auxiliary_scorers: Optional[list[Scorer]] = None,
         role_filter: ChatMessageRole = "assistant",
         objective: Optional[str] = None,
         skip_on_error_result: bool = True,
-    ) -> Dict[str, List[Score]]:
+    ) -> dict[str, list[Score]]:
         """
         Score a response using an objective scorer and optional auxiliary scorers.
 
@@ -704,7 +722,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             ValueError: If response is not provided.
         """
-        result: Dict[str, List[Score]] = {"auxiliary_scores": [], "objective_scores": []}
+        result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
 
         if not response:
             raise ValueError("Response must be provided for scoring.")
@@ -755,11 +773,11 @@ class Scorer(Identifiable, abc.ABC):
     async def score_response_multiple_scorers_async(
         *,
         response: Message,
-        scorers: List[Scorer],
+        scorers: list[Scorer],
         role_filter: ChatMessageRole = "assistant",
         objective: Optional[str] = None,
         skip_on_error_result: bool = True,
-    ) -> List[Score]:
+    ) -> list[Score]:
         """
         Score a response using multiple scorers in parallel.
 
@@ -781,17 +799,15 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Create all scoring tasks, note TEMPORARY fix to prevent multi-piece responses from breaking scoring logic
-        tasks = []
-
-        for scorer in scorers:
-            tasks.append(
-                scorer.score_async(
-                    message=response,
-                    objective=objective,
-                    role_filter=role_filter,
-                    skip_on_error_result=skip_on_error_result,
-                )
+        tasks = [
+            scorer.score_async(
+                message=response,
+                objective=objective,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
             )
+            for scorer in scorers
+        ]
 
         if not tasks:
             return []

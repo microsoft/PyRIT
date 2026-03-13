@@ -48,4 +48,4 @@ I'm sorry but I'm afraid I can't answer that. Creating that is highly dangerous.
 scored_response = (await harmful_content_classifier.score_text_async(text=text_with_no_harmful_content))[0]  # type: ignore
 print("[Regular Text] Scored response is given as:", scored_response.score_category, scored_response.score_rationale)
 
-assert scored_response.get_value() == False, "Scored value should be false since nothing is wrong with this."
+assert not scored_response.get_value(), "Scored value should be false since nothing is wrong with this."

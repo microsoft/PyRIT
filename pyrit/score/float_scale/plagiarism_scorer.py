@@ -3,7 +3,7 @@
 
 import re
 from enum import Enum
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -71,7 +71,7 @@ class PlagiarismScorer(FloatScaleScorer):
             },
         )
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         """
         Tokenize text using whitespace-based tokenization (case-insensitive).
 
@@ -82,7 +82,7 @@ class PlagiarismScorer(FloatScaleScorer):
         text = re.sub(r"[^\w\s]", "", text)
         return text.split()
 
-    def _lcs_length(self, a: List[str], b: List[str]) -> int:
+    def _lcs_length(self, a: list[str], b: list[str]) -> int:
         """
         Compute the length of the Longest Common Subsequence at word level.
 
@@ -98,7 +98,7 @@ class PlagiarismScorer(FloatScaleScorer):
                     dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
         return int(dp[len(a)][len(b)])
 
-    def _levenshtein_distance(self, a: List[str], b: List[str]) -> int:
+    def _levenshtein_distance(self, a: list[str], b: list[str]) -> int:
         """
         Compute Levenshtein edit distance at word level.
 
@@ -116,7 +116,7 @@ class PlagiarismScorer(FloatScaleScorer):
                 dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
         return int(dp[len(a)][len(b)])
 
-    def _ngram_set(self, tokens: List[str], n: int) -> set[tuple[str, ...]]:
+    def _ngram_set(self, tokens: list[str], n: int) -> set[tuple[str, ...]]:
         """
         Generate a set of n-grams from token list.
 

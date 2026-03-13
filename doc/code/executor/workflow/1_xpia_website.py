@@ -25,7 +25,7 @@ from pyrit.datasets import TextJailBreak
 from pyrit.models import Message, MessagePiece
 
 # Read basic HTML file with template slot for the XPIA.
-with open(Path().cwd() / "example" / "index.html", "r") as f:
+with open(Path().cwd() / "example" / "index.html") as f:
     html_template = f.read()
 jailbreak_template = TextJailBreak(string_template=html_template)
 
@@ -60,15 +60,17 @@ from openai.types.responses import (
     ResponseOutputMessage,
 )
 
+from pyrit.auth import get_azure_token_provider
 from pyrit.setup import SQLITE, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=SQLITE)  # type: ignore
 
 
 async def processing_callback() -> str:
+    gpt4o_endpoint = os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
     client = OpenAI(
-        api_key=os.environ["AZURE_OPENAI_GPT4O_KEY"],
-        base_url=os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"],
+        api_key=get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
+        base_url=gpt4o_endpoint,
     )
 
     tools: list[FunctionToolParam] = [

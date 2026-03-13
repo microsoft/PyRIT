@@ -173,7 +173,7 @@ class TestBinAsciiConverterErrorHandling:
     async def test_invalid_encoding_function(self) -> None:
         """Test that invalid encoding function raises ValueError."""
         converter = BinAsciiConverter(encoding_func="hex")
-        converter._encoding_func = "invalid"  # type: ignore
+        converter._encoding_func = "invalid"  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="Unsupported encoding function"):
             await converter.convert_async(prompt="test")
@@ -182,4 +182,4 @@ class TestBinAsciiConverterErrorHandling:
     async def test_invalid_encoding_function_at_init(self) -> None:
         """Test that invalid encoding function at initialization raises ValueError."""
         with pytest.raises(ValueError, match="Invalid encoding_func"):
-            BinAsciiConverter(encoding_func="invalid")  # type: ignore
+            BinAsciiConverter(encoding_func="invalid")  # type: ignore[arg-type]

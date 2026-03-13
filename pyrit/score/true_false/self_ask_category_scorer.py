@@ -3,7 +3,7 @@
 
 import enum
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 import yaml
 
@@ -95,7 +95,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
             },
         )
 
-    def _content_classifier_to_string(self, categories: list[Dict[str, str]]) -> str:
+    def _content_classifier_to_string(self, categories: list[dict[str, str]]) -> str:
         """
         Convert the content classifier categories to a string representation to be put in a system prompt.
 

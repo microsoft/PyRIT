@@ -9,7 +9,8 @@ and memory_labels consistently according to the established contracts.
 """
 
 import uuid
-from typing import List, Optional
+from contextlib import suppress
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -107,7 +108,7 @@ def multimodal_audio_message() -> Message:
 
 
 @pytest.fixture
-def prepended_conversation_text() -> List[Message]:
+def prepended_conversation_text() -> list[Message]:
     """Create a text-only prepended conversation."""
     return [
         Message.from_prompt(prompt="Hello, I need help with something.", role="user"),
@@ -118,7 +119,7 @@ def prepended_conversation_text() -> List[Message]:
 
 
 @pytest.fixture
-def prepended_conversation_multimodal() -> List[Message]:
+def prepended_conversation_multimodal() -> list[Message]:
     """Create a multimodal prepended conversation with image content."""
     conv_id = str(uuid.uuid4())
     return [
@@ -572,7 +573,7 @@ class TestPrependedConversationInMemory:
     def _assert_assistant_translated_to_simulated(
         self,
         *,
-        conversation: List[Message],
+        conversation: list[Message],
         prepended_count: int,
     ) -> None:
         """
@@ -606,7 +607,7 @@ class TestPrependedConversationInMemory:
         self,
         mock_chat_target: MagicMock,
         sample_response: Message,
-        prepended_conversation_multimodal: List[Message],
+        prepended_conversation_multimodal: list[Message],
         sqlite_instance,
     ) -> None:
         """Test that prepended conversation is preserved in memory with correct role translation."""
@@ -649,7 +650,7 @@ class TestPrependedConversationInMemory:
     async def test_red_teaming_attack_adds_prepended_to_memory(
         self,
         red_teaming_attack: RedTeamingAttack,
-        prepended_conversation_multimodal: List[Message],
+        prepended_conversation_multimodal: list[Message],
         sqlite_instance,
     ) -> None:
         """Test that RedTeamingAttack preserves prepended conversation in memory with role translation."""
@@ -683,7 +684,7 @@ class TestPrependedConversationInMemory:
     async def test_crescendo_attack_adds_prepended_to_memory(
         self,
         crescendo_attack: CrescendoAttack,
-        prepended_conversation_multimodal: List[Message],
+        prepended_conversation_multimodal: list[Message],
         multimodal_text_message: Message,
         sqlite_instance,
     ) -> None:
@@ -723,7 +724,7 @@ class TestPrependedConversationInMemory:
         mock_objective_scorer: MagicMock,
         sample_response: Message,
         success_score: Score,
-        prepended_conversation_multimodal: List[Message],
+        prepended_conversation_multimodal: list[Message],
         multimodal_text_message: Message,
         sqlite_instance,
     ) -> None:
@@ -801,7 +802,7 @@ class TestMultiTurnTurnCounting:
     async def test_red_teaming_starts_with_prepended_turn_count(
         self,
         red_teaming_attack: RedTeamingAttack,
-        prepended_conversation_text: List[Message],
+        prepended_conversation_text: list[Message],
     ) -> None:
         """Test that RedTeamingAttack starts executed_turns at prepended turn count."""
         # The prepended_conversation_text has 2 assistant messages
@@ -818,7 +819,7 @@ class TestMultiTurnTurnCounting:
     async def test_crescendo_starts_with_prepended_turn_count(
         self,
         crescendo_attack: CrescendoAttack,
-        prepended_conversation_text: List[Message],
+        prepended_conversation_text: list[Message],
         multimodal_text_message: Message,
     ) -> None:
         """Test that CrescendoAttack starts executed_turns at prepended turn count."""
@@ -836,7 +837,7 @@ class TestMultiTurnTurnCounting:
     async def test_tap_starts_with_prepended_turn_count(
         self,
         tap_attack: TreeOfAttacksWithPruningAttack,
-        prepended_conversation_text: List[Message],
+        prepended_conversation_text: list[Message],
         multimodal_text_message: Message,
     ) -> None:
         """Test that TreeOfAttacksWithPruningAttack starts executed_turns at prepended turn count."""
@@ -894,7 +895,7 @@ class TestMemoryLabelsPropagation:
 # =============================================================================
 
 
-def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) -> List[str]:
+def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) -> list[str]:
     """
     Get all text values from the adversarial chat conversation in memory.
 
@@ -911,16 +912,16 @@ def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) 
 
     text_values = []
     for msg in conversation:
-        for piece in msg.message_pieces:
-            if piece.original_value_data_type == "text":
-                text_values.append(piece.original_value)
+        text_values.extend(
+            piece.original_value for piece in msg.message_pieces if piece.original_value_data_type == "text"
+        )
 
     return text_values
 
 
 def _assert_prepended_text_in_adversarial_context(
     *,
-    prepended_conversation: List[Message],
+    prepended_conversation: list[Message],
     adversarial_chat_conversation_id: str,
     adversarial_chat_mock: Optional[MagicMock] = None,
 ) -> None:
@@ -948,12 +949,15 @@ def _assert_prepended_text_in_adversarial_context(
     )
 
     # If memory is empty but we have a mock, check set_system_prompt calls
-    if not adversarial_text_values and adversarial_chat_mock is not None:
-        if adversarial_chat_mock.set_system_prompt.called:
-            for call in adversarial_chat_mock.set_system_prompt.call_args_list:
-                system_prompt = call.kwargs.get("system_prompt", "")
-                if system_prompt:
-                    adversarial_text_values.append(system_prompt)
+    if (
+        not adversarial_text_values
+        and adversarial_chat_mock is not None
+        and adversarial_chat_mock.set_system_prompt.called
+    ):
+        for call in adversarial_chat_mock.set_system_prompt.call_args_list:
+            system_prompt = call.kwargs.get("system_prompt", "")
+            if system_prompt:
+                adversarial_text_values.append(system_prompt)
 
     combined_adversarial_text = " ".join(adversarial_text_values)
 
@@ -981,7 +985,7 @@ class TestAdversarialChatContextInjection:
         self,
         red_teaming_attack: RedTeamingAttack,
         mock_adversarial_chat: MagicMock,
-        prepended_conversation_text: List[Message],
+        prepended_conversation_text: list[Message],
         sqlite_instance,
     ) -> None:
         """Test that RedTeamingAttack injects prepended conversation into adversarial chat context."""
@@ -1007,7 +1011,7 @@ class TestAdversarialChatContextInjection:
         self,
         crescendo_attack: CrescendoAttack,
         mock_adversarial_chat: MagicMock,
-        prepended_conversation_text: List[Message],
+        prepended_conversation_text: list[Message],
         multimodal_text_message: Message,
         sqlite_instance,
     ) -> None:
@@ -1035,20 +1039,18 @@ class TestAdversarialChatContextInjection:
         self,
         tap_attack: TreeOfAttacksWithPruningAttack,
         mock_adversarial_chat: MagicMock,
-        prepended_conversation_text: List[Message],
+        prepended_conversation_text: list[Message],
         multimodal_text_message: Message,
         sqlite_instance,
     ) -> None:
         """Test that TreeOfAttacksWithPruningAttack injects prepended conversation into adversarial context."""
         # TAP may fail due to JSON parsing, but set_system_prompt should be called before the error
-        try:
+        with suppress(Exception):
             await tap_attack.execute_async(
                 objective="Test objective",
                 prepended_conversation=prepended_conversation_text,
                 next_message=multimodal_text_message,
             )
-        except Exception:
-            pass  # Expected - JSON parsing may fail, but set_system_prompt should have been called
 
         # Verify prepended text appears in adversarial context (checks mock's set_system_prompt calls)
         _assert_prepended_text_in_adversarial_context(

@@ -3,8 +3,9 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Optional
 
 from pyrit.memory import CentralMemory
 from pyrit.models import (

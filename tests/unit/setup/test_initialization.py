@@ -107,7 +107,7 @@ class ScriptInit(PyRITInitializer):
     async def test_invalid_memory_type_raises_error(self):
         """Test that invalid memory type raises ValueError."""
         with pytest.raises(ValueError, match="is not a supported type"):
-            await initialize_pyrit_async(memory_db_type="InvalidType")  # type: ignore
+            await initialize_pyrit_async(memory_db_type="InvalidType")  # type: ignore[arg-type]
 
 
 class TestLoadEnvironmentFiles:

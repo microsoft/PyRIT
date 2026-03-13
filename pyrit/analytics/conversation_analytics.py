@@ -39,20 +39,16 @@ class ConversationAnalytics:
             the similar chat messages based on content.
         """
         all_memories = self.memory_interface.get_message_pieces()
-        similar_messages = []
-
-        for memory in all_memories:
-            if memory.converted_value == chat_message_content:
-                similar_messages.append(
-                    ConversationMessageWithSimilarity(
-                        score=1.0,
-                        role=memory.role,
-                        content=memory.converted_value,
-                        metric="exact_match",  # Exact match
-                    )
-                )
-
-        return similar_messages
+        return [
+            ConversationMessageWithSimilarity(
+                score=1.0,
+                role=memory.role,
+                content=memory.converted_value,
+                metric="exact_match",  # Exact match
+            )
+            for memory in all_memories
+            if memory.converted_value == chat_message_content
+        ]
 
     def get_similar_chat_messages_by_embedding(
         self, *, chat_message_embedding: list[float], threshold: float = 0.8

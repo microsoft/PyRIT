@@ -68,10 +68,10 @@ def test_image_text_converter_add_text_to_image(image_text_converter_sample_imag
     converter = AddImageTextConverter(
         img_to_add=image_text_converter_sample_image, font_name="helvetica.ttf", color=(255, 255, 255)
     )
-    image = Image.open("test.png")
-    pixels_before = list(image.getdata())
+    with Image.open("test.png") as image:
+        pixels_before = list(image.get_flattened_data())
     updated_image = converter._add_text_to_image("Sample Text!")
-    pixels_after = list(updated_image.getdata())
+    pixels_after = list(updated_image.get_flattened_data())
     assert updated_image
     # Check if at least one pixel changed, indicating that text was added
     assert pixels_before != pixels_after
@@ -82,7 +82,7 @@ def test_image_text_converter_add_text_to_image(image_text_converter_sample_imag
 async def test_add_image_text_converter_invalid_input_text(image_text_converter_sample_image) -> None:
     converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image)
     with pytest.raises(ValueError):
-        assert await converter.convert_async(prompt="", input_type="text")  # type: ignore
+        assert await converter.convert_async(prompt="", input_type="text")  # type: ignore[arg-type]
     os.remove("test.png")
 
 
@@ -90,7 +90,7 @@ async def test_add_image_text_converter_invalid_input_text(image_text_converter_
 async def test_add_image_text_converter_invalid_file_path():
     converter = AddImageTextConverter(img_to_add="nonexistent_image.png", font_name="helvetica.ttf")
     with pytest.raises(FileNotFoundError):
-        assert await converter.convert_async(prompt="Sample Text!", input_type="text")  # type: ignore
+        assert await converter.convert_async(prompt="Sample Text!", input_type="text")  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -121,8 +121,10 @@ async def test_add_image_text_converter_equal_to_add_text_image(
     converted_image = await converter.convert_async(prompt="Sample Text!", input_type="text")
     text_image_converter = AddTextImageConverter(text_to_add="Sample Text!")
     converted_text_image = await text_image_converter.convert_async(prompt="test.png", input_type="image_path")
-    pixels_image_text = list(Image.open(converted_image.output_text).getdata())
-    pixels_text_image = list(Image.open(converted_text_image.output_text).getdata())
+    with Image.open(converted_image.output_text) as img1:
+        pixels_image_text = list(img1.get_flattened_data())
+    with Image.open(converted_text_image.output_text) as img2:
+        pixels_text_image = list(img2.get_flattened_data())
     assert pixels_image_text == pixels_text_image
     os.remove(converted_image.output_text)
     if os.path.exists(converted_text_image.output_text):

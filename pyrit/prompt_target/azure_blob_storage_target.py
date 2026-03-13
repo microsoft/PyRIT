@@ -144,9 +144,9 @@ class AzureBlobStorageTarget(PromptTarget):
             if isinstance(exc, ClientAuthenticationError):
                 logger.exception(
                     msg="Authentication failed. Please check that the container existence in the "
-                    + "Azure Storage Account and ensure the validity of the provided SAS token. If you "
-                    + "haven't set the SAS token as an environment variable use `az login` to "
-                    + "enable delegation-based SAS authentication to connect to the storage account"
+                    "Azure Storage Account and ensure the validity of the provided SAS token. If you "
+                    "haven't set the SAS token as an environment variable use `az login` to "
+                    "enable delegation-based SAS authentication to connect to the storage account"
                 )
                 raise
             logger.exception(msg=f"An unexpected error occurred: {exc}")

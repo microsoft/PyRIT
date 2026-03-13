@@ -14,7 +14,7 @@ Converters can be:
 
 import uuid
 from functools import lru_cache
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional
 
 from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -164,7 +164,7 @@ class ConverterService:
             steps=steps,
         )
 
-    def get_converter_objects_for_ids(self, *, converter_ids: List[str]) -> List[Any]:
+    def get_converter_objects_for_ids(self, *, converter_ids: list[str]) -> list[Any]:
         """
         Get converter objects for a list of IDs.
 
@@ -226,14 +226,14 @@ class ConverterService:
                 resolved["converter"] = conv_obj
         return resolved
 
-    def _gather_converters(self, *, converter_ids: List[str]) -> List[Tuple[str, str, Any]]:
+    def _gather_converters(self, *, converter_ids: list[str]) -> list[tuple[str, str, Any]]:
         """
         Gather converters to apply from IDs.
 
         Returns:
             List of tuples (converter_id, converter_type, converter_obj).
         """
-        converters: List[Tuple[str, str, Any]] = []
+        converters: list[tuple[str, str, Any]] = []
         for conv_id in converter_ids:
             conv_obj = self.get_converter_object(converter_id=conv_id)
             if conv_obj is None:
@@ -245,10 +245,10 @@ class ConverterService:
     async def _apply_converters(
         self,
         *,
-        converters: List[Tuple[str, str, Any]],
+        converters: list[tuple[str, str, Any]],
         initial_value: str,
         initial_type: PromptDataType,
-    ) -> Tuple[List[PreviewStep], str, PromptDataType]:
+    ) -> tuple[list[PreviewStep], str, PromptDataType]:
         """
         Apply converters and collect steps.
 
@@ -257,7 +257,7 @@ class ConverterService:
         """
         current_value = initial_value
         current_type = initial_type
-        steps: List[PreviewStep] = []
+        steps: list[PreviewStep] = []
 
         for conv_id, conv_type, conv_obj in converters:
             input_value, input_type = current_value, current_type

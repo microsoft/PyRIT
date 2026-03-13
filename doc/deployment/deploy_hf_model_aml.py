@@ -154,16 +154,12 @@ model = None
 if check_model_version_exists(workspace_ml_client, model_to_deploy, model_version):
     print("Model found in the Azure ML workspace model registry.")
     model = workspace_ml_client.models.get(model_to_deploy, model_version)
-    print(
-        "\n\nUsing model name: {0}, version: {1}, id: {2} for inferencing".format(model.name, model.version, model.id)
-    )
+    print(f"\n\nUsing model name: {model.name}, version: {model.version}, id: {model.id} for inferencing")
 # Check if the Hugging Face model exists in the Azure ML model catalog registry
 elif check_model_version_exists(registry_ml_client, model_to_deploy, model_version):
     print("Model found in the Azure ML model catalog registry.")
     model = registry_ml_client.models.get(model_to_deploy, model_version)
-    print(
-        "\n\nUsing model name: {0}, version: {1}, id: {2} for inferencing".format(model.name, model.version, model.id)
-    )
+    print(f"\n\nUsing model name: {model.name}, version: {model.version}, id: {model.id} for inferencing")
 else:
     raise ValueError(
         f"Model {model_to_deploy} not found in any registry. Please run the notebook (download_and_register_hf_model_aml.ipynb) to download and register Hugging Face model to Azure ML workspace model registry."

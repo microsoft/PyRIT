@@ -6,7 +6,8 @@ import json
 import logging
 import re
 from abc import abstractmethod
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 from openai import (
@@ -22,13 +23,15 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
     handle_bad_request_exception,
 )
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.openai.openai_error_handling import (
     _extract_error_payload,
     _extract_request_id_from_exception,
@@ -62,7 +65,8 @@ def _ensure_async_token_provider(
 
     # Wrap synchronous token provider in async function
     logger.info(
-        "Detected synchronous token provider. Automatically wrapping in async function for compatibility with AsyncOpenAI."
+        "Detected synchronous token provider."
+        " Automatically wrapping in async function for compatibility with AsyncOpenAI."
     )
 
     async def async_token_provider() -> str:
@@ -72,12 +76,12 @@ def _ensure_async_token_provider(
         Returns:
             str: The token string from the synchronous provider.
         """
-        return api_key()  # type: ignore
+        return api_key()  # type: ignore[return-value]
 
     return async_token_provider
 
 
-class OpenAITarget(PromptChatTarget):
+class OpenAITarget(PromptTarget):
     """
     Abstract base class for OpenAI-based prompt targets.
 
@@ -107,6 +111,7 @@ class OpenAITarget(PromptChatTarget):
         max_requests_per_minute: Optional[int] = None,
         httpx_client_kwargs: Optional[dict[str, Any]] = None,
         underlying_model: Optional[str] = None,
+        capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -117,7 +122,9 @@ class OpenAITarget(PromptChatTarget):
             endpoint (str, Optional): The target URL for the OpenAI service.
             api_key (str | Callable[[], str | Awaitable[str]], Optional): The API key for accessing the
                 OpenAI service, or a callable that returns an access token (sync or async).
-                For Azure endpoints with Entra authentication, pass a token provider from pyrit.auth
+                For Azure endpoints, if no API key is provided (via parameter or environment variable),
+                Entra ID authentication is used automatically.
+                You can also explicitly pass a token provider from pyrit.auth
                 (e.g., get_azure_openai_auth(endpoint) for async, or get_azure_token_provider(scope) for sync).
                 Synchronous token providers are automatically wrapped to work with async clients.
                 Defaults to the target-specific API key environment variable.
@@ -132,6 +139,11 @@ class OpenAITarget(PromptChatTarget):
                 from the actual model. If not provided, will attempt to fetch from environment variable.
                 If it is not there either, the identifier "model_name" attribute will use the model_name.
                 Defaults to None.
+            capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. If None, uses the class-level defaults. Defaults to None.
+
+        Raises:
+            ValueError: If no API key is provided and the endpoint is not an Azure endpoint.
         """
         self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
@@ -158,21 +170,35 @@ class OpenAITarget(PromptChatTarget):
         )
 
         # Initialize parent with endpoint and model_name
-        PromptChatTarget.__init__(
+        PromptTarget.__init__(
             self,
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint_value,
             model_name=self._model_name,
             underlying_model=underlying_model_value,
+            capabilities=capabilities,
         )
 
-        # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(
-            env_var_name=self.api_key_environment_variable, passed_value=api_key
-        )
+        # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
+        resolved_api_key: str | Callable[[], str | Awaitable[str]]
+        if api_key is not None and callable(api_key):
+            resolved_api_key = api_key
+        else:
+            api_key_value = default_values.get_non_required_value(
+                env_var_name=self.api_key_environment_variable, passed_value=api_key
+            )
+            if api_key_value:
+                resolved_api_key = api_key_value
+            elif "azure" in endpoint_value.lower():
+                resolved_api_key = get_azure_openai_auth(endpoint_value)
+            else:
+                raise ValueError(
+                    f"Environment variable {self.api_key_environment_variable} is required for non-Azure endpoints. "
+                    "For Azure endpoints, Entra ID authentication is used automatically."
+                )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)
-        self._api_key = _ensure_async_token_provider(self._api_key)
+        self._api_key = _ensure_async_token_provider(resolved_api_key)
 
         self._initialize_openai_client()
 
@@ -256,7 +282,6 @@ class OpenAITarget(PromptChatTarget):
         Returns:
             List of API paths (e.g., ["/chat/completions", "/v1/chat/completions"])
         """
-        pass
 
     @abstractmethod
     def _get_provider_examples(self) -> dict[str, str]:
@@ -269,7 +294,6 @@ class OpenAITarget(PromptChatTarget):
             Dict mapping provider patterns to example URLs
             (e.g., {".openai.azure.com": "https://{resource}.openai.azure.com/openai/v1"})
         """
-        pass
 
     def _validate_url_for_target(self, endpoint_url: str) -> None:
         """
@@ -497,14 +521,14 @@ class OpenAITarget(PromptChatTarget):
             request_id = _extract_request_id_from_exception(e)
             retry_after = _extract_retry_after_from_exception(e)
             logger.warning(f"RateLimitError request_id={request_id} retry_after={retry_after} error={e}")
-            raise RateLimitException()
+            raise RateLimitException from None
         except APIStatusError as e:
             # Other API status errors - check for 429 here as well
             request_id = _extract_request_id_from_exception(e)
             if getattr(e, "status_code", None) == 429:
                 retry_after = _extract_retry_after_from_exception(e)
                 logger.warning(f"429 via APIStatusError request_id={request_id} retry_after={retry_after}")
-                raise RateLimitException()
+                raise RateLimitException from None
             logger.exception(
                 f"APIStatusError request_id={request_id} status={getattr(e, 'status_code', None)} error={e}"
             )
@@ -536,7 +560,6 @@ class OpenAITarget(PromptChatTarget):
         Returns:
             Message: Constructed message with extracted content.
         """
-        pass
 
     def _check_content_filter(self, response: Any) -> bool:
         """
@@ -693,4 +716,3 @@ class OpenAITarget(PromptChatTarget):
         Returns:
             bool: True if JSON response is supported, False otherwise.
         """
-        pass

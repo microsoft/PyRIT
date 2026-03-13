@@ -17,7 +17,7 @@ from pyrit.score.scorer import Scorer
 logger = logging.getLogger(__name__)
 
 
-class _BaseVideoScorer(ABC):
+class _BaseVideoScorer(ABC):  # noqa: B024
     """
     Abstract base class for video scorers that process videos by extracting frames and scoring them.
 

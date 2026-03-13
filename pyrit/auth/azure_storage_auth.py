@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -31,7 +31,7 @@ class AzureStorageAuth:
         Returns:
             UserDelegationKey: A user delegation key valid for one day.
         """
-        delegation_key_start_time = datetime.now()
+        delegation_key_start_time = datetime.now(tz=timezone.utc)
         delegation_key_expiry_time = delegation_key_start_time + timedelta(days=1)
 
         return await blob_service_client.get_user_delegation_key(
@@ -79,7 +79,7 @@ class AzureStorageAuth:
                 storage_account_name = parsed_url.netloc.split(".")[0]
 
                 # Set start_time 5 minutes before the current time to account for any clock skew
-                start_time = datetime.now() - timedelta(minutes=5)
+                start_time = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
                 expiry_time = start_time + timedelta(days=1)
 
                 sas_token = generate_container_sas(

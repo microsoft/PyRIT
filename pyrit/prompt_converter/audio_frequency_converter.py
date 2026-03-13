@@ -97,11 +97,7 @@ class AudioFrequencyConverter(PromptConverter):
             converted_bytes = bytes_io.getvalue()
             await audio_serializer.save_data(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
-            logger.info(
-                "Speech synthesized for text [{}], and the audio was saved to [{}]".format(
-                    prompt, audio_serializer_file
-                )
-            )
+            logger.info(f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]")
 
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))

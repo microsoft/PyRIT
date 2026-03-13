@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import base64
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 
@@ -16,6 +16,7 @@ from pyrit.models import (
     construct_response_from_request,
     data_serializer_factory,
 )
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -27,6 +28,7 @@ class OpenAIImageTarget(OpenAITarget):
 
     # Maximum number of image inputs supported by the OpenAI image API
     _MAX_INPUT_IMAGES = 16
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=False)
 
     def __init__(
         self,
@@ -54,7 +56,9 @@ class OpenAIImageTarget(OpenAITarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
-            image_size (Literal["256x256", "512x512", "1024x1024", "1536x1024", "1024x1536", "1792x1024", "1024x1792"], Optional): The size of the generated image.
+            image_size (Literal, Optional): The size of the generated image.
+                Accepts "256x256", "512x512", "1024x1024", "1536x1024",
+                "1024x1536", "1792x1024", or "1024x1792".
                 Different models support different image sizes.
                 GPT image models support "1024x1024", "1536x1024" and "1024x1536".
                 DALL-E-3 supports "1024x1024", "1792x1024" and "1024x1792".
@@ -162,7 +166,7 @@ class OpenAIImageTarget(OpenAITarget):
         prompt = message.message_pieces[0].converted_value
 
         # Construct request parameters
-        image_generation_args: Dict[str, Any] = {
+        image_generation_args: dict[str, Any] = {
             "model": self._model_name,
             "prompt": prompt,
             "size": self.image_size,
@@ -212,7 +216,7 @@ class OpenAIImageTarget(OpenAITarget):
             image_files.append((image_name, image_bytes, image_type))
 
         # Construct request parameters for image editing
-        image_edit_args: Dict[str, Any] = {
+        image_edit_args: dict[str, Any] = {
             "model": self._model_name,
             "image": image_files,
             "prompt": text_prompt,
@@ -313,6 +317,16 @@ class OpenAIImageTarget(OpenAITarget):
         if len(other_pieces) > 0:
             other_types = [p.converted_value_data_type for p in other_pieces]
             raise ValueError(f"The message contains unsupported piece types. Unsupported types: {other_types}.")
+
+        request = text_pieces[0]
+        messages = self._memory.get_conversation(conversation_id=request.conversation_id)
+
+        n_messages = len(messages)
+        if n_messages > 0:
+            raise ValueError(
+                "This target only supports a single turn conversation. "
+                f"Received: {n_messages} messages which indicates a prior turn."
+            )
 
     def is_json_response_supported(self) -> bool:
         """

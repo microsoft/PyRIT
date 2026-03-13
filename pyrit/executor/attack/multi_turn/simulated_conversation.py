@@ -11,8 +11,7 @@ against a simulated (compliant) target before executing the actual attack.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -23,8 +22,12 @@ from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import Message, SeedPrompt, SeedSimulatedConversation
-from pyrit.prompt_target import PromptChatTarget
-from pyrit.score import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ async def generate_simulated_conversation_async(
     next_message_system_prompt_path: Optional[Union[str, Path]] = None,
     attack_converter_config: Optional[AttackConverterConfig] = None,
     memory_labels: Optional[dict[str, str]] = None,
-) -> List[SeedPrompt]:
+) -> list[SeedPrompt]:
     """
     Generate a simulated conversation between an adversarial chat and a target.
 
@@ -124,7 +127,7 @@ async def generate_simulated_conversation_async(
     logger.info(f"Generating {num_turns}-turn simulated conversation for objective: {objective[:50]}...")
 
     # Build prepended_conversation - only include system message if prompt is provided
-    prepended_conversation: List[Message] = []
+    prepended_conversation: list[Message] = []
     if simulated_target_system_prompt:
         prepended_conversation.append(Message.from_system_prompt(simulated_target_system_prompt))
 
@@ -140,7 +143,7 @@ async def generate_simulated_conversation_async(
 
     # Filter out system messages - keep the actual conversation
     # System prompts are set separately on each target during attack execution
-    conversation_messages: List[Message] = [msg for msg in raw_messages if msg.api_role != "system"]
+    conversation_messages: list[Message] = [msg for msg in raw_messages if msg.api_role != "system"]
 
     # If next_message_system_prompt_path is provided, generate a final user message
     if next_message_system_prompt_path:
@@ -166,7 +169,7 @@ async def generate_simulated_conversation_async(
 async def _generate_next_message_async(
     *,
     objective: str,
-    conversation_messages: List[Message],
+    conversation_messages: list[Message],
     adversarial_chat: PromptChatTarget,
     next_message_system_prompt_path: Union[str, Path],
 ) -> Message:
@@ -217,7 +220,7 @@ async def _generate_next_message_async(
         conversation_id=request_message.conversation_id,
     )
 
-    responses: List[Message] = await adversarial_chat.send_prompt_async(message=request_message)
+    responses: list[Message] = await adversarial_chat.send_prompt_async(message=request_message)
 
     if not responses:
         raise ValueError("No response received from adversarial chat when generating next message")

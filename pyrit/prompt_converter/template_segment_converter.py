@@ -69,7 +69,7 @@ class TemplateSegmentConverter(PromptConverter):
             raise ValueError(
                 f"Error validating template parameters: {str(e)}. "
                 f"Template parameters: {self.prompt_template.parameters}"
-            )
+            ) from e
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -107,7 +107,7 @@ class TemplateSegmentConverter(PromptConverter):
 
         segments = self._split_prompt_into_segments(prompt)
         filled_template = self.prompt_template.render_template_value(
-            **dict(zip(self.prompt_template.parameters, segments))
+            **dict(zip(self.prompt_template.parameters, segments, strict=False))
         )
         return ConverterResult(output_text=filled_template, output_type="text")
 

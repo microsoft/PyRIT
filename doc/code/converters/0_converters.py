@@ -50,7 +50,7 @@ df = df.sort_values(by=["Input Modality", "Output Modality", "Converter"]).reset
 
 # Display all rows
 pd.set_option("display.max_rows", None)
-df
+print(df)
 
 # %% [markdown]
 # ## Converter Categories

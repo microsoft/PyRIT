@@ -3,7 +3,7 @@
 
 import json
 import uuid
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -910,3 +910,182 @@ class TestVideoTargetEdgeCases:
                 n_seconds=duration,
             )
             assert target._n_seconds == duration
+
+
+def test_video_validate_previous_conversations(
+    video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
+):
+    message_piece = sample_conversations[0]
+
+    mock_memory = MagicMock()
+    mock_memory.get_conversation.return_value = sample_conversations
+    mock_memory.add_message_to_memory = AsyncMock()
+
+    video_target._memory = mock_memory
+
+    request = Message(message_pieces=[message_piece])
+
+    with pytest.raises(ValueError, match="This target only supports a single turn conversation."):
+        video_target._validate_request(message=request)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestVideoTargetRemixValidation:
+    """Tests for _validate_video_remix_pieces and video_path validation."""
+
+    @pytest.fixture
+    def video_target(self) -> OpenAIVideoTarget:
+        return OpenAIVideoTarget(
+            endpoint="https://api.openai.com/v1",
+            api_key="test",
+            model_name="sora-2",
+        )
+
+    def test_validate_accepts_text_and_video_path(self, video_target: OpenAIVideoTarget) -> None:
+        """Test validation accepts text + video_path pieces."""
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="remix this",
+            converted_value="remix this",
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/video.mp4",
+            converted_value="/path/video.mp4",
+            converted_value_data_type="video_path",
+            conversation_id=conversation_id,
+        )
+        # Should not raise
+        video_target._validate_request(message=Message([msg_text, msg_video]))
+
+    def test_validate_rejects_video_path_and_image_path(self, video_target: OpenAIVideoTarget) -> None:
+        """Test validation rejects combining video_path and image_path."""
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="remix",
+            converted_value="remix",
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/video.mp4",
+            converted_value="/path/video.mp4",
+            converted_value_data_type="video_path",
+            conversation_id=conversation_id,
+        )
+        msg_image = MessagePiece(
+            role="user",
+            original_value="/path/image.png",
+            converted_value="/path/image.png",
+            converted_value_data_type="image_path",
+            conversation_id=conversation_id,
+        )
+        with pytest.raises(ValueError, match="Cannot combine video_path and image_path"):
+            video_target._validate_request(message=Message([msg_text, msg_video, msg_image]))
+
+    def test_remix_strips_video_path_when_ids_match(self, video_target: OpenAIVideoTarget) -> None:
+        """Test that video_path pieces are stripped when video_id matches on text piece."""
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="remix",
+            converted_value="remix",
+            prompt_metadata={"video_id": "vid_123"},
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/video.mp4",
+            converted_value="/path/video.mp4",
+            converted_value_data_type="video_path",
+            prompt_metadata={"video_id": "vid_123"},
+            conversation_id=conversation_id,
+        )
+        message = Message([msg_text, msg_video])
+
+        OpenAIVideoTarget._validate_video_remix_pieces(message=message)
+
+        assert msg_text.prompt_metadata["video_id"] == "vid_123"
+        assert all(p.converted_value_data_type != "video_path" for p in message.message_pieces)
+
+    def test_remix_raises_when_video_ids_mismatch(self, video_target: OpenAIVideoTarget) -> None:
+        """Test that mismatched video_id values between text and video_path raise ValueError."""
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="remix",
+            converted_value="remix",
+            prompt_metadata={"video_id": "vid_123"},
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/video.mp4",
+            converted_value="/path/video.mp4",
+            converted_value_data_type="video_path",
+            prompt_metadata={"video_id": "vid_DIFFERENT"},
+            conversation_id=conversation_id,
+        )
+        message = Message([msg_text, msg_video])
+
+        with pytest.raises(ValueError, match="video_id mismatch"):
+            OpenAIVideoTarget._validate_video_remix_pieces(message=message)
+
+    def test_remix_raises_when_text_missing_video_id(self, video_target: OpenAIVideoTarget) -> None:
+        """Test that video_path without video_id on text piece raises ValueError."""
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="remix",
+            converted_value="remix",
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/video.mp4",
+            converted_value="/path/video.mp4",
+            converted_value_data_type="video_path",
+            conversation_id=conversation_id,
+        )
+        message = Message([msg_text, msg_video])
+
+        with pytest.raises(ValueError, match="missing.*video_id"):
+            OpenAIVideoTarget._validate_video_remix_pieces(message=message)
+
+    def test_remix_no_op_without_video_path(self, video_target: OpenAIVideoTarget) -> None:
+        """Test that _validate_video_remix_pieces is a no-op for text-only messages."""
+        msg_text = MessagePiece(
+            role="user",
+            original_value="generate a cat video",
+            converted_value="generate a cat video",
+        )
+        message = Message([msg_text])
+
+        OpenAIVideoTarget._validate_video_remix_pieces(message=message)
+
+        assert "video_id" not in (msg_text.prompt_metadata or {})
+
+    def test_remix_raises_when_video_path_missing_video_id(self, video_target: OpenAIVideoTarget) -> None:
+        """Test that video_path piece without video_id raises ValueError."""
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="remix",
+            converted_value="remix",
+            prompt_metadata={"video_id": "vid_123"},
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/video.mp4",
+            converted_value="/path/video.mp4",
+            converted_value_data_type="video_path",
+            conversation_id=conversation_id,
+        )
+        message = Message([msg_text, msg_video])
+
+        with pytest.raises(ValueError, match="video_path piece is missing.*video_id"):
+            OpenAIVideoTarget._validate_video_remix_pieces(message=message)

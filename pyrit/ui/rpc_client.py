@@ -3,8 +3,9 @@
 
 import socket
 import time
+from collections.abc import Callable
 from threading import Event, Semaphore, Thread
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import rpyc
 
@@ -54,7 +55,7 @@ class RPCClient:
         self._prompt_received_sem.acquire()
         if self._is_running:
             return self._prompt_received
-        raise RPCClientStoppedException()
+        raise RPCClientStoppedException
 
     def send_message(self, response: bool) -> None:
         score = Score(

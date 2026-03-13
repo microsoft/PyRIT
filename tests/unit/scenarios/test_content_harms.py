@@ -114,7 +114,8 @@ class TestContentHarmsStrategy:
     def test_all_harm_categories_exist(self):
         """Test that all expected harm categories exist as strategies."""
         expected_categories = ["hate", "fairness", "violence", "sexual", "harassment", "misinformation", "leakage"]
-        strategy_values = [s.value for s in ContentHarmsStrategy if s != ContentHarmsStrategy.ALL]
+        aggregate_values = {"all"}
+        strategy_values = [s.value for s in ContentHarmsStrategy if s.value not in aggregate_values]
 
         for category in expected_categories:
             assert category in strategy_values, f"Expected harm category '{category}' not found in strategies"
@@ -131,7 +132,7 @@ class TestContentHarmsStrategy:
 
     def test_all_strategies_can_be_accessed_by_name(self):
         """Test that all strategies can be accessed by their name."""
-        assert ContentHarmsStrategy.ALL == ContentHarmsStrategy["ALL"]
+        assert ContentHarmsStrategy["ALL"] == ContentHarmsStrategy.ALL
         assert ContentHarmsStrategy.Hate == ContentHarmsStrategy["Hate"]
         assert ContentHarmsStrategy.Fairness == ContentHarmsStrategy["Fairness"]
         assert ContentHarmsStrategy.Violence == ContentHarmsStrategy["Violence"]
@@ -167,7 +168,7 @@ class TestContentHarmsStrategy:
         """Test that strategy comparison works correctly."""
         assert ContentHarmsStrategy.Hate == ContentHarmsStrategy.Hate
         assert ContentHarmsStrategy.Hate != ContentHarmsStrategy.Violence
-        assert ContentHarmsStrategy.ALL != ContentHarmsStrategy.Hate
+        assert ContentHarmsStrategy.Hate != ContentHarmsStrategy.ALL
 
     def test_strategy_hash(self):
         """Test that strategies can be hashed and used in sets/dicts."""
@@ -193,13 +194,13 @@ class TestContentHarmsStrategy:
         with pytest.raises(KeyError):
             ContentHarmsStrategy["InvalidStrategy"]
 
-    def test_get_aggregate_tags_includes_harm_categories(self):
+    def test_get_aggregate_tags_includes_all_aggregates(self):
         """Test that get_aggregate_tags includes 'all' tag."""
         aggregate_tags = ContentHarmsStrategy.get_aggregate_tags()
 
-        # The simple implementation only returns the 'all' tag
         assert "all" in aggregate_tags
         assert isinstance(aggregate_tags, set)
+        assert len(aggregate_tags) == 1
 
     def test_get_aggregate_tags_returns_set(self):
         """Test that get_aggregate_tags returns a set."""
@@ -211,6 +212,10 @@ class TestContentHarmsStrategy:
         # The ALL strategy should include all individual harm categories
         all_strategies = list(ContentHarmsStrategy)
         assert len(all_strategies) == 8  # ALL + 7 harm categories
+
+        # Non-aggregate strategies should be just the 7 harm categories
+        non_aggregate = ContentHarmsStrategy.get_all_strategies()
+        assert len(non_aggregate) == 7
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -237,7 +242,7 @@ class TestContentHarmsBasic:
 
         # Constructor should set adversarial chat and basic metadata
         assert scenario._adversarial_chat == mock_adversarial_target
-        assert scenario.name == "Content Harms"
+        assert scenario.name == "ContentHarms"
         assert scenario.VERSION == 1
 
         # Initialization populates objective target and scenario composites
@@ -693,3 +698,140 @@ class TestContentHarmsDatasetConfiguration:
         config = ContentHarms.default_dataset_config()
 
         assert config.max_dataset_size == 4
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestContentHarmsAttackGroups:
+    """Tests for the single-turn and multi-turn attack generation."""
+
+    @pytest.mark.asyncio
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
+    async def test_get_single_turn_attacks_returns_prompt_sending_and_role_play(
+        self,
+        mock_get_seed_attack_groups,
+        mock_get_scorer,
+        mock_objective_target,
+        mock_adversarial_target,
+        mock_objective_scorer,
+        mock_seed_groups,
+    ):
+        """Test that _get_single_turn_attacks returns PromptSendingAttack and RolePlayAttack."""
+        from pyrit.executor.attack import PromptSendingAttack, RolePlayAttack
+
+        mock_get_scorer.return_value = mock_objective_scorer
+        seed_groups = mock_seed_groups("hate")
+        mock_get_seed_attack_groups.return_value = {"hate": seed_groups}
+
+        scenario = ContentHarms(adversarial_chat=mock_adversarial_target)
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[ContentHarmsStrategy.Hate],
+        )
+
+        attacks = scenario._get_single_turn_attacks(strategy="hate", seed_groups=seed_groups)
+
+        assert len(attacks) == 2
+        attack_types = [type(a._attack) for a in attacks]
+        assert PromptSendingAttack in attack_types
+        assert RolePlayAttack in attack_types
+
+    @pytest.mark.asyncio
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
+    async def test_get_multi_turn_attacks_returns_many_shot_and_tap(
+        self,
+        mock_get_seed_attack_groups,
+        mock_get_scorer,
+        mock_objective_target,
+        mock_adversarial_target,
+        mock_objective_scorer,
+        mock_seed_groups,
+    ):
+        """Test that _get_multi_turn_attacks returns ManyShotJailbreakAttack and TreeOfAttacksWithPruningAttack."""
+        from pyrit.executor.attack import ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack
+
+        mock_get_scorer.return_value = mock_objective_scorer
+        seed_groups = mock_seed_groups("hate")
+        mock_get_seed_attack_groups.return_value = {"hate": seed_groups}
+
+        scenario = ContentHarms(adversarial_chat=mock_adversarial_target)
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[ContentHarmsStrategy.Hate],
+        )
+
+        attacks = scenario._get_multi_turn_attacks(strategy="hate", seed_groups=seed_groups)
+
+        assert len(attacks) == 2
+        attack_types = [type(a._attack) for a in attacks]
+        assert ManyShotJailbreakAttack in attack_types
+        assert TreeOfAttacksWithPruningAttack in attack_types
+
+    @pytest.mark.asyncio
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
+    async def test_get_strategy_attacks_includes_all_groups(
+        self,
+        mock_get_seed_attack_groups,
+        mock_get_scorer,
+        mock_objective_target,
+        mock_adversarial_target,
+        mock_objective_scorer,
+        mock_seed_groups,
+    ):
+        """Test that _get_strategy_attacks returns attacks from both single-turn and multi-turn groups."""
+        from pyrit.executor.attack import (
+            ManyShotJailbreakAttack,
+            PromptSendingAttack,
+            RolePlayAttack,
+            TreeOfAttacksWithPruningAttack,
+        )
+
+        mock_get_scorer.return_value = mock_objective_scorer
+        seed_groups = mock_seed_groups("hate")
+        mock_get_seed_attack_groups.return_value = {"hate": seed_groups}
+
+        scenario = ContentHarms(adversarial_chat=mock_adversarial_target)
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[ContentHarmsStrategy.Hate],
+        )
+
+        attacks = scenario._get_strategy_attacks(strategy="hate", seed_groups=seed_groups)
+
+        # 2 single-turn + 2 multi-turn = 4
+        assert len(attacks) == 4
+        attack_types = [type(a._attack) for a in attacks]
+        assert PromptSendingAttack in attack_types
+        assert RolePlayAttack in attack_types
+        assert ManyShotJailbreakAttack in attack_types
+        assert TreeOfAttacksWithPruningAttack in attack_types
+
+    @pytest.mark.asyncio
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
+    async def test_get_strategy_attacks_raises_when_not_initialized(
+        self,
+        mock_get_seed_attack_groups,
+        mock_get_scorer,
+        mock_adversarial_target,
+        mock_objective_scorer,
+        mock_seed_groups,
+    ):
+        """Test that _get_strategy_attacks raises ValueError when scenario is not initialized."""
+        mock_get_scorer.return_value = mock_objective_scorer
+        seed_groups = mock_seed_groups("hate")
+
+        scenario = ContentHarms(adversarial_chat=mock_adversarial_target)
+
+        with pytest.raises(ValueError, match="Scenario not properly initialized"):
+            scenario._get_strategy_attacks(strategy="hate", seed_groups=seed_groups)
+
+    def test_aggregate_strategies_only_includes_all(self):
+        """Test that ALL is the only aggregate strategy."""
+        aggregates = ContentHarmsStrategy.get_aggregate_strategies()
+        aggregate_values = [s.value for s in aggregates]
+
+        assert "all" in aggregate_values
+        assert len(aggregates) == 1

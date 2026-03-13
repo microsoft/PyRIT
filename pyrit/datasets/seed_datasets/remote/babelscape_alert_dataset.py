@@ -64,10 +64,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         logger.info(f"Loading Babelscape ALERT dataset from {self.source}")
 
         # Determine which categories to load
-        if self.category is None:
-            data_categories = ["alert_adversarial", "alert"]
-        else:
-            data_categories = [self.category]
+        data_categories = ["alert_adversarial", "alert"] if self.category is None else [self.category]
 
         prompts: list[str] = []
         for category_name in data_categories:

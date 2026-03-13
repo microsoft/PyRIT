@@ -42,10 +42,10 @@ def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDatas
     questions_answers = []
     for name in data_categories:
         ds = load_dataset("cais/wmdp", name)
-        for i in range(0, len(ds["test"])):
+        for i in range(len(ds["test"])):
             # For each question, save the 4 possible choices and their respective index
             choices = []
-            for j in range(0, 4):
+            for j in range(4):
                 c = QuestionChoice(index=j, text=ds["test"]["choices"][i][j])
                 choices.append(c)
 

@@ -63,6 +63,21 @@ async def test_braille_converter_numbers():
 
 
 @pytest.mark.asyncio
+async def test_braille_converter_consecutive_numbers_single_prefix():
+    """Test that consecutive digits get only one number prefix."""
+    converter = BrailleConverter()
+    num_prefix = "\u283c"  # Braille number indicator
+
+    result = await converter.convert_async(prompt="123", input_type="text")
+    # Should have exactly one number prefix for a run of consecutive digits
+    assert result.output_text.count(num_prefix) == 1
+
+    result = await converter.convert_async(prompt="1.2", input_type="text")
+    # Period is a number punctuation, so "1.2" stays in number mode — one prefix
+    assert result.output_text.count(num_prefix) == 1
+
+
+@pytest.mark.asyncio
 async def test_braille_converter_punctuation():
     """Test Braille conversion with punctuation."""
     converter = BrailleConverter()

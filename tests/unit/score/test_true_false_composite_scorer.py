@@ -167,7 +167,7 @@ def test_composite_scorer_invalid_scorer_type():
             return []
 
     with pytest.raises(ValueError, match="All scorers must be true_false scorers"):
-        TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[InvalidScorer()])  # type: ignore
+        TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[InvalidScorer()])  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -135,16 +135,18 @@ async def test_send_prompt_async_with_delay(
     mock_choice.message = mock_message
     mock_response.choices = [mock_choice]
 
-    with patch.object(
-        azure_openai_target._async_client.chat.completions, "create", new_callable=AsyncMock
-    ) as mock_create:
-        with patch("asyncio.sleep") as mock_sleep:
-            mock_create.return_value = mock_response
+    with (
+        patch.object(
+            azure_openai_target._async_client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create,
+        patch("asyncio.sleep") as mock_sleep,
+    ):
+        mock_create.return_value = mock_response
 
-            request = sample_entries[0]
-            request.converted_value = "hi, I am a victim chatbot, how can I help?"
+        request = sample_entries[0]
+        request.converted_value = "hi, I am a victim chatbot, how can I help?"
 
-            await azure_openai_target.send_prompt_async(message=Message(message_pieces=[request]))
+        await azure_openai_target.send_prompt_async(message=Message(message_pieces=[request]))
 
-            mock_create.assert_called_once()
-            mock_sleep.assert_called_once_with(6)  # 60/max_requests_per_minute
+        mock_create.assert_called_once()
+        mock_sleep.assert_called_once_with(6)  # 60/max_requests_per_minute

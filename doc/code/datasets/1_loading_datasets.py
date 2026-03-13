@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -55,4 +55,4 @@ memory = CentralMemory().get_memory_instance()
 await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyrit")  # type: ignore
 
 # Memory has flexible querying capabilities
-memory.get_seeds(harm_categories=["illegal"], is_objective=True)
+memory.get_seeds(harm_categories=["illegal"], seed_type="objective")

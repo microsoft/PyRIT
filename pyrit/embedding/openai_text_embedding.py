@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional
 
 import tenacity
 from openai import AsyncOpenAI

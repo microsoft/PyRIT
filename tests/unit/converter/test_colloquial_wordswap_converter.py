@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import re
+import warnings
 
 import pytest
 
@@ -52,7 +53,7 @@ async def test_colloquial_non_deterministic(input_text):
     output_words = re.findall(r"\w+|\S+", result.output_text)
 
     # Check that each wordswap is a valid substitution
-    for input_word, output_word in zip(input_words, output_words):
+    for input_word, output_word in zip(input_words, output_words, strict=False):
         lower_input_word = input_word.lower()
 
         if lower_input_word in valid_substitutions:
@@ -61,12 +62,13 @@ async def test_colloquial_non_deterministic(input_text):
             assert output_word == input_word
 
 
-# Test for custom substitutions
+# Test for custom substitutions dict
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,custom_substitutions,expected_output",
     [
-        ("father", {"father": ["appa", "darth vader"]}, "appa"),  # Custom substitution father -> appa
+        ("father", {"father": ["appa", "darth vader"]}, "appa"),
+        ("Hello world", {"hello": ["hi", "hey"], "world": ["earth"]}, "hi earth"),
     ],
 )
 async def test_colloquial_custom_substitutions(input_text, custom_substitutions, expected_output):
@@ -75,18 +77,53 @@ async def test_colloquial_custom_substitutions(input_text, custom_substitutions,
     assert result.output_text == expected_output
 
 
-# Test for empty custom substitutions
+# Test for non-default wordswap YAML paths
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "input_text,expected_output",
+    "input_text,wordswap_path,expected_output",
     [
-        ("mother and father", "mama and papa"),  # Using default substitutions when custom is empty
+        ("father", "filipino.yaml", "papa"),
+        ("woman", "indian.yaml", "behenji"),
+        ("son", "southern_american.yaml", "junior"),
+        ("man", "multicultural_london.yaml", "mandem"),
     ],
 )
-async def test_colloquial_empty_custom_substitutions(input_text, expected_output):
-    converter = ColloquialWordswapConverter(deterministic=True, custom_substitutions={})
+async def test_colloquial_wordswap_path(input_text, wordswap_path, expected_output):
+    converter = ColloquialWordswapConverter(deterministic=True, wordswap_path=wordswap_path)
     result = await converter.convert_async(prompt=input_text)
     assert result.output_text == expected_output
+
+
+# Test multiple word prompts for non-default wordswap paths
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "input_text,wordswap_path,expected_output",
+    [
+        ("father and mother", "indian.yaml", "papa and mummy"),
+        ("brother and sister", "southern_american.yaml", "bubba and sissy"),
+        ("aunt and uncle", "multicultural_london.yaml", "aunty and unc"),
+    ],
+)
+async def test_multiple_words_custom_colloquialisms(input_text, wordswap_path, expected_output):
+    converter = ColloquialWordswapConverter(deterministic=True, wordswap_path=wordswap_path)
+    result = await converter.convert_async(prompt=input_text)
+    assert result.output_text == expected_output
+
+
+# Test default behavior when no wordswap_path or custom_substitutions given
+@pytest.mark.asyncio
+async def test_colloquial_default_singaporean():
+    converter = ColloquialWordswapConverter(deterministic=True)
+    result = await converter.convert_async(prompt="mother and father")
+    assert result.output_text == "mama and papa"
+
+
+# Test that empty custom_substitutions falls through to defaults
+@pytest.mark.asyncio
+async def test_colloquial_empty_custom_substitutions():
+    converter = ColloquialWordswapConverter(deterministic=True, custom_substitutions={})
+    result = await converter.convert_async(prompt="mother and father")
+    assert result.output_text == "mama and papa"
 
 
 # Test multiple word prompts
@@ -139,3 +176,52 @@ def test_colloquial_converter_input_supported() -> None:
     converter = ColloquialWordswapConverter()
     assert converter.input_supported("text") is True
     assert converter.input_supported("image_path") is False
+
+
+def test_init_conflict_custom_substitutions_and_path():
+    with pytest.raises(ValueError, match="Provide either custom_substitutions or wordswap_path"):
+        ColloquialWordswapConverter(custom_substitutions={"foo": ["bar"]}, wordswap_path="some_file.yaml")
+
+
+def test_init_missing_yaml_file():
+    with pytest.raises(FileNotFoundError, match="Colloquial wordswap file not found"):
+        ColloquialWordswapConverter(wordswap_path="nonexistent.yaml")
+
+
+def test_init_invalid_yaml_format(tmp_path):
+    bad_yaml = tmp_path / "bad.yaml"
+    bad_yaml.write_text("[not, a, dict]", encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a dict"):
+        ColloquialWordswapConverter(wordswap_path=str(bad_yaml))
+
+
+def test_init_invalid_yaml_values(tmp_path):
+    bad_values = tmp_path / "bad_values.yaml"
+    bad_values.write_text('father: "not a list"', encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid entry in wordswap YAML"):
+        ColloquialWordswapConverter(wordswap_path=str(bad_values))
+
+
+def test_init_invalid_yaml_empty_list(tmp_path):
+    empty_list = tmp_path / "empty_list.yaml"
+    empty_list.write_text("father: []", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid entry in wordswap YAML"):
+        ColloquialWordswapConverter(wordswap_path=str(empty_list))
+
+
+def test_init_malformed_yaml(tmp_path):
+    malformed = tmp_path / "malformed.yaml"
+    malformed.write_text("{{invalid yaml::", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid YAML format"):
+        ColloquialWordswapConverter(wordswap_path=str(malformed))
+
+
+def test_deterministic_positional_deprecation_warning():
+    with pytest.warns(FutureWarning, match="positional argument is deprecated"):
+        ColloquialWordswapConverter(True)
+
+
+def test_deterministic_keyword_no_deprecation_warning():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        ColloquialWordswapConverter(deterministic=True)

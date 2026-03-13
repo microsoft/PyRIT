@@ -70,7 +70,7 @@ class TestSelectiveTextConverter:
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
-        # "Hello" in base64 is "SGVsbG8="
+        # "Hello" in base64 is "SGVsbG8="  # noqa: ERA001
         assert result.output_text == "SGVsbG8= World"
         assert result.output_type == "text"
 
@@ -80,7 +80,7 @@ class TestSelectiveTextConverter:
             selection_strategy=RegexSelectionStrategy(pattern=r"\d+"),
         )
         result = await converter.convert_async(prompt="The code is 12345 here", input_type="text")
-        # "12345" in base64 is "MTIzNDU="
+        # "12345" in base64 is "MTIzNDU="  # noqa: ERA001
         assert result.output_text == "The code is MTIzNDU= here"
         assert result.output_type == "text"
 
@@ -90,7 +90,7 @@ class TestSelectiveTextConverter:
             selection_strategy=KeywordSelectionStrategy(keyword="secret"),
         )
         result = await converter.convert_async(prompt="The secret is here", input_type="text")
-        # "secret" in base64 is "c2VjcmV0"
+        # "secret" in base64 is "c2VjcmV0"  # noqa: ERA001
         assert result.output_text == "The c2VjcmV0 is here"
         assert result.output_type == "text"
 
@@ -100,7 +100,7 @@ class TestSelectiveTextConverter:
             selection_strategy=PositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
         )
         result = await converter.convert_async(prompt="0123456789", input_type="text")
-        # "01234" in base64 is "MDEyMzQ="
+        # "01234" in base64 is "MDEyMzQ="  # noqa: ERA001
         assert result.output_text == "MDEyMzQ=56789"
         assert result.output_type == "text"
 
@@ -110,7 +110,7 @@ class TestSelectiveTextConverter:
             selection_strategy=ProportionSelectionStrategy(proportion=0.5, anchor="start"),
         )
         result = await converter.convert_async(prompt="0123456789", input_type="text")
-        # "01234" in base64 is "MDEyMzQ="
+        # "01234" in base64 is "MDEyMzQ="  # noqa: ERA001
         assert result.output_text == "MDEyMzQ=56789"
         assert result.output_type == "text"
 
@@ -120,7 +120,7 @@ class TestSelectiveTextConverter:
             selection_strategy=RangeSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
         )
         result = await converter.convert_async(prompt="0123456789", input_type="text")
-        # "01234" in base64 is "MDEyMzQ="
+        # "01234" in base64 is "MDEyMzQ="  # noqa: ERA001
         assert result.output_text == "MDEyMzQ=56789"
         assert result.output_type == "text"
 
@@ -131,7 +131,7 @@ class TestSelectiveTextConverter:
             preserve_tokens=True,
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
-        # "Hello" in base64 is "SGVsbG8="
+        # "Hello" in base64 is "SGVsbG8="  # noqa: ERA001
         assert result.output_text == "⟪SGVsbG8=⟫ World"
         assert result.output_type == "text"
 
@@ -144,7 +144,7 @@ class TestSelectiveTextConverter:
             end_token=">>",
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
-        # "Hello" in base64 is "SGVsbG8="
+        # "Hello" in base64 is "SGVsbG8="  # noqa: ERA001
         assert result.output_text == "<<SGVsbG8=>> World"
         assert result.output_type == "text"
 
@@ -194,7 +194,7 @@ class TestSelectiveTextConverter:
             selection_strategy=IndexSelectionStrategy(start=4, end=10),
         )
         result = await converter.convert_async(prompt="The secret code", input_type="text")
-        # "secret" in base64 is "c2VjcmV0"
+        # "secret" in base64 is "c2VjcmV0"  # noqa: ERA001
         assert result.output_text == "The c2VjcmV0 code"
         assert result.output_type == "text"
 
@@ -204,7 +204,7 @@ class TestSelectiveTextConverter:
             selection_strategy=IndexSelectionStrategy(start=11, end=None),
         )
         result = await converter.convert_async(prompt="Hello World", input_type="text")
-        # "" (empty string) in base64 is ""
+        # "" (empty string) in base64 is ""  # noqa: ERA001
         assert result.output_text == "Hello World"
         assert result.output_type == "text"
 
@@ -230,7 +230,7 @@ class TestSelectiveTextConverter:
             selection_strategy=KeywordSelectionStrategy(keyword="secret", context_before=4, context_after=3),
         )
         result = await converter.convert_async(prompt="The secret is here", input_type="text")
-        # "The secret is" in base64 is "VGhlIHNlY3JldCBpcw=="
+        # "The secret is" in base64 is "VGhlIHNlY3JldCBpcw=="  # noqa: ERA001
         assert result.output_text == "VGhlIHNlY3JldCBpcw== here"
         assert result.output_type == "text"
 

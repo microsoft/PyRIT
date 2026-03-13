@@ -5,7 +5,7 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Optional
 
 from tqdm import tqdm
 
@@ -27,7 +27,7 @@ class SeedDatasetProvider(ABC):
     - dataset_name property: Human-readable name for the dataset
     """
 
-    _registry: Dict[str, Type["SeedDatasetProvider"]] = {}
+    _registry: dict[str, type["SeedDatasetProvider"]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -50,7 +50,6 @@ class SeedDatasetProvider(ABC):
         Returns:
             str: The dataset name (e.g., "HarmBench", "JailbreakBench JBB-Behaviors")
         """
-        pass
 
     @abstractmethod
     async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
@@ -67,10 +66,9 @@ class SeedDatasetProvider(ABC):
         Raises:
             Exception: If the dataset cannot be fetched or processed.
         """
-        pass
 
     @classmethod
-    def get_all_providers(cls) -> Dict[str, Type["SeedDatasetProvider"]]:
+    def get_all_providers(cls) -> dict[str, type["SeedDatasetProvider"]]:
         """
         Get all registered dataset provider classes.
 
@@ -80,7 +78,7 @@ class SeedDatasetProvider(ABC):
         return cls._registry.copy()
 
     @classmethod
-    def get_all_dataset_names(cls) -> List[str]:
+    def get_all_dataset_names(cls) -> list[str]:
         """
         Get the names of all registered datasets.
 
@@ -101,14 +99,14 @@ class SeedDatasetProvider(ABC):
                 provider = provider_class()
                 dataset_names.add(provider.dataset_name)
             except Exception as e:
-                raise ValueError(f"Could not get dataset name from {provider_class.__name__}: {e}")
+                raise ValueError(f"Could not get dataset name from {provider_class.__name__}: {e}") from e
         return sorted(dataset_names)
 
     @classmethod
     async def fetch_datasets_async(
         cls,
         *,
-        dataset_names: Optional[List[str]] = None,
+        dataset_names: Optional[list[str]] = None,
         cache: bool = True,
         max_concurrency: int = 5,
     ) -> list[SeedDataset]:
@@ -149,8 +147,8 @@ class SeedDatasetProvider(ABC):
                 raise ValueError(f"Dataset(s) not found: {invalid_names}. Available datasets: {available_names}")
 
         async def fetch_single_dataset(
-            provider_name: str, provider_class: Type["SeedDatasetProvider"]
-        ) -> Optional[Tuple[str, SeedDataset]]:
+            provider_name: str, provider_class: type["SeedDatasetProvider"]
+        ) -> Optional[tuple[str, SeedDataset]]:
             """
             Fetch a single dataset with error handling.
 
@@ -160,10 +158,9 @@ class SeedDatasetProvider(ABC):
             provider = provider_class()
 
             # Apply dataset name filter if specified
-            if dataset_names is not None:
-                if provider.dataset_name not in dataset_names:
-                    logger.debug(f"Skipping {provider_name} - not in filter list")
-                    return None
+            if dataset_names is not None and provider.dataset_name not in dataset_names:
+                logger.debug(f"Skipping {provider_name} - not in filter list")
+                return None
 
             dataset = await provider.fetch_dataset(cache=cache)
             return (provider.dataset_name, dataset)
@@ -176,8 +173,8 @@ class SeedDatasetProvider(ABC):
         pbar = tqdm(total=total_count, desc="Loading datasets - this can take a few minutes", unit="dataset")
 
         async def fetch_with_semaphore(
-            provider_name: str, provider_class: Type["SeedDatasetProvider"]
-        ) -> Optional[Tuple[str, SeedDataset]]:
+            provider_name: str, provider_class: type["SeedDatasetProvider"]
+        ) -> Optional[tuple[str, SeedDataset]]:
             """
             Enforce concurrency limit and update progress during dataset fetch.
 
@@ -199,7 +196,7 @@ class SeedDatasetProvider(ABC):
         pbar.close()
 
         # Merge datasets with the same name
-        datasets: Dict[str, SeedDataset] = {}
+        datasets: dict[str, SeedDataset] = {}
         for result in results:
             # Skip None results (filtered datasets)
             if result is None:

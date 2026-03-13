@@ -39,7 +39,7 @@ def test_math_obfuscation_spaces_and_newlines():
     result = asyncio.run(converter.convert_async(prompt="A B\nC"))
     lines = result.output_text.splitlines()
 
-    # "A", blank (space), "B", blank (newline), "C"
+    # "A", blank (space), "B", blank (newline), "C"  # noqa: ERA001
     assert lines[0].startswith("A =")
     assert lines[1] == ""
     assert lines[2].startswith("B =")

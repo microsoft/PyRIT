@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyrit.models import Message, SeedAttackGroup, SeedGroup
 
@@ -36,10 +36,10 @@ class AttackParameters:
     next_message: Optional[Message] = None
 
     # Conversation that is automatically prepended to the target model
-    prepended_conversation: Optional[List[Message]] = None
+    prepended_conversation: Optional[list[Message]] = None
 
     # Additional labels that can be applied to the prompts throughout the attack
-    memory_labels: Optional[Dict[str, str]] = field(default_factory=dict)
+    memory_labels: Optional[dict[str, str]] = field(default_factory=dict)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -75,11 +75,11 @@ class AttackParameters:
 
     @classmethod
     async def from_seed_group_async(
-        cls: Type[AttackParamsT],
+        cls: type[AttackParamsT],
         *,
         seed_group: SeedAttackGroup,
-        adversarial_chat: Optional["PromptChatTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: Optional[PromptChatTarget] = None,
+        objective_scorer: Optional[TrueFalseScorer] = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
@@ -126,7 +126,7 @@ class AttackParameters:
         assert seed_group.objective is not None
 
         # Build params dict, only including fields this class accepts
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
 
         if "objective" in valid_fields:
             params["objective"] = seed_group.objective.value
@@ -181,7 +181,7 @@ class AttackParameters:
         return cls(**params)
 
     @classmethod
-    def excluding(cls, *field_names: str) -> Type["AttackParameters"]:
+    def excluding(cls, *field_names: str) -> type[AttackParameters]:
         """
         Create a new AttackParameters subclass that excludes the specified fields.
 
@@ -208,7 +208,7 @@ class AttackParameters:
             raise ValueError(f"Cannot exclude non-existent fields: {invalid}. Valid fields: {current_fields}")
 
         # Build new fields list excluding the specified ones
-        new_fields: List[Any] = []
+        new_fields: list[Any] = []
         for f in dataclasses.fields(cls):
             if f.name not in field_names:
                 # Preserve field defaults

@@ -102,6 +102,27 @@ def test_explicit_category():
     assert len(scorer._harm_categories) == 1
 
 
+def test_async_callable_api_key_raises():
+    async def async_provider():
+        return "token"
+
+    with pytest.raises(ValueError, match="Async token providers are not supported"):
+        AzureContentFilterScorer(api_key=async_provider, endpoint="bar")
+
+
+def test_sync_callable_returning_coroutine_raises():
+    async def async_fn():
+        return "token"
+
+    with pytest.raises(ValueError, match="returns a coroutine/awaitable"):
+        AzureContentFilterScorer(api_key=lambda: async_fn(), endpoint="bar")
+
+
+def test_sync_callable_api_key_accepted():
+    scorer = AzureContentFilterScorer(api_key=lambda: "token", endpoint="bar")
+    assert callable(scorer._api_key)
+
+
 @pytest.mark.asyncio
 async def test_azure_content_filter_scorer_adds_to_memory():
     memory = MagicMock(MemoryInterface)

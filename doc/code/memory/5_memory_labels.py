@@ -12,11 +12,11 @@
 # # 5. Resending Prompts Using Memory Labels Example
 #
 # Memory labels are a free-from dictionary for tagging prompts for easier querying and scoring later on. The `GLOBAL_MEMORY_LABELS`
-# environment variable can be set to apply labels (e.g. `username` and `op_name`) to all prompts sent by any attack.
+# environment variable can be set to apply labels (e.g. `operator` and `operation`) to all prompts sent by any attack.
 # Passed-in labels will be combined with `GLOBAL_MEMORY_LABELS` into one dictionary. In the case of collisions,
 # the passed-in labels take precedence.
 #
-# You can then query the database (either AzureSQL or SQLite) for prompts with specific labels, such as `username` and/or `op_name`
+# You can then query the database (either AzureSQL or SQLite) for prompts with specific labels, such as `operator` and/or `operation`
 # (which are standard), as well as any others you'd like, including `harm_category`, `language`, `technique`, etc.
 #
 # We take the following steps in this example:

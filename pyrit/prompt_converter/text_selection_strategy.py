@@ -4,7 +4,8 @@
 import abc
 import random
 import re
-from typing import List, Optional, Pattern, Union
+from re import Pattern
+from typing import Optional, Union
 
 
 class TextSelectionStrategy(abc.ABC):
@@ -25,7 +26,6 @@ class TextSelectionStrategy(abc.ABC):
             tuple[int, int]: A tuple of (start_index, end_index) representing the character range.
                 The range is inclusive of start_index and exclusive of end_index.
         """
-        pass
 
 
 class TokenSelectionStrategy(TextSelectionStrategy):
@@ -76,7 +76,7 @@ class WordSelectionStrategy(TextSelectionStrategy):
     """
 
     @abc.abstractmethod
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select word indices to be converted.
 
@@ -86,7 +86,6 @@ class WordSelectionStrategy(TextSelectionStrategy):
         Returns:
             List[int]: A list of indices representing which words should be converted.
         """
-        pass
 
     def select_range(self, *, text: str, word_separator: str = " ") -> tuple[int, int]:
         """
@@ -400,7 +399,7 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
     Selects words based on their indices in the word list.
     """
 
-    def __init__(self, *, indices: List[int]) -> None:
+    def __init__(self, *, indices: list[int]) -> None:
         """
         Initialize the word index selection strategy.
 
@@ -409,7 +408,7 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
         """
         self._indices = indices
 
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select words at the specified indices.
 
@@ -439,7 +438,7 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
     Selects words that match specific keywords.
     """
 
-    def __init__(self, *, keywords: List[str], case_sensitive: bool = True) -> None:
+    def __init__(self, *, keywords: list[str], case_sensitive: bool = True) -> None:
         """
         Initialize the word keyword selection strategy.
 
@@ -450,7 +449,7 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
         self._keywords = keywords
         self._case_sensitive = case_sensitive
 
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select words that match the keywords.
 
@@ -491,7 +490,7 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
         self._proportion = proportion
         self._seed = seed
 
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select a random proportion of words.
 
@@ -525,7 +524,7 @@ class WordRegexSelectionStrategy(WordSelectionStrategy):
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
 
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select words that match the regex pattern.
 
@@ -569,7 +568,7 @@ class WordPositionSelectionStrategy(WordSelectionStrategy):
         self._start_proportion = start_proportion
         self._end_proportion = end_proportion
 
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select words based on the relative position.
 
@@ -594,7 +593,7 @@ class AllWordsSelectionStrategy(WordSelectionStrategy):
     Selects all words (default strategy).
     """
 
-    def select_words(self, *, words: List[str]) -> List[int]:
+    def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select all words.
 

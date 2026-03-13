@@ -5,7 +5,7 @@ import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -102,8 +102,8 @@ class TestTransparencyAttackConverter:
         processed_image = converter._load_and_preprocess_image(sample_benign_image)
 
         assert processed_image.shape == (50, 50)  # height, width (single channel grayscale)
-        assert processed_image.dtype == numpy.float32
-        assert numpy.all(processed_image >= 0.0) and numpy.all(processed_image <= 1.0)
+        assert processed_image.dtype == np.float32
+        assert np.all(processed_image >= 0.0) and np.all(processed_image <= 1.0)
 
         for invalid_path in [None, "", "invalid_path.txt", "image.png", "image.gif"]:
             with pytest.raises(ValueError):
@@ -114,8 +114,8 @@ class TestTransparencyAttackConverter:
 
     def test_compute_mse_loss(self, sample_benign_image):
         converter = TransparencyAttackConverter(benign_image_path=sample_benign_image)
-        blended = numpy.array([[1.0, 2.0], [3.0, 4.0]])
-        target = numpy.array([[2.0, 3.0], [4.0, 5.0]])
+        blended = np.array([[1.0, 2.0], [3.0, 4.0]])
+        target = np.array([[2.0, 3.0], [4.0, 5.0]])
         expected_loss = 1.0
 
         loss = converter._compute_mse_loss(blended, target)
@@ -124,13 +124,13 @@ class TestTransparencyAttackConverter:
 
     def test_create_blended_image(self, sample_benign_image):
         converter = TransparencyAttackConverter(benign_image_path=sample_benign_image)
-        attack_image = numpy.array([[0.2]], dtype=numpy.float32)  # 1x1 grayscale image
-        alpha = numpy.array([[0.8]], dtype=numpy.float32)  # 1x1 alpha
+        attack_image = np.array([[0.2]], dtype=np.float32)  # 1x1 grayscale image
+        alpha = np.array([[0.8]], dtype=np.float32)  # 1x1 alpha
 
         la_image = converter._create_blended_image(attack_image, alpha)
 
         assert la_image.shape == (1, 1, 2)  # LA (Luminance + Alpha)
-        assert la_image.dtype == numpy.uint8
+        assert la_image.dtype == np.uint8
         expected_gray_value = int(0.2 * 255)
         assert la_image[0, 0, 0] == expected_gray_value  # L (Luminance)
         assert la_image[0, 0, 1] == int(0.8 * 255)  # A (Alpha)
@@ -145,8 +145,8 @@ class TestTransparencyAttackConverter:
             mock_factory.return_value = mock_serializer
 
             converter = TransparencyAttackConverter(benign_image_path=sample_benign_image)
-            attack_image = numpy.ones((10, 10), dtype=numpy.float32) * 0.5
-            alpha = numpy.ones((10, 10), dtype=numpy.float32) * 0.7
+            attack_image = np.ones((10, 10), dtype=np.float32) * 0.5
+            alpha = np.ones((10, 10), dtype=np.float32) * 0.7
 
             result_path = await converter._save_blended_image(attack_image, alpha)
 

@@ -10,7 +10,7 @@ def remove_kernelspec_from_ipynb_files(file_path: str):
 
     if file_path.endswith(".ipynb"):
         # Iterate through all .ipynb files in the specified file
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             content = json.load(f)
             # Remove the "kernelspec" metadata section if it exists
             if "metadata" in content and "kernelspec" in content["metadata"]:

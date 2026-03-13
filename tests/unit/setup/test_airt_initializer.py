@@ -3,6 +3,7 @@
 
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -36,13 +37,10 @@ class TestAIRTInitializerInitialize:
         reset_default_values()
         # Set up required env vars for AIRT
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"] = "https://test-converter.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "test_converter_key"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"] = "gpt-4"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"] = "https://test-scorer.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"] = "test_scorer_key"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"] = "gpt-4"
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test-safety.cognitiveservices.azure.com"
-        os.environ["AZURE_CONTENT_SAFETY_API_KEY"] = "test_safety_key"
         # Clean up globals
         for attr in [
             "default_converter_target",
@@ -59,13 +57,10 @@ class TestAIRTInitializerInitialize:
         # Clean up env vars
         for var in [
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
             "AZURE_CONTENT_SAFETY_API_ENDPOINT",
-            "AZURE_CONTENT_SAFETY_API_KEY",
         ]:
             if var in os.environ:
                 del os.environ[var]
@@ -81,18 +76,50 @@ class TestAIRTInitializerInitialize:
 
     @pytest.mark.asyncio
     async def test_initialize_runs_without_error(self):
-        """Test that initialize runs without errors."""
+        """Test that initialize runs without errors when no API keys are set (Entra auth fallback)."""
         init = AIRTInitializer()
-        # Should not raise any errors
-        await init.initialize_async()
+        with (
+            patch("pyrit.setup.initializers.airt.get_azure_openai_auth", return_value="mock_token"),
+            patch("pyrit.setup.initializers.airt.get_azure_token_provider", return_value="mock_token_provider"),
+        ):
+            await init.initialize_async()
+
+    @pytest.mark.asyncio
+    async def test_initialize_uses_api_keys_when_set(self):
+        """Test that initialize uses API keys from env vars when they are set."""
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "converter-key"
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"] = "scorer-key"
+        os.environ["AZURE_CONTENT_SAFETY_API_KEY"] = "safety-key"
+        try:
+            init = AIRTInitializer()
+            with (
+                patch("pyrit.setup.initializers.airt.get_azure_openai_auth") as mock_auth,
+                patch("pyrit.setup.initializers.airt.get_azure_token_provider") as mock_token,
+            ):
+                await init.initialize_async()
+                # Entra auth should NOT be called when API keys are set
+                mock_auth.assert_not_called()
+                mock_token.assert_not_called()
+        finally:
+            for var in [
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY",
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2",
+                "AZURE_CONTENT_SAFETY_API_KEY",
+            ]:
+                if var in os.environ:
+                    del os.environ[var]
 
     @pytest.mark.asyncio
     async def test_get_info_after_initialize_has_populated_data(self):
         """Test that get_info_async() returns populated data after initialization."""
         init = AIRTInitializer()
-        await init.initialize_async()
-
-        info = await AIRTInitializer.get_info_async()
+        with (
+            patch("pyrit.setup.initializers.airt.get_azure_openai_auth", return_value="mock_token"),
+            patch("pyrit.setup.initializers.airt.get_azure_token_provider", return_value="mock_token_provider"),
+        ):
+            await init.initialize_async()
+            # get_info_async re-runs initialize_async internally, so patches must still be active
+            info = await AIRTInitializer.get_info_async()
 
         # Verify basic structure
         assert isinstance(info, dict)
@@ -137,7 +164,7 @@ class TestAIRTInitializerInitialize:
         """Test that validate raises error listing all missing env vars."""
         # Remove multiple required env vars
         del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"]
 
         init = AIRTInitializer()
         with pytest.raises(ValueError) as exc_info:
@@ -145,7 +172,7 @@ class TestAIRTInitializerInitialize:
 
         error_message = str(exc_info.value)
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in error_message
-        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY" in error_message
+        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL" in error_message
 
 
 class TestAIRTInitializerGetInfo:
@@ -160,11 +187,8 @@ class TestAIRTInitializerGetInfo:
         assert info["class"] == "AIRTInitializer"
         assert "required_env_vars" in info
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in info["required_env_vars"]
-        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY" in info["required_env_vars"]
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2" in info["required_env_vars"]
-        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2" in info["required_env_vars"]
         assert "AZURE_CONTENT_SAFETY_API_ENDPOINT" in info["required_env_vars"]
-        assert "AZURE_CONTENT_SAFETY_API_KEY" in info["required_env_vars"]
 
     async def test_get_info_includes_description(self):
         """Test that get_info_async includes the description field."""

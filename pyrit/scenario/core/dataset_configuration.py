@@ -11,13 +11,15 @@ with either explicit SeedGroups or dataset names (mutually exclusive).
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Optional
 
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedAttackGroup, SeedGroup
-from pyrit.models.seeds.seed import Seed
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyrit.models.seeds.seed import Seed
     from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy
 
 # Key used when seed_groups are provided directly (not from a named dataset)
@@ -44,8 +46,8 @@ class DatasetConfiguration:
     def __init__(
         self,
         *,
-        seed_groups: Optional[List[SeedGroup]] = None,
-        dataset_names: Optional[List[str]] = None,
+        seed_groups: Optional[list[SeedGroup]] = None,
+        dataset_names: Optional[list[str]] = None,
         max_dataset_size: Optional[int] = None,
         scenario_composites: Optional[Sequence[ScenarioCompositeStrategy]] = None,
     ) -> None:
@@ -82,7 +84,7 @@ class DatasetConfiguration:
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
         self._scenario_composites = scenario_composites
 
-    def get_seed_groups(self) -> Dict[str, List[SeedGroup]]:
+    def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
         """
         Resolve and return seed groups based on the configuration.
 
@@ -104,7 +106,7 @@ class DatasetConfiguration:
         Raises:
             ValueError: If no seed groups could be resolved from the configuration.
         """
-        result: Dict[str, List[SeedGroup]] = {}
+        result: dict[str, list[SeedGroup]] = {}
 
         if self._seed_groups is not None:
             # Use explicit seed groups under a special key
@@ -129,7 +131,7 @@ class DatasetConfiguration:
 
         return result
 
-    def _load_seed_groups_for_dataset(self, *, dataset_name: str) -> List[SeedGroup]:
+    def _load_seed_groups_for_dataset(self, *, dataset_name: str) -> list[SeedGroup]:
         """
         Load seed groups for a single dataset from memory.
 
@@ -145,7 +147,7 @@ class DatasetConfiguration:
         memory = CentralMemory.get_memory_instance()
         return list(memory.get_seed_groups(dataset_name=dataset_name) or [])
 
-    def get_all_seed_groups(self) -> List[SeedGroup]:
+    def get_all_seed_groups(self) -> list[SeedGroup]:
         """
         Resolve and return all seed groups as a flat list.
 
@@ -161,12 +163,12 @@ class DatasetConfiguration:
             ValueError: If no seed groups could be resolved from the configuration.
         """
         seed_groups_by_dataset = self.get_seed_groups()
-        all_groups: List[SeedGroup] = []
+        all_groups: list[SeedGroup] = []
         for groups in seed_groups_by_dataset.values():
             all_groups.extend(groups)
         return all_groups
 
-    def get_seed_attack_groups(self) -> Dict[str, List[SeedAttackGroup]]:
+    def get_seed_attack_groups(self) -> dict[str, list[SeedAttackGroup]]:
         """
         Resolve and return seed groups as SeedAttackGroups, grouped by dataset.
 
@@ -182,12 +184,12 @@ class DatasetConfiguration:
             ValueError: If no seed groups could be resolved from the configuration.
         """
         seed_groups_by_dataset = self.get_seed_groups()
-        result: Dict[str, List[SeedAttackGroup]] = {}
+        result: dict[str, list[SeedAttackGroup]] = {}
         for dataset_name, groups in seed_groups_by_dataset.items():
             result[dataset_name] = [SeedAttackGroup(seeds=list(sg.seeds)) for sg in groups]
         return result
 
-    def get_all_seed_attack_groups(self) -> List[SeedAttackGroup]:
+    def get_all_seed_attack_groups(self) -> list[SeedAttackGroup]:
         """
         Resolve and return all seed groups as SeedAttackGroups in a flat list.
 
@@ -202,12 +204,12 @@ class DatasetConfiguration:
             ValueError: If no seed groups could be resolved from the configuration.
         """
         attack_groups_by_dataset = self.get_seed_attack_groups()
-        all_groups: List[SeedAttackGroup] = []
+        all_groups: list[SeedAttackGroup] = []
         for groups in attack_groups_by_dataset.values():
             all_groups.extend(groups)
         return all_groups
 
-    def get_default_dataset_names(self) -> List[str]:
+    def get_default_dataset_names(self) -> list[str]:
         """
         Get the list of default dataset names for this configuration.
 
@@ -220,7 +222,7 @@ class DatasetConfiguration:
             return list(self._dataset_names)
         return []
 
-    def _apply_max_dataset_size(self, seed_groups: List[SeedGroup]) -> List[SeedGroup]:
+    def _apply_max_dataset_size(self, seed_groups: list[SeedGroup]) -> list[SeedGroup]:
         """
         Apply max_dataset_size sampling to a list of seed groups.
 
@@ -246,7 +248,7 @@ class DatasetConfiguration:
         """
         return self._seed_groups is not None or self._dataset_names is not None
 
-    def get_all_seeds(self) -> List[Seed]:
+    def get_all_seeds(self) -> list[Seed]:
         """
         Load all seed prompts from memory for all configured datasets.
 
@@ -265,7 +267,7 @@ class DatasetConfiguration:
             raise ValueError("No dataset names configured. Set dataset_names to use get_all_seed_prompts.")
 
         memory = CentralMemory.get_memory_instance()
-        all_seeds: List[Seed] = []
+        all_seeds: list[Seed] = []
 
         for dataset_name in self._dataset_names:
             seeds = memory.get_seeds(dataset_name=dataset_name)

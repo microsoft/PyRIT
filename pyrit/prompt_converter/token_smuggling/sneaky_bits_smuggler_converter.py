@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
@@ -58,7 +58,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
             }
         )
 
-    def encode_message(self, message: str) -> Tuple[str, str]:
+    def encode_message(self, message: str) -> tuple[str, str]:
         """
         Encode the message using Sneaky Bits mode.
 

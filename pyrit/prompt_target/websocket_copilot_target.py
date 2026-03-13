@@ -22,6 +22,7 @@ from pyrit.exceptions import (
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import DataTypeSerializer, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class WebSocketCopilotTarget(PromptTarget):
     SUPPORTED_DATA_TYPES = {"text", "image_path"}
     RESPONSE_TIMEOUT_SECONDS: int = 60
     CONNECTION_TIMEOUT_SECONDS: int = 30
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=True)
 
     def __init__(
         self,
@@ -82,6 +84,7 @@ class WebSocketCopilotTarget(PromptTarget):
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
         authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
+        capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -95,6 +98,8 @@ class WebSocketCopilotTarget(PromptTarget):
             authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
+            capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. If None, uses the class-level defaults. Defaults to None.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -117,6 +122,7 @@ class WebSocketCopilotTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             endpoint=self._websocket_base_url,
             model_name=model_name,
+            capabilities=capabilities,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -232,10 +238,12 @@ class WebSocketCopilotTarget(PromptTarget):
             f"X-SessionId={session_id}",
             f"ConversationId={copilot_conversation_id}",
             f"access_token={access_token}",
-            "X-variants=feature.includeExternal,feature.AssistantConnectorsContentSources,"
-            "3S.BizChatWprBoostAssistant,3S.EnableMEFromSkillDiscovery,feature.EnableAuthErrorMessage,"
-            "EnableRequestPlugins,feature.EnableSensitivityLabels,feature.IsEntityAnnotationsEnabled,"
-            "EnableUnsupportedUrlDetector",
+            (
+                "X-variants=feature.includeExternal,feature.AssistantConnectorsContentSources,"
+                "3S.BizChatWprBoostAssistant,3S.EnableMEFromSkillDiscovery,feature.EnableAuthErrorMessage,"
+                "EnableRequestPlugins,feature.EnableSensitivityLabels,feature.IsEntityAnnotationsEnabled,"
+                "EnableUnsupportedUrlDetector"
+            ),
             "source=%22officeweb%22",
             "scenario=OfficeWebIncludedCopilot",
         ]
@@ -364,7 +372,7 @@ class WebSocketCopilotTarget(PromptTarget):
         text_parts: list[str] = []
         message_annotations: list[dict[str, Any]] = []
 
-        for idx, piece in enumerate(message_pieces):
+        for _idx, piece in enumerate(message_pieces):
             if piece.converted_value_data_type == "text":
                 text_parts.append(piece.converted_value)
 
@@ -506,16 +514,16 @@ class WebSocketCopilotTarget(PromptTarget):
 
                 is_user_input = input_msg.get("type") == CopilotMessageType.USER_PROMPT
 
-                MAX_MESSAGE_ITERATIONS = 1000
+                max_message_iterations = 1000
                 iteration_count = 0
                 stop_polling = False
 
                 while not stop_polling:
                     # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
                     iteration_count += 1
-                    if iteration_count > MAX_MESSAGE_ITERATIONS:
+                    if iteration_count > max_message_iterations:
                         raise RuntimeError(
-                            f"Exceeded maximum message iterations ({MAX_MESSAGE_ITERATIONS}) "
+                            f"Exceeded maximum message iterations ({max_message_iterations}) "
                             "while waiting for Copilot response."
                         )
 
@@ -527,7 +535,7 @@ class WebSocketCopilotTarget(PromptTarget):
                     except asyncio.TimeoutError:
                         raise TimeoutError(
                             f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
-                        )
+                        ) from None
 
                     if raw_message is None:
                         raise RuntimeError(

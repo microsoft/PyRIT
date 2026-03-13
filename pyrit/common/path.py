@@ -6,7 +6,7 @@ import pathlib
 from appdirs import user_data_dir
 
 
-def get_default_data_path(dir: str) -> pathlib.Path:
+def get_default_data_path(dir: str) -> pathlib.Path:  # noqa: A002
     """
     Retrieve the default data path for PyRIT.
 

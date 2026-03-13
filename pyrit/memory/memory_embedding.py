@@ -82,5 +82,7 @@ def default_memory_embedding_factory(embedding_model: Optional[EmbeddingSupport]
     try:
         model = OpenAITextEmbedding()
         return MemoryEmbedding(embedding_model=model)
-    except ValueError:
-        raise ValueError("No embedding model was provided and no OpenAI embedding model was found in the environment.")
+    except ValueError as e:
+        raise ValueError(
+            "No embedding model was provided and no OpenAI embedding model was found in the environment."
+        ) from e

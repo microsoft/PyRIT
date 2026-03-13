@@ -150,7 +150,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 
@@ -172,10 +172,10 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
 
         # Connect callbacks to the events fired by the speech recognizer
         speech_recognizer.recognized.connect(lambda evt: self.transcript_cb(evt, transcript=transcribed_text))
-        speech_recognizer.recognizing.connect(lambda evt: logger.info("RECOGNIZING: {}".format(evt)))
-        speech_recognizer.recognized.connect(lambda evt: logger.info("RECOGNIZED: {}".format(evt)))
-        speech_recognizer.session_started.connect(lambda evt: logger.info("SESSION STARTED: {}".format(evt)))
-        speech_recognizer.session_stopped.connect(lambda evt: logger.info("SESSION STOPPED: {}".format(evt)))
+        speech_recognizer.recognizing.connect(lambda evt: logger.info(f"RECOGNIZING: {evt}"))
+        speech_recognizer.recognized.connect(lambda evt: logger.info(f"RECOGNIZED: {evt}"))
+        speech_recognizer.session_started.connect(lambda evt: logger.info(f"SESSION STARTED: {evt}"))
+        speech_recognizer.session_stopped.connect(lambda evt: logger.info(f"SESSION STOPPED: {evt}"))
         # Stop continuous recognition when stopped or canceled event is fired
         speech_recognizer.canceled.connect(lambda evt: self.stop_cb(evt, recognizer=speech_recognizer))
         speech_recognizer.session_stopped.connect(lambda evt: self.stop_cb(evt, recognizer=speech_recognizer))
@@ -200,7 +200,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             evt (speechsdk.SpeechRecognitionEventArgs): Event.
             transcript (list): List to store transcribed text.
         """
-        logger.info("RECOGNIZED: {}".format(evt.result.text))
+        logger.info(f"RECOGNIZED: {evt.result.text}")
         transcript.append(evt.result.text)
 
     def stop_cb(self, evt: Any, recognizer: Any) -> None:
@@ -219,17 +219,17 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 
-        logger.info("CLOSING on {}".format(evt))
+        logger.info(f"CLOSING on {evt}")
         recognizer.stop_continuous_recognition_async()
         self.done = True
         if evt.result.reason == speechsdk.ResultReason.Canceled:
             cancellation_details = evt.result.cancellation_details
-            logger.info("Speech recognition canceled: {}".format(cancellation_details.reason))
+            logger.info(f"Speech recognition canceled: {cancellation_details.reason}")
             if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                logger.error("Error details: {}".format(cancellation_details.error_details))
+                logger.error(f"Error details: {cancellation_details.error_details}")
             elif cancellation_details.reason == speechsdk.CancellationReason.EndOfStream:
                 logger.info("End of audio stream detected.")

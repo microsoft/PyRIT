@@ -361,7 +361,7 @@ def test_factory_returns_instance_of_true_false_scorer():
 def test_factory_preserves_wrapped_scorer():
     """Test that factory preserves reference to wrapped scorer."""
     original_scorer = MockFloatScaleScorer()
-    original_scorer.custom_attr = "test_value"  # type: ignore
+    original_scorer.custom_attr = "test_value"  # type: ignore[abstract]
 
     conv_scorer = create_conversation_scorer(scorer=original_scorer)
 
@@ -369,9 +369,9 @@ def test_factory_preserves_wrapped_scorer():
     assert isinstance(conv_scorer, ConversationScorer)
     # Access via attribute since _get_wrapped_scorer is available at runtime
     assert hasattr(conv_scorer, "_wrapped_scorer")
-    wrapped = getattr(conv_scorer, "_wrapped_scorer")
+    wrapped = conv_scorer._wrapped_scorer
     assert wrapped is original_scorer
-    assert wrapped.custom_attr == "test_value"  # type: ignore
+    assert wrapped.custom_attr == "test_value"  # type: ignore[abstract]
 
 
 def test_factory_with_custom_validator():

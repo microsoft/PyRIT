@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 import logging
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
@@ -26,6 +26,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -37,7 +38,11 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +315,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         # Prepare the result
         return AttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -323,7 +328,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     async def _teardown_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
-        pass
 
     async def _generate_next_prompt_async(self, context: MultiTurnAttackContext[Any]) -> Message:
         """
@@ -520,6 +524,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             ValueError: If no response is received from the target system.
         """
         logger.info(f"Sending prompt to target: {message.get_value()[:50]}...")
+
+        # For single-turn targets, rotate conversation_id so each turn starts fresh
+        self._rotate_conversation_for_single_turn_target(context=context)
 
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,

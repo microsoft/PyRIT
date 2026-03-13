@@ -121,7 +121,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
         except Exception as e:
             logger.error(f"Failed to load JBB-Behaviors dataset: {str(e)}")
-            raise Exception(f"Error loading JBB-Behaviors dataset: {str(e)}")
+            raise Exception(f"Error loading JBB-Behaviors dataset: {str(e)}") from e
 
     def _map_jbb_category_to_harm_category(self, jbb_category: str) -> list[str]:
         """

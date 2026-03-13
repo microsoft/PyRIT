@@ -100,7 +100,7 @@ class AddTextImageConverter(PromptConverter):
             font = ImageFont.truetype(self._font_name, self._font_size)
         except OSError:
             logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
-            font = cast(FreeTypeFont, ImageFont.load_default())
+            font = cast("FreeTypeFont", ImageFont.load_default())
         return font
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:

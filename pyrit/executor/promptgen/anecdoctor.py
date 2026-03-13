@@ -7,7 +7,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
 import yaml
 
@@ -24,7 +24,9 @@ from pyrit.models import (
     Message,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptChatTarget
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class AnecdoctorContext(PromptGeneratorStrategyContext):
     """
 
     # The data in ClaimsReview format to use in constructing the prompt
-    evaluation_data: List[str]
+    evaluation_data: list[str]
 
     # The language of the content to generate (e.g., "english", "spanish")
     language: str
@@ -51,7 +53,7 @@ class AnecdoctorContext(PromptGeneratorStrategyContext):
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # Optional memory labels to apply to the prompts
-    memory_labels: Dict[str, str] = field(default_factory=dict)
+    memory_labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -138,8 +140,8 @@ class AnecdoctorGenerator(
     def _create_identifier(
         self,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        children: Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]] = None,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this prompt generator.
@@ -152,7 +154,7 @@ class AnecdoctorGenerator(
         Returns:
             ComponentIdentifier: The identifier for this prompt generator.
         """
-        all_children: Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]] = {
+        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
             "objective_target": self._objective_target.get_identifier(),
         }
         if children:
@@ -255,7 +257,6 @@ class AnecdoctorGenerator(
             context (AnecdoctorContext): The generation context.
         """
         # Nothing to clean up for this prompt generation
-        pass
 
     async def _prepare_examples_async(self, *, context: AnecdoctorContext) -> str:
         """
@@ -331,7 +332,7 @@ class AnecdoctorGenerator(
         yaml_data = yaml.safe_load(prompt_data)
         return str(yaml_data["value"])
 
-    def _format_few_shot_examples(self, *, evaluation_data: List[str]) -> str:
+    def _format_few_shot_examples(self, *, evaluation_data: list[str]) -> str:
         """
         Format the evaluation data as few-shot examples.
 
@@ -404,7 +405,7 @@ class AnecdoctorGenerator(
         *,
         content_type: str,
         language: str,
-        evaluation_data: List[str],
+        evaluation_data: list[str],
         memory_labels: Optional[dict[str, str]] = None,
         **kwargs: Any,
     ) -> AnecdoctorResult: ...

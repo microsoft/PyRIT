@@ -161,12 +161,19 @@ class PyRITShell(cmd.Cmd):
             --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
         Examples:
-            run garak.encoding --initializers openai_objective_target load_default_datasets
-            run garak.encoding --initializers custom_target load_default_datasets --strategies base64 rot13
-            run foundry --initializers openai_objective_target load_default_datasets --max-concurrency 10 --max-retries 3
-            run garak.encoding --initializers custom_target load_default_datasets --memory-labels '{"run_id":"test123","env":"dev"}'
-            run foundry --initializers openai_objective_target load_default_datasets -s jailbreak crescendo
-            run garak.encoding --initializers openai_objective_target load_default_datasets --database InMemory --log-level DEBUG
+            run garak.encoding --initializers openai_objective_target \
+                load_default_datasets
+            run garak.encoding --initializers custom_target \
+                load_default_datasets --strategies base64 rot13
+            run foundry --initializers openai_objective_target \
+                load_default_datasets --max-concurrency 10 --max-retries 3
+            run garak.encoding --initializers custom_target \
+                load_default_datasets \
+                --memory-labels '{"run_id":"test123","env":"dev"}'
+            run foundry --initializers openai_objective_target \
+                load_default_datasets -s jailbreak crescendo
+            run garak.encoding --initializers openai_objective_target \
+                load_default_datasets --database InMemory --log-level DEBUG
             run foundry --initialization-scripts ./my_custom_init.py -s all
 
         Note:
@@ -182,17 +189,19 @@ class PyRITShell(cmd.Cmd):
             print("\nOptions:")
             print(f"  --initializers <name> ...       {frontend_core.ARG_HELP['initializers']} (REQUIRED)")
             print(
-                f"  --initialization-scripts <...>  {frontend_core.ARG_HELP['initialization_scripts']} (alternative to --initializers)"
+                f"  --initialization-scripts <...>  {frontend_core.ARG_HELP['initialization_scripts']}"
+                " (alternative to --initializers)"
             )
             print(f"  --strategies, -s <s1> <s2> ...  {frontend_core.ARG_HELP['scenario_strategies']}")
             print(f"  --max-concurrency <N>           {frontend_core.ARG_HELP['max_concurrency']}")
             print(f"  --max-retries <N>               {frontend_core.ARG_HELP['max_retries']}")
             print(f"  --memory-labels <JSON>          {frontend_core.ARG_HELP['memory_labels']}")
             print(
-                f"  --database <type>               Override default database ({frontend_core.IN_MEMORY}, {frontend_core.SQLITE}, {frontend_core.AZURE_SQL})"
+                f"  --database <type>               Override default database"
+                f" ({frontend_core.IN_MEMORY}, {frontend_core.SQLITE}, {frontend_core.AZURE_SQL})"
             )
             print(
-                f"  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+                "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
             )
             print("\nExample:")
             print("  run foundry --initializers openai_objective_target load_default_datasets")
@@ -411,7 +420,7 @@ class PyRITShell(cmd.Cmd):
     # Shortcuts and aliases
     do_quit = do_exit
     do_q = do_exit
-    do_EOF = do_exit  # Ctrl+D on Unix, Ctrl+Z on Windows
+    do_EOF = do_exit  # Ctrl+D on Unix, Ctrl+Z on Windows  # noqa: N815
 
     def emptyline(self) -> bool:
         """
@@ -464,7 +473,11 @@ def main() -> int:
         "--database",
         choices=[frontend_core.IN_MEMORY, frontend_core.SQLITE, frontend_core.AZURE_SQL],
         default=frontend_core.SQLITE,
-        help=f"Default database type to use ({frontend_core.IN_MEMORY}, {frontend_core.SQLITE}, {frontend_core.AZURE_SQL}) (default: {frontend_core.SQLITE}, can be overridden per-run)",
+        help=(
+            f"Default database type to use"
+            f" ({frontend_core.IN_MEMORY}, {frontend_core.SQLITE}, {frontend_core.AZURE_SQL})"
+            f" (default: {frontend_core.SQLITE}, can be overridden per-run)"
+        ),
     )
 
     parser.add_argument(
@@ -472,7 +485,10 @@ def main() -> int:
         type=str,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default="WARNING",
-        help="Default logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING, can be overridden per-run)",
+        help=(
+            "Default logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+            " (default: WARNING, can be overridden per-run)"
+        ),
     )
 
     parser.add_argument(

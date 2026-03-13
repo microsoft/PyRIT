@@ -4,14 +4,13 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
+import logging  # noqa: TC003
 import time
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar, Union, overload
 
 from pyrit.common.logger import logger
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.core import (
     Strategy,
@@ -28,7 +27,10 @@ from pyrit.models import (
     ConversationReference,
     Message,
 )
-from pyrit.prompt_target import PromptTarget
+
+if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+    from pyrit.prompt_target import PromptTarget
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
@@ -59,8 +61,8 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
 
     # Mutable overrides for attacks that generate these values internally
     _next_message_override: Optional[Message] = None
-    _prepended_conversation_override: Optional[List[Message]] = None
-    _memory_labels_override: Optional[Dict[str, str]] = None
+    _prepended_conversation_override: Optional[list[Message]] = None
+    _memory_labels_override: Optional[dict[str, str]] = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -69,7 +71,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return self.params.objective
 
     @property
-    def memory_labels(self) -> Dict[str, str]:
+    def memory_labels(self) -> dict[str, str]:
         """Additional labels that can be applied to the prompts throughout the attack."""
         # Check override first (for attacks that merge labels)
         if self._memory_labels_override is not None:
@@ -77,12 +79,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return self.params.memory_labels or {}
 
     @memory_labels.setter
-    def memory_labels(self, value: Dict[str, str]) -> None:
+    def memory_labels(self, value: dict[str, str]) -> None:
         """Set the memory labels (for attacks that merge strategy + context labels)."""
         self._memory_labels_override = value
 
     @property
-    def prepended_conversation(self) -> List[Message]:
+    def prepended_conversation(self) -> list[Message]:
         """Conversation that is automatically prepended to the target model."""
         # Check override first (for attacks that generate internally)
         if self._prepended_conversation_override is not None:
@@ -93,7 +95,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return []
 
     @prepended_conversation.setter
-    def prepended_conversation(self, value: List[Message]) -> None:
+    def prepended_conversation(self, value: list[Message]) -> None:
         """Set the prepended conversation (for attacks that generate internally)."""
         self._prepended_conversation_override = value
 
@@ -236,7 +238,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         *,
         objective_target: PromptTarget,
         context_type: type[AttackStrategyContextT],
-        params_type: Type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
         logger: logging.Logger = logger,
     ):
         """
@@ -268,8 +270,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     def _create_identifier(
         self,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        children: Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]] = None,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
     ) -> ComponentIdentifier:
         """
         Construct the attack strategy identifier.
@@ -287,7 +289,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Returns:
             ComponentIdentifier: The identifier for this attack strategy.
         """
-        all_children: Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]] = {
+        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
             "objective_target": self.get_objective_target().get_identifier(),
         }
 
@@ -326,7 +328,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         return self._create_identifier()
 
     @property
-    def params_type(self) -> Type[AttackParameters]:
+    def params_type(self) -> type[AttackParameters]:
         """
         Get the parameters type for this attack strategy.
 
@@ -372,7 +374,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         *,
         objective: str,
         next_message: Optional[Message] = None,
-        prepended_conversation: Optional[List[Message]] = None,
+        prepended_conversation: Optional[list[Message]] = None,
         memory_labels: Optional[dict[str, str]] = None,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...

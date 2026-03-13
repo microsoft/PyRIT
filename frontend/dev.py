@@ -42,7 +42,7 @@ def sync_version():
 
         # Read package.json
         package_json_path = FRONTEND_DIR / "package.json"
-        with open(package_json_path, "r") as f:
+        with open(package_json_path) as f:
             package_data = json.load(f)
 
         # Update version if different

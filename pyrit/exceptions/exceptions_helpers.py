@@ -49,7 +49,7 @@ def log_exception(retry_state: RetryCallState) -> None:
     try:
         exec_context = get_execution_context()
         if exec_context:
-            # Format: "objective scorer; TrueFalseScorer::_score_value_with_llm"
+            # Format: "objective scorer; TrueFalseScorer::_score_value_with_llm"  # noqa: ERA001
             role_display = exec_context.component_role.value.replace("_", " ")
             if exec_context.component_name:
                 for_clause = f"{role_display}. {exec_context.component_name}::{fn_name}"
@@ -148,4 +148,4 @@ def remove_markdown_json(response_msg: str) -> str:
             json.loads(response_msg)
             return response_msg
         except json.JSONDecodeError:
-            return "Invalid JSON response: {}".format(response_msg)
+            return f"Invalid JSON response: {response_msg}"

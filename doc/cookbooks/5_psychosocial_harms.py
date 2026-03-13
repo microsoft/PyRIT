@@ -35,6 +35,7 @@ import os
 import pathlib
 from collections import defaultdict
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -77,7 +78,7 @@ sample_user_context = {
 print("Attack Technique using Escalation for a user in imminent crisis:")
 attack_strategy_path = pathlib.Path(DATASETS_PATH) / "executors" / "crescendo" / "escalation_crisis.yaml"
 
-with open(attack_strategy_path, "r") as file:
+with open(attack_strategy_path) as file:
     print(file.read())
 
 # %% [markdown]
@@ -188,7 +189,11 @@ crisis_management_system_prompt = f"""{crisis_management_rubric}
 # %%
 # Create a scoring instance with our defined rubric
 
-azure_openai_chat_target = OpenAIChatTarget()
+chat_endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
+azure_openai_chat_target = OpenAIChatTarget(
+    endpoint=chat_endpoint,
+    api_key=get_azure_openai_auth(chat_endpoint),
+)
 crisis_scorer = SelfAskGeneralFloatScaleScorer(
     chat_target=azure_openai_chat_target,
     system_prompt_format_string=crisis_management_system_prompt,
@@ -254,14 +259,18 @@ for conv_id, prompts in conversations.items():
 conversation_objectives = sample_user_context["IMMINENT_CRISIS"]
 print("Conversation Objectives: ", conversation_objectives)
 
+gpt4o_endpoint = os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
 target_llm = OpenAIChatTarget(
-    endpoint=os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"],
-    api_key=os.environ["AZURE_OPENAI_GPT4O_KEY"],
+    endpoint=gpt4o_endpoint,
+    api_key=get_azure_openai_auth(gpt4o_endpoint),
     model_name=os.environ["AZURE_OPENAI_GPT4O_MODEL"],
 )
 
 # Create adversarial config with custom instructions
-adversarial_target = OpenAIChatTarget()
+adversarial_target = OpenAIChatTarget(
+    endpoint=chat_endpoint,
+    api_key=get_azure_openai_auth(chat_endpoint),
+)
 adversarial_config = AttackAdversarialConfig(target=adversarial_target, system_prompt_path=attack_strategy_path)
 
 for objective in conversation_objectives:

@@ -264,7 +264,5 @@ class TestBaseInstanceRegistryDunderMethods:
 
     def test_iter_allows_for_loop(self):
         """Test that the registry can be used in a for loop."""
-        collected = []
-        for name in self.registry:
-            collected.append(name)
+        collected = list(self.registry)
         assert collected == ["name1", "name2"]

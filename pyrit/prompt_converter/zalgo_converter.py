@@ -58,7 +58,7 @@ class ZalgoConverter(WordLevelConverter):
         try:
             intensity = int(intensity)
         except (TypeError, ValueError):
-            raise ValueError(f"Invalid intensity value: {intensity!r} (must be an integer)")
+            raise ValueError(f"Invalid intensity value: {intensity!r} (must be an integer)") from None
 
         normalized_intensity = max(0, min(intensity, MAX_INTENSITY))
         if intensity != normalized_intensity:

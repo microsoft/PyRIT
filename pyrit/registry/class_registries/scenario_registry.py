@@ -154,7 +154,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         except Exception as e:
             logger.debug(f"Failed to discover user scenarios: {e}")
 
-    def _build_metadata(self, name: str, entry: ClassEntry["Scenario"]) -> ScenarioMetadata:
+    def _build_metadata(self, name: str, entry: ClassEntry[Scenario]) -> ScenarioMetadata:
         """
         Build metadata for a Scenario class.
 

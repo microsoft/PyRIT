@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-# flake8: noqa
 
 from unittest.mock import patch
 

@@ -105,11 +105,11 @@ chapters:
       - file: code/scoring/5_human_in_the_loop_scorer
       - file: code/scoring/6_refusal_scorer
       - file: code/scoring/7_batch_scorer
+      - file: code/scoring/8_scorer_metrics
       - file: code/scoring/insecure_code_scorer
       - file: code/scoring/persuasion_full_conversation_scorer
       - file: code/scoring/prompt_shield_scorer
       - file: code/scoring/generic_scorers
-      - file: code/scoring/8_scorer_metrics
     - file: code/memory/0_memory
       sections:
       - file: code/memory/1_sqlite_memory

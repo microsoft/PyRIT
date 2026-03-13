@@ -28,4 +28,3 @@ class ScenarioResultPrinter(ABC):
         Args:
             result (ScenarioResult): The scenario result to summarize
         """
-        pass

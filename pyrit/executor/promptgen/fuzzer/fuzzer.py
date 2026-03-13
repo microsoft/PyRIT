@@ -8,7 +8,7 @@ import random
 import textwrap
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union, overload
+from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
 import numpy as np
 from colorama import Fore, Style
@@ -23,7 +23,6 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import FuzzerConverter
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -33,8 +32,11 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
+
+if TYPE_CHECKING:
+    from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import FuzzerConverter
+    from pyrit.prompt_target import PromptChatTarget, PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,7 @@ class _MCTSExplorer:
         self.minimum_reward = minimum_reward
         self.non_leaf_node_probability = non_leaf_node_probability
 
-    def select_node(self, *, initial_nodes: List[_PromptNode], step: int) -> Tuple[_PromptNode, List[_PromptNode]]:
+    def select_node(self, *, initial_nodes: list[_PromptNode], step: int) -> tuple[_PromptNode, list[_PromptNode]]:
         """
         Select a node using MCTS-explore algorithm.
 
@@ -153,7 +155,7 @@ class _MCTSExplorer:
         exploration = self.frequency_weight * np.sqrt(2 * np.log(step) / (node.visited_num + 0.01))
         return float(exploitation + exploration)
 
-    def update_rewards(self, path: List[_PromptNode], reward: float, last_node: Optional[_PromptNode] = None) -> None:
+    def update_rewards(self, path: list[_PromptNode], reward: float, last_node: Optional[_PromptNode] = None) -> None:
         """
         Update rewards for nodes in the path.
 
@@ -179,24 +181,24 @@ class FuzzerContext(PromptGeneratorStrategyContext):
     """
 
     # Per-execution input data
-    prompts: List[str]
-    prompt_templates: List[str]
+    prompts: list[str]
+    prompt_templates: list[str]
     max_query_limit: Optional[int] = None
 
     # Tracking state
     total_target_query_count: int = 0
     total_jailbreak_count: int = 0
-    jailbreak_conversation_ids: List[Union[str, uuid.UUID]] = field(default_factory=list)
+    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
     executed_turns: int = 0
 
     # Tree structure
-    initial_prompt_nodes: List[_PromptNode] = field(default_factory=list)
-    new_prompt_nodes: List[_PromptNode] = field(default_factory=list)
-    mcts_selected_path: List[_PromptNode] = field(default_factory=list)
+    initial_prompt_nodes: list[_PromptNode] = field(default_factory=list)
+    new_prompt_nodes: list[_PromptNode] = field(default_factory=list)
+    mcts_selected_path: list[_PromptNode] = field(default_factory=list)
     last_choice_node: Optional[_PromptNode] = None
 
     # Optional memory labels to apply to the prompts
-    memory_labels: Dict[str, str] = field(default_factory=dict)
+    memory_labels: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """
@@ -219,8 +221,8 @@ class FuzzerResult(PromptGeneratorStrategyResult):
     """
 
     # Concrete fields instead of metadata storage
-    successful_templates: List[str] = field(default_factory=list)
-    jailbreak_conversation_ids: List[Union[str, uuid.UUID]] = field(default_factory=list)
+    successful_templates: list[str] = field(default_factory=list)
+    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
     total_queries: int = 0
     templates_explored: int = 0
 
@@ -536,7 +538,7 @@ class FuzzerGenerator(
     def with_default_scorer(
         *,
         objective_target: PromptTarget,
-        template_converters: List[FuzzerConverter],
+        template_converters: list[FuzzerConverter],
         scoring_target: PromptChatTarget,
         converter_config: Optional[StrategyConverterConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -546,7 +548,7 @@ class FuzzerGenerator(
         non_leaf_node_probability: float = _DEFAULT_NON_LEAF_PROBABILITY,
         batch_size: int = _DEFAULT_BATCH_SIZE,
         target_jailbreak_goal_count: int = _DEFAULT_TARGET_JAILBREAK_COUNT,
-    ) -> "FuzzerGenerator":
+    ) -> FuzzerGenerator:
         """
         Create a FuzzerGenerator instance with default scoring configuration.
 
@@ -604,7 +606,7 @@ class FuzzerGenerator(
         self,
         *,
         objective_target: PromptTarget,
-        template_converters: List[FuzzerConverter],
+        template_converters: list[FuzzerConverter],
         converter_config: Optional[StrategyConverterConfig] = None,
         scorer: Optional[Scorer] = None,
         scoring_success_threshold: float = 0.8,
@@ -682,8 +684,8 @@ class FuzzerGenerator(
     def _create_identifier(
         self,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        children: Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]] = None,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this prompt generator.
@@ -696,7 +698,7 @@ class FuzzerGenerator(
         Returns:
             ComponentIdentifier: The identifier for this prompt generator.
         """
-        all_children: Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]] = {
+        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
             "objective_target": self._objective_target.get_identifier(),
         }
         if children:
@@ -715,7 +717,7 @@ class FuzzerGenerator(
     def _validate_inputs(
         self,
         *,
-        template_converters: List[FuzzerConverter],
+        template_converters: list[FuzzerConverter],
         batch_size: int,
     ) -> None:
         """
@@ -862,7 +864,6 @@ class FuzzerGenerator(
             context (FuzzerContext): The generation context.
         """
         # No specific teardown needed
-        pass
 
     def _should_stop_generation(self, context: FuzzerContext) -> bool:
         """
@@ -889,7 +890,7 @@ class FuzzerGenerator(
 
         return False
 
-    def _select_template_with_mcts(self, context: FuzzerContext) -> Tuple[_PromptNode, List[_PromptNode]]:
+    def _select_template_with_mcts(self, context: FuzzerContext) -> tuple[_PromptNode, list[_PromptNode]]:
         """
         Select a template using the MCTS-explore algorithm.
 
@@ -946,7 +947,7 @@ class FuzzerGenerator(
 
         return converted.output_text
 
-    def _get_other_templates(self, context: FuzzerContext) -> List[str]:
+    def _get_other_templates(self, context: FuzzerContext) -> list[str]:
         """
         Get templates not in the current MCTS path.
 
@@ -956,16 +957,15 @@ class FuzzerGenerator(
         Returns:
             List of template strings.
         """
-        other_templates = []
         node_ids_on_path = {node.id for node in context.mcts_selected_path}
 
-        for prompt_node in context.initial_prompt_nodes + context.new_prompt_nodes:
-            if prompt_node.id not in node_ids_on_path:
-                other_templates.append(prompt_node.template)
+        return [
+            prompt_node.template
+            for prompt_node in context.initial_prompt_nodes + context.new_prompt_nodes
+            if prompt_node.id not in node_ids_on_path
+        ]
 
-        return other_templates
-
-    def _generate_prompts_from_template(self, *, template: SeedPrompt, prompts: List[str]) -> List[str]:
+    def _generate_prompts_from_template(self, *, template: SeedPrompt, prompts: list[str]) -> list[str]:
         """
         Generate jailbreak prompts by filling template with prompts.
 
@@ -985,7 +985,7 @@ class FuzzerGenerator(
 
         return [template.render_template_value(prompt=prompt) for prompt in prompts]
 
-    async def _send_prompts_to_target_async(self, *, context: FuzzerContext, prompts: List[str]) -> List[Message]:
+    async def _send_prompts_to_target_async(self, *, context: FuzzerContext, prompts: list[str]) -> list[Message]:
         """
         Send prompts to the target in batches.
 
@@ -1006,7 +1006,7 @@ class FuzzerGenerator(
             batch_size=self._batch_size,
         )
 
-    def _create_normalizer_requests(self, prompts: List[str]) -> List[NormalizerRequest]:
+    def _create_normalizer_requests(self, prompts: list[str]) -> list[NormalizerRequest]:
         """
         Create normalizer requests from prompts.
 
@@ -1016,7 +1016,7 @@ class FuzzerGenerator(
         Returns:
             List of normalizer requests.
         """
-        requests: List[NormalizerRequest] = []
+        requests: list[NormalizerRequest] = []
 
         for prompt in prompts:
             seed_group = SeedGroup(seeds=[SeedPrompt(value=prompt, data_type="text")])
@@ -1029,7 +1029,7 @@ class FuzzerGenerator(
 
         return requests
 
-    async def _score_responses_async(self, *, responses: List[Message], tasks: List[str]) -> List[Score]:
+    async def _score_responses_async(self, *, responses: list[Message], tasks: list[str]) -> list[Score]:
         """
         Score the responses from the target.
 
@@ -1054,8 +1054,8 @@ class FuzzerGenerator(
         self,
         *,
         context: FuzzerContext,
-        scores: List[Score],
-        responses: List[Message],
+        scores: list[Score],
+        responses: list[Message],
         template_node: _PromptNode,
         current_seed: _PromptNode,
     ) -> int:
@@ -1189,8 +1189,8 @@ class FuzzerGenerator(
     async def execute_async(
         self,
         *,
-        prompts: List[str],
-        prompt_templates: List[str],
+        prompts: list[str],
+        prompt_templates: list[str],
         max_query_limit: Optional[int] = None,
         memory_labels: Optional[dict[str, str]] = None,
         **kwargs: Any,

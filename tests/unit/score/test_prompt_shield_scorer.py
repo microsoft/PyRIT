@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import Mock
 
 import pytest

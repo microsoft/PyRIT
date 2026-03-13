@@ -84,7 +84,9 @@
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "ms-playwright.playwright",
-        "orta.vscode-jest"
+        "orta.vscode-jest",
+        "github.copilot",
+        "github.copilot-chat"
       ]
     }
   },

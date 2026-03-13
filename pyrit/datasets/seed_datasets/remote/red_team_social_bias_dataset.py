@@ -116,7 +116,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                             data_type="text",
                             prompt_group_id=group_id,
                             sequence=i,
-                            **prompt_metadata,  # type: ignore
+                            **prompt_metadata,  # type: ignore[arg-type]
                         )
                     )
             else:
@@ -133,7 +133,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                     SeedPrompt(
                         value=escaped_cleaned_value,
                         data_type="text",
-                        **prompt_metadata,  # type: ignore
+                        **prompt_metadata,  # type: ignore[arg-type]
                     )
                 )
 

@@ -50,7 +50,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-target = TextTarget(text_stream=open(os.devnull, "w", encoding="utf-8"))
+target = TextTarget(text_stream=open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115
 printer = ConsoleAttackResultPrinter()
 
 

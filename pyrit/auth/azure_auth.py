@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, Union, cast
+from typing import TYPE_CHECKING, Any, Union, cast
 from urllib.parse import urlparse
 
 import msal
@@ -23,6 +23,8 @@ from azure.identity.aio import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import azure.cognitiveservices.speech as speechsdk
 
 from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
@@ -135,7 +137,7 @@ def get_access_token_from_azure_cli(*, scope: str, tenant_id: str = "") -> str:
     try:
         credential = AzureCliCredential(tenant_id=tenant_id)
         token = credential.get_token(scope)
-        return cast(str, token.token)
+        return cast("str", token.token)
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}' with tenant ID '{tenant_id}': {e}")
         raise
@@ -157,7 +159,7 @@ def get_access_token_from_azure_msi(*, client_id: str, scope: str) -> str:
     try:
         credential = ManagedIdentityCredential(client_id=client_id)
         token = credential.get_token(scope)
-        return cast(str, token.token)
+        return cast("str", token.token)
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}' with client ID '{client_id}': {e}")
         raise
@@ -178,7 +180,7 @@ def get_access_token_from_msa_public_client(*, client_id: str, scope: str) -> st
     try:
         app = msal.PublicClientApplication(client_id)
         result = app.acquire_token_interactive(scopes=[scope])
-        return cast(str, result["access_token"])
+        return cast("str", result["access_token"])
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}' with client ID '{client_id}': {e}")
         raise
@@ -323,7 +325,7 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
-            + "You may need to install it via 'pip install pyrit[speech]'"
+            "You may need to install it via 'pip install pyrit[speech]'"
         )
         raise e
 
@@ -359,7 +361,7 @@ def get_speech_config_from_default_azure_credential(resource_id: str, region: st
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
-            + "You may need to install it via 'pip install pyrit[speech]'"
+            "You may need to install it via 'pip install pyrit[speech]'"
         )
         raise e
 

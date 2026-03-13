@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import List
 
 from pyrit.message_normalizer.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message, MessagePiece
@@ -24,7 +23,7 @@ class ConversationContextNormalizer(MessageStringNormalizer):
         ...
     """
 
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Normalize a list of messages into a turn-based context string.
 
@@ -40,7 +39,7 @@ class ConversationContextNormalizer(MessageStringNormalizer):
         if not messages:
             raise ValueError("Messages list cannot be empty")
 
-        context_parts: List[str] = []
+        context_parts: list[str] = []
         turn_number = 0
 
         for message in messages:

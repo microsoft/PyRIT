@@ -3,8 +3,8 @@
 
 import io
 import os
+from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
-from typing import MutableSequence
 
 import pytest
 from unit.mocks import get_sample_conversations
@@ -20,6 +20,7 @@ def sample_entries() -> MutableSequence[MessagePiece]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_user_no_system(sample_entries: MutableSequence[MessagePiece]):
     output_stream = io.StringIO()
     no_op = TextTarget(text_stream=output_stream)
@@ -37,6 +38,7 @@ async def test_send_prompt_user_no_system(sample_entries: MutableSequence[Messag
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_stream(sample_entries: MutableSequence[MessagePiece]):
     with NamedTemporaryFile(mode="w+", delete=False) as tmp_file:
         prompt = "hi, I am a victim chatbot, how can I help?"

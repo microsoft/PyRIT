@@ -18,7 +18,7 @@ Helper functions include:
 """
 
 import uuid
-from typing import List, Optional
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -133,7 +133,7 @@ def sample_system_piece() -> MessagePiece:
 
 
 @pytest.fixture
-def sample_conversation(sample_user_piece: MessagePiece, sample_assistant_piece: MessagePiece) -> List[Message]:
+def sample_conversation(sample_user_piece: MessagePiece, sample_assistant_piece: MessagePiece) -> list[Message]:
     """Create a sample conversation with user and assistant messages."""
     return [
         Message(message_pieces=[sample_user_piece]),
@@ -509,7 +509,7 @@ class TestConversationRetrieval:
         assert result == []
 
     def test_get_conversation_returns_messages_in_order(
-        self, attack_identifier: ComponentIdentifier, sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_conversation returns messages in order."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -537,7 +537,7 @@ class TestConversationRetrieval:
         assert result is None
 
     def test_get_last_message_returns_last_piece(
-        self, attack_identifier: ComponentIdentifier, sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message returns the most recent message."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -555,7 +555,7 @@ class TestConversationRetrieval:
         assert result.api_role == "assistant"
 
     def test_get_last_message_with_role_filter(
-        self, attack_identifier: ComponentIdentifier, sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message with role filter returns correct message."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -574,7 +574,7 @@ class TestConversationRetrieval:
         assert result.api_role == "user"
 
     def test_get_last_message_with_role_filter_returns_none_when_no_match(
-        self, attack_identifier: ComponentIdentifier, sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message returns None when no message matches role filter."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -718,7 +718,7 @@ class TestInitializeContext:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that prepended conversation is added to memory for chat targets."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -766,7 +766,7 @@ class TestInitializeContext:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that prepended conversation is normalized for non-chat targets by default."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -792,7 +792,7 @@ class TestInitializeContext:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that non-chat target normalizes prepended conversation when configured."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -821,7 +821,7 @@ class TestInitializeContext:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that turn count is returned for multi-turn attacks."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1022,7 +1022,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that non-chat targets normalize by default (no config), matching dataclass field default."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1048,7 +1048,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that non_chat_target_behavior='raise' raises ValueError."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1073,7 +1073,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that normalize_first_turn creates next_message when none exists."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1101,7 +1101,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that normalize_first_turn prepends context to existing next_message."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1131,7 +1131,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that normalize_first_turn returns empty ConversationState (no turn tracking)."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1161,7 +1161,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied to all roles by default."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1188,7 +1188,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to user role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1217,7 +1217,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to assistant role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1246,7 +1246,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that empty roles list means no converters applied to any role."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1279,7 +1279,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that default normalizer produces Turn N format."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1307,7 +1307,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that custom message_normalizer is used when provided."""
         from pyrit.message_normalizer import MessageStringNormalizer
@@ -1388,7 +1388,7 @@ class TestPrependedConversationConfigSettings:
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that chat targets ignore non_chat_target_behavior setting."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1469,7 +1469,7 @@ class TestAddPrependedConversationToMemory:
     async def test_adds_messages_to_memory(
         self,
         attack_identifier: ComponentIdentifier,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that messages are added to memory."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1488,7 +1488,7 @@ class TestAddPrependedConversationToMemory:
     async def test_assigns_conversation_id_to_all_pieces(
         self,
         attack_identifier: ComponentIdentifier,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that conversation_id is assigned to all message pieces."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1508,7 +1508,7 @@ class TestAddPrependedConversationToMemory:
     async def test_assigns_attack_identifier_to_all_pieces(
         self,
         attack_identifier: ComponentIdentifier,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that attack_identifier is assigned to all message pieces."""
         manager = ConversationManager(attack_identifier=attack_identifier)

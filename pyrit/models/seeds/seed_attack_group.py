@@ -9,11 +9,15 @@ Extends SeedGroup to enforce exactly one objective is present.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Sequence, Union
+from typing import TYPE_CHECKING, Any, Union
 
-from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyrit.models.seeds.seed import Seed
 
 
 class SeedAttackGroup(SeedGroup):
@@ -30,7 +34,7 @@ class SeedAttackGroup(SeedGroup):
     def __init__(
         self,
         *,
-        seeds: Sequence[Union[Seed, Dict[str, Any]]],
+        seeds: Sequence[Union[Seed, dict[str, Any]]],
     ):
         """
         Initialize a SeedAttackGroup.

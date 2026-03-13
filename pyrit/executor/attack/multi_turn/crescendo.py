@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -30,6 +30,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
@@ -50,6 +51,9 @@ from pyrit.score import (
     SelfAskScaleScorer,
 )
 from pyrit.score.score_utils import normalize_score_to_float
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,7 @@ class CrescendoAttackResult(AttackResult):
         Returns:
             int: The number of backtracks.
         """
-        return cast(int, self.metadata.get("backtrack_count", 0))
+        return cast("int", self.metadata.get("backtrack_count", 0))
 
     @backtrack_count.setter
     def backtrack_count(self, value: int) -> None:
@@ -254,7 +258,17 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         Args:
             context (CrescendoAttackContext): Attack context with configuration
+
+        Raises:
+            ValueError: If the objective target does not support multi-turn conversations.
         """
+        if not self._objective_target.supports_multi_turn:
+            raise ValueError(
+                "CrescendoAttack requires a multi-turn target. Crescendo fundamentally relies on "
+                "multi-turn conversation history to gradually escalate prompts. "
+                "Use RedTeamingAttack or TreeOfAttacksWithPruning instead."
+            )
+
         # Ensure the context has a session
         context.session = ConversationSession()
 
@@ -380,7 +394,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Prepare the result
         result = CrescendoAttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -402,7 +416,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             context (CrescendoAttackContext): The attack context.
         """
         # Nothing to be done here, no-op
-        pass
 
     @pyrit_json_retry
     async def _get_attack_prompt_async(

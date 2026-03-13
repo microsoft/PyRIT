@@ -203,7 +203,6 @@ print(custom_formatted)
 # You can create custom normalizers by extending the base classes.
 
 # %%
-from typing import List
 
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message
@@ -212,7 +211,7 @@ from pyrit.models import Message
 class SimpleMarkdownNormalizer(MessageStringNormalizer):
     """Custom normalizer that formats messages as Markdown."""
 
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         lines = []
         for msg in messages:
             piece = msg.get_piece()

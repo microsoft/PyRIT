@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -29,7 +29,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         source: str = "PKU-Alignment/PKU-SafeRLHF",
         include_safe_prompts: bool = True,
         filter_harm_categories: Optional[
-            List[
+            list[
                 Literal[
                     "Animal Abuse",
                     "Copyright Issues",

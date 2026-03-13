@@ -18,7 +18,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Optional, Union
 
 import pyrit
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
@@ -146,7 +146,7 @@ class SeedSimulatedConversation(Seed):
         return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SeedSimulatedConversation":
+    def from_dict(cls, data: dict[str, Any]) -> SeedSimulatedConversation:
         """
         Create a SeedSimulatedConversation from a dictionary, typically from YAML.
 
@@ -183,7 +183,7 @@ class SeedSimulatedConversation(Seed):
         template_path: Union[str, Path],
         required_parameters: list[str],
         error_message: Optional[str] = None,
-    ) -> "SeedSimulatedConversation":
+    ) -> SeedSimulatedConversation:
         """
         Load a SeedSimulatedConversation from a YAML file and validate required parameters.
 
@@ -209,7 +209,7 @@ class SeedSimulatedConversation(Seed):
 
         return instance
 
-    def get_identifier(self) -> Dict[str, Any]:
+    def get_identifier(self) -> dict[str, Any]:
         """
         Get an identifier dict capturing this configuration for comparison/storage.
 

@@ -130,7 +130,7 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 
@@ -167,18 +167,16 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
                 await audio_serializer.save_data(audio_data)
                 audio_serializer_file = str(audio_serializer.value)
                 logger.info(
-                    "Speech synthesized for text [{}], and the audio was saved to [{}]".format(
-                        prompt, audio_serializer_file
-                    )
+                    f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]"
                 )
             elif result.reason == speechsdk.ResultReason.Canceled:
                 cancellation_details = result.cancellation_details
-                logger.info("Speech synthesis canceled: {}".format(cancellation_details.reason))
+                logger.info(f"Speech synthesis canceled: {cancellation_details.reason}")
                 if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                    logger.error("Error details: {}".format(cancellation_details.error_details))
+                    logger.error(f"Error details: {cancellation_details.error_details}")
                 raise RuntimeError(
-                    "Speech synthesis canceled: {}".format(cancellation_details.reason)
-                    + "Error details: {}".format(cancellation_details.error_details)
+                    f"Speech synthesis canceled: {cancellation_details.reason}. "
+                    f"Error details: {cancellation_details.error_details}"
                 )
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))

@@ -11,14 +11,48 @@ and automatically expanded during scenario initialization.
 It also provides ScenarioCompositeStrategy for representing composed attack strategies.
 """
 
-from enum import Enum
-from typing import List, Sequence, Set, TypeVar
+from __future__ import annotations
+
+from enum import Enum, EnumMeta
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from pyrit.common.deprecation import print_deprecation_message
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # TypeVar for the enum subclass itself
 T = TypeVar("T", bound="ScenarioStrategy")
 
 
-class ScenarioStrategy(Enum):
+class _DeprecatedEnumMeta(EnumMeta):
+    """
+    Custom Enum metaclass that supports deprecated member aliases.
+
+    Subclasses of ScenarioStrategy can define deprecated member name mappings
+    by setting ``__deprecated_members__`` on the class after definition.
+    Each entry maps the old name to a ``(new_name, removed_in)`` tuple::
+
+        MyStrategy.__deprecated_members__ = {"OLD_NAME": ("NewName", "0.13.0")}
+
+    Accessing ``MyStrategy.OLD_NAME`` will emit a DeprecationWarning and return
+    the same enum member as ``MyStrategy.NewName``.
+    """
+
+    def __getattr__(cls, name: str) -> Any:
+        deprecated = cls.__dict__.get("__deprecated_members__")
+        if deprecated and name in deprecated:
+            new_name, removed_in = deprecated[name]
+            print_deprecation_message(
+                old_item=f"{cls.__name__}.{name}",
+                new_item=f"{cls.__name__}.{new_name}",
+                removed_in=removed_in,
+            )
+            return cls[new_name]
+        raise AttributeError(name)
+
+
+class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
     """
     Base class for attack strategies with tag-based categorization and aggregation.
 
@@ -46,7 +80,7 @@ class ScenarioStrategy(Enum):
 
     _tags: set[str]
 
-    def __new__(cls, value: str, tags: set[str] | None = None) -> "ScenarioStrategy":
+    def __new__(cls, value: str, tags: set[str] | None = None) -> ScenarioStrategy:
         """
         Create a new ScenarioStrategy with value and tags.
 
@@ -76,7 +110,7 @@ class ScenarioStrategy(Enum):
         return self._tags
 
     @classmethod
-    def get_aggregate_tags(cls: type[T]) -> Set[str]:
+    def get_aggregate_tags(cls: type[T]) -> set[str]:
         """
         Get the set of tags that represent aggregate categories.
 
@@ -93,7 +127,7 @@ class ScenarioStrategy(Enum):
         return {"all"}
 
     @classmethod
-    def get_strategies_by_tag(cls: type[T], tag: str) -> Set[T]:
+    def get_strategies_by_tag(cls: type[T], tag: str) -> set[T]:
         """
         Get all attack strategies that have a specific tag.
 
@@ -150,7 +184,7 @@ class ScenarioStrategy(Enum):
         return [s for s in cls if s.value in aggregate_tags]
 
     @classmethod
-    def normalize_strategies(cls: type[T], strategies: Set[T]) -> Set[T]:
+    def normalize_strategies(cls: type[T], strategies: set[T]) -> set[T]:
         """
         Normalize a set of attack strategies by expanding aggregate tags.
 
@@ -194,10 +228,10 @@ class ScenarioStrategy(Enum):
     @classmethod
     def prepare_scenario_strategies(
         cls: type[T],
-        strategies: Sequence[T | "ScenarioCompositeStrategy"] | None = None,
+        strategies: Sequence[T | ScenarioCompositeStrategy] | None = None,
         *,
         default_aggregate: T | None = None,
-    ) -> List["ScenarioCompositeStrategy"]:
+    ) -> list[ScenarioCompositeStrategy]:
         """
         Prepare and normalize scenario strategies for use in a scenario.
 
@@ -383,7 +417,7 @@ class ScenarioCompositeStrategy:
         return self._name
 
     @property
-    def strategies(self) -> List[ScenarioStrategy]:
+    def strategies(self) -> list[ScenarioStrategy]:
         """Get the list of strategies in this composition."""
         return self._strategies
 
@@ -394,8 +428,8 @@ class ScenarioCompositeStrategy:
 
     @staticmethod
     def extract_single_strategy_values(
-        composites: Sequence["ScenarioCompositeStrategy"], *, strategy_type: type[T]
-    ) -> Set[str]:
+        composites: Sequence[ScenarioCompositeStrategy], *, strategy_type: type[T]
+    ) -> set[str]:
         """
         Extract strategy values from single-strategy composites.
 
@@ -473,8 +507,8 @@ class ScenarioCompositeStrategy:
 
     @staticmethod
     def normalize_compositions(
-        compositions: List["ScenarioCompositeStrategy"], *, strategy_type: type[T]
-    ) -> List["ScenarioCompositeStrategy"]:
+        compositions: list[ScenarioCompositeStrategy], *, strategy_type: type[T]
+    ) -> list[ScenarioCompositeStrategy]:
         """
         Normalize strategy compositions by expanding aggregates while preserving concrete compositions.
 
@@ -514,7 +548,7 @@ class ScenarioCompositeStrategy:
             raise ValueError("Compositions list cannot be empty")
 
         aggregate_tags = strategy_type.get_aggregate_tags()
-        normalized_compositions: List[ScenarioCompositeStrategy] = []
+        normalized_compositions: list[ScenarioCompositeStrategy] = []
 
         for composite in compositions:
             if not composite.strategies:
@@ -551,8 +585,9 @@ class ScenarioCompositeStrategy:
                 aggregate = aggregates_in_composition[0]
                 expanded = strategy_type.normalize_strategies({aggregate})
                 # Each expanded strategy becomes its own composition
-                for strategy in expanded:
-                    normalized_compositions.append(ScenarioCompositeStrategy(strategies=[strategy]))
+                normalized_compositions.extend(
+                    ScenarioCompositeStrategy(strategies=[strategy]) for strategy in expanded
+                )
             else:
                 # Concrete composition - validate and preserve as-is
                 strategy_type.validate_composition(typed_strategies)

@@ -667,9 +667,8 @@ class TestMain:
     @patch("pyrit.cli.frontend_core.FrontendCore")
     def test_main_creates_context_without_initializers(self, mock_frontend_core: MagicMock):
         """Test main creates context without initializers."""
-        with patch("pyrit.cli.pyrit_shell.PyRITShell"):
-            with patch("sys.argv", ["pyrit_shell"]):
-                pyrit_shell.main()
+        with patch("pyrit.cli.pyrit_shell.PyRITShell"), patch("sys.argv", ["pyrit_shell"]):
+            pyrit_shell.main()
 
         call_kwargs = mock_frontend_core.call_args[1]
         assert call_kwargs["initialization_scripts"] is None
@@ -714,13 +713,12 @@ class TestPyRITShellRunCommand:
 
         shell = pyrit_shell.PyRITShell(context=mock_context)
 
-        with patch("pyrit.cli.frontend_core.FrontendCore"):
-            with patch("pyrit.cli.frontend_core.run_scenario_async"):
-                shell.do_run("test_scenario --initializers init1 --strategies s1 s2 --max-concurrency 10")
+        with patch("pyrit.cli.frontend_core.FrontendCore"), patch("pyrit.cli.frontend_core.run_scenario_async"):
+            shell.do_run("test_scenario --initializers init1 --strategies s1 s2 --max-concurrency 10")
 
-                # Verify run_scenario_async was called with correct args
-                # (it's called via asyncio.run, so check the mock_asyncio_run call)
-                assert mock_asyncio_run.call_count == 2
+            # Verify run_scenario_async was called with correct args
+            # (it's called via asyncio.run, so check the mock_asyncio_run call)
+            assert mock_asyncio_run.call_count == 2
 
     @patch("pyrit.cli.pyrit_shell.asyncio.run")
     @patch("pyrit.cli.frontend_core.parse_run_arguments")

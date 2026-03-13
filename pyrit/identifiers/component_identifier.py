@@ -21,7 +21,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Optional, Union
+from typing import Any, ClassVar, Optional, Union
 
 import pyrit
 from pyrit.common.deprecation import print_deprecation_message
@@ -29,7 +29,7 @@ from pyrit.common.deprecation import print_deprecation_message
 logger = logging.getLogger(__name__)
 
 
-def config_hash(config_dict: Dict[str, Any]) -> str:
+def config_hash(config_dict: dict[str, Any]) -> str:
     """
     Compute a deterministic SHA256 hash from a config dictionary.
 
@@ -54,9 +54,9 @@ def _build_hash_dict(
     *,
     class_name: str,
     class_module: str,
-    params: Dict[str, Any],
-    children: Dict[str, Any],
-) -> Dict[str, Any]:
+    params: dict[str, Any],
+    children: dict[str, Any],
+) -> dict[str, Any]:
     """
     Build the canonical dictionary used for hash computation.
 
@@ -73,20 +73,18 @@ def _build_hash_dict(
     Returns:
         Dict[str, Any]: The canonical dictionary for hashing.
     """
-    hash_dict: Dict[str, Any] = {
+    hash_dict: dict[str, Any] = {
         ComponentIdentifier.KEY_CLASS_NAME: class_name,
         ComponentIdentifier.KEY_CLASS_MODULE: class_module,
     }
 
     # Only include non-None params — adding an optional param with None default
     # won't change existing hashes, making the schema backward-compatible.
-    for key, value in sorted(params.items()):
-        if value is not None:
-            hash_dict[key] = value
+    hash_dict.update({key: value for key, value in sorted(params.items()) if value is not None})
 
     # Children contribute their hashes, not their full structure.
     if children:
-        children_hashes: Dict[str, Any] = {}
+        children_hashes: dict[str, Any] = {}
         for name, child in sorted(children.items()):
             if isinstance(child, ComponentIdentifier):
                 children_hashes[name] = child.hash
@@ -125,9 +123,9 @@ class ComponentIdentifier:
     #: Full module path (e.g., "pyrit.score.self_ask_scale_scorer").
     class_module: str
     #: Behavioral parameters that affect output.
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
-    children: Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]] = field(default_factory=dict)
+    children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = field(default_factory=dict)
     #: Content-addressed SHA256 hash computed from class, params, and children.
     hash: str = field(init=False, compare=False)
     #: Version tag for storage. Not included in hash.
@@ -170,8 +168,8 @@ class ComponentIdentifier:
         cls,
         obj: object,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        children: Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]] = None,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
     ) -> ComponentIdentifier:
         """
         Build a ComponentIdentifier from a live object instance.
@@ -204,7 +202,7 @@ class ComponentIdentifier:
         )
 
     @classmethod
-    def normalize(cls, value: Union[ComponentIdentifier, Dict[str, Any]]) -> ComponentIdentifier:
+    def normalize(cls, value: Union[ComponentIdentifier, dict[str, Any]]) -> ComponentIdentifier:
         """
         Normalize a value to a ComponentIdentifier instance.
 
@@ -233,7 +231,7 @@ class ComponentIdentifier:
             return cls.from_dict(value)
         raise TypeError(f"Expected ComponentIdentifier or dict, got {type(value).__name__}")
 
-    def to_dict(self, *, max_value_length: Optional[int] = None) -> Dict[str, Any]:
+    def to_dict(self, *, max_value_length: Optional[int] = None) -> dict[str, Any]:
         """
         Serialize to a JSON-compatible dictionary for DB/JSONL storage.
 
@@ -253,7 +251,7 @@ class ComponentIdentifier:
             Dict[str, Any]: JSON-serializable dictionary suitable for database storage
                 or JSONL export.
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             self.KEY_CLASS_NAME: self.class_name,
             self.KEY_CLASS_MODULE: self.class_module,
             self.KEY_HASH: self.hash,
@@ -264,7 +262,7 @@ class ComponentIdentifier:
             result[key] = self._truncate_value(value=value, max_length=max_value_length)
 
         if self.children:
-            serialized_children: Dict[str, Any] = {}
+            serialized_children: dict[str, Any] = {}
             for name, child in self.children.items():
                 if isinstance(child, ComponentIdentifier):
                     serialized_children[name] = child.to_dict(max_value_length=max_value_length)
@@ -293,7 +291,7 @@ class ComponentIdentifier:
         return value
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> ComponentIdentifier:
+    def from_dict(cls, data: dict[str, Any]) -> ComponentIdentifier:
         """
         Deserialize from a stored dictionary.
 
@@ -370,7 +368,7 @@ class ComponentIdentifier:
             raise ValueError(f"Child '{key}' is a list of {len(child)} components. Use get_child_list() instead.")
         return child
 
-    def get_child_list(self, key: str) -> List[ComponentIdentifier]:
+    def get_child_list(self, key: str) -> list[ComponentIdentifier]:
         """
         Get a list of children by key.
 
@@ -390,8 +388,8 @@ class ComponentIdentifier:
 
     @classmethod
     def _reconstruct_children(
-        cls, children_dict: Optional[Dict[str, Any]]
-    ) -> Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]:
+        cls, children_dict: Optional[dict[str, Any]]
+    ) -> dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]:
         """
         Reconstruct child identifiers from raw dictionary data.
 
@@ -402,7 +400,7 @@ class ComponentIdentifier:
         Returns:
             Dict mapping child names to reconstructed ComponentIdentifier instances or lists thereof.
         """
-        children: Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]] = {}
+        children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {}
         if not children_dict or not isinstance(children_dict, dict):
             return children
 

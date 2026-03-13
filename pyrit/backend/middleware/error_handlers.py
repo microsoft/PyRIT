@@ -44,14 +44,14 @@ def register_error_handlers(app: FastAPI) -> None:
         problem = ProblemDetail(
             type="/errors/validation-error",
             title="Validation Error",
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Request validation failed",
             instance=str(request.url.path),
             errors=errors,
         )
 
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=problem.model_dump(exclude_none=True),
         )
 
@@ -163,9 +163,8 @@ def register_error_handlers(app: FastAPI) -> None:
             JSONResponse: RFC 7807 problem detail response with 500 status.
         """
         # Log the full exception for debugging
-        logger.error(
+        logger.exception(  # noqa: LOG004 – Starlette exception handler, not a try/except block
             f"Unhandled exception on {request.method} {request.url.path}: {exc}",
-            exc_info=True,
         )
 
         problem = ProblemDetail(

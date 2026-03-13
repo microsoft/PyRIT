@@ -66,7 +66,7 @@ def test_leetspeak_non_deterministic(input_text):
     # Check that each character in the output is a valid substitution
     assert all(
         char in valid_chars.get(original_char, [original_char])
-        for original_char, char in zip(input_text, result.output_text)
+        for original_char, char in zip(input_text, result.output_text, strict=False)
     )
 
 

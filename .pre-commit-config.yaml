@@ -13,6 +13,11 @@ repos:
       entry: python ./build_scripts/remove_notebook_headers.py
       language: python
       files: ^doc.*\.(ipynb)$
+    - id: sanitize-notebook-paths
+      name: Sanitize Notebook Paths
+      entry: python ./build_scripts/sanitize_notebook_paths.py
+      language: python
+      files: ^doc.*\.(ipynb)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -56,6 +61,7 @@ repos:
       - id: mypy
         name: mypy (strict)
         files: &strict_modules ^pyrit/
+        exclude: ^pyrit/auxiliary_attacks/
         args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache, --strict]
         entry: mypy
         language: system

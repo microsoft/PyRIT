@@ -13,8 +13,9 @@ import importlib.util
 import inspect
 import logging
 import pkgutil
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable, Iterator, Optional, Tuple, Type, TypeVar
+from typing import Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,9 @@ T = TypeVar("T")
 def discover_in_directory(
     *,
     directory: Path,
-    base_class: Type[T],
+    base_class: type[T],
     recursive: bool = True,
-) -> Iterator[Tuple[str, Path, Type[T]]]:
+) -> Iterator[tuple[str, Path, type[T]]]:
     """
     Discover all subclasses of base_class in a directory by loading Python files.
 
@@ -52,7 +53,7 @@ def discover_in_directory(
             yield from discover_in_directory(directory=item, base_class=base_class, recursive=True)
 
 
-def _process_file(*, file_path: Path, base_class: Type[T]) -> Iterator[Tuple[str, Path, Type[T]]]:
+def _process_file(*, file_path: Path, base_class: type[T]) -> Iterator[tuple[str, Path, type[T]]]:
     """
     Process a Python file and yield subclasses of the base class.
 
@@ -73,10 +74,13 @@ def _process_file(*, file_path: Path, base_class: Type[T]) -> Iterator[Tuple[str
 
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
-            if inspect.isclass(attr) and issubclass(attr, base_class) and attr is not base_class:
-                # Check it's not abstract
-                if not inspect.isabstract(attr):
-                    yield (file_path.stem, file_path, attr)
+            if (
+                inspect.isclass(attr)
+                and issubclass(attr, base_class)
+                and attr is not base_class
+                and not inspect.isabstract(attr)
+            ):
+                yield (file_path.stem, file_path, attr)
 
     except Exception as e:
         logger.warning(f"Failed to load module from {file_path}: {e}")
@@ -86,11 +90,11 @@ def discover_in_package(
     *,
     package_path: Path,
     package_name: str,
-    base_class: Type[T],
+    base_class: type[T],
     recursive: bool = True,
     name_builder: Optional[Callable[[str, str], str]] = None,
     _prefix: str = "",
-) -> Iterator[Tuple[str, Type[T]]]:
+) -> Iterator[tuple[str, type[T]]]:
     """
     Discover all subclasses using pkgutil.iter_modules on a package.
 
@@ -110,7 +114,9 @@ def discover_in_package(
         Tuples of (registry_name, class) for each discovered subclass.
     """
     if name_builder is None:
-        name_builder = lambda prefix, name: name if not prefix else f"{prefix}.{name}"
+
+        def name_builder(prefix: str, name: str) -> str:
+            return name if not prefix else f"{prefix}.{name}"
 
     for _, module_name, is_pkg in pkgutil.iter_modules([str(package_path)]):
         if module_name.startswith("_"):
@@ -123,12 +129,11 @@ def discover_in_package(
 
             # For non-package modules, find and yield subclasses
             if not is_pkg:
-                for name, obj in inspect.getmembers(module, inspect.isclass):
-                    if issubclass(obj, base_class) and obj is not base_class:
-                        if not inspect.isabstract(obj):
-                            # Build the registry name including any prefix
-                            registry_name = name_builder(_prefix, module_name)
-                            yield (registry_name, obj)
+                for _name, obj in inspect.getmembers(module, inspect.isclass):
+                    if issubclass(obj, base_class) and obj is not base_class and not inspect.isabstract(obj):
+                        # Build the registry name including any prefix
+                        registry_name = name_builder(_prefix, module_name)
+                        yield (registry_name, obj)
 
             # Recursively discover in subpackages
             if recursive and is_pkg:
@@ -150,9 +155,9 @@ def discover_in_package(
 
 def discover_subclasses_in_loaded_modules(
     *,
-    base_class: Type[T],
-    exclude_module_prefixes: Optional[Tuple[str, ...]] = None,
-) -> Iterator[Tuple[str, Type[T]]]:
+    base_class: type[T],
+    exclude_module_prefixes: Optional[tuple[str, ...]] = None,
+) -> Iterator[tuple[str, type[T]]]:
     """
     Discover subclasses of a base class from already-loaded modules.
 
@@ -183,7 +188,6 @@ def discover_subclasses_in_loaded_modules(
         if any(module_name.startswith(prefix) for prefix in exclude_module_prefixes):
             continue
 
-        for name, obj in inspect.getmembers(module, inspect.isclass):
-            if issubclass(obj, base_class) and obj is not base_class:
-                if not inspect.isabstract(obj):
-                    yield (module_name, obj)
+        for _name, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, base_class) and obj is not base_class and not inspect.isabstract(obj):
+                yield (module_name, obj)

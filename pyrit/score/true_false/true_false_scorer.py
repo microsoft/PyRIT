@@ -83,7 +83,7 @@ class TrueFalseScorer(Scorer):
         """
         from pyrit.common.path import SCORER_EVALS_PATH
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_hash,
+            find_objective_metrics_by_eval_hash,
         )
 
         if self.evaluation_file_mapping is None:
@@ -94,7 +94,7 @@ class TrueFalseScorer(Scorer):
         if not result_file.exists():
             return None
 
-        return find_objective_metrics_by_hash(hash=self.get_identifier().hash, file_path=result_file)
+        return find_objective_metrics_by_eval_hash(eval_hash=self.get_eval_hash(), file_path=result_file)
 
     async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
         """

@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 mcr.microsoft.com/devcontainers/python:3.11
+FROM mcr.microsoft.com/devcontainers/python:3.11
 
 # Makes installation faster
 ENV UV_COMPILE_BYTECODE=1
@@ -32,15 +32,12 @@ RUN apt-get update && apt-get install -y \
  && curl -sL https://packages.microsoft.com/keys/microsoft.asc \
       | gpg --dearmor \
       > /usr/share/keyrings/microsoft-archive-keyring.gpg \
- && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
       > /etc/apt/sources.list.d/microsoft.list \
  && apt-get update \
- && ACCEPT_EULA=Y apt-get install -y \
-      msodbcsql18 \
-      mssql-tools \
-      unixodbc-dev \
+ && ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 \
  && apt-get install -y azure-cli \
- && echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> /etc/profile.d/sqltools.sh \
+ && echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> /etc/profile.d/sqltools.sh \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
@@ -68,6 +65,9 @@ RUN echo "vscode ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y nodejs \
  && npm install -g npm@latest \
+ && npm install -g @github/copilot@0.0.421 \
+ && npm cache clean --force \
+ && rm -rf /root/.npm \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 

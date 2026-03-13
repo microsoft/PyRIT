@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import AsyncMock
 
 import pytest
@@ -110,7 +110,7 @@ class TestPlaywrightTarget:
         target = PlaywrightTarget(interaction_func=mock_interaction_func, page=mock_page)
 
         assert hasattr(target, "SUPPORTED_DATA_TYPES")
-        assert target.SUPPORTED_DATA_TYPES == {"text", "image_path"}
+        assert {"text", "image_path"} == target.SUPPORTED_DATA_TYPES
 
     def test_validate_request_unsupported_type(self, mock_interaction_func, mock_page):
         """Test validation with unsupported data type."""
@@ -274,7 +274,7 @@ class TestPlaywrightTarget:
         from pyrit.prompt_target.playwright_target import InteractionFunction
 
         # Check that the protocol exists and has the right signature
-        assert hasattr(InteractionFunction, "__call__")
+        assert callable(InteractionFunction)
 
     @pytest.mark.asyncio
     async def test_interaction_function_receives_complete_request(self, mock_page, multiple_text_pieces):
@@ -345,9 +345,7 @@ class TestPlaywrightTargetEdgeCases:
 
         async def complex_interaction_func(page, message):
             # Simulate processing all pieces
-            processed_values = []
-            for piece in message.message_pieces:
-                processed_values.append(f"Processed[{piece.converted_value}]")
+            processed_values = [f"Processed[{piece.converted_value}]" for piece in message.message_pieces]
             return " | ".join(processed_values)
 
         target = PlaywrightTarget(interaction_func=complex_interaction_func, page=mock_page)

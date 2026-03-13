@@ -8,8 +8,9 @@ This module contains types shared between class registries (which store Type[T])
 and instance registries (which store T instances).
 """
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Protocol, Tuple, TypeVar, runtime_checkable
+from typing import Any, Optional, Protocol, TypeVar, runtime_checkable
 
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
 
@@ -68,16 +69,16 @@ class RegistryProtocol(Protocol[MetadataT]):
         """Reset the singleton instance."""
         ...
 
-    def get_names(self) -> List[str]:
+    def get_names(self) -> list[str]:
         """Get a sorted list of all registered names."""
         ...
 
     def list_metadata(
         self,
         *,
-        include_filters: Optional[Dict[str, Any]] = None,
-        exclude_filters: Optional[Dict[str, Any]] = None,
-    ) -> List[MetadataT]:
+        include_filters: Optional[dict[str, Any]] = None,
+        exclude_filters: Optional[dict[str, Any]] = None,
+    ) -> list[MetadataT]:
         """
         List metadata for all registered items, optionally filtered.
 
@@ -107,7 +108,7 @@ class RegistryProtocol(Protocol[MetadataT]):
         ...
 
 
-def _get_metadata_value(metadata: Any, key: str) -> Tuple[bool, Any]:
+def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
     """
     Get a value from a metadata object by key.
 
@@ -135,8 +136,8 @@ def _get_metadata_value(metadata: Any, key: str) -> Tuple[bool, Any]:
 def _matches_filters(
     metadata: Any,
     *,
-    include_filters: Optional[Dict[str, Any]] = None,
-    exclude_filters: Optional[Dict[str, Any]] = None,
+    include_filters: Optional[dict[str, Any]] = None,
+    exclude_filters: Optional[dict[str, Any]] = None,
 ) -> bool:
     """
     Check if a metadata object matches all provided filters.

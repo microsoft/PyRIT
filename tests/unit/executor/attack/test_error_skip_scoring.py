@@ -7,6 +7,7 @@ This ensures consistent error handling across all attack strategies.
 """
 
 import uuid
+from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -233,11 +234,8 @@ async def test_attack_executor_skips_scoring_on_error(
             mock_score.return_value = {"objective_scores": [], "auxiliary_scores": []}
 
             # Execute attack
-            try:
+            with suppress(Exception):
                 await attack.execute_async(**execute_kwargs_func())
-            except Exception:
-                # May fail due to mocking complexity, we just care about scoring behavior
-                pass
 
             # Verify scoring was called with skip_on_error_result=True if it was called
             if mock_score.called:

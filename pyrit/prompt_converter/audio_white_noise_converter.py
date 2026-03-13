@@ -114,9 +114,7 @@ class AudioWhiteNoiseConverter(PromptConverter):
             if data.ndim == 1:
                 noisy_data = self._add_noise(data).astype(original_dtype)
             else:
-                channels = []
-                for ch in range(data.shape[1]):
-                    channels.append(self._add_noise(data[:, ch]))
+                channels = [self._add_noise(data[:, ch]) for ch in range(data.shape[1])]
                 noisy_data = np.column_stack(channels).astype(original_dtype)
 
             # Write the processed data as a new WAV file

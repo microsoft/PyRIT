@@ -153,9 +153,8 @@ async def test_char_swap_converter_proportion_unchanged_with_iterations():
 
     # Mock random.sample to select exactly 2 words (indices 0 and 2)
     # This simulates the word selection strategy picking "Testing" and "words"
-    with patch("random.sample", return_value=[0, 2]) as mock_sample:
-        with patch("random.randint", return_value=1):
-            result = await converter.convert_async(prompt=prompt)
+    with patch("random.sample", return_value=[0, 2]) as mock_sample, patch("random.randint", return_value=1):
+        result = await converter.convert_async(prompt=prompt)
 
     # Verify sample was called once (word selection happens once, not per iteration)
     assert mock_sample.call_count == 1

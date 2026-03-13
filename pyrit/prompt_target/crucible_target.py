@@ -103,7 +103,7 @@ class CrucibleTarget(PromptTarget):
         )
 
         if not resp.text:
-            raise EmptyResponseException()
+            raise EmptyResponseException
 
         logger.info(f'Received the following response from the prompt target "{resp.text}"')
         return resp.text

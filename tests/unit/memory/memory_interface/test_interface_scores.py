@@ -3,7 +3,8 @@
 
 
 import uuid
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 from uuid import uuid4
 
 import pytest

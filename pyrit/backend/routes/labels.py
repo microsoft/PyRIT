@@ -7,7 +7,7 @@ Labels API routes.
 Provides access to unique label values for filtering in the GUI.
 """
 
-from typing import Dict, List, Literal
+from typing import Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
@@ -21,7 +21,7 @@ class LabelOptionsResponse(BaseModel):
     """Response containing unique label keys and their values."""
 
     source: str = Field(..., description="Source type (e.g., 'attacks')")
-    labels: Dict[str, List[str]] = Field(..., description="Map of label keys to their unique values")
+    labels: dict[str, list[str]] = Field(..., description="Map of label keys to their unique values")
 
 
 @router.get(
@@ -48,10 +48,6 @@ async def get_label_options(
     """
     memory = CentralMemory.get_memory_instance()
 
-    if source == "attacks":
-        labels = memory.get_unique_attack_labels()
-    else:
-        # Future: add support for other sources
-        labels = {}
+    labels = memory.get_unique_attack_labels() if source == "attacks" else {}
 
     return LabelOptionsResponse(source=source, labels=labels)

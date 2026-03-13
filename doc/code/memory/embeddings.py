@@ -49,7 +49,7 @@ embedding_response.to_json()
 from pyrit.common.path import DB_DATA_PATH
 
 saved_embedding_path = embedding_response.save_to_file(directory_path=DB_DATA_PATH)
-saved_embedding_path
+print(saved_embedding_path)
 
 # %% [markdown]
 # To load an embedding from disk
@@ -59,4 +59,4 @@ saved_embedding_path
 from pyrit.common.path import DB_DATA_PATH
 
 saved_embedding_path = embedding_response.save_to_file(directory_path=DB_DATA_PATH)
-saved_embedding_path
+print(saved_embedding_path)

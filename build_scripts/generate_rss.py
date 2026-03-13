@@ -60,7 +60,7 @@ for file in files:
     fe.guid(f"https://azure.github.io/PyRIT/blog/{file.name}")
 
     # Extract title and description from HTML content
-    with open(file, "r", encoding="utf-8") as f:
+    with open(file, encoding="utf-8") as f:
         parser = BlogEntryParser()
         parser.feed(f.read())
         fe.title(parser.title)

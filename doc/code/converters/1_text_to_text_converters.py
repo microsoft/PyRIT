@@ -6,11 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit (3.13.5)
-#     language: python
-#     name: python3
+#       jupytext_version: 1.17.2
 # ---
 
 # %% [markdown]
@@ -248,6 +244,7 @@ from pyrit.prompt_converter import (
     NoiseConverter,
     PersuasionConverter,
     RandomTranslationConverter,
+    ScientificTranslationConverter,
     TenseConverter,
     ToneConverter,
     ToxicSentenceGeneratorConverter,
@@ -308,3 +305,7 @@ print("Toxic Sentence:", await toxic_generator.convert_async(prompt="building"))
 # Math prompt transforms into symbolic math
 math_prompt_converter = MathPromptConverter(converter_target=attack_llm)
 print("Math Prompt:", await math_prompt_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Scientific converter translates into scientific language
+scientific_translation_converter = ScientificTranslationConverter(converter_target=attack_llm, mode="academic")
+print("Scientific Translation:", await scientific_translation_converter.convert_async(prompt=prompt))  # type: ignore

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import logging
+import logging  # noqa: TC003
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional, TypeVar

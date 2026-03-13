@@ -3,10 +3,11 @@
 
 
 import uuid
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional
 
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
@@ -17,6 +18,9 @@ from pyrit.models import (
     MessagePiece,
     Score,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def create_message_piece(conversation_id: str, prompt_num: int, targeted_harm_categories=None, labels=None):
@@ -123,7 +127,11 @@ def test_get_attack_results_by_ids(sqlite_instance: MemoryInterface):
 
 
 def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInterface):
-    """Test retrieving attack results by conversation ID."""
+    """Test retrieving attack results by conversation ID.
+
+    When duplicate rows exist for the same conversation_id (legacy bug),
+    get_attack_results deduplicates and returns only the newest entry.
+    """
     # Create and add attack results
     attack_result1 = AttackResult(
         conversation_id="conv_1",
@@ -134,7 +142,7 @@ def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInterface)
     )
 
     attack_result2 = AttackResult(
-        conversation_id="conv_1",  # Same conversation ID
+        conversation_id="conv_1",  # Same conversation ID (simulates legacy duplicate)
         objective="Test objective 2",
         executed_turns=3,
         execution_time_ms=500,
@@ -152,13 +160,11 @@ def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInterface)
     # Add all attack results to memory
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
 
-    # Retrieve attack results by conversation ID
+    # Retrieve attack results by conversation ID — deduplication keeps only the newest
     retrieved_results = sqlite_instance.get_attack_results(conversation_id="conv_1")
 
-    # Verify correct results were retrieved
-    assert len(retrieved_results) == 2
-    for result in retrieved_results:
-        assert result.conversation_id == "conv_1"
+    assert len(retrieved_results) == 1
+    assert retrieved_results[0].conversation_id == "conv_1"
 
 
 def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
@@ -459,7 +465,9 @@ def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
         attack_result = AttackResult(
             conversation_id=f"conv_{i}",
             objective=f"Test objective {i}",
-            attack_identifier=ComponentIdentifier(class_name=f"TestAttack{i}", class_module="test.module"),
+            atomic_attack_identifier=build_atomic_attack_identifier(
+                attack_identifier=ComponentIdentifier(class_name=f"TestAttack{i}", class_module="test.module"),
+            ),
             executed_turns=i + 1,
             execution_time_ms=(i + 1) * 100,
             outcome=outcome,
@@ -557,8 +565,8 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
 
     entry: AttackResultEntry = sqlite_instance._query_entries(AttackResultEntry)[0]
 
-    assert set(entry.pruned_conversation_ids) == pruned_ids  # type: ignore
-    assert set(entry.adversarial_chat_conversation_ids) == adversarial_ids  # type: ignore
+    assert set(entry.pruned_conversation_ids) == pruned_ids  # type: ignore[arg-type]
+    assert set(entry.adversarial_chat_conversation_ids) == adversarial_ids  # type: ignore[arg-type]
 
     retrieved_result = entry.get_attack_result()
     assert {
@@ -588,6 +596,128 @@ def test_attack_result_without_attack_generation_conversation_ids(sqlite_instanc
     retrieved_result = entry.get_attack_result()
     assert not retrieved_result.get_conversations_by_type(ConversationType.PRUNED)
     assert not retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+
+
+def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlite_instance: MemoryInterface):
+    """Test that updating adversarial_chat_conversation_ids is reflected when reading back.
+
+    This catches a regression where the conversation count in the attack history
+    was always showing 1 instead of the actual number of conversations.
+    """
+    # Create attack with no related conversations
+    attack_result = AttackResult(
+        conversation_id="conv_1",
+        objective="Test conversation count",
+        outcome=AttackOutcome.UNDETERMINED,
+        metadata={"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-01T00:00:00"},
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    # Verify initial state: no related conversations
+    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(results) == 1
+    assert len(results[0].related_conversations) == 0
+
+    # Add first related conversation
+    sqlite_instance.update_attack_result(
+        conversation_id="conv_1",
+        update_fields={"adversarial_chat_conversation_ids": ["branch-1"]},
+    )
+
+    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(results[0].related_conversations) == 1
+    assert {r.conversation_id for r in results[0].related_conversations} == {"branch-1"}
+
+    # Add second related conversation (preserving the first)
+    sqlite_instance.update_attack_result(
+        conversation_id="conv_1",
+        update_fields={"adversarial_chat_conversation_ids": ["branch-1", "branch-2"]},
+    )
+
+    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(results[0].related_conversations) == 2
+    assert {r.conversation_id for r in results[0].related_conversations} == {"branch-1", "branch-2"}
+
+    # Verify they are all ADVERSARIAL type
+    for ref in results[0].related_conversations:
+        assert ref.conversation_type == ConversationType.ADVERSARIAL
+
+
+def test_update_attack_result_metadata_does_not_clobber_conversation_ids(sqlite_instance: MemoryInterface):
+    """Regression test: updating only attack_metadata must not erase adversarial_chat_conversation_ids.
+
+    This was the root cause of the conversation-count bug. The old _update_entries
+    used session.merge() which copied ALL attributes from the (potentially stale)
+    detached entry, silently overwriting JSON columns that were not in update_fields.
+    """
+    attack_result = AttackResult(
+        conversation_id="conv_1",
+        objective="Test metadata update preserves conversation ids",
+        outcome=AttackOutcome.UNDETERMINED,
+        metadata={"created_at": "2026-01-01T00:00:00"},
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    # Step 1: add related conversations
+    sqlite_instance.update_attack_result(
+        conversation_id="conv_1",
+        update_fields={"adversarial_chat_conversation_ids": ["branch-1", "branch-2"]},
+    )
+
+    # Step 2: update ONLY metadata (this is what add_message_async does)
+    sqlite_instance.update_attack_result(
+        conversation_id="conv_1",
+        update_fields={"attack_metadata": {"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-02T00:00:00"}},
+    )
+
+    # Verify conversation ids are still present
+    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(results[0].related_conversations) == 2, (
+        "Updating attack_metadata must not erase adversarial_chat_conversation_ids"
+    )
+    assert {r.conversation_id for r in results[0].related_conversations} == {"branch-1", "branch-2"}
+
+
+def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instance: MemoryInterface):
+    """Regression test: merging a stale entry must not overwrite concurrent updates.
+
+    Simulates the race condition where entry is loaded, then another update modifies
+    the DB, and finally the stale entry is used for an unrelated update.
+    """
+    from pyrit.memory.memory_models import AttackResultEntry
+
+    attack_result = AttackResult(
+        conversation_id="conv_1",
+        objective="Test stale merge",
+        outcome=AttackOutcome.UNDETERMINED,
+        metadata={"created_at": "2026-01-01T00:00:00"},
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    # Load entry (will become stale)
+    stale_entries = sqlite_instance._query_entries(
+        AttackResultEntry, conditions=AttackResultEntry.conversation_id == "conv_1"
+    )
+    assert stale_entries[0].adversarial_chat_conversation_ids is None
+
+    # Concurrent update adds conversation ids
+    sqlite_instance.update_attack_result(
+        conversation_id="conv_1",
+        update_fields={"adversarial_chat_conversation_ids": ["branch-1"]},
+    )
+
+    # Now update with the stale entry (only metadata)
+    sqlite_instance._update_entries(
+        entries=[stale_entries[0]],
+        update_fields={"attack_metadata": {"updated_at": "2026-01-02T00:00:00"}},
+    )
+
+    # Verify the concurrent update was NOT lost
+    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(results[0].related_conversations) == 1, (
+        "Stale entry merge must not overwrite concurrent adversarial_chat_conversation_ids update"
+    )
+    assert results[0].related_conversations.pop().conversation_id == "branch-1"
 
 
 def test_get_attack_results_by_harm_category_single(sqlite_instance: MemoryInterface):
@@ -799,7 +929,7 @@ def test_get_attack_results_labels_query_on_empty_labels(sqlite_instance: Memory
 
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
-    results = sqlite_instance.get_attack_results(labels={"op_name": "test"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "test"})
     assert len(results) == 0
 
     results = sqlite_instance.get_attack_results(labels={"researcher": "roakey"})
@@ -813,8 +943,8 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
     """Test querying for labels where the key exists but the value doesn't match."""
 
     # Create attack results with specific label values
-    message_piece1 = create_message_piece("conv_1", 1, labels={"op_name": "op_exists", "researcher": "roakey"})
-    message_piece2 = create_message_piece("conv_2", 1, labels={"op_name": "another_op", "researcher": "roakey"})
+    message_piece1 = create_message_piece("conv_1", 1, labels={"operation": "op_exists", "researcher": "roakey"})
+    message_piece2 = create_message_piece("conv_2", 1, labels={"operation": "another_op", "researcher": "roakey"})
     message_piece3 = create_message_piece("conv_3", 1, labels={"operation": "test_op"})
 
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece1, message_piece2, message_piece3])
@@ -827,11 +957,11 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
     sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
 
     # Query for key that exists but with wrong value
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_doesnotexist"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_doesnotexist"})
     assert len(results) == 0
 
     # Query for existing key with correct value
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_exists"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
@@ -856,11 +986,11 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
     assert results[0].conversation_id == "conv_3"
 
     # Test multiple keys where one matches and one doesn't
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_exists", "researcher": "not_roakey"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists", "researcher": "not_roakey"})
     assert len(results) == 0
 
     # Test multiple keys where both match
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_exists", "researcher": "roakey"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists", "researcher": "roakey"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
@@ -1014,10 +1144,12 @@ def _make_attack_result_with_identifier(
     return AttackResult(
         conversation_id=conversation_id,
         objective=f"Objective for {conversation_id}",
-        attack_identifier=ComponentIdentifier(
-            class_name=class_name,
-            class_module="pyrit.attacks",
-            params=params,
+        atomic_attack_identifier=build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(
+                class_name=class_name,
+                class_module="pyrit.attacks",
+                params=params,
+            ),
         ),
     )
 
@@ -1094,7 +1226,7 @@ def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite
 
 
 def test_get_attack_results_converter_classes_single_match(sqlite_instance: MemoryInterface):
-    """Test that converter_classes with one class returns attacks using that converter."""
+    """Test that converter_types with one type returns attacks using that converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
@@ -1106,7 +1238,7 @@ def test_get_attack_results_converter_classes_single_match(sqlite_instance: Memo
 
 
 def test_get_attack_results_converter_classes_and_logic(sqlite_instance: MemoryInterface):
-    """Test that multiple converter_classes use AND logic — all must be present."""
+    """Test that multiple converter_types use AND logic — all must be present."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
@@ -1130,7 +1262,7 @@ def test_get_attack_results_converter_classes_case_insensitive(sqlite_instance: 
 
 
 def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryInterface):
-    """Test that converter_classes filter returns empty when no attack has the converter."""
+    """Test that converter_types filter returns empty when no attack has the converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
 
@@ -1139,7 +1271,7 @@ def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryIn
 
 
 def test_get_attack_results_attack_class_and_converter_classes_combined(sqlite_instance: MemoryInterface):
-    """Test combining attack_class and converter_classes filters."""
+    """Test combining attack_type and converter_types filters."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack", ["Base64Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack", ["ROT13Converter"])
@@ -1152,7 +1284,7 @@ def test_get_attack_results_attack_class_and_converter_classes_combined(sqlite_i
 
 
 def test_get_attack_results_attack_class_with_no_converters(sqlite_instance: MemoryInterface):
-    """Test combining attack_class with converter_classes=[] (no converters)."""
+    """Test combining attack_type with converter_types=[] (no converters)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
     ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # No converters

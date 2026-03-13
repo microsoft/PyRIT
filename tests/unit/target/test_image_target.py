@@ -3,7 +3,7 @@
 
 import os
 import uuid
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -245,7 +245,7 @@ async def test_send_prompt_async_bad_request_error(
         mock_generate.side_effect = bad_request_error
 
         # Non-content-filter BadRequestError should be re-raised (same as chat target behavior)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             await image_target.send_prompt_async(message=Message([request]))
 
 
@@ -504,3 +504,21 @@ async def test_validate_piece_type(image_target: OpenAIImageTarget):
     finally:
         if os.path.isfile(audio_piece.original_value):
             os.remove(audio_piece.original_value)
+
+
+@pytest.mark.asyncio
+async def test_validate_previous_conversations(
+    image_target: OpenAIImageTarget, sample_conversations: MutableSequence[MessagePiece]
+):
+    message_piece = sample_conversations[0]
+
+    mock_memory = MagicMock()
+    mock_memory.get_conversation.return_value = sample_conversations
+    mock_memory.add_message_to_memory = AsyncMock()
+
+    image_target._memory = mock_memory
+
+    request = Message(message_pieces=[message_piece])
+
+    with pytest.raises(ValueError, match="This target only supports a single turn conversation."):
+        await image_target.send_prompt_async(message=request)

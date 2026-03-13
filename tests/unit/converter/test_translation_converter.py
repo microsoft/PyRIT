@@ -56,7 +56,7 @@ async def test_translation_converter_retries_on_exception(sqlite_instance):
     # Mock asyncio.sleep to avoid exponential backoff delays
     with patch.object(prompt_target, "send_prompt_async", mock_send_prompt):
         with patch("asyncio.sleep", new_callable=AsyncMock):
-            with pytest.raises(Exception):
+            with pytest.raises(Exception):  # noqa: B017
                 await translation_converter.convert_async(prompt="hello")
 
             assert mock_send_prompt.call_count == max_retries

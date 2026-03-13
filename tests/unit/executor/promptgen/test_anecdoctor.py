@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,7 +53,7 @@ def mock_prompt_normalizer() -> PromptNormalizer:
 
 
 @pytest.fixture
-def sample_evaluation_data() -> List[str]:
+def sample_evaluation_data() -> list[str]:
     """Sample evaluation data for testing."""
     return [
         "Claim: The earth is flat. Review: FALSE",

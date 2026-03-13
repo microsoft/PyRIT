@@ -218,7 +218,6 @@ class TestFlipAttackExecution:
             mock_result = AttackResult(
                 conversation_id=basic_context.conversation_id,
                 objective=basic_context.objective,
-                attack_identifier=flip_attack.get_identifier(),
                 outcome=AttackOutcome.SUCCESS,
             )
             mock_perform.return_value = mock_result
@@ -250,7 +249,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
         attack._perform_async = AsyncMock(return_value=mock_result)

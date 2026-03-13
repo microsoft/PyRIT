@@ -112,9 +112,7 @@ class AudioVolumeConverter(PromptConverter):
                 volume_data = self._apply_volume(data).astype(original_dtype)
             else:
                 # Multi-channel audio (e.g., stereo)
-                channels = []
-                for ch in range(data.shape[1]):
-                    channels.append(self._apply_volume(data[:, ch]))
+                channels = [self._apply_volume(data[:, ch]) for ch in range(data.shape[1])]
                 volume_data = np.column_stack(channels).astype(original_dtype)
 
             # Write the processed data as a new WAV file

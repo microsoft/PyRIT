@@ -3,7 +3,8 @@
 
 import json
 import logging
-from typing import Any, Callable, Literal, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, Optional
 
 from pyrit.common import default_values, net_utility
 from pyrit.identifiers import ComponentIdentifier

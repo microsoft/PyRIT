@@ -282,7 +282,7 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
         objective="task",
     )
 
-    assert chat_target.send_prompt_async.call_count == int(1)
+    assert chat_target.send_prompt_async.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -829,9 +829,9 @@ async def test_score_response_async_multiple_pieces():
 
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should have all auxiliary scores
-    # assert len(result["auxiliary_scores"]) == 4
-    # for score in aux_scores:
-    #     assert score in result["auxiliary_scores"]
+    # assert len(result["auxiliary_scores"]) == 4  # noqa: ERA001
+    # for score in aux_scores:  # noqa: ERA001
+    #     assert score in result["auxiliary_scores"]  # noqa: ERA001
 
     # Should have only one objective score (first success)
     assert len(result["objective_scores"]) == 1
@@ -909,13 +909,13 @@ async def test_score_response_async_skip_on_error_false():
     assert len(result["auxiliary_scores"]) == 1
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should score both pieces for auxiliary
-    # assert len(result["auxiliary_scores"]) == 2
+    # assert len(result["auxiliary_scores"]) == 2  # noqa: ERA001
 
     # But only one objective score (first success)
     assert len(result["objective_scores"]) == 1
 
     # # Verify both pieces were scored for auxiliary
-    # assert aux_scorer.score_async.call_count == 2
+    # assert aux_scorer.score_async.call_count == 2  # noqa: ERA001
 
 
 @pytest.mark.asyncio
@@ -1419,3 +1419,42 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "blocked" in scores[0].score_rationale.lower()
         # The description should also mention blocked, not just "error"
         assert "blocked" in scores[0].score_value_description.lower()
+
+
+@pytest.mark.asyncio
+async def test_score_value_with_llm_skips_reasoning_piece(good_json):
+    """Test that _score_value_with_llm extracts JSON from the text piece, not a reasoning piece."""
+    chat_target = MagicMock(PromptChatTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    # Simulate a reasoning model response: first piece is reasoning, second is the actual text with JSON
+    reasoning_piece = MessagePiece(
+        role="assistant",
+        original_value="Let me think about this...",
+        original_value_data_type="reasoning",
+        converted_value="Let me think about this...",
+        converted_value_data_type="reasoning",
+        conversation_id="test-convo",
+    )
+    text_piece = MessagePiece(
+        role="assistant",
+        original_value=good_json,
+        conversation_id="test-convo",
+    )
+    response_message = Message(message_pieces=[reasoning_piece, text_piece])
+    chat_target.send_prompt_async = AsyncMock(return_value=[response_message])
+
+    scorer = MockScorer()
+
+    result = await scorer._score_value_with_llm(
+        prompt_target=chat_target,
+        system_prompt="system_prompt",
+        message_value="message_value",
+        message_data_type="text",
+        scored_prompt_id="123",
+        category="category",
+        objective="task",
+    )
+
+    assert result.raw_score_value == "1"
+    assert result.score_rationale == "Valid response"

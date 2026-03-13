@@ -4,7 +4,7 @@
 import logging
 import textwrap
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, overload
+from typing import Any, Optional, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -34,10 +34,10 @@ class QuestionAnsweringBenchmarkContext(StrategyContext):
     question_answering_entry: QuestionAnsweringEntry
 
     # Prepended conversation for context
-    prepended_conversation: List[Message] = field(default_factory=list)
+    prepended_conversation: list[Message] = field(default_factory=list)
 
     # Memory labels for tracking
-    memory_labels: Dict[str, str] = field(default_factory=dict)
+    memory_labels: dict[str, str] = field(default_factory=dict)
 
     # Generated fields for the benchmark run
     # The generated objective for the benchmark
@@ -253,15 +253,14 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         Args:
             context (QuestionAnsweringBenchmarkContext): The context for the strategy.
         """
-        pass
 
     @overload
     async def execute_async(
         self,
         *,
         question_answering_entry: QuestionAnsweringEntry,
-        prepended_conversation: Optional[List[Message]] = None,
-        memory_labels: Optional[Dict[str, str]] = None,
+        prepended_conversation: Optional[list[Message]] = None,
+        memory_labels: Optional[dict[str, str]] = None,
         **kwargs: Any,
     ) -> AttackResult: ...
 

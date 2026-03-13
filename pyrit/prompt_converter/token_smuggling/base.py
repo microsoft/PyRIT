@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from typing import Literal, Tuple
+from typing import Literal
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models.literals import PromptDataType
@@ -98,7 +98,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
         return output_type == "text"
 
     @abc.abstractmethod
-    def encode_message(self, *, message: str) -> Tuple[str, str]:
+    def encode_message(self, *, message: str) -> tuple[str, str]:
         """
         Encode the given message.
 

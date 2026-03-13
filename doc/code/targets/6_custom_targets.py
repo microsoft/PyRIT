@@ -103,7 +103,6 @@ await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ig
 # Below is an example of using PromptSendingAttack, which allows the use of all our converters. For example, you could use this to utilize all the built-in jailbreaks, base64 encode them, use variations, different languages, etc.
 
 # %%
-from typing import List
 
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -130,7 +129,7 @@ scoring_config = AttackScoringConfig(objective_scorer=scorer)
 
 aoai_target = OpenAIChatTarget()
 
-converters: List[PromptConverterConfiguration] = PromptConverterConfiguration.from_converters(
+converters: list[PromptConverterConfiguration] = PromptConverterConfiguration.from_converters(
     converters=[RandomCapitalLettersConverter(percentage=25)]
 )
 

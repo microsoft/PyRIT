@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from pyrit.exceptions import PyritException
 

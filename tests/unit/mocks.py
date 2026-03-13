@@ -5,8 +5,9 @@ import os
 import shutil
 import tempfile
 import uuid
+from collections.abc import Generator, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Generator, MutableSequence, Optional, Sequence
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 from pyrit.identifiers import ComponentIdentifier
@@ -121,7 +122,7 @@ class MockHttpPostSync:
 class MockPromptTarget(PromptChatTarget):
     prompt_sent: list[str]
 
-    def __init__(self, id=None, rpm=None) -> None:
+    def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
         super().__init__(max_requests_per_minute=rpm)
         self.id = id
         self.prompt_sent = []

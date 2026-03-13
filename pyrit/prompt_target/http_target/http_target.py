@@ -5,7 +5,8 @@
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any, Optional
 
 import httpx
 
@@ -141,7 +142,7 @@ class HTTPTarget(PromptTarget):
         """
         re_pattern = re.compile(self.prompt_regex_string)
         if re.search(self.prompt_regex_string, self.http_request):
-            http_request_w_prompt = re_pattern.sub(request.converted_value, self.http_request)
+            http_request_w_prompt = re_pattern.sub(lambda m: request.converted_value, self.http_request)
         else:
             http_request_w_prompt = self.http_request
         return http_request_w_prompt
@@ -210,7 +211,7 @@ class HTTPTarget(PromptTarget):
             if cleanup_client:
                 await client.aclose()
 
-    def parse_raw_http_request(self, http_request: str) -> tuple[Dict[str, str], RequestBody, str, str, str]:
+    def parse_raw_http_request(self, http_request: str) -> tuple[dict[str, str], RequestBody, str, str, str]:
         """
         Parse the HTTP request string into a dictionary of headers.
 
@@ -228,7 +229,7 @@ class HTTPTarget(PromptTarget):
         Raises:
             ValueError: If the HTTP request line is invalid.
         """
-        headers_dict: Dict[str, str] = {}
+        headers_dict: dict[str, str] = {}
         if self._client:
             headers_dict = dict(self._client.headers.copy())
         if not http_request:
@@ -276,7 +277,7 @@ class HTTPTarget(PromptTarget):
     def _infer_full_url_from_host(
         self,
         path: str,
-        headers_dict: Dict[str, str],
+        headers_dict: dict[str, str],
     ) -> str:
         # If path is already a full URL, return it as is
         path = path.lower()

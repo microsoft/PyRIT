@@ -153,9 +153,9 @@ class VariationConverter(PromptConverter):
             response = json.loads(response_msg)
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}") from None
 
         try:
             return str(response[0])
         except KeyError:
-            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}") from None

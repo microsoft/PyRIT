@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import List, Optional
+from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
@@ -25,7 +25,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         self,
         *,
         aggregator: TrueFalseAggregatorFunc,
-        scorers: List[TrueFalseScorer],
+        scorers: list[TrueFalseScorer],
     ) -> None:
         """
         Initialize the composite scorer.

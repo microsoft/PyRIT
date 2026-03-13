@@ -121,11 +121,13 @@ class TestCopilotAuthenticatorInitialization:
                 "COPILOT_PASSWORD": "test_password_123",
             }
             env_vars.pop(missing_var)
-            with patch.dict(os.environ, env_vars, clear=True):
-                with pytest.raises(
+            with (
+                patch.dict(os.environ, env_vars, clear=True),
+                pytest.raises(
                     ValueError, match="COPILOT_USERNAME and COPILOT_PASSWORD environment variables must be set"
-                ):
-                    CopilotAuthenticator()
+                ),
+            ):
+                CopilotAuthenticator()
 
     def test_init_creates_cache_directory(self, mock_env_vars, mock_persistent_cache, temp_cache_dir):
         """Test that initialization creates cache directory if it doesn't exist."""
@@ -183,12 +185,14 @@ class TestCopilotAuthenticatorCacheManagement:
     def test_create_persistent_cache_raises_on_encryption_failure_without_fallback(self):
         """Test cache creation raises exception when encryption fails and no fallback."""
 
-        with patch(
-            "pyrit.auth.copilot_authenticator.build_encrypted_persistence",
-            side_effect=Exception("Encryption not available"),
+        with (
+            patch(
+                "pyrit.auth.copilot_authenticator.build_encrypted_persistence",
+                side_effect=Exception("Encryption not available"),
+            ),
+            pytest.raises(Exception, match="Encryption not available"),
         ):
-            with pytest.raises(Exception, match="Encryption not available"):
-                CopilotAuthenticator._create_persistent_cache("/test/cache.bin", fallback_to_plaintext=False)
+            CopilotAuthenticator._create_persistent_cache("/test/cache.bin", fallback_to_plaintext=False)
 
     def test_save_token_to_cache_with_expiry(self, mock_env_vars, mock_persistent_cache):
         """Test saving token to cache with expiration time."""

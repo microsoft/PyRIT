@@ -28,7 +28,11 @@ class TestAzureSpeechTextToAudioConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     async def test_azure_speech_text_to_audio_convert_async(
-        self, mock_get_required_value, MockSpeechConfig, MockSpeechSynthesizer, sqlite_instance
+        self,
+        mock_get_required_value,
+        MockSpeechConfig,  # noqa: N803
+        MockSpeechSynthesizer,  # noqa: N803
+        sqlite_instance,
     ):
         import azure.cognitiveservices.speech as speechsdk
 
@@ -55,7 +59,7 @@ class TestAzureSpeechTextToAudioConverter:
             file_path = converted_output.output_text
             assert file_path
             assert os.path.exists(file_path)
-            data = open(file_path, "rb").read()
+            data = open(file_path, "rb").read()  # noqa: SIM115
             assert data == b"dummy_audio_data"
             os.remove(file_path)
             MockSpeechConfig.assert_called_once_with(subscription="dummy_value", region="dummy_value")
@@ -67,7 +71,7 @@ class TestAzureSpeechTextToAudioConverter:
         # testing empty space string
         prompt = "     "
         with pytest.raises(ValueError):
-            await converter.convert_async(prompt=prompt, input_type="text")  # type: ignore
+            await converter.convert_async(prompt=prompt, input_type="text")  # type: ignore[arg-type]
 
     def test_azure_speech_audio_text_converter_input_supported(self):
         converter = AzureSpeechTextToAudioConverter()

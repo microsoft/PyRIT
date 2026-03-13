@@ -3,9 +3,8 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -13,6 +12,9 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseScoreAggregator,
 )
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.identifiers import ComponentIdentifier
 
 
 class QuestionAnswerScorer(TrueFalseScorer):

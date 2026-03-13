@@ -44,11 +44,11 @@ class QuestionAnsweringEntry(BaseModel):
         try:
             # Match using the explicit choice.index (not enumerate position) so non-sequential indices are supported
             return next(choice for choice in self.choices if str(choice.index) == str(correct_answer_index)).text
-        except StopIteration:
+        except StopIteration as e:
             raise ValueError(
                 f"No matching choice found for correct_answer '{correct_answer_index}'. "
                 f"Available choices are: {[f'{i}: {c.text}' for i, c in enumerate(self.choices)]}"
-            )
+            ) from e
 
     def __hash__(self) -> int:
         """

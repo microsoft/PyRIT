@@ -37,10 +37,7 @@ class TestSeedDatasetProviderIntegration:
 
         try:
             # Use max_examples for slow providers that fetch many remote images
-            if provider_cls == _VLSUMultimodalDataset:
-                provider = provider_cls(max_examples=6)
-            else:
-                provider = provider_cls()
+            provider = provider_cls(max_examples=6) if provider_cls == _VLSUMultimodalDataset else provider_cls()
             dataset = await provider.fetch_dataset(cache=False)
 
             assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"

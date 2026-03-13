@@ -5,7 +5,6 @@
 Unit tests for LoadDefaultDatasets initializer.
 """
 
-from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -195,8 +194,8 @@ class TestLoadDefaultDatasets:
         scenario_names = registry.get_names()
 
         # Collect all required datasets from all scenarios
-        missing_datasets: List[str] = []
-        scenario_dataset_map: dict[str, List[str]] = {}
+        missing_datasets: list[str] = []
+        scenario_dataset_map: dict[str, list[str]] = {}
 
         for scenario_name in scenario_names:
             scenario_class = registry.get_class(scenario_name)
@@ -205,9 +204,11 @@ class TestLoadDefaultDatasets:
                     required = scenario_class.default_dataset_config().get_default_dataset_names()
                     scenario_dataset_map[scenario_name] = required
 
-                    for dataset_name in required:
-                        if dataset_name not in available_datasets:
-                            missing_datasets.append(f"{scenario_name} requires '{dataset_name}'")
+                    missing_datasets.extend(
+                        f"{scenario_name} requires '{dataset_name}'"
+                        for dataset_name in required
+                        if dataset_name not in available_datasets
+                    )
                 except Exception as e:
                     # Log but don't fail - some scenarios might not be fully initialized
                     print(f"Warning: Could not get required datasets from {scenario_name}: {e}")

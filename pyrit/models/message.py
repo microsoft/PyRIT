@@ -6,12 +6,16 @@ from __future__ import annotations
 import copy
 import uuid
 import warnings
-from datetime import datetime
-from typing import Dict, MutableSequence, Optional, Sequence, Union
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.common.utils import combine_dict
-from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 from pyrit.models.message_piece import MessagePiece
+
+if TYPE_CHECKING:
+    from collections.abc import MutableSequence, Sequence
+
+    from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 
 
 class Message:
@@ -365,7 +369,7 @@ class Message:
         *,
         prompt: str,
         role: ChatMessageRole,
-        prompt_metadata: Optional[Dict[str, Union[str, int]]] = None,
+        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
     ) -> Message:
         """
         Build a single-piece message from prompt text.
@@ -411,7 +415,7 @@ class Message:
 
         """
         new_pieces = copy.deepcopy(self.message_pieces)
-        new_timestamp = datetime.now()
+        new_timestamp = datetime.now(tz=timezone.utc)
         for piece in new_pieces:
             piece.id = uuid.uuid4()
             piece.timestamp = new_timestamp
@@ -541,7 +545,7 @@ def construct_response_from_request(
     request: MessagePiece,
     response_text_pieces: list[str],
     response_type: PromptDataType = "text",
-    prompt_metadata: Optional[Dict[str, Union[str, int]]] = None,
+    prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
     error: PromptResponseError = "none",
 ) -> Message:
     """

@@ -153,9 +153,7 @@ class ImageCompressionConverter(PromptConverter):
         Returns:
             bool: True if the image should be compressed, False otherwise.
         """
-        if original_size < self._min_compression_threshold:
-            return False  # skip compression for small images
-        return True
+        return original_size >= self._min_compression_threshold
 
     def _compress_image(self, image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
         """
@@ -261,12 +259,11 @@ class ImageCompressionConverter(PromptConverter):
             RuntimeError: If there is an error during the download process.
         """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    response.raise_for_status()
-                    return await response.read()
+            async with aiohttp.ClientSession() as session, session.get(url) as response:
+                response.raise_for_status()
+                return await response.read()
         except aiohttp.ClientError as e:
-            raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}")
+            raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}") from e
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """

@@ -3,7 +3,7 @@
 
 import ast
 import logging
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -46,7 +46,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
             "English", "Hindi", "French", "Spanish", "Arabic", "Russian", "Serbian", "Tagalog"
         ] = "English",
         harm_categories: Optional[
-            List[
+            list[
                 Literal[
                     "Bullying & Harassment",
                     "Discrimination & Injustice",
@@ -109,13 +109,13 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
             categories = ast.literal_eval(example["harm_category"])
 
             # Apply filters
-            if self.harm_categories_filter is not None:
-                if not any(cat in categories for cat in self.harm_categories_filter):
-                    continue
+            if self.harm_categories_filter is not None and not any(
+                cat in categories for cat in self.harm_categories_filter
+            ):
+                continue
 
-            if self.harm_scope is not None:
-                if example["global_or_local"] != self.harm_scope:
-                    continue
+            if self.harm_scope is not None and example["global_or_local"] != self.harm_scope:
+                continue
 
             seed_prompts.append(
                 SeedPrompt(
