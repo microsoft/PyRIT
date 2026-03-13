@@ -173,6 +173,12 @@ def render_module(data: dict) -> str:
 
     parts.extend(render_class(cls) for cls in classes)
 
+    if aliases:
+        parts.append("## Re-exports\n")
+        for a in aliases:
+            target = a.get("target", "")
+            parts.append(f"- `{a['name']}` → `{target}`\n")
+
     return "\n".join(parts)
 
 
