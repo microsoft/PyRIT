@@ -80,6 +80,14 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Stephen R. Pfohl, Heather Cole-Lewis, Rory Sayres, Darlene Neal, Mercy Asiedu, et al.** "A Toolbox for Surfacing Health Equity Harms and Biases in Large Language Models." *Nature Medicine*, 2024. [Paper](https://arxiv.org/abs/2403.12025)
 
+- **Boxin Wang, Weixin Chen, Hengzhi Pei, Chulin Xie, Mintong Kang, Chenhui Zhang, Chejian Xu, Zidi Xiong, Ritik Dutta, Rylan Schaeffer, Sang T. Truong, Simran Arora, Mantas Mazeika, Dan Hendrycks, Zinan Lin, Yu Cheng, Sanmi Koyejo, Dawn Song, Bo Li.** "DecodingTrust: A Comprehensive Assessment of Trustworthiness in GPT Models." *arXiv:2306.11698*, 2023. [Paper](https://arxiv.org/abs/2306.11698)
+
+- **Nathaniel Li, Alexander Pan, Anjali Gopal, Summer Yue, Daniel Berrios, et al.** "The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning." *arXiv:2403.03218*, 2024. [Paper](https://arxiv.org/abs/2403.03218)
+
+- **Paul Röttger, Hannah Rose Kirk, Bertie Vidgen, Giuseppe Attanasio, Federico Bianchi, Dirk Hovy.** "XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models." *arXiv:2308.01263*, 2023. [Paper](https://arxiv.org/abs/2308.01263)
+
+- **Bertie Vidgen, Adarsh Agrawal, Ahmed M. Ahmed, Victor Akinwande, et al.** "Introducing v0.5 of the AI Safety Benchmark from MLCommons." (AILuminate) *arXiv:2404.12241*, 2024. [Paper](https://arxiv.org/abs/2404.12241)
+
 ## Other References
 
 - **Diederik P. Kingma, Jimmy Ba.** "Adam: A Method for Stochastic Optimization." *arXiv:1412.6980*, 2014. Presented at ICLR 2015. [Paper](https://arxiv.org/abs/1412.6980)
