@@ -47,3 +47,39 @@ All academic papers, research blogs, and technical reports referenced throughout
 - **Adversa AI.** "Universal LLM Jailbreak: ChatGPT, GPT-4, Bard, Bing, Anthropic, and Beyond." 2023.
 
 - **Blake Bullwinkel, Amanda Minnich, Shiven Chawla, Gary Lopez, Martin Pouliot, Whitney Maxwell, Joris de Gruyter, Katherine Pratt, Saphir Qi, Nina Chikanov, Roman Lutz, Raja Sekhar Rao Dheekonda, Bolor-Erdene Jagdagdorj, Eugenia Kim, Justin Song, Keegan Hines, Daniel Jones, Giorgio Severi, Richard Lundeen, Sam Vaughan, Victoria Westerhoff, Pete Bryan, Ram Shankar Siva Kumar, Yonatan Zunger, Chang Kawaguchi, Mark Russinovich.** "Lessons From Red Teaming 100 Generative AI Products." *arXiv:2501.07238*, 2024. Presented at the Red Teaming GenAI Workshop, NeurIPS 2024. [Paper](https://arxiv.org/abs/2501.07238) · [eBook](https://aka.ms/AIRTLessonsPaper)
+
+## Datasets and Benchmarks
+
+- **Jiaming Ji, Mickel Liu, Juntao Dai, Xuehai Pan, Chi Zhang, Ce Bian, Chi Zhang, Ruiyang Sun, Yizhou Wang, Yaodong Yang.** "BeaverTails: Towards Improved Safety Alignment of LLM via a Human-Preference Dataset." *arXiv:2307.04657*, 2023. [Paper](https://arxiv.org/abs/2307.04657)
+
+- **Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen, Yang Zhang.** "'Do Anything Now': Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models." *arXiv:2308.03825*, 2023. [Paper](https://arxiv.org/abs/2308.03825)
+
+- **Aakanksha, Arash Ahmadian, Beyza Ermis, Seraphina Goldfarb-Tarrant, Julia Kreutzer, Marzieh Fadaee, Sara Hooker.** "The Multilingual Alignment Prism: Aligning Global and Local Preferences to Reduce Harm." *arXiv:2406.18682*, 2024. [Paper](https://arxiv.org/abs/2406.18682)
+
+- **Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, David Forsyth, Dan Hendrycks.** "HarmBench: A Standardized Evaluation Framework for Automated Red Teaming and Robust Refusal." *arXiv:2402.04249*, 2024. [Paper](https://arxiv.org/abs/2402.04249)
+
+- **Patrick Chao, Edoardo Debenedetti, Alexander Robey, Maksym Andriushchenko, Francesco Croce, Vikash Sehwag, Edgar Dobriban, Nicolas Flammarion, George J. Pappas, Florian Tramer, Hamed Hassani, Eric Wong.** "JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Language Models." *arXiv:2404.01318*, 2024. [Paper](https://arxiv.org/abs/2404.01318)
+
+- **Yuxia Wang, Haonan Li, Xudong Han, Preslav Nakov, Timothy Baldwin.** "Do-Not-Answer: A Dataset for Evaluating Safeguards in LLMs." *arXiv:2308.13387*, 2023. [Paper](https://arxiv.org/abs/2308.13387)
+
+- **Likai Tang, Niruth Bogahawatta, Yasod Ginige, Jiarui Xu, Shixuan Sun, Surangika Ranathunga, Suranga Seneviratne.** "A Framework to Assess Multilingual Vulnerabilities of LLMs." *arXiv:2503.13081*, 2025. [Paper](https://arxiv.org/abs/2503.13081)
+
+- **Justin Cui, Wei-Lin Chiang, Ion Stoica, Cho-Jui Hsieh.** "OR-Bench: An Over-Refusal Benchmark for Large Language Models." *arXiv:2405.20947*, 2024. [Paper](https://arxiv.org/abs/2405.20947)
+
+- **Jiaming Ji, Donghai Hong, Borong Zhang, Boyuan Chen, Juntao Dai, Boren Zheng, Tianyi Qiu, Jiayi Zhou, Kaile Wang, Boxuan Li, Sirui Han, Yike Guo, Yaodong Yang.** "PKU-SafeRLHF: Towards Multi-Level Safety Alignment for LLMs with Human Preference." *arXiv:2406.15513*, 2024. [Paper](https://arxiv.org/abs/2406.15513)
+
+- **Zi Lin, Zihan Wang, Yongqi Tong, Yangkun Wang, Yuxin Guo, Yujia Wang, Jingbo Shang.** "ToxicChat: Unveiling Hidden Challenges of Toxicity Detection in Real-World User-AI Conversation." *arXiv:2310.17389*, 2023. [Paper](https://arxiv.org/abs/2310.17389)
+
+- **Fengqing Jiang, Fengbo Ma, Zhangchen Xu, Yuetai Li, Bhaskar Ramasubramanian, Luyao Niu, Bo Li, Xianyan Chen, Zhen Xiang, Radha Poovendran.** "SOSBENCH: Benchmarking Safety Alignment on Scientific Knowledge." *arXiv:2505.21605*, 2025. [Paper](https://arxiv.org/abs/2505.21605)
+
+- **Tinghao Xie, Xiangyu Qi, Yi Zeng, Yangsibo Huang, Udari Madhushani Sehwag, Kaixuan Huang, Luxi He, Boyi Wei, Dacheng Li, Ying Sheng, Ruoxi Jia, Bo Li, Kai Li, Danqi Chen, Peter Henderson, Prateek Mittal.** "SORRY-Bench: Systematically Evaluating Large Language Model Safety Refusal." *arXiv:2406.14598*, 2024. [Paper](https://arxiv.org/abs/2406.14598)
+
+- **Bertie Vidgen, Nino Scherrer, Hannah Rose Kirk, Rebecca Qian, Anand Kannappan, Scott A. Hale, Paul Röttger.** "SimpleSafetyTests: a Test Suite for Identifying Critical Safety Risks in Large Language Models." *arXiv:2311.08370*, 2023. [Paper](https://arxiv.org/abs/2311.08370)
+
+- **Lijun Li, Bowen Dong, Ruohui Wang, Xuhao Hu, Wangmeng Zuo, Dahua Lin, Yu Qiao, Jing Shao.** "SALAD-Bench: A Hierarchical and Comprehensive Safety Benchmark for Large Language Models." *arXiv:2402.05044*, 2024. [Paper](https://arxiv.org/abs/2402.05044)
+
+- **Stephen R. Pfohl, Heather Cole-Lewis, Rory Sayres, Darlene Neal, Mercy Asiedu, et al.** "A Toolbox for Surfacing Health Equity Harms and Biases in Large Language Models." *Nature Medicine*, 2024. [Paper](https://arxiv.org/abs/2403.12025)
+
+## Other References
+
+- **Diederik P. Kingma, Jimmy Ba.** "Adam: A Method for Stochastic Optimization." *arXiv:1412.6980*, 2014. Presented at ICLR 2015. [Paper](https://arxiv.org/abs/1412.6980)
