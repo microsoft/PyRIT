@@ -16,6 +16,12 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Blake Bullwinkel, Amanda Minnich, Shiven Chawla, Gary Lopez, Martin Pouliot, Whitney Maxwell, Joris de Gruyter, Katherine Pratt, Saphir Qi, Nina Chikanov, Roman Lutz, Raja Sekhar Rao Dheekonda, Bolor-Erdene Jagdagdorj, Eugenia Kim, Justin Song, Keegan Hines, Daniel Jones, Giorgio Severi, Richard Lundeen, Sam Vaughan, Victoria Westerhoff, Pete Bryan, Ram Shankar Siva Kumar, Yonatan Zunger, Chang Kawaguchi, Mark Russinovich.** "Lessons From Red Teaming 100 Generative AI Products." *arXiv:2501.07238*, 2024. Presented at the Red Teaming GenAI Workshop, NeurIPS 2024. [Paper](https://arxiv.org/abs/2501.07238) · [eBook](https://aka.ms/AIRTLessonsPaper)
 
+- **Blake Bullwinkel, Mark Russinovich, Ahmed Salem, Santiago Zanella-Beguelin, Daniel Jones, Giorgio Severi, Eugenia Kim, Keegan Hines, Amanda Minnich, Yonatan Zunger, Ram Shankar Siva Kumar.** "A Representation Engineering Perspective on the Effectiveness of Multi-Turn Jailbreaks." *arXiv:2507.02956*, 2025. [Paper](https://arxiv.org/abs/2507.02956)
+
+- **Blake Bullwinkel, Giorgio Severi, Keegan Hines, Amanda Minnich, Ram Shankar Siva Kumar, Yonatan Zunger.** "The Trigger in the Haystack: Extracting and Reconstructing LLM Backdoor Triggers." *arXiv:2602.03085*, 2026. [Paper](https://arxiv.org/abs/2602.03085)
+
+- **Pete Bryan, Giorgio Severi, Joris de Gruyter, Daniel Jones, Blake Bullwinkel, Amanda Minnich, Shiven Chawla, Gary Lopez, Martin Pouliot, Adam Fourney, Whitney Maxwell, Katherine Pratt, Saphir Qi, Nina Chikanov, Roman Lutz, Raja Sekhar Rao Dheekonda, Bolor-Erdene Jagdagdorj, Eugenia Kim, Justin Song, Keegan Hines, Richard Lundeen, Sam Vaughan, Victoria Westerhoff, Yonatan Zunger, Chang Kawaguchi, Mark Russinovich, Ram Shankar Siva Kumar.** "Taxonomy of Failure Mode in Agentic AI Systems." Microsoft Whitepaper, 2025. [PDF](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/final/en-us/microsoft-brand/documents/Taxonomy-of-Failure-Mode-in-Agentic-AI-Systems-Whitepaper.pdf)
+
 - **Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J. Pappas, Eric Wong.** "Jailbreaking Black Box Large Language Models in Twenty Queries." (PAIR) *arXiv:2310.08419*, 2023. [Paper](https://arxiv.org/abs/2310.08419)
 
 - **Patrick Chao, Edoardo Debenedetti, Alexander Robey, Maksym Andriushchenko, Francesco Croce, Vikash Sehwag, Edgar Dobriban, Nicolas Flammarion, George J. Pappas, Florian Tramer, Hamed Hassani, Eric Wong.** "JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Language Models." *arXiv:2404.01318*, 2024. [Paper](https://arxiv.org/abs/2404.01318)
@@ -26,11 +32,15 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Keegan Hines, Gary Lopez, Matthew Hall, Federico Stolfa, Shrimai Prabhumoye, Yair Livne, Manish Nagireddy, Arun Shankar Iyer, Kieran Dolan.** "Defending Against Indirect Prompt Injection Attacks With Spotlighting." *arXiv:2403.14720*, 2024. [Paper](https://arxiv.org/abs/2403.14720)
 
+- **Emman Haider, Daniel Perez-Becker, Thomas Portet, Piyush Madan, Amit Garg, Atabak Ashfaq, David Majercak, Wen Wen, Dongwoo Kim, Ziyi Yang, Jianwen Zhang, Hiteshi Sharma, Blake Bullwinkel, Martin Pouliot, Amanda Minnich, Shiven Chawla, Solianna Herrera, Shahed Warreth, Maggie Engler, Gary Lopez, Nina Chikanov, Raja Sekhar Rao Dheekonda, Bolor-Erdene Jagdagdorj, Roman Lutz, Richard Lundeen, Tori Westerhoff, Pete Bryan, Christian Seifert, Ram Shankar Siva Kumar, Andrew Berkley, Alex Kessler.** "Phi-3 Safety Post-Training: Aligning Language Models with a 'Break-Fix' Cycle." *arXiv:2407.13833*, 2024. [Paper](https://arxiv.org/abs/2407.13833)
+
 - **Fengqing Jiang, Fengbo Ma, Zhangchen Xu, Yuetai Li, Bhaskar Ramasubramanian, Luyao Niu, Bo Li, Xianyan Chen, Zhen Xiang, Radha Poovendran.** "SOSBENCH: Benchmarking Safety Alignment on Scientific Knowledge." *arXiv:2505.21605*, 2025. [Paper](https://arxiv.org/abs/2505.21605)
 
 - **Jiaming Ji, Mickel Liu, Juntao Dai, Xuehai Pan, Chi Zhang, Ce Bian, Chi Zhang, Ruiyang Sun, Yizhou Wang, Yaodong Yang.** "BeaverTails: Towards Improved Safety Alignment of LLM via a Human-Preference Dataset." *arXiv:2307.04657*, 2023. [Paper](https://arxiv.org/abs/2307.04657)
 
 - **Jiaming Ji, Donghai Hong, Borong Zhang, Boyuan Chen, Juntao Dai, Boren Zheng, Tianyi Qiu, Jiayi Zhou, Kaile Wang, Boxuan Li, Sirui Han, Yike Guo, Yaodong Yang.** "PKU-SafeRLHF: Towards Multi-Level Safety Alignment for LLMs with Human Preference." *arXiv:2406.15513*, 2024. [Paper](https://arxiv.org/abs/2406.15513)
+
+- **Daniel Jones, Giorgio Severi, Martin Pouliot, Gary Lopez, Joris de Gruyter, Santiago Zanella-Beguelin, Justin Song, Blake Bullwinkel, Pamela Cortez, Amanda Minnich.** "A Systematization of Security Vulnerabilities in Computer Use Agents." *arXiv:2507.05445*, 2025. [Paper](https://arxiv.org/abs/2507.05445)
 
 - **Diederik P. Kingma, Jimmy Ba.** "Adam: A Method for Stochastic Optimization." *arXiv:1412.6980*, 2014. Presented at ICLR 2015. [Paper](https://arxiv.org/abs/1412.6980)
 
@@ -66,7 +76,11 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Mark Russinovich, Ahmed Salem, Ronen Eldan.** "Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack." *arXiv:2404.01833*, 2024. Accepted at USENIX Security 2025. [Paper](https://arxiv.org/abs/2404.01833) · [Website](https://crescendo-the-multiturn-jailbreak.github.io/)
 
+- **Mark Russinovich, Ahmed Salem, Santiago Zanella-Béguelin, Yonatan Zunger.** "The Price of Intelligence." *Communications of the ACM*, 68(9), 46–53, 2025. [Paper](https://doi.org/10.1145/3749447)
+
 - **Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen, Yang Zhang.** "'Do Anything Now': Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models." *arXiv:2308.03825*, 2023. [Paper](https://arxiv.org/abs/2308.03825)
+
+- **Erfan Shayegani, Keegan Hines, Yue Dong, Nael Abu-Ghazaleh, Roman Lutz, Spencer Whitehead, Vidhisha Balachandran, Besmira Nushi, Vibhav Vineet.** "Just Do It!? Computer-Use Agents Exhibit Blind Goal-Directedness." *arXiv:2510.01670*, 2025. [Paper](https://arxiv.org/abs/2510.01670)
 
 - **Likai Tang, Niruth Bogahawatta, Yasod Ginige, Jiarui Xu, Shixuan Sun, Surangika Ranathunga, Suranga Seneviratne.** "A Framework to Assess Multilingual Vulnerabilities of LLMs." *arXiv:2503.13081*, 2025. [Paper](https://arxiv.org/abs/2503.13081)
 

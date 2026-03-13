@@ -19,6 +19,7 @@ skipped_urls = [
     "https://platform.openai.com/docs/guides/function-calling",  # blocks python requests
     "https://platform.openai.com/docs/guides/structured-outputs",  # blocks python requests
     "https://www.anthropic.com/research/many-shot-jailbreaking",  # blocks python requests
+    "https://doi.org/10.1145/3749447",  # ACM blocks automated requests
     "https://code.visualstudio.com/docs/devcontainers/containers",
     "https://stackoverflow.com/questions/77134272/pip-install-dev-with-pyproject-toml-not-working",
     "https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers",
