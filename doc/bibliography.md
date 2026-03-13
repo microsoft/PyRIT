@@ -76,7 +76,7 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Mark Russinovich, Ahmed Salem, Ronen Eldan.** "Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack." *arXiv:2404.01833*, 2024. Accepted at USENIX Security 2025. [Paper](https://arxiv.org/abs/2404.01833) · [Website](https://crescendo-the-multiturn-jailbreak.github.io/)
 
-- **Mark Russinovich, Ahmed Salem, Santiago Zanella-Béguelin, Yonatan Zunger.** "The Price of Intelligence." *Communications of the ACM*, 68(9), 46–53, 2025. [Paper](https://doi.org/10.1145/3749447)
+- **Mark Russinovich, Ahmed Salem, Santiago Zanella-Béguelin, Yonatan Zunger.** "The Price of Intelligence." *Communications of the ACM*, 68(9), 46–53, 2025. DOI: 10.1145/3749447
 
 - **Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen, Yang Zhang.** "'Do Anything Now': Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models." *arXiv:2308.03825*, 2023. [Paper](https://arxiv.org/abs/2308.03825)
 
