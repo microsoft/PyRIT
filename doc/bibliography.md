@@ -88,6 +88,12 @@ All academic papers, research blogs, and technical reports referenced throughout
 
 - **Bertie Vidgen, Adarsh Agrawal, Ahmed M. Ahmed, Victor Akinwande, et al.** "Introducing v0.5 of the AI Safety Benchmark from MLCommons." (AILuminate) *arXiv:2404.12241*, 2024. [Paper](https://arxiv.org/abs/2404.12241)
 
+- **Apart Research.** "DarkBench: A Comprehensive Benchmark for Dark Design Patterns in Large Language Models." 2025. [Website](https://darkbench.ai/) · [OpenReview](https://openreview.net/forum?id=odjMSBSWRt)
+
 ## Other References
 
 - **Diederik P. Kingma, Jimmy Ba.** "Adam: A Method for Stochastic Optimization." *arXiv:1412.6980*, 2014. Presented at ICLR 2015. [Paper](https://arxiv.org/abs/1412.6980)
+
+- **Gary D. Lopez Munoz, Amanda J. Minnich, Roman Lutz, Richard Lundeen, Raja Sekhar Rao Dheekonda, Nina Chikanov, Bolor-Erdene Jagdagdorj, Martin Pouliot, Shiven Chawla, Whitney Maxwell, Blake Bullwinkel, Katherine Pratt, Joris de Gruyter, Charlotte Siska, Pete Bryan, Tori Westerhoff, Chang Kawaguchi, Christian Seifert, Ram Shankar Siva Kumar, Yonatan Zunger.** "PyRIT: A Framework for Security Risk Identification and Red Teaming in Generative AI Systems." *arXiv:2410.02828*, 2024. [Paper](https://arxiv.org/abs/2410.02828)
+
+- **Johann Rehberger.** "Sneaky Bits and ASCII Smuggler." Embrace The Red, 2025. [Blog Post](https://embracethered.com/blog/posts/2025/sneaky-bits-and-ascii-smuggler/)
