@@ -77,6 +77,13 @@ def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
         code = error_obj.get("code") if isinstance(error_obj, dict) else None
         if code in ["content_filter", "moderation_blocked"]:
             return True
+        # OpenAI uses "invalid_prompt" for model-level safety blocks (e.g. CBRN topics).
+        # Only treat it as a content filter when the message indicates a safety block,
+        # not for other invalid_prompt reasons (e.g. malformed schemas).
+        if code == "invalid_prompt":
+            message = error_obj.get("message", "") if isinstance(error_obj, dict) else ""
+            if "limited access" in str(message).lower() or "safety" in str(message).lower():
+                return True
         # Heuristic: Azure sometimes uses other codes with policy-related content
         return "content_filter" in json.dumps(data).lower()
     # String-based heuristic search
