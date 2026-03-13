@@ -215,6 +215,7 @@ project:
         - file: blog/2025_01_27.md
         - file: blog/2025_01_14.md
         - file: blog/2024_12_3.md
+    - file: bibliography.md
 site:
   nav:
     - title: Cookbooks
