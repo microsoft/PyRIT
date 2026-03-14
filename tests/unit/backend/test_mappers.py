@@ -566,11 +566,16 @@ class TestSignBlobUrlAsync:
         assert result == "http://example.com/img.png"
 
     @pytest.mark.asyncio
-    async def test_already_signed_url_unchanged(self) -> None:
-        """URLs that already have query params (SAS) are not re-signed."""
-        url = "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=abc"
-        result = await _sign_blob_url_async(blob_url=url)
-        assert result == url
+    async def test_already_signed_url_is_re_signed(self) -> None:
+        """URLs with existing query params (expired SAS) are stripped and re-signed."""
+        url = "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=old"
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
+            new_callable=AsyncMock,
+            return_value="sv=2024&sig=fresh",
+        ):
+            result = await _sign_blob_url_async(blob_url=url)
+        assert result == "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=fresh"
 
     @pytest.mark.asyncio
     async def test_appends_sas_token(self) -> None:
@@ -1037,6 +1042,130 @@ class TestTargetObjectToInstance:
         result = target_object_to_instance("t-1", target_obj)
 
         assert result.supports_multi_turn is False
+
+    def test_extra_params_in_target_specific_params(self) -> None:
+        """Test that non-extracted params like reasoning_effort appear in target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIResponseTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "o3",
+                "temperature": 1.0,
+                "reasoning_effort": "high",
+                "reasoning_summary": "auto",
+                "max_output_tokens": 4096,
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.temperature == 1.0
+        assert result.target_specific_params is not None
+        assert result.target_specific_params["reasoning_effort"] == "high"
+        assert result.target_specific_params["reasoning_summary"] == "auto"
+        assert result.target_specific_params["max_output_tokens"] == 4096
+
+    def test_no_extra_params_returns_none_target_specific(self) -> None:
+        """Test that when only extracted params exist, target_specific_params is None."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "top_p": 0.9,
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.temperature == 0.7
+        assert result.top_p == 0.9
+        assert result.target_specific_params is None
+
+    def test_none_valued_extra_params_excluded(self) -> None:
+        """Test that extra params with None values are excluded from target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIResponseTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "o3",
+                "reasoning_effort": "high",
+                "reasoning_summary": None,
+                "max_output_tokens": None,
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.target_specific_params is not None
+        assert result.target_specific_params == {"reasoning_effort": "high"}
+
+    def test_explicit_target_specific_params_merged_with_extras(self) -> None:
+        """Test that explicit target_specific_params from identifier merge with extra params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="CustomTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://custom.api",
+                "model_name": "custom-model",
+                "extra_body_parameters": {"custom_key": "custom_val"},
+                "target_specific_params": {"explicit_param": "explicit_val"},
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.target_specific_params is not None
+        # extra_body_parameters is an extra param (not in extracted keys)
+        assert result.target_specific_params["extra_body_parameters"] == {"custom_key": "custom_val"}
+        # explicit target_specific_params from identifier should also be present
+        assert result.target_specific_params["explicit_param"] == "explicit_val"
+
+    def test_chat_target_extra_params_preserved(self) -> None:
+        """Test that OpenAIChatTarget params like frequency_penalty appear in target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "frequency_penalty": 0.5,
+                "presence_penalty": 0.3,
+                "seed": 42,
+                "max_completion_tokens": 2048,
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.temperature == 0.7
+        assert result.top_p == 0.9
+        assert result.target_specific_params is not None
+        assert result.target_specific_params["frequency_penalty"] == 0.5
+        assert result.target_specific_params["presence_penalty"] == 0.3
+        assert result.target_specific_params["seed"] == 42
+        assert result.target_specific_params["max_completion_tokens"] == 2048
 
 
 # ============================================================================

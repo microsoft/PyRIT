@@ -540,6 +540,24 @@ class TestAttackRoutes:
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             assert call_kwargs["converter_types"] == ["Base64", "ROT13"]
 
+    def test_list_attacks_normalizes_empty_converter_types(self, client: TestClient) -> None:
+        """Test that empty converter_types strings are stripped so [] means no-converter attacks."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?converter_types=")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args[1]
+            assert call_kwargs["converter_types"] == []
+
     def test_get_conversations_success(self, client: TestClient) -> None:
         """Test getting attack conversations returns service response."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
@@ -762,6 +780,68 @@ class TestTargetRoutes:
             response = client.get("/api/targets/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_list_targets_includes_target_specific_params(self, client: TestClient) -> None:
+        """Test that target_specific_params (e.g. reasoning_effort) are included in list response."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_targets_async = AsyncMock(
+                return_value=TargetListResponse(
+                    items=[
+                        TargetInstance(
+                            target_registry_name="azure_responses",
+                            target_type="OpenAIResponseTarget",
+                            endpoint="https://api.openai.com",
+                            model_name="o3",
+                            temperature=1.0,
+                            target_specific_params={
+                                "reasoning_effort": "high",
+                                "reasoning_summary": "auto",
+                                "max_output_tokens": 4096,
+                            },
+                        )
+                    ],
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            target = data["items"][0]
+            assert target["target_specific_params"]["reasoning_effort"] == "high"
+            assert target["target_specific_params"]["reasoning_summary"] == "auto"
+            assert target["target_specific_params"]["max_output_tokens"] == 4096
+
+    def test_get_target_includes_target_specific_params(self, client: TestClient) -> None:
+        """Test that target_specific_params are included in single-target response."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_target_async = AsyncMock(
+                return_value=TargetInstance(
+                    target_registry_name="azure_chat",
+                    target_type="OpenAIChatTarget",
+                    endpoint="https://api.openai.com",
+                    model_name="gpt-4",
+                    temperature=0.7,
+                    target_specific_params={
+                        "frequency_penalty": 0.5,
+                        "presence_penalty": 0.3,
+                        "seed": 42,
+                    },
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/azure_chat")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["target_specific_params"]["frequency_penalty"] == 0.5
+            assert data["target_specific_params"]["presence_penalty"] == 0.3
+            assert data["target_specific_params"]["seed"] == 42
 
 
 # ============================================================================

@@ -88,6 +88,9 @@ class ConfigurationLoader(YamlLoadable):
           - /path/to/.env.local
 
         silent: false
+
+        operator: my_team
+        operation: my_operation
     """
 
     memory_db_type: str = "sqlite"
@@ -95,6 +98,8 @@ class ConfigurationLoader(YamlLoadable):
     initialization_scripts: Optional[list[str]] = None
     env_files: Optional[list[str]] = None
     silent: bool = False
+    operator: Optional[str] = None
+    operation: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
@@ -234,6 +239,10 @@ class ConfigurationLoader(YamlLoadable):
                 # Preserve None vs [] distinction from config file
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
+                if default_config.operator:
+                    config_data["operator"] = default_config.operator
+                if default_config.operation:
+                    config_data["operation"] = default_config.operation
             except Exception as e:
                 logger.warning(f"Failed to load default config file {default_config_path}: {e}")
 
@@ -250,6 +259,10 @@ class ConfigurationLoader(YamlLoadable):
             # Preserve None vs [] distinction from config file
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
+            if explicit_config.operator:
+                config_data["operator"] = explicit_config.operator
+            if explicit_config.operation:
+                config_data["operation"] = explicit_config.operation
 
         # 3. Apply overrides (non-None values take precedence)
         # Convert Sequence to list to match dataclass field types

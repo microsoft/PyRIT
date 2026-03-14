@@ -24,7 +24,7 @@ mypy:
 docs-build:
 	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
 	uv run python build_scripts/gen_api_md.py
-	cd doc && uv run jupyter-book build --all
+	cd doc && uv run jupyter-book build --all --html
 	uv run ./build_scripts/generate_rss.py
 
 # Regenerate only the API reference pages (without building the full site)

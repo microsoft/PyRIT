@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import pyrit
-from pyrit.backend.middleware import register_error_handlers
+from pyrit.backend.middleware import RequestIdMiddleware, register_error_handlers
 from pyrit.backend.routes import attacks, converters, health, labels, media, targets, version
 from pyrit.memory import CentralMemory
 
@@ -51,6 +51,9 @@ app = FastAPI(
 
 # Register RFC 7807 error handlers
 register_error_handlers(app)
+
+# Attach X-Request-ID to every request/response for log correlation
+app.add_middleware(RequestIdMiddleware)
 
 
 # Configure CORS

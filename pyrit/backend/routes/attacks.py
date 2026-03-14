@@ -89,6 +89,9 @@ async def list_attacks(
     """
     service = get_attack_service()
     labels = _parse_labels(label)
+    # Normalize converter_types: strip empty strings so ?converter_types= means "no converters"
+    if converter_types is not None:
+        converter_types = [c for c in converter_types if c]
     return await service.list_attacks_async(
         attack_type=attack_type,
         converter_types=converter_types,

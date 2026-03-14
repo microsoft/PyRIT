@@ -41,6 +41,17 @@ memory_db_type: sqlite
 initializers:
   - simple
 
+# Operator and Operation Labels
+# ------------------------------
+# Default labels applied to all attacks created with PyRIT.
+#
+# - operator: Identifies who is running the attack (e.g., your team name or alias).
+# - operation: Groups related attacks under a campaign or engagement name.
+#
+# Both are optional.
+operator: roakey
+operation: op_trash_panda
+
 # Initialization Scripts
 # ----------------------
 # List of paths to custom Python scripts containing PyRITInitializer subclasses.

@@ -221,11 +221,11 @@ project:
 site:
   nav:
     - title: Cookbooks
-      url: /cookbooks/README
+      url: /cookbooks/readme
     - title: Setup
       url: /setup/a-install-uv
     - title: Contributing
-      url: /contributing/README
+      url: /contributing/readme
     - title: User Guide
       children:
         - title: Architecture
@@ -247,7 +247,7 @@ site:
     - title: API Reference
       url: /api/index
     - title: Blog
-      url: /blog/README
+      url: /blog/readme
   options:
     logo: roakey.png
     favicon: roakey.png

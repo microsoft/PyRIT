@@ -31,6 +31,9 @@ const config: Config = {
       {
         tsconfig: "tsconfig.test.json",
         useESM: false,
+        astTransformers: {
+          before: [{ path: "./jest-import-meta-transformer.ts" }],
+        },
       },
     ],
   },
@@ -39,16 +42,7 @@ const config: Config = {
   transformIgnorePatterns: [
     "/node_modules/(?!(@fluentui|axios)/)",
   ],
-  globals: {
-    "import.meta": {
-      env: {
-        VITE_API_URL: "http://localhost:8000/api",
-        MODE: "test",
-        DEV: true,
-        PROD: false,
-      },
-    },
-  },
+  globals: {},
 };
 
 export default config;

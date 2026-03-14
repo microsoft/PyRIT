@@ -2308,3 +2308,106 @@ class TestAddMessageGuards:
 
         result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
         assert result.attack is not None
+
+
+class TestResolveVideoRemixMetadata:
+    """Tests for _resolve_video_remix_metadata."""
+
+    def test_resolves_video_id_from_original_piece(self, attack_service, mock_memory):
+        """When a video_path piece has original_prompt_id, resolve video_id onto text piece."""
+        original_piece = MagicMock()
+        original_piece.prompt_metadata = {"video_id": "vid-abc-123"}
+        mock_memory.get_message_pieces.return_value = [original_piece]
+
+        request = AddMessageRequest(
+            role="user",
+            target_conversation_id="conv-1",
+            pieces=[
+                MessagePieceRequest(original_value="remix this video", data_type="text"),
+                MessagePieceRequest(
+                    original_value="/path/to/video.mp4",
+                    data_type="video_path",
+                    original_prompt_id="piece-id-1",
+                ),
+            ],
+        )
+
+        attack_service._resolve_video_remix_metadata(request)
+
+        assert request.pieces[0].prompt_metadata == {"video_id": "vid-abc-123"}
+        assert request.pieces[1].prompt_metadata == {"video_id": "vid-abc-123"}
+
+    def test_no_op_without_video_pieces(self, attack_service):
+        """Should do nothing when there are no video_path pieces."""
+        request = AddMessageRequest(
+            role="user",
+            target_conversation_id="conv-1",
+            pieces=[MessagePieceRequest(original_value="just text", data_type="text")],
+        )
+
+        attack_service._resolve_video_remix_metadata(request)
+
+        assert request.pieces[0].prompt_metadata is None
+
+    def test_no_op_when_video_id_already_set(self, attack_service, mock_memory):
+        """Should not overwrite existing video_id on text piece."""
+        request = AddMessageRequest(
+            role="user",
+            target_conversation_id="conv-1",
+            pieces=[
+                MessagePieceRequest(
+                    original_value="remix",
+                    data_type="text",
+                    prompt_metadata={"video_id": "existing-id"},
+                ),
+                MessagePieceRequest(
+                    original_value="/path/to/video.mp4",
+                    data_type="video_path",
+                    original_prompt_id="piece-id-1",
+                ),
+            ],
+        )
+
+        attack_service._resolve_video_remix_metadata(request)
+
+        assert request.pieces[0].prompt_metadata == {"video_id": "existing-id"}
+        mock_memory.get_message_pieces.assert_not_called()
+
+    def test_no_op_without_original_prompt_id(self, attack_service, mock_memory):
+        """Should not crash when video_path piece has no original_prompt_id."""
+        request = AddMessageRequest(
+            role="user",
+            target_conversation_id="conv-1",
+            pieces=[
+                MessagePieceRequest(original_value="remix", data_type="text"),
+                MessagePieceRequest(original_value="/path/to/video.mp4", data_type="video_path"),
+            ],
+        )
+
+        attack_service._resolve_video_remix_metadata(request)
+
+        assert request.pieces[0].prompt_metadata is None
+        mock_memory.get_message_pieces.assert_not_called()
+
+    def test_no_op_when_original_piece_has_no_video_id(self, attack_service, mock_memory):
+        """Should not set metadata when original piece has no video_id."""
+        original_piece = MagicMock()
+        original_piece.prompt_metadata = {"other_key": "value"}
+        mock_memory.get_message_pieces.return_value = [original_piece]
+
+        request = AddMessageRequest(
+            role="user",
+            target_conversation_id="conv-1",
+            pieces=[
+                MessagePieceRequest(original_value="remix", data_type="text"),
+                MessagePieceRequest(
+                    original_value="/path/to/video.mp4",
+                    data_type="video_path",
+                    original_prompt_id="piece-id-1",
+                ),
+            ],
+        )
+
+        attack_service._resolve_video_remix_metadata(request)
+
+        assert request.pieces[0].prompt_metadata is None
