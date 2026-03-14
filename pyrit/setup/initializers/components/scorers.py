@@ -21,6 +21,7 @@ from pyrit.score import (
     AzureContentFilterScorer,
     FloatScaleThresholdScorer,
     LikertScalePaths,
+    RefusalScorerPaths,
     Scorer,
     SelfAskLikertScorer,
     SelfAskRefusalScorer,
@@ -50,7 +51,10 @@ GPT4O_UNSAFE_TEMP0_TARGET: str = "azure_gpt4o_unsafe_chat_temp0"
 GPT4O_UNSAFE_TEMP9_TARGET: str = "azure_gpt4o_unsafe_chat_temp9"
 
 # Scorer registry names.
-REFUSAL_GPT4O: str = "refusal_gpt4o"
+REFUSAL_GPT4O_OBJECTIVE_BLOCK_SAFE: str = "refusal_gpt4o_objective_block_safe"
+REFUSAL_GPT4O_OBJECTIVE_ALLOW_SAFE: str = "refusal_gpt4o_objective_allow_safe"
+REFUSAL_GPT4O_NO_OBJECTIVE_BLOCK_SAFE: str = "refusal_gpt4o_no_objective_block_safe"
+REFUSAL_GPT4O_NO_OBJECTIVE_ALLOW_SAFE: str = "refusal_gpt4o_no_objective_allow_safe"
 INVERTED_REFUSAL_GPT4O: str = "inverted_refusal_gpt4o"
 INVERTED_REFUSAL_GPT4O_UNSAFE: str = "inverted_refusal_gpt4o_unsafe"
 INVERTED_REFUSAL_GPT4O_UNSAFE_TEMP9: str = "inverted_refusal_gpt4o_unsafe_temp9"
@@ -152,8 +156,40 @@ class ScorerInitializer(PyRITInitializer):
         unsafe_temp0: Optional[PromptChatTarget] = target_registry.get_instance_by_name(GPT4O_UNSAFE_TEMP0_TARGET)  # type: ignore[assignment]
         unsafe_temp9: Optional[PromptChatTarget] = target_registry.get_instance_by_name(GPT4O_UNSAFE_TEMP9_TARGET)  # type: ignore[assignment]
 
-        # Refusal Scorers
-        self._try_register(scorer_registry, REFUSAL_GPT4O, lambda: SelfAskRefusalScorer(chat_target=gpt4o), gpt4o)
+        # Refusal Scorers (default uses OBJECTIVE_ALLOW_SAFE)
+        self._try_register(
+            scorer_registry,
+            REFUSAL_GPT4O_OBJECTIVE_BLOCK_SAFE,
+            lambda: SelfAskRefusalScorer(
+                chat_target=gpt4o, refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE
+            ),
+            gpt4o,
+        )
+        self._try_register(
+            scorer_registry,
+            REFUSAL_GPT4O_OBJECTIVE_ALLOW_SAFE,
+            lambda: SelfAskRefusalScorer(
+                chat_target=gpt4o, refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE
+            ),
+            gpt4o,
+        )
+        self._try_register(
+            scorer_registry,
+            REFUSAL_GPT4O_NO_OBJECTIVE_BLOCK_SAFE,
+            lambda: SelfAskRefusalScorer(
+                chat_target=gpt4o, refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE
+            ),
+            gpt4o,
+        )
+        self._try_register(
+            scorer_registry,
+            REFUSAL_GPT4O_NO_OBJECTIVE_ALLOW_SAFE,
+            lambda: SelfAskRefusalScorer(
+                chat_target=gpt4o, refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE
+            ),
+            gpt4o,
+        )
+
         self._try_register(
             scorer_registry,
             INVERTED_REFUSAL_GPT4O,
