@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Combobox, Field, MessageBar, MessageBarBody, Option, Spinner, Text } from '@fluentui/react-components'
+import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -15,6 +15,7 @@ export default function ConverterPanel({ onClose }: ConverterPanelProps) {
   const [converters, setConverters] = useState<ConverterCatalogEntry[]>([])
   const [selectedConverterType, setSelectedConverterType] = useState('')
   const [query, setQuery] = useState('')
+  const [paramValues, setParamValues] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -114,8 +115,18 @@ export default function ConverterPanel({ onClose }: ConverterPanelProps) {
                 value={query}
                 selectedOptions={selectedConverterType ? [selectedConverterType] : []}
                 onOptionSelect={(_, data) => {
-                  setSelectedConverterType(data.optionValue ?? '')
+                  const newType = data.optionValue ?? ''
+                  setSelectedConverterType(newType)
                   setQuery(data.optionText ?? '')
+                  // Reset param values to defaults for the newly selected converter
+                  const newConverter = converters.find((c) => c.converter_type === newType)
+                  const defaults: Record<string, string> = {}
+                  for (const p of newConverter?.parameters ?? []) {
+                    if (p.default_value != null) {
+                      defaults[p.name] = p.default_value
+                    }
+                  }
+                  setParamValues(defaults)
                 }}
                 onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
                 placeholder="Search converters..."
@@ -146,6 +157,44 @@ export default function ConverterPanel({ onClose }: ConverterPanelProps) {
                     Out: {selectedConverter.supported_output_types.join(', ') || 'n/a'}
                   </Text>
                 </div>
+              </div>
+            )}
+
+            {selectedConverter && (selectedConverter.parameters?.length ?? 0) > 0 && (
+              <div className={styles.paramsSection} data-testid="converter-params">
+                <Text weight="semibold" size={300}>Parameters</Text>
+                {(selectedConverter.parameters ?? []).map((param) => (
+                  <Field
+                    key={param.name}
+                    label={`${param.name}${param.required ? ' *' : ''}`}
+                    hint={param.type_name}
+                  >
+                    {param.choices ? (
+                      <Select
+                        value={paramValues[param.name] ?? param.default_value ?? ''}
+                        onChange={(_, data) =>
+                          setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
+                        }
+                        data-testid={`param-${param.name}`}
+                      >
+                        {param.choices.map((choice) => (
+                          <option key={choice} value={choice}>
+                            {choice}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <Input
+                        value={paramValues[param.name] ?? ''}
+                        placeholder={param.default_value ?? undefined}
+                        onChange={(_, data) =>
+                          setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
+                        }
+                        data-testid={`param-${param.name}`}
+                      />
+                    )}
+                  </Field>
+                ))}
               </div>
             )}
 

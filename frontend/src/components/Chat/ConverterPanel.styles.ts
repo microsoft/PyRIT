@@ -82,6 +82,15 @@ export const useConverterPanelStyles = makeStyles({
     gap: tokens.spacingVerticalXS,
     marginTop: tokens.spacingVerticalS,
   },
+  paramsSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+    padding: tokens.spacingVerticalS,
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
   outputBox: {
     padding: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusMedium,

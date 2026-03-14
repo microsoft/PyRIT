@@ -91,10 +91,19 @@ export interface ConverterListResponse {
   items: ConverterInstance[]
 }
 
+export interface ConverterParameterSchema {
+  name: string
+  type_name: string
+  required: boolean
+  default_value?: string | null
+  choices?: string[] | null
+}
+
 export interface ConverterCatalogEntry {
   converter_type: string
   supported_input_types: string[]
   supported_output_types: string[]
+  parameters: ConverterParameterSchema[]
 }
 
 export interface ConverterCatalogResponse {

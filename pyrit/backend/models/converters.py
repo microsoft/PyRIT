@@ -18,6 +18,7 @@ __all__ = [
     "ConverterCatalogResponse",
     "ConverterInstance",
     "ConverterInstanceListResponse",
+    "ConverterParameterSchema",
     "CreateConverterRequest",
     "CreateConverterResponse",
     "ConverterPreviewRequest",
@@ -31,6 +32,16 @@ __all__ = [
 # ============================================================================
 
 
+class ConverterParameterSchema(BaseModel):
+    """Schema for a single converter constructor parameter."""
+
+    name: str = Field(..., description="Parameter name")
+    type_name: str = Field(..., description="Human-readable type (e.g. 'str', 'int', 'Literal[...]')")
+    required: bool = Field(..., description="Whether the parameter must be provided")
+    default_value: Optional[str] = Field(None, description="String representation of default value, if any")
+    choices: Optional[list[str]] = Field(None, description="Allowed values for Literal types")
+
+
 class ConverterCatalogEntry(BaseModel):
     """A converter type available from the backend registry."""
 
@@ -40,6 +51,9 @@ class ConverterCatalogEntry(BaseModel):
     )
     supported_output_types: list[str] = Field(
         default_factory=list, description="Output data types produced by this converter type"
+    )
+    parameters: list[ConverterParameterSchema] = Field(
+        default_factory=list, description="Constructor parameters for dynamic form generation"
     )
 
 

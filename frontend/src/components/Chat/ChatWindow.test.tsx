@@ -2144,6 +2144,7 @@ describe("ChatWindow Integration", () => {
           converter_type: "Base64Converter",
           supported_input_types: ["text"],
           supported_output_types: ["text"],
+          parameters: [],
         },
       ],
     });
@@ -2170,6 +2171,49 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByText("Out: text")).toBeInTheDocument();
       expect(screen.getByTestId("converter-output")).toBeInTheDocument();
       expect(screen.getByText("Converted output will appear here.")).toBeInTheDocument();
+      // No params section when parameters is empty
+      expect(screen.queryByTestId("converter-params")).not.toBeInTheDocument();
+    });
+  });
+
+  it("should show parameter form when converter has parameters", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [
+        {
+          converter_type: "Base64Converter",
+          supported_input_types: ["text"],
+          supported_output_types: ["text"],
+          parameters: [
+            {
+              name: "encoding_func",
+              type_name: "Literal['b64encode', 'urlsafe_b64encode']",
+              required: false,
+              default_value: "b64encode",
+              choices: ["b64encode", "urlsafe_b64encode"],
+            },
+          ],
+        },
+      ],
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-converter-params"
+          conversationId="conv-converter-params"
+          activeConversationId="conv-converter-params"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-params")).toBeInTheDocument();
+      expect(screen.getByTestId("param-encoding_func")).toBeInTheDocument();
+      expect(screen.getByText("Parameters")).toBeInTheDocument();
     });
   });
 
@@ -2180,11 +2224,13 @@ describe("ChatWindow Integration", () => {
           converter_type: "Base64Converter",
           supported_input_types: ["text"],
           supported_output_types: ["text"],
+          parameters: [],
         },
         {
           converter_type: "CharSwapConverter",
           supported_input_types: ["text"],
           supported_output_types: ["text"],
+          parameters: [],
         },
       ],
     });

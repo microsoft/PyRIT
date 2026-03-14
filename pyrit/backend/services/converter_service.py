@@ -12,9 +12,10 @@ Converters can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import inspect
 import uuid
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Literal, Optional, Union, get_args, get_origin
 
 from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -23,6 +24,7 @@ from pyrit.backend.models.converters import (
     ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
+    ConverterParameterSchema,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
     CreateConverterRequest,
@@ -53,6 +55,81 @@ def _build_converter_class_registry() -> dict[str, type]:
 
 # Module-level class registry (built once on import)
 _CONVERTER_CLASS_REGISTRY: dict[str, type] = _build_converter_class_registry()
+
+# Types that can be rendered as simple form fields
+_SIMPLE_TYPES: set[type] = {str, int, float, bool}
+
+
+def _is_simple_type(annotation: Any) -> bool:
+    """Return True if the annotation represents a type renderable in a form field."""
+    if annotation in _SIMPLE_TYPES:
+        return True
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return True
+    if origin is Union:
+        args = get_args(annotation)
+        non_none = [a for a in args if a is not type(None)]
+        return len(non_none) == 1 and _is_simple_type(non_none[0])
+    return False
+
+
+def _serialize_type(annotation: Any) -> str:
+    """Convert a type annotation to a concise human-readable string."""
+    if annotation is inspect.Parameter.empty:
+        return "Any"
+    origin = get_origin(annotation)
+    if origin is Literal:
+        args = get_args(annotation)
+        return f"Literal[{', '.join(repr(a) for a in args)}]"
+    if origin is Union:
+        args = get_args(annotation)
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            inner = _serialize_type(non_none[0])
+            return f"Optional[{inner}]" if len(args) > len(non_none) else inner
+    if hasattr(annotation, "__name__"):
+        return annotation.__name__
+    return str(annotation)
+
+
+def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]:
+    """Extract simple constructor parameters from a converter class."""
+    try:
+        sig = inspect.signature(converter_class.__init__)
+    except (ValueError, TypeError):
+        return []
+
+    params: list[ConverterParameterSchema] = []
+    for name, p in sig.parameters.items():
+        if name == "self":
+            continue
+        if not _is_simple_type(p.annotation):
+            continue
+
+        no_default = p.default is inspect.Parameter.empty
+        is_sentinel = hasattr(p.default, "__class__") and "Sentinel" in type(p.default).__name__
+        required = no_default or is_sentinel
+
+        default_value: Optional[str] = None
+        if not required and p.default is not None:
+            default_value = str(p.default)
+
+        choices: Optional[list[str]] = None
+        if get_origin(p.annotation) is Literal:
+            choices = [str(a) for a in get_args(p.annotation)]
+
+        params.append(
+            ConverterParameterSchema(
+                name=name,
+                type_name=_serialize_type(p.annotation),
+                required=required,
+                default_value=default_value,
+                choices=choices,
+            )
+        )
+
+    return params
 
 
 class ConverterService:
@@ -115,6 +192,7 @@ class ConverterService:
                     converter_type=converter_type,
                     supported_input_types=supported_input_types,
                     supported_output_types=supported_output_types,
+                    parameters=_extract_parameters(converter_class),
                 )
             )
 
