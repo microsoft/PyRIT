@@ -5,6 +5,8 @@ project:
     - name: Microsoft AI Red Team
   copyright: Copyright 2024, Microsoft AI Red Team
   github: Azure/PyRIT
+  bibliography:
+    - references.bib
   exports:
     - format: pdf
       template: plain_latex_book
