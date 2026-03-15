@@ -279,30 +279,6 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               Convert
             </Button>
             </div>
-          {convertedValue && (
-            <div className={styles.conversionBar} data-testid="conversion-indicator">
-              <div className={styles.conversionLabel}>
-                <span className={styles.originalBadge}>Original</span>
-                <Text size={200} className={styles.conversionText} truncate>
-                  {originalValue}
-                </Text>
-              </div>
-              <div className={styles.conversionLabel}>
-                <span className={styles.convertedBadge}>Converted</span>
-                <Text size={200} className={styles.conversionText} truncate>
-                  {convertedValue}
-                </Text>
-              </div>
-              <Button
-                appearance="subtle"
-                size="small"
-                onClick={onClearConversion}
-                data-testid="clear-conversion-btn"
-              >
-                ✕
-              </Button>
-            </div>
-          )}
           <textarea
             ref={textareaRef}
             className={styles.textInput}
@@ -335,6 +311,24 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             />
           </div>
           </div>
+          {convertedValue && (
+            <div className={styles.conversionBarBottom} data-testid="converted-indicator">
+              <div className={styles.conversionBarHeader}>
+                <span className={styles.convertedBadge}>Converted</span>
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  onClick={onClearConversion}
+                  data-testid="clear-conversion-btn"
+                >
+                  ✕
+                </Button>
+              </div>
+              <Text size={200} className={styles.conversionText}>
+                {convertedValue}
+              </Text>
+            </div>
+          )}
         </div>
         </>
         )}

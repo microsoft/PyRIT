@@ -162,7 +162,7 @@ export default function ChatWindow({
     }
   }, [attackResultId, activeConversationId, onSelectConversation, loadConversation])
 
-  const handleSend = async (originalValue: string, _convertedValue: string | undefined, attachments: MessageAttachment[]) => {
+  const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
     if (!activeTarget) { return }
 
     // Track which conversation this send belongs to (may be updated after attack creation)
@@ -170,12 +170,18 @@ export default function ChatWindow({
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
+    // When a converter was applied, display the converted text as content
+    // and preserve the original for the "Original" indicator
+    const displayContent = convertedValue ?? originalValue
+    const hasConversion = convertedValue != null && convertedValue !== originalValue
+
     // Add user message with attachments for display
     const userMessage: Message = {
       role: 'user',
-      content: originalValue,
+      content: displayContent,
       timestamp: new Date().toISOString(),
       attachments: attachments.length > 0 ? attachments : undefined,
+      originalContent: hasConversion ? originalValue : undefined,
     }
     setMessages(prev => [...prev, userMessage])
 
@@ -196,7 +202,7 @@ export default function ChatWindow({
 
     try {
       // Build message pieces from text + attachments
-      const pieces = await buildMessagePieces(originalValue, attachments)
+      const pieces = await buildMessagePieces(displayContent, attachments)
 
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
