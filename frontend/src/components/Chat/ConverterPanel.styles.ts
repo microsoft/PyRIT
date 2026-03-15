@@ -102,4 +102,12 @@ export const useConverterPanelStyles = makeStyles({
     overflowY: 'auto' as const,
     maxHeight: '200px',
   },
+  previewPre: {
+    margin: 0,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground1,
+  },
 })

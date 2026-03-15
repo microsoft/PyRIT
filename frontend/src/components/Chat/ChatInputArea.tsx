@@ -70,9 +70,13 @@ interface ChatInputAreaProps {
   onConfigureTarget?: () => void
   onToggleConverterPanel?: () => void
   isConverterPanelOpen?: boolean
+  onInputChange?: (value: string) => void
+  convertedValue?: string | null
+  originalValue?: string | null
+  onClearConversion?: () => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, convertedValue, originalValue, onClearConversion }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -128,9 +132,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   const handleSend = () => {
     if ((input || attachments.length > 0) && !disabled) {
-      onSend(input, undefined, attachments)
+      onSend(input, convertedValue ?? undefined, attachments)
       setInput('')
       setAttachments([])
+      onClearConversion?.()
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto'
       }
@@ -158,7 +163,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 96) + 'px'
     }
-  }, [input])
+    onInputChange?.(input)
+  }, [input, onInputChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
@@ -273,6 +279,30 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               Convert
             </Button>
             </div>
+          {convertedValue && (
+            <div className={styles.conversionBar} data-testid="conversion-indicator">
+              <div className={styles.conversionLabel}>
+                <span className={styles.originalBadge}>Original</span>
+                <Text size={200} className={styles.conversionText} truncate>
+                  {originalValue}
+                </Text>
+              </div>
+              <div className={styles.conversionLabel}>
+                <span className={styles.convertedBadge}>Converted</span>
+                <Text size={200} className={styles.conversionText} truncate>
+                  {convertedValue}
+                </Text>
+              </div>
+              <Button
+                appearance="subtle"
+                size="small"
+                onClick={onClearConversion}
+                data-testid="clear-conversion-btn"
+              >
+                ✕
+              </Button>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             className={styles.textInput}
@@ -282,6 +312,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onKeyDown={handleKeyDown}
             disabled={disabled}
             rows={1}
+            data-testid="chat-input"
           />
           <div className={styles.iconButtonsRight}>
             {activeTarget && activeTarget.supports_multi_turn === false && (

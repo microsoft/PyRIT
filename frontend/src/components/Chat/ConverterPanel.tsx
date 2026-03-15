@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text } from '@fluentui/react-components'
-import { DismissRegular } from '@fluentui/react-icons'
+import { DismissRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { ConverterCatalogEntry } from '../../types'
@@ -8,14 +8,19 @@ import { useConverterPanelStyles } from './ConverterPanel.styles'
 
 interface ConverterPanelProps {
   onClose: () => void
+  previewText?: string
+  onUseConvertedValue?: (original: string, converted: string) => void
 }
 
-export default function ConverterPanel({ onClose }: ConverterPanelProps) {
+export default function ConverterPanel({ onClose, previewText = '', onUseConvertedValue }: ConverterPanelProps) {
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterCatalogEntry[]>([])
   const [selectedConverterType, setSelectedConverterType] = useState('')
   const [query, setQuery] = useState('')
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  const [previewOutput, setPreviewOutput] = useState('')
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,6 +73,33 @@ export default function ConverterPanel({ onClose }: ConverterPanelProps) {
   const selectedConverter = converters.find(
     (converter) => converter.converter_type === selectedConverterType
   ) ?? converters[0]
+
+  const handlePreview = async () => {
+    if (!selectedConverterType || !previewText.trim()) {
+      return
+    }
+    setIsPreviewing(true)
+    setPreviewError(null)
+    setPreviewOutput('')
+
+    try {
+      const createResponse = await convertersApi.createConverter({
+        type: selectedConverterType,
+        params: { ...paramValues },
+      })
+
+      const previewResponse = await convertersApi.previewConversion({
+        original_value: previewText,
+        converter_ids: [createResponse.converter_id],
+      })
+
+      setPreviewOutput(previewResponse.converted_value)
+    } catch (err) {
+      setPreviewError(toApiError(err).detail)
+    } finally {
+      setIsPreviewing(false)
+    }
+  }
 
   return (
     <aside className={styles.root} data-testid="converter-panel">
@@ -198,13 +230,54 @@ export default function ConverterPanel({ onClose }: ConverterPanelProps) {
               </div>
             )}
 
-            <div className={styles.outputSection} data-testid="converter-output">
-              <Text weight="semibold" size={300}>Output</Text>
-              <div className={styles.outputBox}>
+            <div className={styles.outputSection} data-testid="converter-preview-section">
+              <Button
+                appearance="primary"
+                size="small"
+                icon={isPreviewing ? <Spinner size="tiny" /> : <PlayRegular />}
+                onClick={handlePreview}
+                disabled={isPreviewing || !previewText.trim() || !selectedConverterType}
+                data-testid="converter-preview-btn"
+              >
+                {isPreviewing ? 'Converting...' : 'Preview'}
+              </Button>
+
+              {!previewText.trim() && (
                 <Text size={200} className={styles.hintText}>
-                  Converted output will appear here.
+                  Type in the chat input box to preview a conversion.
                 </Text>
+              )}
+
+              {previewError && (
+                <MessageBar intent="error" data-testid="converter-preview-error">
+                  <MessageBarBody>{previewError}</MessageBarBody>
+                </MessageBar>
+              )}
+
+              <div data-testid="converter-output">
+                <Text weight="semibold" size={300}>Output</Text>
+                <div className={styles.outputBox}>
+                  {previewOutput ? (
+                    <pre className={styles.previewPre} data-testid="converter-preview-result">{previewOutput}</pre>
+                  ) : (
+                    <Text size={200} className={styles.hintText}>
+                      Converted output will appear here.
+                    </Text>
+                  )}
+                </div>
               </div>
+
+              {previewOutput && (
+                <Button
+                  appearance="primary"
+                  size="small"
+                  onClick={() => onUseConvertedValue?.(previewText, previewOutput)}
+                  disabled={!onUseConvertedValue}
+                  data-testid="use-converted-btn"
+                >
+                  Use Converted Value
+                </Button>
+              )}
             </div>
           </div>
         )}

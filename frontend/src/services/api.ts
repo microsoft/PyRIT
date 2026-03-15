@@ -124,6 +124,16 @@ export const convertersApi = {
     const response = await apiClient.get(`/converters/${encodeURIComponent(converterId)}`)
     return response.data
   },
+
+  createConverter: async (request: { type: string; params?: Record<string, unknown> }): Promise<{ converter_id: string; converter_type: string }> => {
+    const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+
+  previewConversion: async (request: { original_value: string; converter_ids: string[] }): Promise<{ converted_value: string }> => {
+    const response = await apiClient.post('/converters/preview', request)
+    return response.data
+  },
 }
 
 export const attacksApi = {

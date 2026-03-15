@@ -20,6 +20,8 @@ jest.mock("../../services/api", () => ({
     listConverterCatalog: jest.fn(),
     listConverters: jest.fn(),
     getConverter: jest.fn(),
+    createConverter: jest.fn(),
+    previewConversion: jest.fn(),
   },
   labelsApi: {
     getLabels: jest.fn().mockImplementation(() => new Promise(() => {})),
@@ -2170,6 +2172,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByText("In: text")).toBeInTheDocument();
       expect(screen.getByText("Out: text")).toBeInTheDocument();
       expect(screen.getByTestId("converter-output")).toBeInTheDocument();
+      expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
       expect(screen.getByText("Converted output will appear here.")).toBeInTheDocument();
       // No params section when parameters is empty
       expect(screen.queryByTestId("converter-params")).not.toBeInTheDocument();
@@ -2214,6 +2217,66 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByTestId("converter-params")).toBeInTheDocument();
       expect(screen.getByTestId("param-encoding_func")).toBeInTheDocument();
       expect(screen.getByText("Parameters")).toBeInTheDocument();
+    });
+  });
+
+  it("should preview conversion when Preview button is clicked", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [
+        {
+          converter_type: "Base64Converter",
+          supported_input_types: ["text"],
+          supported_output_types: ["text"],
+          parameters: [],
+        },
+      ],
+    });
+    mockedConvertersApi.createConverter.mockResolvedValue({
+      converter_id: "test-conv-id",
+      converter_type: "Base64Converter",
+    });
+    mockedConvertersApi.previewConversion.mockResolvedValue({
+      converted_value: "aGVsbG8=",
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-converter-preview"
+          conversationId="conv-converter-preview"
+          activeConversationId="conv-converter-preview"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    // Type in the chat input textarea first
+    const chatInput = screen.getByTestId("chat-input");
+    await userEvent.type(chatInput, "hello");
+
+    // Open converter panel
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
+    });
+
+    // Click Preview — should use chat input text
+    await userEvent.click(screen.getByTestId("converter-preview-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-preview-result")).toBeInTheDocument();
+      expect(screen.getByText("aGVsbG8=")).toBeInTheDocument();
+    });
+
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      type: "Base64Converter",
+      params: {},
+    });
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith({
+      original_value: "hello",
+      converter_ids: ["test-conv-id"],
     });
   });
 

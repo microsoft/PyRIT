@@ -67,6 +67,9 @@ export default function ChatWindow({
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  const [chatInputText, setChatInputText] = useState('')
+  const [convertedValue, setConvertedValue] = useState<string | null>(null)
+  const [originalValue, setOriginalValue] = useState<string | null>(null)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
 
@@ -461,7 +464,14 @@ export default function ChatWindow({
   return (
     <div className={styles.root}>
       {isConverterPanelOpen && (
-        <ConverterPanel onClose={() => setIsConverterPanelOpen(false)} />
+        <ConverterPanel
+          onClose={() => setIsConverterPanelOpen(false)}
+          previewText={chatInputText}
+          onUseConvertedValue={(original, converted) => {
+            setOriginalValue(original)
+            setConvertedValue(converted)
+          }}
+        />
       )}
       <div className={styles.chatArea}>
         <div className={styles.ribbon}>
@@ -534,6 +544,10 @@ export default function ChatWindow({
           onConfigureTarget={!activeTarget ? () => onNavigate?.('config') : undefined}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
+          onInputChange={setChatInputText}
+          convertedValue={convertedValue}
+          originalValue={originalValue}
+          onClearConversion={() => { setConvertedValue(null); setOriginalValue(null) }}
         />
       </div>
       {isPanelOpen && (
