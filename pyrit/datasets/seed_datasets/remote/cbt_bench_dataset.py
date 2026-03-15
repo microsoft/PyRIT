@@ -25,7 +25,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/Psychotherapy-LLM/CBT-Bench
-        - https://arxiv.org/abs/2410.13218
+        - [@zhang2024cbtbench]
     """
 
     def __init__(

@@ -97,13 +97,9 @@ def render_function(func: dict, heading_level: str = "###") -> str:
     ret = func.get("returns_annotation", "")
     ret_str = f" → {ret}" if ret else ""
 
-    # Use heading for name, code block for full signature if long
-    full_sig = f"{prefix}{name}{sig}{ret_str}"
-    if len(full_sig) > 80:
-        parts = [f"{heading_level} {prefix}{name}\n"]
-        parts.append(f"```python\n{prefix}{name}{sig}{ret_str}\n```\n")
-    else:
-        parts = [f"{heading_level} `{full_sig}`\n"]
+    # Heading shows just the name; full signature in a code block below
+    parts = [f"{heading_level} `{prefix}{name}`\n"]
+    parts.append(f"```python\n{prefix}{name}{sig}{ret_str}\n```\n")
 
     ds = func.get("docstring", {})
     if ds:
@@ -128,7 +124,9 @@ def render_class(cls: dict) -> str:
     bases = cls.get("bases", [])
     bases_str = f"({', '.join(bases)})" if bases else ""
 
-    parts = [f"## `class {name}{bases_str}`\n"]
+    parts = [f"## `{name}`\n"]
+    if bases_str:
+        parts.append(f"*Bases: {bases_str}*\n")
 
     ds = cls.get("docstring", {})
     if ds and ds.get("text"):
@@ -154,7 +152,13 @@ def render_class(cls: dict) -> str:
 def render_module(data: dict) -> str:
     """Render a full module page."""
     mod_name = data["name"]
-    parts = [f"# {mod_name}\n"]
+    short_name = mod_name.rsplit(".", 1)[-1]
+    parts = [
+        "---",
+        f"short_title: {short_name}",
+        "---\n",
+        f"# {mod_name}\n",
+    ]
 
     ds = data.get("docstring", {})
     if ds and ds.get("text"):
