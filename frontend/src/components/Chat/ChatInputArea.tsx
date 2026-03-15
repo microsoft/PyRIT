@@ -6,7 +6,7 @@ import {
   Text,
   tokens,
 } from '@fluentui/react-components'
-import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular } from '@fluentui/react-icons'
+import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 import { MessageAttachment, TargetInstance } from '../../types'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 
@@ -270,15 +270,18 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               title="Attach files"
             />
             <Button
-              className={styles.convertButton}
+              className={styles.iconButton}
               appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
+              icon={<ArrowSyncRegular />}
               onClick={onToggleConverterPanel}
               disabled={disabled || !onToggleConverterPanel}
               data-testid="toggle-converter-panel-btn"
-            >
-              Convert
-            </Button>
+              title="Toggle converter panel"
+            />
             </div>
+          {convertedValue && (
+            <span className={styles.originalBadge} data-testid="original-banner">Original</span>
+          )}
           <textarea
             ref={textareaRef}
             className={styles.textInput}
@@ -313,20 +316,18 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           </div>
           {convertedValue && (
             <div className={styles.conversionBarBottom} data-testid="converted-indicator">
-              <div className={styles.conversionBarHeader}>
-                <span className={styles.convertedBadge}>Converted</span>
-                <Button
-                  appearance="subtle"
-                  size="small"
-                  onClick={onClearConversion}
-                  data-testid="clear-conversion-btn"
-                >
-                  ✕
-                </Button>
-              </div>
-              <Text size={200} className={styles.conversionText}>
+              <span className={styles.convertedBadge}>Converted</span>
+              <Text size={200} className={styles.conversionText} truncate>
                 {convertedValue}
               </Text>
+              <Button
+                appearance="subtle"
+                size="small"
+                onClick={onClearConversion}
+                data-testid="clear-conversion-btn"
+              >
+                ✕
+              </Button>
             </div>
           )}
         </div>
