@@ -145,7 +145,7 @@ result = await attack.execute_async(objective=request)  # type: ignore
 await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
 
 # %% [markdown]
-# You can also make use of attacks, for example, to use other LLMs to help you send prompts for the challenges. Crucible challenges are single-turn, so some techniques like `Crescendo` won't work, but you could adapt other techniques like PAIR/TAP. Below is an example using RedTeamingAttack (similar to the Gandalf example).
+# You can also make use of attacks, for example, to use other LLMs to help you send prompts for the challenges. Crucible challenges are single-turn, so some techniques like Crescendo [@russinovich2024crescendo] won't work, but you could adapt other techniques like PAIR [@chao2023pair] or TAP [@mehrotra2023tap]. Below is an example using RedTeamingAttack (similar to the Gandalf example).
 
 # %%
 import textwrap
