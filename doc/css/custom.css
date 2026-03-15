@@ -81,13 +81,3 @@
   z-index: 0;
   pointer-events: none;
 }
-
-/* Auto-expand bibliography references list and hide the "Show All" button */
-.myst-bibliography-list {
-  max-height: none !important;
-  overflow: visible !important;
-}
-
-.myst-bibliography-toggle {
-  display: none !important;
-}

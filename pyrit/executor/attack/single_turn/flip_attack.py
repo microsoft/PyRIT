@@ -32,7 +32,7 @@ FlipAttackParameters = AttackParameters.excluding("prepended_conversation", "nex
 class FlipAttack(PromptSendingAttack):
     """
     Implement the FlipAttack method found here:
-    https://arxiv.org/html/2410.02832v1.
+    https://arxiv.org/html/2410.02832v1 [@li2024flipattack].
 
     Essentially, it adds a system prompt to the beginning of the conversation to flip each word in the prompt.
     """
