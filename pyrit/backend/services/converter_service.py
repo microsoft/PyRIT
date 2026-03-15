@@ -250,6 +250,7 @@ class ConverterService:
         # Resolve any converter references in params and instantiate
         params = self._resolve_converter_params(params=request.params)
         converter_class = self._get_converter_class(converter_type=request.type)
+        params = self._coerce_params(converter_class=converter_class, params=params)
         converter_obj = converter_class(**params)
         self._registry.register_instance(converter_obj, name=converter_id)
 
@@ -340,6 +341,51 @@ class ConverterService:
                     raise ValueError(f"Referenced converter '{ref['converter_id']}' not found")
                 resolved["converter"] = conv_obj
         return resolved
+
+    @staticmethod
+    def _coerce_params(*, converter_class: type, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        Coerce parameter values to match the converter's __init__ type annotations.
+
+        The frontend sends all values as strings; this converts them to int, float,
+        or bool as needed based on the constructor signature.
+
+        Returns:
+            Params dict with values coerced to the expected types.
+        """
+        try:
+            sig = inspect.signature(converter_class.__init__)
+        except (ValueError, TypeError):
+            return params
+
+        coerced = dict(params)
+        for name, value in coerced.items():
+            if name not in sig.parameters or not isinstance(value, str):
+                continue
+            annotation = sig.parameters[name].annotation
+            if annotation is inspect.Parameter.empty:
+                continue
+
+            origin = get_origin(annotation)
+            # Unwrap Optional[X] to X
+            if origin is Union:
+                args = get_args(annotation)
+                non_none = [a for a in args if a is not type(None)]
+                if len(non_none) == 1:
+                    annotation = non_none[0]
+                    origin = get_origin(annotation)
+
+            try:
+                if annotation is int:
+                    coerced[name] = int(value)
+                elif annotation is float:
+                    coerced[name] = float(value)
+                elif annotation is bool:
+                    coerced[name] = value.lower() in ("true", "1", "yes")
+            except (ValueError, TypeError):
+                pass
+
+        return coerced
 
     def _gather_converters(self, *, converter_ids: list[str]) -> list[tuple[str, str, Any]]:
         """

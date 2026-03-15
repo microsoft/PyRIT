@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text } from '@fluentui/react-components'
 import { DismissRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
@@ -100,8 +100,37 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
     }
   }
 
+  const [panelWidth, setPanelWidth] = useState(320)
+  const isDragging = useRef(false)
+
+  const handleMouseDown = useCallback(() => {
+    isDragging.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const newWidth = Math.max(240, Math.min(600, e.clientX))
+      setPanelWidth(newWidth)
+    }
+    const handleMouseUp = () => {
+      if (!isDragging.current) return
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
   return (
-    <aside className={styles.root} data-testid="converter-panel">
+    <aside className={styles.root} style={{ width: panelWidth, minWidth: panelWidth }} data-testid="converter-panel">
       <div className={styles.header}>
         <div className={styles.headerTitle}>
           <Text weight="semibold" size={300}>Converters</Text>
