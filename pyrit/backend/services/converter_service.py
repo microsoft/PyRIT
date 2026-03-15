@@ -132,6 +132,15 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
     return params
 
 
+def _is_llm_based(converter_class: type) -> bool:
+    """Return True if the converter requires an LLM target parameter."""
+    try:
+        sig = inspect.signature(converter_class.__init__)
+    except (ValueError, TypeError):
+        return False
+    return any("target" in name.lower() for name in sig.parameters if name != "self")
+
+
 class ConverterService:
     """
     Service for managing converter instances.
@@ -193,6 +202,7 @@ class ConverterService:
                     supported_input_types=supported_input_types,
                     supported_output_types=supported_output_types,
                     parameters=_extract_parameters(converter_class),
+                    is_llm_based=_is_llm_based(converter_class),
                 )
             )
 

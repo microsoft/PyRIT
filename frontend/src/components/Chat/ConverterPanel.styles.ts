@@ -76,6 +76,17 @@ export const useConverterPanelStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
   },
+  llmBadge: {
+    display: 'inline-block',
+    marginLeft: tokens.spacingHorizontalXS,
+    padding: `0 ${tokens.spacingHorizontalXXS}`,
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorPalettePurpleBackground2,
+    color: tokens.colorPalettePurpleForeground2,
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightSemibold as unknown as string,
+    verticalAlign: 'middle',
+  },
   outputSection: {
     display: 'flex',
     flexDirection: 'column',

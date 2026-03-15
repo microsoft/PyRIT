@@ -63,7 +63,6 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
   }, [])
 
   const filteredConverters = useMemo(() => {
-    // Show all options when query matches the selected converter (no active filter)
     if (query === selectedConverterType) {
       return converters
     }
@@ -165,8 +164,9 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
                 data-testid="converter-panel-select"
               >
                 {filteredConverters.map((converter) => (
-                  <Option key={converter.converter_type} value={converter.converter_type}>
+                  <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type}>
                     {converter.converter_type}
+                    {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
                   </Option>
                 ))}
               </Combobox>

@@ -55,6 +55,7 @@ class ConverterCatalogEntry(BaseModel):
     parameters: list[ConverterParameterSchema] = Field(
         default_factory=list, description="Constructor parameters for dynamic form generation"
     )
+    is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
 
 
 class ConverterCatalogResponse(BaseModel):

@@ -104,6 +104,7 @@ export interface ConverterCatalogEntry {
   supported_input_types: string[]
   supported_output_types: string[]
   parameters: ConverterParameterSchema[]
+  is_llm_based: boolean
 }
 
 export interface ConverterCatalogResponse {
