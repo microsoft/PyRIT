@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from pyrit.models.scenario_result import ScenarioResult
 
-from pyrit.cli import banner, frontend_core
+from pyrit.cli import _banner as banner
+from pyrit.cli import frontend_core
 
 
 class PyRITShell(cmd.Cmd):

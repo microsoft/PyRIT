@@ -9,7 +9,8 @@ import cmd
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyrit.cli import banner, pyrit_shell
+from pyrit.cli import _banner as banner
+from pyrit.cli import pyrit_shell
 
 
 class TestPyRITShell:
@@ -43,7 +44,7 @@ class TestPyRITShell:
 
         # Verify that cmdloop calls play_animation and passes the result as intro
         with (
-            patch("pyrit.cli.banner.play_animation", return_value="TEST_BANNER") as mock_play,
+            patch("pyrit.cli._banner.play_animation", return_value="TEST_BANNER") as mock_play,
             patch("cmd.Cmd.cmdloop") as mock_cmdloop,
         ):
             shell.cmdloop()
@@ -58,7 +59,7 @@ class TestPyRITShell:
 
         shell = pyrit_shell.PyRITShell(context=mock_context)
 
-        with patch("pyrit.cli.banner.play_animation") as mock_play, patch("cmd.Cmd.cmdloop") as mock_cmdloop:
+        with patch("pyrit.cli._banner.play_animation") as mock_play, patch("cmd.Cmd.cmdloop") as mock_cmdloop:
             shell.cmdloop(intro="Custom intro")
 
             mock_play.assert_not_called()

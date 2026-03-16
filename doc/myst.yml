@@ -167,47 +167,33 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
+        - file: api/pyrit_cli_frontend_core.md
+        - file: api/pyrit_cli_pyrit_backend.md
+        - file: api/pyrit_cli_pyrit_scan.md
+        - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md
         - file: api/pyrit_datasets.md
         - file: api/pyrit_embedding.md
         - file: api/pyrit_exceptions.md
         - file: api/pyrit_executor_attack.md
-          children:
-            - file: api/pyrit_executor_attack_single_turn.md
-            - file: api/pyrit_executor_attack_multi_turn.md
-            - file: api/pyrit_executor_attack_core.md
-            - file: api/pyrit_executor_attack_component.md
-            - file: api/pyrit_executor_attack_printer.md
         - file: api/pyrit_executor_benchmark.md
         - file: api/pyrit_executor_core.md
         - file: api/pyrit_executor_promptgen.md
-          children:
-            - file: api/pyrit_executor_promptgen_core.md
-            - file: api/pyrit_executor_promptgen_fuzzer.md
         - file: api/pyrit_executor_workflow.md
         - file: api/pyrit_identifiers.md
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
-          children:
-            - file: api/pyrit_models_seeds.md
         - file: api/pyrit_prompt_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
         - file: api/pyrit_registry.md
-          children:
-            - file: api/pyrit_registry_class_registries.md
-            - file: api/pyrit_registry_instance_registries.md
         - file: api/pyrit_scenario.md
-          children:
-            - file: api/pyrit_scenario_core.md
-            - file: api/pyrit_scenario_scenarios_airt.md
-            - file: api/pyrit_scenario_scenarios_foundry.md
-            - file: api/pyrit_scenario_scenarios_garak.md
         - file: api/pyrit_score.md
         - file: api/pyrit_setup.md
           children:
             - file: api/pyrit_setup_initializers.md
+        - file: api/pyrit_show_versions.md
         - file: api/pyrit_ui.md
     - file: blog/README.md
       children:
