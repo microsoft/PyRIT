@@ -84,11 +84,3 @@ class MyConverter(PromptConverter):
 ## Exports
 
 New converters MUST be added to `pyrit/prompt_converter/__init__.py` — both the import and the `__all__` list.
-
-## Common Review Issues
-
-- `output_type` in `ConverterResult` doesn't match what's actually returned
-- Synchronous/blocking I/O inside `convert_async` (use `aiofiles` or run in executor)
-- `_build_identifier` missing parameters that change output behavior
-- Missing export in `__init__.py`
-- Using positional args instead of keyword-only in `__init__` or `convert_async`
