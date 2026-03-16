@@ -63,6 +63,9 @@ class MessagePiece(BaseModel):
     converted_filename: Optional[str] = Field(
         default=None, description="Converted filename extracted from file path or blob URL"
     )
+    prompt_metadata: Optional[dict[str, Any]] = Field(
+        default=None, description="Metadata associated with the piece (e.g., video_id for remix mode)"
+    )
 
 
 class Message(BaseModel):
@@ -241,7 +244,7 @@ class ConversationSummary(BaseModel):
     conversation_id: str = Field(..., description="Unique conversation identifier")
     message_count: int = Field(0, description="Number of messages in this conversation")
     last_message_preview: Optional[str] = Field(None, description="Preview of the last message")
-    created_at: Optional[str] = Field(None, description="ISO timestamp of the first message")
+    created_at: Optional[datetime] = Field(None, description="Timestamp of the first message")
 
 
 class AttackConversationsResponse(BaseModel):

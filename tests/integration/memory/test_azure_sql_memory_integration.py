@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -37,23 +37,40 @@ def generate_test_id() -> str:
     return str(uuid4())[:8]
 
 
-def get_test_scorer_identifier(**kwargs) -> ScorerIdentifier:
+def get_test_atomic_attack_identifier() -> ComponentIdentifier:
     """
-    Returns a test ScorerIdentifier for use in integration tests.
-
-    Args:
-        **kwargs: Optional overrides for ScorerIdentifier fields.
+    Returns a test atomic attack ComponentIdentifier for use in integration tests.
 
     Returns:
-        ScorerIdentifier: A test scorer identifier with all required fields.
+        ComponentIdentifier: A composite AtomicAttack identifier.
     """
-    return ScorerIdentifier(
+    attack_strategy = ComponentIdentifier(
+        class_name="TestAttack",
+        class_module="tests.integration.memory.test_azure_sql_memory_integration",
+    )
+    return build_atomic_attack_identifier(attack_identifier=attack_strategy)
+
+
+def get_test_scorer_identifier(**kwargs) -> ComponentIdentifier:
+    """
+    Returns a test ComponentIdentifier for use in integration tests.
+
+    Args:
+        **kwargs: Optional overrides for ComponentIdentifier fields.
+
+    Returns:
+        ComponentIdentifier: A test scorer identifier with all required fields.
+    """
+    params = {
+        "class_description": kwargs.get("class_description", "Test scorer for integration testing"),
+        "identifier_type": kwargs.get("identifier_type", "instance"),
+        "scorer_type": kwargs.get("scorer_type", "true_false"),
+        "system_prompt_template": kwargs.get("system_prompt_template"),
+    }
+    return ComponentIdentifier(
         class_name=kwargs.get("class_name", "TestScorer"),
         class_module=kwargs.get("class_module", "tests.integration.memory.test_azure_sql_memory_integration"),
-        class_description=kwargs.get("class_description", "Test scorer for integration testing"),
-        identifier_type=kwargs.get("identifier_type", "instance"),
-        scorer_type=kwargs.get("scorer_type", "true_false"),
-        system_prompt_template=kwargs.get("system_prompt_template"),
+        params={k: v for k, v in params.items() if v is not None},
     )
 
 
@@ -261,22 +278,23 @@ async def test_get_attack_results_by_harm_categories(azuresql_instance: AzureSQL
         azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece1, piece2, piece3])
 
         # Create attack results
+        atomic_id = get_test_atomic_attack_identifier()
         result1 = AttackResult(
             conversation_id=conversation_ids[0],
             objective="Test objective 1",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result2 = AttackResult(
             conversation_id=conversation_ids[1],
             objective="Test objective 2",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result3 = AttackResult(
             conversation_id=conversation_ids[2],
             objective="Test objective 3",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.FAILURE,
         )
 
@@ -347,22 +365,23 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
         azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece1, piece2, piece3])
 
         # Create attack results
+        atomic_id = get_test_atomic_attack_identifier()
         result1 = AttackResult(
             conversation_id=conversation_ids[0],
             objective="Test objective 1",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result2 = AttackResult(
             conversation_id=conversation_ids[1],
             objective="Test objective 2",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result3 = AttackResult(
             conversation_id=conversation_ids[2],
             objective="Test objective 3",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.FAILURE,
         )
 
@@ -390,17 +409,57 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
 
 
 @pytest.mark.asyncio
+async def test_legacy_attack_identifier_compat(azuresql_instance: AzureSQLMemory):
+    """
+    Legacy integration test verifying the deprecated attack_identifier parameter
+    is promoted to atomic_attack_identifier via the compatibility wrapper.
+    """
+    test_id = generate_test_id()
+    conversation_ids = [f"conv_legacy_{test_id}"]
+
+    with cleanup_conversation_data(azuresql_instance, conversation_ids):
+        piece = MessagePiece(
+            conversation_id=conversation_ids[0],
+            role="user",
+            original_value="Legacy test",
+            converted_value="Legacy test",
+        )
+        azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+        legacy_id = ComponentIdentifier(
+            class_name="LegacyAttack",
+            class_module="tests.integration.memory.test_azure_sql_memory_integration",
+        )
+        result = AttackResult(
+            conversation_id=conversation_ids[0],
+            objective="Legacy objective",
+            attack_identifier=legacy_id,
+            outcome=AttackOutcome.SUCCESS,
+        )
+        # The compat wrapper should have promoted attack_identifier to atomic_attack_identifier
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+
+        azuresql_instance.add_attack_results_to_memory(attack_results=[result])
+
+        results = azuresql_instance.get_attack_results()
+        results = [r for r in results if test_id in r.conversation_id]
+        assert len(results) == 1
+        assert results[0].atomic_attack_identifier is not None
+
+
+@pytest.mark.asyncio
 async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: AzureSQLMemory):
     """
     Integration test for storing and retrieving objective_scorer_identifier in ScenarioResult.
 
-    Verifies that ScorerIdentifier is correctly serialized to JSON when stored
-    and deserialized back to ScorerIdentifier when retrieved from Azure SQL.
+    Verifies that ComponentIdentifier is correctly serialized to JSON when stored
+    and deserialized back to ComponentIdentifier when retrieved from Azure SQL.
     """
     test_id = generate_test_id()
 
     with cleanup_scenario_data(azuresql_instance, test_id):
-        # Create a ScorerIdentifier with various fields
+        # Create a ComponentIdentifier with various fields
         scorer_identifier = get_test_scorer_identifier(
             scorer_type="true_false",
             system_prompt_template="Test prompt template for {objective}",
@@ -426,9 +485,12 @@ async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: Az
 
         retrieved = results[0]
         assert retrieved.objective_scorer_identifier is not None
-        assert isinstance(retrieved.objective_scorer_identifier, ScorerIdentifier)
-        assert retrieved.objective_scorer_identifier.scorer_type == "true_false"
-        assert retrieved.objective_scorer_identifier.system_prompt_template == "Test prompt template for {objective}"
+        assert isinstance(retrieved.objective_scorer_identifier, ComponentIdentifier)
+        assert retrieved.objective_scorer_identifier.params["scorer_type"] == "true_false"
+        assert (
+            retrieved.objective_scorer_identifier.params["system_prompt_template"]
+            == "Test prompt template for {objective}"
+        )
         assert retrieved.objective_scorer_identifier.class_name == scorer_identifier.class_name
         assert retrieved.objective_scorer_identifier.hash == scorer_identifier.hash
 

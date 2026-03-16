@@ -85,6 +85,27 @@ npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 
+### E2E Test Modes
+
+E2E flow tests run in two modes controlled by Playwright projects and an environment variable:
+
+- **Seeded** (`--project seeded`, default for CI): Messages are stored directly in the database with `send: false` using dummy credentials. No real API keys needed. Tests cover the full UI flow (display, branching, conversation switching, promoting) without calling any external service.
+
+- **Live** (`--project live`, requires `E2E_LIVE_MODE=true`): Messages are sent to real OpenAI endpoints with `send: true`. Each target variant requires its own set of environment variables (e.g., `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_KEY`, `OPENAI_CHAT_MODEL`). Variants whose env vars are missing are automatically skipped. Tests verify that real target responses render correctly.
+
+```bash
+# CI (seeded only — no credentials needed)
+npx playwright test --project seeded
+
+# Live integration (requires real API keys)
+E2E_LIVE_MODE=true npx playwright test --project live
+
+# Run both
+E2E_LIVE_MODE=true npx playwright test
+```
+
+The seeded project runs in the **GitHub Actions** workflow. The live project is intended for an **Azure DevOps pipeline** that has the required secret API keys.
+
 E2E tests use `dev.py` to automatically start both frontend and backend servers. If servers are already running, they will be reused.
 
 > **Note**: `test:e2e:ui` and `test:e2e:headed` require a graphical display and won't work in headless environments like devcontainers. Use `npm run test:e2e` for CI/headless testing.

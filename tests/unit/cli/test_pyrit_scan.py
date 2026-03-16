@@ -36,7 +36,7 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["test_scenario"])
 
         assert args.scenario_name == "test_scenario"
-        assert args.database == "SQLite"
+        assert args.database is None
         assert args.log_level == logging.WARNING
 
     def test_parse_args_with_database(self):
@@ -342,12 +342,12 @@ class TestMain:
         assert result == 1
 
     @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_database_defaults_to_sqlite(self, mock_frontend_core: MagicMock):
-        """Test main uses SQLite as default database."""
+    def test_main_database_defaults_to_none(self, mock_frontend_core: MagicMock):
+        """Test main passes None for database when not specified (config file determines default)."""
         pyrit_scan.main(["--list-scenarios"])
 
         call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["database"] == "SQLite"
+        assert call_kwargs["database"] is None
 
     @patch("pyrit.cli.frontend_core.FrontendCore")
     def test_main_log_level_defaults_to_warning(self, mock_frontend_core: MagicMock):

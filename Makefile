@@ -16,10 +16,21 @@ pre-commit:
 mypy:
 	$(CMD) mypy $(PYMODULE) $(UNIT_TESTS)
 
+# Build the full documentation site:
+# 1. Generate API reference JSON from Python source (griffe)
+# 2. Convert API JSON to MyST markdown pages
+# 3. Build the Jupyter Book site
+# 4. Generate RSS feed
 docs-build:
-	uv run jb build -W -v ./doc
-	cp -r assets doc/_build/assets
+	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
+	uv run python build_scripts/gen_api_md.py
+	cd doc && uv run jupyter-book build --all --html
 	uv run ./build_scripts/generate_rss.py
+
+# Regenerate only the API reference pages (without building the full site)
+docs-api:
+	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
+	uv run python build_scripts/gen_api_md.py
 
 # Because of import time, "auto" seemed to actually go slower than just using 4 processes
 unit-test:

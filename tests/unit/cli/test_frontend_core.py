@@ -18,6 +18,7 @@ from pyrit.registry import InitializerMetadata, ScenarioMetadata
 class TestFrontendCore:
     """Tests for FrontendCore class."""
 
+    @patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", Path("/nonexistent/.pyrit_conf"))
     def test_init_with_defaults(self):
         """Test initialization with default parameters."""
         context = frontend_core.FrontendCore()
