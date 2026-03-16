@@ -299,9 +299,7 @@ async def run_scenario_async(
             initializer_class = context.initializer_registry.get_class(config.name)
             instance = initializer_class()
             if config.args:
-                instance.params = {
-                    k: [str(i) for i in v] if isinstance(v, list) else [str(v)] for k, v in config.args.items()
-                }
+                instance.set_params_from_args(args=config.args)
             initializer_instances.append(instance)
 
     # Re-initialize PyRIT with the scenario-specific initializers
@@ -808,13 +806,13 @@ ARG_HELP = {
 }
 
 
-def _parse_initializer_arg(arg: str) -> dict[str, Any]:
+def _parse_initializer_arg(arg: str) -> str | dict[str, Any]:
     """
-    Parse an initializer CLI argument into a dict for ConfigurationLoader.
+    Parse an initializer CLI argument into a string or dict for ConfigurationLoader.
 
     Supports two formats:
-    - Simple name: "simple" → {"name": "simple"}
-    - Name with params: "target:tags=default,scorer" → {"name": "target", "args": {"tags": "default,scorer"}}
+    - Simple name: "simple" → "simple"
+    - Name with params: "target:tags=default,scorer" → {"name": "target", "args": {"tags": ["default", "scorer"]}}
 
     For multiple params on one initializer, separate with semicolons: "name:key1=val1;key2=val2"
     For multiple initializers with params, space-separate them: "target:tags=a,b dataset:mode=strict"
@@ -823,13 +821,13 @@ def _parse_initializer_arg(arg: str) -> dict[str, Any]:
         arg: The CLI argument string.
 
     Returns:
-        dict: A dict with 'name' and optionally 'args' keys.
+        str | dict[str, Any]: A plain name string, or a dict with 'name' and 'args' keys.
 
     Raises:
         ValueError: If the argument format is invalid.
     """
     if ":" not in arg:
-        return arg  # type: ignore[return-value]
+        return arg
 
     name, params_str = arg.split(":", 1)
     if not name:
@@ -850,7 +848,7 @@ def _parse_initializer_arg(arg: str) -> dict[str, Any]:
 
     if args:
         return {"name": name, "args": args}
-    return name  # type: ignore[return-value]
+    return name
 
 
 def parse_run_arguments(*, args_string: str) -> dict[str, Any]:

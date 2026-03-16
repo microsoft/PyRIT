@@ -51,7 +51,7 @@ Example:
 ```yaml
 initializers:
   - simple
-  - name: airt
+  - name: target
     args:
       tags:
         - default

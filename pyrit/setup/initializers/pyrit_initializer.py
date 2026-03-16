@@ -56,6 +56,18 @@ class PyRITInitializer(ABC):
         """Initialize the PyRIT initializer with no parameters."""
         self.params: dict[str, list[str]] = {}
 
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """
+        Set params from a YAML-style args dictionary.
+
+        Converts each value to a list of strings: lists are stringified element-wise,
+        scalars are wrapped in a single-element list.
+
+        Args:
+            args: Dictionary of argument names to values (scalars or lists).
+        """
+        self.params = {k: [str(i) for i in v] if isinstance(v, list) else [str(v)] for k, v in args.items()}
+
     @property
     @abstractmethod
     def name(self) -> str:

@@ -172,9 +172,7 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
             initializer_class = context.initializer_registry.get_class(config.name)
             instance = initializer_class()
             if config.args:
-                instance.params = {
-                    k: [str(i) for i in v] if isinstance(v, list) else [str(v)] for k, v in config.args.items()
-                }
+                instance.set_params_from_args(args=config.args)
             initializer_instances.append(instance)
 
         # Re-initialize with initializers applied
