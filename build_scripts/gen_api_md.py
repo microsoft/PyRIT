@@ -207,6 +207,7 @@ def render_module(data: dict) -> str:
 
     classes = [m for m in members if m.get("kind") == "class"]
     functions = [m for m in members if m.get("kind") == "function"]
+    aliases = [m for m in members if m.get("kind") == "alias"]
 
     if functions:
         parts.append("## Functions\n")

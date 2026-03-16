@@ -18,28 +18,37 @@
 # The following command lists all built-in datasets available in PyRIT. Some datasets are stored locally, while others are fetched remotely from sources like HuggingFace.
 #
 # Many of these datasets come from published research, including
+# Aegis [@ghosh2025aegis],
+# ALERT [@tedeschi2024alert],
 # BeaverTails [@ji2023beavertails],
-# HarmBench [@mazeika2024harmbench],
-# JailbreakBench [@chao2024jailbreakbench],
-# HarmfulQA [@chu2023harmfulqa],
 # CBT-Bench [@zhang2024cbtbench],
-# SimpleSafetyTests [@vidgen2023simplesafetytests],
-# Do-Not-Answer [@wang2023donotanswer],
-# OR-Bench [@cui2024orbench],
-# SALAD-Bench [@li2024saladbench],
-# SORRY-Bench [@xie2024sorrybench],
-# ToxicChat [@lin2023toxicchat],
-# SOSBench [@jiang2025sosbench],
-# PKU-SafeRLHF [@ji2024pkusaferlhf],
-# EquityMedQA [@pfohl2024equitymedqa],
 # DarkBench [@darkbench2025],
+# Do Anything Now [@shen2023donotanything],
+# Do-Not-Answer [@wang2023donotanswer],
+# EquityMedQA [@pfohl2024equitymedqa],
+# HarmBench [@mazeika2024harmbench],
+# HarmfulQA [@chu2023harmfulqa],
+# JailbreakBench [@chao2024jailbreakbench],
+# LLM-LAT [@sheshadri2024lat],
+# MedSafetyBench [@han2024medsafetybench],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
 # Multilingual Vulnerabilities [@tang2025multilingual],
+# OR-Bench [@cui2024orbench],
+# PKU-SafeRLHF [@ji2024pkusaferlhf],
+# SALAD-Bench [@li2024saladbench],
+# SimpleSafetyTests [@vidgen2023simplesafetytests],
+# SORRY-Bench [@xie2024sorrybench],
+# SOSBench [@jiang2025sosbench],
+# TDC23 [@mazeika2023tdc],
+# ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
-# Do Anything Now [@shen2023donotanything],
-# AILuminate [@vidgen2024ailuminate],
 # XSTest [@rottger2023xstest],
-# and Transphobia Awareness [@scheuerman2025transphobia].
+# AILuminate [@vidgen2024ailuminate],
+# Transphobia Awareness [@scheuerman2025transphobia],
+# Red Team Social Bias [@vantaylor2024socialbias],
+# and PromptIntel [@roccia2024promptintel].
+# Some datasets also originate from tools like garak [@derczynski2024garak]
+# and AdvBench [@zou2023gcg].
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
