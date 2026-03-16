@@ -38,6 +38,7 @@
 # VLSU [@palaskar2025vlsu],
 # Do Anything Now [@shen2023donotanything],
 # AILuminate [@vidgen2024ailuminate],
+# XSTest [@rottger2023xstest],
 # and Transphobia Awareness [@scheuerman2025transphobia].
 
 # %%
