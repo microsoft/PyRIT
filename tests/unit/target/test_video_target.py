@@ -632,6 +632,65 @@ class TestVideoTargetRemix:
             # Verify poll was NOT called since status was already completed
             mock_poll.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_remix_with_text_and_video_path_pieces(self, video_target: OpenAIVideoTarget):
+        """Test full send_prompt_async with text + video_path pieces (UI remix flow).
+
+        When the frontend sends a remix request, it includes both a text piece
+        and a video_path piece, both carrying matching video_id in prompt_metadata.
+        The target should extract video_id from the text piece and call remix().
+        """
+        conversation_id = str(uuid.uuid4())
+        msg_text = MessagePiece(
+            role="user",
+            original_value="make it more dramatic",
+            converted_value="make it more dramatic",
+            prompt_metadata={"video_id": "vid_from_ui_123"},
+            conversation_id=conversation_id,
+        )
+        msg_video = MessagePiece(
+            role="user",
+            original_value="/path/to/original.mp4",
+            converted_value="/path/to/original.mp4",
+            converted_value_data_type="video_path",
+            prompt_metadata={"video_id": "vid_from_ui_123"},
+            conversation_id=conversation_id,
+        )
+
+        mock_remix_video = MagicMock()
+        mock_remix_video.id = "remixed_output_456"
+        mock_remix_video.status = "completed"
+        mock_remix_video.error = None
+        mock_remix_video.remixed_from_video_id = "vid_from_ui_123"
+
+        mock_video_response = MagicMock()
+        mock_video_response.content = b"remixed video data"
+
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/remixed.mp4"
+        mock_serializer.save_data = AsyncMock()
+
+        with (
+            patch.object(video_target._async_client.videos, "remix", new_callable=AsyncMock) as mock_remix,
+            patch.object(video_target._async_client.videos, "poll", new_callable=AsyncMock),
+            patch.object(
+                video_target._async_client.videos, "download_content", new_callable=AsyncMock
+            ) as mock_download,
+            patch("pyrit.prompt_target.openai.openai_video_target.data_serializer_factory") as mock_factory,
+        ):
+            mock_remix.return_value = mock_remix_video
+            mock_download.return_value = mock_video_response
+            mock_factory.return_value = mock_serializer
+
+            response = await video_target.send_prompt_async(message=Message([msg_text, msg_video]))
+
+            # Verify remix was called with the video_id from text metadata
+            mock_remix.assert_called_once_with("vid_from_ui_123", prompt="make it more dramatic")
+
+            # Verify response
+            assert len(response) == 1
+            assert response[0].message_pieces[0].converted_value_data_type == "video_path"
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestVideoTargetMetadata:
@@ -986,8 +1045,8 @@ class TestVideoTargetRemixValidation:
         with pytest.raises(ValueError, match="Cannot combine video_path and image_path"):
             video_target._validate_request(message=Message([msg_text, msg_video, msg_image]))
 
-    def test_remix_strips_video_path_when_ids_match(self, video_target: OpenAIVideoTarget) -> None:
-        """Test that video_path pieces are stripped when video_id matches on text piece."""
+    def test_remix_keeps_video_path_pieces_when_ids_match(self, video_target: OpenAIVideoTarget) -> None:
+        """Test that video_path pieces are preserved after validation so normalizer stores them."""
         conversation_id = str(uuid.uuid4())
         msg_text = MessagePiece(
             role="user",
@@ -1009,7 +1068,8 @@ class TestVideoTargetRemixValidation:
         OpenAIVideoTarget._validate_video_remix_pieces(message=message)
 
         assert msg_text.prompt_metadata["video_id"] == "vid_123"
-        assert all(p.converted_value_data_type != "video_path" for p in message.message_pieces)
+        assert len(message.message_pieces) == 2
+        assert any(p.converted_value_data_type == "video_path" for p in message.message_pieces)
 
     def test_remix_raises_when_video_ids_mismatch(self, video_target: OpenAIVideoTarget) -> None:
         """Test that mismatched video_id values between text and video_path raise ValueError."""

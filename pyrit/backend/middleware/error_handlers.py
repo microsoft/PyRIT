@@ -162,9 +162,11 @@ def register_error_handlers(app: FastAPI) -> None:
         Returns:
             JSONResponse: RFC 7807 problem detail response with 500 status.
         """
+        request_id = getattr(request.state, "request_id", None)
         # Log the full exception for debugging
         logger.exception(  # noqa: LOG004 – Starlette exception handler, not a try/except block
-            f"Unhandled exception on {request.method} {request.url.path}: {exc}",
+            f"Unhandled exception on {request.method} {request.url.path}"
+            f"{f' request_id={request_id}' if request_id else ''}: {exc}",
         )
 
         problem = ProblemDetail(

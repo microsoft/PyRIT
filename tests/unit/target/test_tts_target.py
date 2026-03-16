@@ -4,6 +4,7 @@
 import os
 import uuid
 from collections.abc import MutableSequence
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -121,7 +122,7 @@ async def test_tts_send_prompt_file_save_async(
         assert file_path
         assert file_path.endswith(f".{response_format}")
         assert os.path.exists(file_path)
-        data = open(file_path, "rb").read()  # noqa: SIM115
+        data = Path(file_path).read_bytes()
         assert data == b"audio data"
         os.remove(file_path)
 

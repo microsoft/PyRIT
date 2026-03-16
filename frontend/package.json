@@ -16,6 +16,8 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:seeded": "playwright test --project seeded",
+    "test:e2e:live": "E2E_LIVE_MODE=true playwright test --project live",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed"
   },
@@ -24,7 +26,8 @@
     "@fluentui/react-icons": "^2.0.258",
     "axios": "^1.13.5",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-error-boundary": "^6.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
@@ -52,6 +55,7 @@
     "vite": "^7.3.1"
   },
   "overrides": {
-    "rollup": ">=4.59.0"
+    "rollup": ">=4.59.0",
+    "@tootallnate/once": ">=3.0.1"
   }
 }

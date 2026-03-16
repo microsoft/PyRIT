@@ -1,7 +1,9 @@
+import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
-import InputBox from "./InputBox";
+import ChatInputArea from "./ChatInputArea";
+import type { ChatInputAreaHandle } from "./ChatInputArea";
 
 // Wrapper component for Fluent UI context
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -11,7 +13,7 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 // Helper to get the send button specifically
 const getSendButton = () => screen.getByRole("button", { name: /send/i });
 
-describe("InputBox", () => {
+describe("ChatInputArea", () => {
   const defaultProps = {
     onSend: jest.fn(),
     disabled: false,
@@ -24,7 +26,7 @@ describe("InputBox", () => {
   it("should render input area and send button", () => {
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -38,7 +40,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -52,7 +54,7 @@ describe("InputBox", () => {
   it("should disable input when disabled prop is true", () => {
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} disabled={true} />
+        <ChatInputArea {...defaultProps} disabled={true} />
       </TestWrapper>
     );
 
@@ -63,7 +65,7 @@ describe("InputBox", () => {
   it("should disable send button when input is empty", () => {
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -76,7 +78,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -93,7 +95,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -112,7 +114,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -129,7 +131,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -146,7 +148,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -162,7 +164,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -173,7 +175,7 @@ describe("InputBox", () => {
   it("should have file input for attachments", () => {
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -186,7 +188,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -210,7 +212,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -231,7 +233,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -264,7 +266,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} onSend={onSend} />
+        <ChatInputArea {...defaultProps} onSend={onSend} />
       </TestWrapper>
     );
 
@@ -292,7 +294,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -313,7 +315,7 @@ describe("InputBox", () => {
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -329,12 +331,64 @@ describe("InputBox", () => {
     });
   });
 
+  it("should show single-turn warning when target does not support multiturn chat", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{
+            target_registry_name: "test",
+            target_type: "TextTarget",
+            supports_multi_turn: false,
+          }}
+        />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByText(
+        /does not track conversation history/
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("should not show single-turn warning when target supports multiturn chat", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{
+            target_registry_name: "test",
+            target_type: "OpenAIChatTarget",
+            supports_multi_turn: true,
+          }}
+        />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.queryByText(/does not track conversation history/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("should not show single-turn warning when no active target", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} activeTarget={null} />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.queryByText(/does not track conversation history/)
+    ).not.toBeInTheDocument();
+  });
+
   it("should handle multiple file attachments", async () => {
     const user = userEvent.setup();
 
     render(
       <TestWrapper>
-        <InputBox {...defaultProps} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -354,5 +408,97 @@ describe("InputBox", () => {
       expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
       expect(screen.getByText(/audio\.mp3/)).toBeInTheDocument();
     });
+  });
+
+  it("should show attachment chip when addAttachment is called via ref", async () => {
+    const ref = React.createRef<ChatInputAreaHandle>();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea ref={ref} {...defaultProps} />
+      </TestWrapper>
+    );
+
+    // Programmatically add an attachment via the ref
+    React.act(() => {
+      ref.current?.addAttachment({
+        type: "image",
+        name: "forwarded.png",
+        url: "data:image/png;base64,abc=",
+        mimeType: "image/png",
+        size: 512,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/forwarded\.png/)).toBeInTheDocument();
+    });
+
+    // Send button should be enabled since there's an attachment
+    expect(screen.getByTitle("Send message")).toBeEnabled();
+  });
+
+  it("should show single-turn banner when singleTurnLimitReached is true", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          singleTurnLimitReached={true}
+          onNewConversation={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
+    expect(screen.getByText(/only supports single-turn/)).toBeInTheDocument();
+    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
+    // Input area should not be rendered
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("should call onNewConversation when New Conversation button clicked", async () => {
+    const user = userEvent.setup();
+    const onNewConversation = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          singleTurnLimitReached={true}
+          onNewConversation={onNewConversation}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByTestId("new-conversation-btn"));
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("should not show New Conversation button when onNewConversation is not provided", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          singleTurnLimitReached={true}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("new-conversation-btn")).not.toBeInTheDocument();
+  });
+
+  it("should show normal input when singleTurnLimitReached is false", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          singleTurnLimitReached={false}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 });

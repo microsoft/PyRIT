@@ -536,9 +536,9 @@ class TestLeakageImageStrategy:
         # Verify it's a valid image with correct dimensions
         from PIL import Image
 
-        img = Image.open(test_image_path)
-        assert img.size == (800, 600)
-        assert img.mode == "RGB"
+        with Image.open(test_image_path) as img:
+            assert img.size == (800, 600)
+            assert img.mode == "RGB"
 
     def test_ensure_blank_image_exists_does_not_overwrite(self, mock_objective_scorer, sample_objectives, tmp_path):
         """Test that _ensure_blank_image_exists doesn't overwrite existing image."""
@@ -564,8 +564,8 @@ class TestLeakageImageStrategy:
         assert Path(test_image_path).stat().st_mtime == original_mtime
 
         # Verify it's still the original image
-        img = Image.open(test_image_path)
-        assert img.size == (100, 100)  # Original size, not 800x600
+        with Image.open(test_image_path) as img:
+            assert img.size == (100, 100)  # Original size, not 800x600
 
     def test_ensure_blank_image_exists_creates_parent_directories(
         self, mock_objective_scorer, sample_objectives, tmp_path

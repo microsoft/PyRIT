@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom";
 
+// Set Vite-equivalent env vars for tests (the AST transformer rewrites
+// import.meta.env.X → process.env.X, so these must exist as process.env).
+process.env.VITE_API_URL = "http://localhost:8000/api";
+process.env.MODE = "test";
+process.env.DEV = "true";
+process.env.PROD = "false";
+
 // Mock window.matchMedia for Fluent UI components
 Object.defineProperty(window, "matchMedia", {
   writable: true,

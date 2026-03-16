@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Union, cast
-from urllib.parse import urlparse
 
 import msal
 from azure.core.credentials import AccessToken
@@ -257,25 +256,19 @@ def get_default_azure_scope(endpoint: str) -> str:
     """
     Determine the appropriate Azure token scope based on the endpoint URL.
 
+    The Cognitive Services scope is accepted by all Azure AI endpoints including
+    Azure OpenAI (*.openai.azure.com) and AI Foundry (*.ai.azure.com).
+
     Args:
         endpoint (str): The Azure endpoint URL.
 
     Returns:
-        str: The appropriate token scope for the endpoint.
-            - 'https://ml.azure.com/.default' for AI Foundry endpoints (*.ai.azure.com)
-            - 'https://cognitiveservices.azure.com/.default' for other Azure endpoints
+        str: The token scope 'https://cognitiveservices.azure.com/.default'.
 
     Example:
         >>> scope = get_default_azure_scope('https://myresource.openai.azure.com')
         >>> # Returns 'https://cognitiveservices.azure.com/.default'
     """
-    try:
-        parsed_uri = urlparse(endpoint)
-        if parsed_uri.hostname and parsed_uri.hostname.lower().endswith(".ai.azure.com"):
-            return "https://ml.azure.com/.default"
-    except Exception:
-        pass
-
     return "https://cognitiveservices.azure.com/.default"
 
 

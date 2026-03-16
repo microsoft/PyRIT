@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 # ---
 
 # %% [markdown]
@@ -17,7 +17,7 @@
 #
 # ## Execution Order
 #
-# When `initialize_pyrit` is called:
+# When `initialize_pyrit_async` is called:
 # 1. Environment files are loaded (`.env`, `.env.local`)
 # 2. Memory database is configured
 # 3. All initializers are sorted by `execution_order` and executed
@@ -27,10 +27,9 @@
 # %% [markdown]
 # The following is a minimal `PyRITInitializer` class. It doesn't need much! In this case, it sets the default value for temperature for all OpenAIChatTargets to .9.
 
+# %%
 from pyrit.common.apply_defaults import set_default_value
 from pyrit.prompt_target import OpenAIChatTarget
-
-# %%
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 
@@ -68,7 +67,9 @@ from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import SimpleInitializer
 
 # Using built-in initializer
-await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])  # type: ignore
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type="InMemory", initializers=[SimpleInitializer()]
+)
 
 # %% [markdown]
 # ## External Scripts

@@ -130,6 +130,27 @@ async def test_azure_blob_storage_io_write_file():
 
 
 @pytest.mark.asyncio
+async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_token():
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    sas_token = "explicit-sas-token"
+    azure_blob_storage_io = AzureBlobStorageIO(container_url=container_url, sas_token=sas_token)
+
+    mock_container_client = AsyncMock()
+
+    with (
+        patch("pyrit.models.storage_io.AzureStorageAuth.get_sas_token", new_callable=AsyncMock) as mock_get_sas_token,
+        patch(
+            "pyrit.models.storage_io.AsyncContainerClient.from_container_url", return_value=mock_container_client
+        ) as mock_from_container_url,
+    ):
+        await azure_blob_storage_io._create_container_client_async()
+
+    mock_get_sas_token.assert_not_awaited()
+    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=sas_token)
+    assert azure_blob_storage_io._client_async is mock_container_client
+
+
+@pytest.mark.asyncio
 async def test_azure_storage_io_path_exists(azure_blob_storage_io):
     azure_blob_storage_io._client_async = AsyncMock()
 

@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 import pyrit
@@ -28,10 +28,11 @@ class VersionResponse(BaseModel):
     modified: Optional[bool] = None
     display: str
     database_info: Optional[str] = None
+    default_labels: Optional[dict[str, str]] = None
 
 
 @router.get("", response_model=VersionResponse)
-async def get_version_async() -> VersionResponse:
+async def get_version_async(request: Request) -> VersionResponse:
     """
     Get version information for the PyRIT installation.
 
@@ -72,6 +73,9 @@ async def get_version_async() -> VersionResponse:
     except Exception as e:
         logger.debug(f"Could not detect database info: {e}")
 
+    # Read default labels from app state (set by pyrit_backend CLI)
+    default_labels: Optional[dict[str, str]] = getattr(request.app.state, "default_labels", None) or None
+
     return VersionResponse(
         version=version,
         source=source,
@@ -79,4 +83,5 @@ async def get_version_async() -> VersionResponse:
         modified=modified,
         display=display,
         database_info=database_info,
+        default_labels=default_labels,
     )

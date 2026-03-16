@@ -1,0 +1,239 @@
+version: 1
+project:
+  title: PyRIT Documentation
+  authors:
+    - name: Microsoft AI Red Team
+  copyright: Copyright 2024, Microsoft AI Red Team
+  github: Azure/PyRIT
+  bibliography:
+    - references.bib
+  exports:
+    - format: pdf
+      template: plain_latex_book
+      output: exports/book.pdf
+  toc:
+    - file: index.md
+    - file: cookbooks/README.md
+      children:
+        - file: cookbooks/1_sending_prompts.ipynb
+        - file: cookbooks/2_precomputing_turns.ipynb
+        - file: cookbooks/3_copyright_violations.ipynb
+        - file: cookbooks/4_testing_bias.ipynb
+        - file: cookbooks/5_psychosocial_harms.ipynb
+    - file: setup/1a_install_uv.md
+      children:
+        - file: setup/1b_install_docker.md
+        - file: setup/1c_install_conda.md
+        - file: setup/jupyter_setup.md
+        - file: setup/populating_secrets.md
+        - file: setup/pyrit_conf.md
+        - file: setup/use_azure_sql_db.md
+    - file: contributing/README.md
+      children:
+        - file: contributing/1a_install_uv.md
+        - file: contributing/1b_install_devcontainers.md
+        - file: contributing/1c_install_conda.md
+        - file: contributing/2_git.md
+        - file: contributing/3_incorporating_research.md
+        - file: contributing/4_style_guide.md
+        - file: contributing/5_running_tests.md
+        - file: contributing/6_unit_tests.md
+        - file: contributing/7_integration_tests.md
+        - file: contributing/8_notebooks.md
+        - file: contributing/9_pre_commit.md
+        - file: contributing/10_exception.md
+        - file: contributing/11_release_process.md
+    - file: code/architecture.md
+    - file: code/user_guide.md
+      children:
+        - file: code/datasets/0_dataset.md
+          children:
+            - file: code/datasets/1_loading_datasets.ipynb
+            - file: code/datasets/2_seed_programming.ipynb
+            - file: code/datasets/3_dataset_writing.md
+            - file: code/datasets/4_dataset_coding.ipynb
+        - file: code/executor/0_executor.md
+          children:
+            - file: code/executor/attack/0_attack.md
+              children:
+                - file: code/executor/attack/1_prompt_sending_attack.ipynb
+                - file: code/executor/attack/2_red_teaming_attack.ipynb
+                - file: code/executor/attack/3_crescendo_attack.ipynb
+                - file: code/executor/attack/chunked_request_attack.ipynb
+                - file: code/executor/attack/context_compliance_attack.ipynb
+                - file: code/executor/attack/flip_attack.ipynb
+                - file: code/executor/attack/many_shot_jailbreak_attack.ipynb
+                - file: code/executor/attack/multi_prompt_sending_attack.ipynb
+                - file: code/executor/attack/role_play_attack.ipynb
+                - file: code/executor/attack/skeleton_key_attack.ipynb
+                - file: code/executor/attack/tap_attack.ipynb
+                - file: code/executor/attack/violent_durian_attack.ipynb
+            - file: code/executor/workflow/0_workflow.md
+              children:
+                - file: code/executor/workflow/1_xpia_website.ipynb
+                - file: code/executor/workflow/2_xpia_ai_recruiter.ipynb
+            - file: code/executor/benchmark/0_benchmark.md
+              children:
+                - file: code/executor/benchmark/1_qa_benchmark.ipynb
+            - file: code/executor/promptgen/0_promptgen.md
+              children:
+                - file: code/executor/promptgen/1_anecdoctor_generator.ipynb
+                - file: code/executor/promptgen/fuzzer_generator.ipynb
+        - file: code/targets/0_prompt_targets.md
+          children:
+            - file: code/targets/1_openai_chat_target.ipynb
+            - file: code/targets/2_openai_responses_target.ipynb
+            - file: code/targets/3_openai_image_target.ipynb
+            - file: code/targets/4_openai_video_target.ipynb
+            - file: code/targets/5_openai_tts_target.ipynb
+            - file: code/targets/6_custom_targets.ipynb
+            - file: code/targets/7_non_open_ai_chat_targets.ipynb
+            - file: code/targets/8_non_llm_targets.ipynb
+            - file: code/targets/9_rate_limiting.ipynb
+            - file: code/targets/10_http_target.ipynb
+            - file: code/targets/11_message_normalizer.ipynb
+            - file: code/targets/10_1_playwright_target.ipynb
+            - file: code/targets/10_2_playwright_target_copilot.ipynb
+            - file: code/targets/10_3_websocket_copilot_target.ipynb
+            - file: code/targets/open_ai_completions.ipynb
+            - file: code/targets/prompt_shield_target.ipynb
+            - file: code/targets/realtime_target.ipynb
+            - file: code/targets/use_huggingface_chat_target.ipynb
+        - file: code/converters/0_converters.ipynb
+          children:
+            - file: code/converters/1_text_to_text_converters.ipynb
+            - file: code/converters/2_audio_converters.ipynb
+            - file: code/converters/3_image_converters.ipynb
+            - file: code/converters/4_video_converters.ipynb
+            - file: code/converters/5_file_converters.ipynb
+            - file: code/converters/6_selectively_converting.ipynb
+            - file: code/converters/7_human_converter.ipynb
+        - file: code/scoring/0_scoring.md
+          children:
+            - file: code/scoring/1_azure_content_safety_scorers.ipynb
+            - file: code/scoring/2_true_false_scorers.ipynb
+            - file: code/scoring/3_classification_scorers.ipynb
+            - file: code/scoring/4_likert_scorers.ipynb
+            - file: code/scoring/5_human_in_the_loop_scorer.ipynb
+            - file: code/scoring/6_refusal_scorer.ipynb
+            - file: code/scoring/7_batch_scorer.ipynb
+            - file: code/scoring/8_scorer_metrics.ipynb
+            - file: code/scoring/insecure_code_scorer.ipynb
+            - file: code/scoring/persuasion_full_conversation_scorer.ipynb
+            - file: code/scoring/prompt_shield_scorer.ipynb
+            - file: code/scoring/generic_scorers.ipynb
+        - file: code/memory/0_memory.md
+          children:
+            - file: code/memory/1_sqlite_memory.ipynb
+            - file: code/memory/2_basic_memory_programming.ipynb
+            - file: code/memory/3_memory_data_types.md
+            - file: code/memory/4_manually_working_with_memory.md
+            - file: code/memory/5_memory_labels.ipynb
+            - file: code/memory/6_azure_sql_memory.ipynb
+            - file: code/memory/7_azure_sql_memory_attacks.ipynb
+            - file: code/memory/8_seed_database.ipynb
+            - file: code/memory/9_exporting_data.ipynb
+            - file: code/memory/10_schema_diagram.md
+            - file: code/memory/embeddings.ipynb
+        - file: code/setup/0_setup.md
+          children:
+            - file: code/setup/1_configuration.ipynb
+            - file: code/setup/2_resiliency.ipynb
+            - file: code/setup/default_values.md
+            - file: code/setup/pyrit_initializer.ipynb
+        - file: code/auxiliary_attacks/0_auxiliary_attacks.ipynb
+          children:
+            - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
+        - file: code/scenarios/0_scenarios.ipynb
+          children:
+            - file: code/scenarios/1_configuring_scenarios.ipynb
+        - file: code/registry/0_registry.md
+          children:
+            - file: code/registry/1_class_registry.ipynb
+            - file: code/registry/2_instance_registry.ipynb
+        - file: code/gui/0_gui.md
+        - file: code/front_end/0_front_end.md
+          children:
+            - file: code/front_end/1_pyrit_scan.ipynb
+            - file: code/front_end/2_pyrit_shell.md
+    - file: deployment/README.md
+      children:
+        - file: deployment/deploy_hf_model_aml.ipynb
+        - file: deployment/download_and_register_hf_model_aml.ipynb
+        - file: deployment/hf_aml_model_endpoint_guide.md
+        - file: deployment/score_aml_endpoint.ipynb
+        - file: deployment/troubleshooting_guide_hf_azureml.md
+    - file: api/index.md
+      children:
+        - file: api/pyrit_analytics.md
+        - file: api/pyrit_auth.md
+        - file: api/pyrit_cli_frontend_core.md
+        - file: api/pyrit_cli_pyrit_backend.md
+        - file: api/pyrit_cli_pyrit_scan.md
+        - file: api/pyrit_cli_pyrit_shell.md
+        - file: api/pyrit_common.md
+        - file: api/pyrit_datasets.md
+        - file: api/pyrit_embedding.md
+        - file: api/pyrit_exceptions.md
+        - file: api/pyrit_executor_attack.md
+        - file: api/pyrit_executor_benchmark.md
+        - file: api/pyrit_executor_core.md
+        - file: api/pyrit_executor_promptgen.md
+        - file: api/pyrit_executor_workflow.md
+        - file: api/pyrit_identifiers.md
+        - file: api/pyrit_memory.md
+        - file: api/pyrit_message_normalizer.md
+        - file: api/pyrit_models.md
+        - file: api/pyrit_prompt_converter.md
+        - file: api/pyrit_prompt_normalizer.md
+        - file: api/pyrit_prompt_target.md
+        - file: api/pyrit_registry.md
+        - file: api/pyrit_scenario.md
+        - file: api/pyrit_score.md
+        - file: api/pyrit_setup.md
+        - file: api/pyrit_show_versions.md
+        - file: api/pyrit_ui.md
+    - file: blog/README.md
+      children:
+        - file: blog/2025_06_06.md
+        - file: blog/2025_03_03.md
+        - file: blog/2025_02_11.md
+        - file: blog/2025_01_27.md
+        - file: blog/2025_01_14.md
+        - file: blog/2024_12_3.md
+site:
+  nav:
+    - title: Cookbooks
+      url: /cookbooks/readme
+    - title: Setup
+      url: /setup/a-install-uv
+    - title: Contributing
+      url: /contributing/readme
+    - title: User Guide
+      children:
+        - title: Architecture
+          url: /code/architecture
+        - title: Datasets
+          url: /code/datasets/dataset
+        - title: Attacks
+          url: /code/executor/attack/attack
+        - title: Targets
+          url: /code/targets/prompt-targets
+        - title: Converters
+          url: /code/converters/converters
+        - title: Scoring
+          url: /code/scoring/scoring
+        - title: Memory
+          url: /code/memory/memory
+        - title: Scenarios
+          url: /code/scenarios/scenarios
+    - title: API Reference
+      url: /api/index
+    - title: Blog
+      url: /blog/readme
+  options:
+    logo: roakey.png
+    favicon: roakey.png
+    folders: true
+    style: ./css/custom.css
+  template: book-theme

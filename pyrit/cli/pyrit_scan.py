@@ -85,16 +85,17 @@ Examples:
     parser.add_argument(
         "--database",
         type=frontend_core.validate_database_argparse,
-        default=frontend_core.SQLITE,
+        default=None,
         help=(
             f"Database type to use for memory storage ({frontend_core.IN_MEMORY}, "
-            f"{frontend_core.SQLITE}, {frontend_core.AZURE_SQL}) (default: {frontend_core.SQLITE})"
+            f"{frontend_core.SQLITE}, {frontend_core.AZURE_SQL}). "
+            f"Defaults to value from config file, or {frontend_core.SQLITE} if not specified."
         ),
     )
 
     parser.add_argument(
         "--initializers",
-        type=str,
+        type=frontend_core._parse_initializer_arg,
         nargs="+",
         help=frontend_core.ARG_HELP["initializers"],
     )

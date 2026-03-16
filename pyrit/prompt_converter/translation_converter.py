@@ -46,7 +46,7 @@ class TranslationConverter(PromptConverter):
         prompt_template: Optional[SeedPrompt] = None,
         max_retries: int = 3,
         max_wait_time_in_seconds: int = 60,
-    ):
+    ) -> None:
         """
         Initialize the converter with the target chat support, language, and optional prompt template.
 

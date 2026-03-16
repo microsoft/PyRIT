@@ -389,7 +389,7 @@ class AttackService:
         conversations: list[ConversationSummary] = []
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
-            created_at = stats.created_at.isoformat() if stats and stats.created_at else None
+            created_at = stats.created_at if stats else None
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,
@@ -400,7 +400,9 @@ class AttackService:
             )
 
         # Sort all conversations by created_at (earliest first, None last)
-        conversations.sort(key=lambda c: (c.created_at is None, c.created_at or ""))
+        conversations.sort(
+            key=lambda c: (c.created_at is None, c.created_at or datetime.min.replace(tzinfo=timezone.utc))
+        )
 
         return AttackConversationsResponse(
             attack_result_id=attack_result_id,
@@ -918,6 +920,8 @@ class AttackService:
 
         await self._persist_base64_pieces_async(request)
 
+        self._resolve_video_remix_metadata(request)
+
         pyrit_message = request_to_pyrit_message(
             request=request,
             conversation_id=conversation_id,
@@ -956,6 +960,45 @@ class AttackService:
                 labels=labels,
             )
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
+
+    def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
+        """
+        Auto-resolve video_id metadata for remix mode.
+
+        When a video_path piece is carried over from a previous conversation
+        (via original_prompt_id) alongside a text piece, the video target
+        requires video_id in the text piece's prompt_metadata. This method
+        looks up the original piece's metadata and propagates the video_id.
+        """
+        video_pieces = [p for p in request.pieces if p.data_type == "video_path"]
+        if not video_pieces:
+            return
+
+        text_piece = next((p for p in request.pieces if p.data_type == "text"), None)
+        if not text_piece:
+            return
+
+        # Already has video_id — nothing to resolve
+        if text_piece.prompt_metadata and text_piece.prompt_metadata.get("video_id"):
+            return
+
+        # Try to resolve video_id from the original prompt piece
+        for vp in video_pieces:
+            if not vp.original_prompt_id:
+                continue
+            original_pieces = self._memory.get_message_pieces(prompt_ids=[vp.original_prompt_id])
+            if not original_pieces:
+                continue
+            video_id = (original_pieces[0].prompt_metadata or {}).get("video_id")
+            if video_id:
+                if text_piece.prompt_metadata is None:
+                    text_piece.prompt_metadata = {}
+                text_piece.prompt_metadata["video_id"] = video_id
+                # Also set video_id on the video piece itself
+                if vp.prompt_metadata is None:
+                    vp.prompt_metadata = {}
+                vp.prompt_metadata["video_id"] = video_id
+                return
 
     def _get_converter_configs(self, request: AddMessageRequest) -> list[PromptConverterConfiguration]:
         """
