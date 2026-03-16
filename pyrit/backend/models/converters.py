@@ -40,6 +40,7 @@ class ConverterParameterSchema(BaseModel):
     required: bool = Field(..., description="Whether the parameter must be provided")
     default_value: Optional[str] = Field(None, description="String representation of default value, if any")
     choices: Optional[list[str]] = Field(None, description="Allowed values for Literal types")
+    description: Optional[str] = Field(None, description="Parameter description from docstring")
 
 
 class ConverterCatalogEntry(BaseModel):

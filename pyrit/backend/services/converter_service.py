@@ -13,6 +13,7 @@ Converters can be:
 """
 
 import inspect
+import re
 import uuid
 from functools import lru_cache
 from typing import Any, Literal, Optional, Union, get_args, get_origin
@@ -93,12 +94,31 @@ def _serialize_type(annotation: Any) -> str:
     return str(annotation)
 
 
+def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
+    """Parse parameter descriptions from Google-style docstring Args section."""
+    doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()
+    match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
+    if not match:
+        return {}
+    args_block = match.group(1)
+    # Detect indentation of first parameter line
+    indent_match = re.match(r"^(\s+)", args_block)
+    indent = indent_match.group(1) if indent_match else r"\s+"
+    pattern = rf"^{indent}(\w+)\s*(?:\([^)]*\))?\s*:\s*(.+?)(?=\n{indent}\w|\Z)"
+    descriptions: dict[str, str] = {}
+    for m in re.finditer(pattern, args_block, re.DOTALL | re.MULTILINE):
+        descriptions[m.group(1)] = " ".join(m.group(2).split())
+    return descriptions
+
+
 def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]:
     """Extract simple constructor parameters from a converter class."""
     try:
         sig = inspect.signature(converter_class.__init__)
     except (ValueError, TypeError):
         return []
+
+    arg_descriptions = _parse_arg_descriptions(converter_class)
 
     params: list[ConverterParameterSchema] = []
     for name, p in sig.parameters.items():
@@ -126,6 +146,7 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
                 required=required,
                 default_value=default_value,
                 choices=choices,
+                description=arg_descriptions.get(name),
             )
         )
 

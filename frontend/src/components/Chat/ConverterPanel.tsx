@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text, Tooltip } from '@fluentui/react-components'
-import { ChevronDownRegular, ChevronRightRegular, DismissRegular, PlayRegular } from '@fluentui/react-icons'
+import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { ConverterCatalogEntry } from '../../types'
@@ -277,11 +277,15 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                   Parameters
                 </Button>
                 {paramsExpanded && (selectedConverter.parameters ?? []).map((param) => (
-                  <Field
-                    key={param.name}
-                    label={`${param.name}${param.required ? ' *' : ''}`}
-                    hint={param.type_name}
-                  >
+                  <div key={param.name} className={styles.paramBlock}>
+                    <span className={styles.paramLabel}>
+                      <Text size={200} weight="semibold">{param.name}{param.required ? ' *' : ''}</Text>
+                      {param.description && (
+                        <Tooltip content={param.description} relationship="description">
+                          <span className={styles.paramInfo}><InfoRegular fontSize={12} /></span>
+                        </Tooltip>
+                      )}
+                    </span>
                     {param.choices ? (
                       <Select
                         value={paramValues[param.name] ?? param.default_value ?? ''}
@@ -306,7 +310,8 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                         data-testid={`param-${param.name}`}
                       />
                     )}
-                  </Field>
+                    <Text size={100} className={styles.hintText}>{param.type_name}</Text>
+                  </div>
                 ))}
               </div>
             )}

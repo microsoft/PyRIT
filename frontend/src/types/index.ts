@@ -97,6 +97,7 @@ export interface ConverterParameterSchema {
   required: boolean
   default_value?: string | null
   choices?: string[] | null
+  description?: string | null
 }
 
 export interface ConverterCatalogEntry {

@@ -189,6 +189,22 @@ export const useConverterPanelStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     padding: 0,
   },
+  paramBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
+  paramLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+  },
+  paramInfo: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    color: tokens.colorNeutralForeground3,
+    cursor: 'help',
+  },
   outputBox: {
     padding: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusMedium,
