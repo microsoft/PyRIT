@@ -32,7 +32,7 @@ class TestFrontendCore:
     def test_init_with_all_parameters(self):
         """Test initialization with all parameters."""
         scripts = [Path("/test/script.py")]
-        initializers = ["test_init"]
+        initializers = ["alpha_init", "beta_init", "gamma_init"]
 
         context = frontend_core.FrontendCore(
             database=frontend_core.IN_MEMORY,
