@@ -16,67 +16,34 @@
 # **Important Note**: Datasets are best managed through [PyRIT memory](../memory/8_seed_database.ipynb), where data is normalized and can be queried efficiently. However, this guide demonstrates how to load datasets directly as a starting point, and these can easily be imported into the database later.
 #
 # The following command lists all built-in datasets available in PyRIT. Some datasets are stored locally, while others are fetched remotely from sources like HuggingFace.
+#
+# Many of these datasets come from published research, including
+# BeaverTails [@ji2023beavertails],
+# HarmBench [@mazeika2024harmbench],
+# JailbreakBench [@chao2024jailbreakbench],
+# HarmfulQA [@chu2023harmfulqa],
+# CBT-Bench [@zhang2024cbtbench],
+# SimpleSafetyTests [@vidgen2023simplesafetytests],
+# Do-Not-Answer [@wang2023donotanswer],
+# OR-Bench [@cui2024orbench],
+# SALAD-Bench [@li2024saladbench],
+# SORRY-Bench [@xie2024sorrybench],
+# ToxicChat [@lin2023toxicchat],
+# SOSBench [@jiang2025sosbench],
+# PKU-SafeRLHF [@ji2024pkusaferlhf],
+# EquityMedQA [@pfohl2024equitymedqa],
+# DarkBench [@darkbench2025],
+# Multilingual Alignment Prism [@aakanksha2024multilingual],
+# Multilingual Vulnerabilities [@tang2025multilingual],
+# VLSU [@palaskar2025vlsu],
+# Do Anything Now [@shen2023donotanything],
+# AILuminate [@vidgen2024ailuminate],
+# and Transphobia Awareness [@scheuerman2025transphobia].
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
 
 SeedDatasetProvider.get_all_dataset_names()
-
-# %% [markdown]
-# ## Dataset Overview
-#
-# The following table summarizes all built-in datasets with descriptions and source references,
-# extracted from the dataset provider docstrings.
-
-# %%
-import re
-
-
-def _extract_dataset_info(provider_class):
-    """Extract name, description, and source URL from a dataset provider class."""
-    provider = provider_class()
-    name = provider.dataset_name
-    doc = provider_class.__doc__ or ""
-
-    # Extract first paragraph as description (skip class name line)
-    lines = [line.strip() for line in doc.strip().split("\n") if line.strip()]
-    desc_lines = []
-    for line in lines[1:]:  # skip first line (usually "Loader for...")
-        if line.startswith(("Reference", "License", "Warning")):
-            break
-        if line.startswith(("- ", "[@")):
-            break
-        desc_lines.append(line)
-    description = " ".join(desc_lines).strip()
-    if not description and lines:
-        description = lines[0]
-
-    # Extract source URL
-    url_match = re.search(r"https?://\S+", doc)
-    source_url = url_match.group(0).rstrip(",.;)") if url_match else ""
-
-    # Extract citation key if present
-    cite_match = re.search(r"\[@(\w+)\]", doc)
-    citation = f"[@{cite_match.group(1)}]" if cite_match else ""
-
-    return name, description[:120], source_url, citation
-
-
-providers = SeedDatasetProvider.get_all_providers()
-rows = []
-for _cls_name, cls in sorted(providers.items()):
-    try:
-        name, desc, url, cite = _extract_dataset_info(cls)
-        rows.append((name, desc, url, cite))
-    except Exception:
-        pass
-
-# Print as markdown table
-print("| Dataset | Description | Source | Citation |")
-print("|---------|-------------|--------|----------|")
-for name, desc, url, cite in rows:
-    url_cell = url if url else ""
-    print(f"| {name} | {desc} | {url_cell} | {cite} |")
 
 # %% [markdown]
 # ## Loading Specific Datasets
