@@ -10,7 +10,7 @@ interface ConverterPanelProps {
   onClose: () => void
   previewText?: string
   activeInputTypes?: string[]
-  onUseConvertedValue?: (original: string, converted: string) => void
+  onUseConvertedValue?: (original: string, converted: string, converterInstanceId: string) => void
 }
 
 export default function ConverterPanel({ onClose, previewText = '', activeInputTypes = ['text'], onUseConvertedValue }: ConverterPanelProps) {
@@ -21,6 +21,7 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   const [paramsExpanded, setParamsExpanded] = useState(true)
   const [previewOutput, setPreviewOutput] = useState('')
+  const [previewConverterInstanceId, setPreviewConverterInstanceId] = useState<string | null>(null)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -115,6 +116,7 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
       })
 
       setPreviewOutput(previewResponse.converted_value)
+      setPreviewConverterInstanceId(createResponse.converter_id)
     } catch (err) {
       setPreviewError(toApiError(err).detail)
     } finally {
@@ -210,6 +212,9 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                     }
                   }
                   setParamValues(defaults)
+                  setPreviewOutput('')
+                  setPreviewConverterInstanceId(null)
+                  setPreviewError(null)
                 }}
                 onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
                 placeholder="Search converters..."
@@ -353,11 +358,11 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                 </div>
               </div>
 
-              {previewOutput && (
+              {previewOutput && previewConverterInstanceId && (
                 <Button
                   appearance="primary"
                   size="small"
-                  onClick={() => onUseConvertedValue?.(previewText, previewOutput)}
+                  onClick={() => onUseConvertedValue?.(previewText, previewOutput, previewConverterInstanceId)}
                   disabled={!onUseConvertedValue}
                   data-testid="use-converted-btn"
                 >

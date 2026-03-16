@@ -71,6 +71,7 @@ export default function ChatWindow({
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
   const [convertedValue, setConvertedValue] = useState<string | null>(null)
   const [originalValue, setOriginalValue] = useState<string | null>(null)
+  const [activeConverterInstanceId, setActiveConverterInstanceId] = useState<string | null>(null)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
 
@@ -171,10 +172,9 @@ export default function ChatWindow({
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
-    // When a converter was applied, display the converted text as content
-    // and preserve the original for the "Original" indicator
-    const displayContent = convertedValue ?? originalValue
-    const hasConversion = convertedValue != null && convertedValue !== originalValue
+    // When a converter is active, show a preview locally while the backend applies it
+    const hasConversion = activeConverterInstanceId != null && convertedValue != null
+    const displayContent = hasConversion ? convertedValue : originalValue
 
     // Add user message with attachments for display
     const userMessage: Message = {
@@ -202,8 +202,15 @@ export default function ChatWindow({
     setMessages(prev => [...prev, loadingMessage])
 
     try {
-      // Build message pieces from text + attachments
-      const pieces = await buildMessagePieces(displayContent, attachments)
+      // Build message pieces from text + attachments — always use original text
+      const pieces = await buildMessagePieces(originalValue, attachments)
+
+      // If a converter was previewed, set converted_value on the text piece directly.
+      // The backend skips converter application when converted_value is already set,
+      // but still stores converter_identifiers metadata.
+      if (hasConversion && pieces.length > 0 && pieces[0].data_type === 'text') {
+        pieces[0].converted_value = convertedValue
+      }
 
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
@@ -245,6 +252,7 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
+      const converterIds = activeConverterInstanceId ? [activeConverterInstanceId] : undefined
       const response = await attacksApi.addMessage(currentAttackResultId!, {
         role: 'user',
         pieces,
@@ -252,7 +260,13 @@ export default function ChatWindow({
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId!,
         labels: labels ?? undefined,
+        converter_ids: converterIds,
       })
+
+      // Clear converter state after successful send
+      setConvertedValue(null)
+      setOriginalValue(null)
+      setActiveConverterInstanceId(null)
 
       // Only update displayed messages if the user is still viewing this conversation.
       // If they switched away the response is persisted server-side and will appear
@@ -475,9 +489,10 @@ export default function ChatWindow({
           onClose={() => setIsConverterPanelOpen(false)}
           previewText={chatInputText}
           activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
-          onUseConvertedValue={(original, converted) => {
+          onUseConvertedValue={(original, converted, converterInstanceId) => {
             setOriginalValue(original)
             setConvertedValue(converted)
+            setActiveConverterInstanceId(converterInstanceId)
           }}
         />
       )}
@@ -556,7 +571,7 @@ export default function ChatWindow({
           onAttachmentsChange={setAttachmentTypes}
           convertedValue={convertedValue}
           originalValue={originalValue}
-          onClearConversion={() => { setConvertedValue(null); setOriginalValue(null) }}
+          onClearConversion={() => { setConvertedValue(null); setOriginalValue(null); setActiveConverterInstanceId(null) }}
         />
       </div>
       {isPanelOpen && (
