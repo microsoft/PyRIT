@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import base64
-import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Optional
@@ -18,7 +17,7 @@ from azure.ai.contentsafety.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from pyrit.auth import AsyncTokenProviderCredential, get_azure_async_token_provider
+from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
@@ -39,49 +38,6 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_async_token_provider(
-    api_key: str | Callable[[], str | Awaitable[str]] | None,
-) -> str | Callable[[], Awaitable[str]] | None:
-    """
-    Ensure the api_key is either a string or an async callable.
-
-    If a synchronous callable token provider is provided, it's automatically wrapped
-    in an async function to make it compatible with the async ContentSafetyClient.
-
-    Args:
-        api_key: Either a string API key or a callable that returns a token (sync or async).
-
-    Returns:
-        Either a string API key or an async callable that returns a token.
-    """
-    if api_key is None or isinstance(api_key, str) or not callable(api_key):
-        return api_key
-
-    # Check if the callable is already async
-    if inspect.iscoroutinefunction(api_key):
-        return api_key
-
-    # Wrap synchronous token provider in async function
-    logger.debug(
-        "Detected synchronous token provider."
-        " Automatically wrapping in async function for compatibility with async ContentSafetyClient."
-    )
-
-    async def async_token_provider() -> str:
-        """
-        Async wrapper for synchronous token provider.
-
-        Returns:
-            str: The token string from the synchronous provider.
-        """
-        result = api_key()
-        if inspect.isawaitable(result):
-            return await result
-        return result
-
-    return async_token_provider
 
 
 class AzureContentFilterScorer(FloatScaleScorer):
@@ -185,7 +141,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)
-        self._api_key = _ensure_async_token_provider(resolved_api_key)
+        self._api_key = ensure_async_token_provider(resolved_api_key)
 
         # Create ContentSafetyClient with appropriate credential
         if self._endpoint is not None:

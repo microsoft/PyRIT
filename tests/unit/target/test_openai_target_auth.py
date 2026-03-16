@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.prompt_target.openai.openai_target import OpenAITarget, _ensure_async_token_provider
+from pyrit.auth import ensure_async_token_provider
+from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 
 class _ConcreteOpenAITarget(OpenAITarget):
@@ -126,30 +127,30 @@ class TestOpenAITargetAuthResolution:
 
 
 class TestEnsureAsyncTokenProvider:
-    """Tests for the _ensure_async_token_provider helper function."""
+    """Tests for the ensure_async_token_provider helper function."""
 
     def test_none_returns_none(self):
-        assert _ensure_async_token_provider(None) is None
+        assert ensure_async_token_provider(None) is None
 
     def test_string_returns_string(self):
-        assert _ensure_async_token_provider("my-key") == "my-key"
+        assert ensure_async_token_provider("my-key") == "my-key"
 
     def test_async_callable_returned_as_is(self):
         async def provider() -> str:
             return "token"
 
-        result = _ensure_async_token_provider(provider)
+        result = ensure_async_token_provider(provider)
         assert result is provider
 
     def test_sync_callable_wrapped_to_async(self):
         def provider() -> str:
             return "sync-token"
 
-        result = _ensure_async_token_provider(provider)
+        result = ensure_async_token_provider(provider)
         assert asyncio.iscoroutinefunction(result)
         assert asyncio.run(result()) == "sync-token"
 
     def test_non_callable_non_string_returned_as_is(self):
         # Edge case: something that's not a string and not callable
-        result = _ensure_async_token_provider(42)  # type: ignore[arg-type]
+        result = ensure_async_token_provider(42)  # type: ignore[arg-type]
         assert result == 42
