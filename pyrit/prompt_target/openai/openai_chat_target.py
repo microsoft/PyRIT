@@ -433,20 +433,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         if not pieces:
             raise EmptyResponseException(message="Failed to extract any response content.")
 
-        # Capture token usage from the API response and store in the first piece's labels
+        # Capture token usage from the API response and store in the first piece's metadata
         if hasattr(response, "usage") and response.usage and pieces:
-            token_usage = {
-                "model_name": getattr(response, "model", "unknown"),
-                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0),
-                "total_tokens": getattr(response.usage, "total_tokens", 0),
-                "cached_tokens": getattr(response.usage, "cached_tokens", 0),
-            }
-            if pieces[0].labels is None:
-                pieces[0].labels = {}
-            else:
-                pieces[0].labels = dict(pieces[0].labels)
-            pieces[0].labels["token_usage"] = token_usage
+            pieces[0].prompt_metadata["token_usage_model_name"] = getattr(response, "model", "unknown")
+            pieces[0].prompt_metadata["token_usage_prompt_tokens"] = getattr(response.usage, "prompt_tokens", 0)
+            pieces[0].prompt_metadata["token_usage_completion_tokens"] = getattr(response.usage, "completion_tokens", 0)
+            pieces[0].prompt_metadata["token_usage_total_tokens"] = getattr(response.usage, "total_tokens", 0)
+            pieces[0].prompt_metadata["token_usage_cached_tokens"] = getattr(response.usage, "cached_tokens", 0)
 
         return Message(message_pieces=pieces)
 
