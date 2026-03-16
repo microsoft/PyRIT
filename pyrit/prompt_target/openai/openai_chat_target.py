@@ -433,6 +433,21 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         if not pieces:
             raise EmptyResponseException(message="Failed to extract any response content.")
 
+        # Capture token usage from the API response and store in the first piece's labels
+        if hasattr(response, "usage") and response.usage and pieces:
+            token_usage = {
+                "model_name": getattr(response, "model", "unknown"),
+                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
+                "completion_tokens": getattr(response.usage, "completion_tokens", 0),
+                "total_tokens": getattr(response.usage, "total_tokens", 0),
+                "cached_tokens": getattr(response.usage, "cached_tokens", 0),
+            }
+            if pieces[0].labels is None:
+                pieces[0].labels = {}
+            else:
+                pieces[0].labels = dict(pieces[0].labels)
+            pieces[0].labels["token_usage"] = token_usage
+
         return Message(message_pieces=pieces)
 
     async def _save_audio_response_async(self, *, audio_data_base64: str) -> str:
