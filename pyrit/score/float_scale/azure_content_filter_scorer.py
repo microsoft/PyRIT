@@ -64,7 +64,7 @@ def _ensure_async_token_provider(
         return api_key
 
     # Wrap synchronous token provider in async function
-    logger.info(
+    logger.debug(
         "Detected synchronous token provider."
         " Automatically wrapping in async function for compatibility with async ContentSafetyClient."
     )
