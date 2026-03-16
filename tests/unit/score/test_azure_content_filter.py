@@ -113,6 +113,16 @@ def test_async_callable_api_key_accepted():
     assert inspect.iscoroutinefunction(scorer._api_key)
 
 
+@pytest.mark.asyncio
+async def test_async_callable_api_key_returns_token():
+    async def async_provider():
+        return "token"
+
+    scorer = AzureContentFilterScorer(api_key=async_provider, endpoint="bar")
+    result = await scorer._api_key()
+    assert result == "token"
+
+
 def test_sync_callable_returning_coroutine_accepted():
     async def async_fn():
         return "token"
@@ -127,10 +137,28 @@ def test_sync_callable_returning_coroutine_accepted():
     assert inspect.iscoroutinefunction(scorer._api_key)
 
 
+@pytest.mark.asyncio
+async def test_sync_callable_returning_coroutine_returns_token():
+    async def async_fn():
+        return "token"
+
+    sync_lambda = lambda: async_fn()  # noqa: E731
+    scorer = AzureContentFilterScorer(api_key=sync_lambda, endpoint="bar")
+    result = await scorer._api_key()
+    assert result == "token"
+
+
 def test_sync_callable_api_key_accepted():
     scorer = AzureContentFilterScorer(api_key=lambda: "token", endpoint="bar")
     assert callable(scorer._api_key)
     assert inspect.iscoroutinefunction(scorer._api_key)
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_api_key_returns_token():
+    scorer = AzureContentFilterScorer(api_key=lambda: "token", endpoint="bar")
+    result = await scorer._api_key()
+    assert result == "token"
 
 
 @pytest.mark.asyncio

@@ -28,8 +28,10 @@ async def test_azure_content_filter_scorer_image_integration(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer with image input.
 
-    This test requires AZURE_CONTENT_SAFETY_API_KEY and AZURE_CONTENT_SAFETY_API_ENDPOINT
-    environment variables to be set. Uses a sample image from the assets folder.
+    This test requires AZURE_CONTENT_SAFETY_API_ENDPOINT to be set.
+    Authentication uses Entra ID by default (via `az login`). Alternatively,
+    set AZURE_CONTENT_SAFETY_API_KEY for API key auth.
+    Uses a sample image from the assets folder.
     """
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = AzureContentFilterScorer()
