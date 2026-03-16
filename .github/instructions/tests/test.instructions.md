@@ -6,6 +6,8 @@ applyTo: '**/tests/**'
 
 When generating unit tests for PyRIT components, follow these comprehensive guidelines to ensure consistent, maintainable, and thorough test coverage.
 
+Tests should be readable, and it should be clear what is being tested and how. Tests should also be maintainable, and it should be easy to update them when the code changes. We should make sure we reuse code. If there are common patterns across tests, we should extract those into helper functions or fixtures. This makes it easier to write new tests and maintain existing ones.
+
 ## Core Testing Requirements
 
 ### Database/Memory Isolation
