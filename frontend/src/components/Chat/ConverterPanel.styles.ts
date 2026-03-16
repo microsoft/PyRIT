@@ -1,15 +1,33 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
 export const useConverterPanelStyles = makeStyles({
+  resizeContainer: {
+    display: 'flex',
+    flexDirection: 'row',
+    height: '100%',
+    flexShrink: 0,
+  },
   root: {
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
-    width: '320px',
-    minWidth: '320px',
-    borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
+    flex: 1,
+    minWidth: 0,
     backgroundColor: tokens.colorNeutralBackground3,
     overflow: 'hidden',
+  },
+  resizeHandle: {
+    width: '4px',
+    cursor: 'col-resize',
+    backgroundColor: 'transparent',
+    borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
+    flexShrink: 0,
+    ':hover': {
+      backgroundColor: tokens.colorBrandBackground2,
+    },
+    ':active': {
+      backgroundColor: tokens.colorBrandBackground,
+    },
   },
   header: {
     display: 'flex',
@@ -78,7 +96,7 @@ export const useConverterPanelStyles = makeStyles({
   },
   llmBadge: {
     display: 'inline-block',
-    marginLeft: tokens.spacingHorizontalXS,
+    marginRight: tokens.spacingHorizontalXXS,
     padding: `0 ${tokens.spacingHorizontalXXS}`,
     borderRadius: tokens.borderRadiusSmall,
     backgroundColor: tokens.colorPalettePurpleBackground2,
@@ -86,6 +104,70 @@ export const useConverterPanelStyles = makeStyles({
     fontSize: tokens.fontSizeBase100,
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     verticalAlign: 'middle',
+  },
+  optionContent: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: tokens.spacingHorizontalXS,
+  },
+  optionBadges: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2px',
+    flexShrink: 0,
+  },
+  typeBadge: {
+    display: 'inline-block',
+    padding: `0 3px`,
+    borderRadius: tokens.borderRadiusSmall,
+    fontSize: '10px',
+    fontWeight: tokens.fontWeightSemibold as unknown as string,
+    lineHeight: '16px',
+    verticalAlign: 'middle',
+  },
+  typeArrow: {
+    fontSize: '10px',
+    color: tokens.colorNeutralForeground3,
+  },
+  // Input type colors (solid backgrounds)
+  input_text: {
+    backgroundColor: tokens.colorPaletteBlueBackground2,
+    color: tokens.colorPaletteBlueForeground2,
+  },
+  input_image_path: {
+    backgroundColor: tokens.colorPaletteGreenBackground2,
+    color: tokens.colorPaletteGreenForeground2,
+  },
+  input_audio_path: {
+    backgroundColor: tokens.colorPaletteYellowBackground2,
+    color: tokens.colorPaletteYellowForeground2,
+  },
+  input_video_path: {
+    backgroundColor: tokens.colorPalettePurpleBackground2,
+    color: tokens.colorPalettePurpleForeground2,
+  },
+  // Output type colors (outlined/lighter)
+  output_text: {
+    backgroundColor: 'transparent',
+    color: tokens.colorPaletteBlueForeground2,
+    border: `1px solid ${tokens.colorPaletteBlueBorderActive}`,
+  },
+  output_image_path: {
+    backgroundColor: 'transparent',
+    color: tokens.colorPaletteGreenForeground2,
+    border: `1px solid ${tokens.colorPaletteGreenBorderActive}`,
+  },
+  output_audio_path: {
+    backgroundColor: 'transparent',
+    color: tokens.colorPaletteYellowForeground2,
+    border: `1px solid ${tokens.colorPaletteYellowBorderActive}`,
+  },
+  output_video_path: {
+    backgroundColor: 'transparent',
+    color: tokens.colorPalettePurpleForeground2,
+    border: `1px solid ${tokens.colorPalettePurpleBorderActive}`,
   },
   outputSection: {
     display: 'flex',
@@ -101,6 +183,11 @@ export const useConverterPanelStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     backgroundColor: tokens.colorNeutralBackground1,
+  },
+  paramsSectionHeader: {
+    justifyContent: 'flex-start',
+    fontWeight: tokens.fontWeightSemibold as unknown as string,
+    padding: 0,
   },
   outputBox: {
     padding: tokens.spacingVerticalS,

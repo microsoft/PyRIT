@@ -196,6 +196,10 @@ class ConverterService:
             supported_input_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_INPUT_TYPES", ())]
             supported_output_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_OUTPUT_TYPES", ())]
 
+            # Extract first paragraph of docstring as description
+            raw_doc = (converter_class.__doc__ or "").strip()
+            description = raw_doc.split("\n\n")[0].replace("\n", " ").strip() or None
+
             items.append(
                 ConverterCatalogEntry(
                     converter_type=converter_type,
@@ -203,6 +207,7 @@ class ConverterService:
                     supported_output_types=supported_output_types,
                     parameters=_extract_parameters(converter_class),
                     is_llm_based=_is_llm_based(converter_class),
+                    description=description,
                 )
             )
 

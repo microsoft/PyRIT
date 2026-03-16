@@ -68,6 +68,7 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
+  const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
   const [convertedValue, setConvertedValue] = useState<string | null>(null)
   const [originalValue, setOriginalValue] = useState<string | null>(null)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
@@ -473,6 +474,7 @@ export default function ChatWindow({
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
           previewText={chatInputText}
+          activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
           onUseConvertedValue={(original, converted) => {
             setOriginalValue(original)
             setConvertedValue(converted)
@@ -551,6 +553,7 @@ export default function ChatWindow({
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
+          onAttachmentsChange={setAttachmentTypes}
           convertedValue={convertedValue}
           originalValue={originalValue}
           onClearConversion={() => { setConvertedValue(null); setOriginalValue(null) }}

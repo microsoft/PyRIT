@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text } from '@fluentui/react-components'
-import { DismissRegular, PlayRegular } from '@fluentui/react-icons'
+import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text, Tooltip } from '@fluentui/react-components'
+import { ChevronDownRegular, ChevronRightRegular, DismissRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { ConverterCatalogEntry } from '../../types'
@@ -9,15 +9,17 @@ import { useConverterPanelStyles } from './ConverterPanel.styles'
 interface ConverterPanelProps {
   onClose: () => void
   previewText?: string
+  activeInputTypes?: string[]
   onUseConvertedValue?: (original: string, converted: string) => void
 }
 
-export default function ConverterPanel({ onClose, previewText = '', onUseConvertedValue }: ConverterPanelProps) {
+export default function ConverterPanel({ onClose, previewText = '', activeInputTypes = ['text'], onUseConvertedValue }: ConverterPanelProps) {
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterCatalogEntry[]>([])
   const [selectedConverterType, setSelectedConverterType] = useState('')
   const [query, setQuery] = useState('')
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  const [paramsExpanded, setParamsExpanded] = useState(true)
   const [previewOutput, setPreviewOutput] = useState('')
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -62,12 +64,32 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
     }
   }, [])
 
-  const filteredConverters = useMemo(() => {
-    if (query === selectedConverterType) {
-      return converters
+  // Map frontend attachment types to backend data type prefixes
+  const inputTypeSet = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of activeInputTypes) {
+      if (t === 'text') set.add('text')
+      else if (t === 'image') set.add('image_path')
+      else if (t === 'audio') set.add('audio_path')
+      else if (t === 'video') set.add('video_path')
     }
-    return converters.filter((c) => c.converter_type.toLowerCase().includes(query.toLowerCase()))
-  }, [converters, query, selectedConverterType])
+    if (set.size === 0) set.add('text')
+    return set
+  }, [activeInputTypes])
+
+  const filteredConverters = useMemo(() => {
+    // First filter by supported input types
+    const byType = converters.filter((c) => {
+      const supported = c.supported_input_types ?? []
+      if (supported.length === 0) return true
+      return supported.some((s) => inputTypeSet.has(s))
+    })
+    // Then filter by search query
+    if (query === selectedConverterType) {
+      return byType
+    }
+    return byType.filter((c) => c.converter_type.toLowerCase().includes(query.toLowerCase()))
+  }, [converters, query, selectedConverterType, inputTypeSet])
 
   const selectedConverter = converters.find(
     (converter) => converter.converter_type === selectedConverterType
@@ -130,8 +152,9 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
   }, [])
 
   return (
-    <aside className={styles.root} style={{ width: panelWidth, minWidth: panelWidth }} data-testid="converter-panel">
-      <div className={styles.header}>
+    <div className={styles.resizeContainer} style={{ width: panelWidth, minWidth: panelWidth }}>
+      <aside className={styles.root} data-testid="converter-panel">
+        <div className={styles.header}>
         <div className={styles.headerTitle}>
           <Text weight="semibold" size={300}>Converters</Text>
           <Text size={200} className={styles.hintText}>
@@ -193,10 +216,19 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
                 data-testid="converter-panel-select"
               >
                 {filteredConverters.map((converter) => (
-                  <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type}>
-                    {converter.converter_type}
-                    {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
-                  </Option>
+                  <Tooltip
+                    key={converter.converter_type}
+                    content={converter.description || converter.converter_type}
+                    relationship="description"
+                    positioning="after"
+                  >
+                    <Option value={converter.converter_type} text={converter.converter_type}>
+                      <span className={styles.optionContent}>
+                        {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
+                        {converter.converter_type}
+                      </span>
+                    </Option>
+                  </Tooltip>
                 ))}
               </Combobox>
             </Field>
@@ -208,23 +240,43 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
                 <Text weight="semibold" size={300} className={styles.converterName}>
                   {selectedConverter.converter_type}
                 </Text>
-                <div className={styles.metaRow}>
-                  <Text size={200} className={styles.badgeText}>
-                    In: {selectedConverter.supported_input_types.join(', ') || 'n/a'}
+                {selectedConverter.description && (
+                  <Text size={200} className={styles.hintText}>
+                    {selectedConverter.description}
                   </Text>
+                )}
+                <div className={styles.metaRow}>
+                  <Text size={200} className={styles.badgeText}>In:</Text>
+                  {(selectedConverter.supported_input_types ?? []).map((t) => (
+                    <span key={t} className={`${styles.typeBadge} ${styles[`input_${t}` as keyof typeof styles] ?? ''}`}>
+                      {t.replace('_path', '')}
+                    </span>
+                  ))}
                 </div>
                 <div className={styles.metaRow}>
-                  <Text size={200} className={styles.badgeText}>
-                    Out: {selectedConverter.supported_output_types.join(', ') || 'n/a'}
-                  </Text>
+                  <Text size={200} className={styles.badgeText}>Out:</Text>
+                  {(selectedConverter.supported_output_types ?? []).map((t) => (
+                    <span key={t} className={`${styles.typeBadge} ${styles[`output_${t}` as keyof typeof styles] ?? ''}`}>
+                      {t.replace('_path', '')}
+                    </span>
+                  ))}
                 </div>
               </div>
             )}
 
             {selectedConverter && (selectedConverter.parameters?.length ?? 0) > 0 && (
               <div className={styles.paramsSection} data-testid="converter-params">
-                <Text weight="semibold" size={300}>Parameters</Text>
-                {(selectedConverter.parameters ?? []).map((param) => (
+                <Button
+                  appearance="transparent"
+                  size="small"
+                  icon={paramsExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                  onClick={() => setParamsExpanded((prev) => !prev)}
+                  className={styles.paramsSectionHeader}
+                  data-testid="toggle-params-btn"
+                >
+                  Parameters
+                </Button>
+                {paramsExpanded && (selectedConverter.parameters ?? []).map((param) => (
                   <Field
                     key={param.name}
                     label={`${param.name}${param.required ? ' *' : ''}`}
@@ -312,5 +364,11 @@ export default function ConverterPanel({ onClose, previewText = '', onUseConvert
         )}
       </div>
     </aside>
+    <div
+      className={styles.resizeHandle}
+      onMouseDown={handleMouseDown}
+      data-testid="converter-panel-resize"
+    />
+    </div>
   )
 }

@@ -134,7 +134,7 @@ export const useChatInputAreaStyles = makeStyles({
   },
   conversionBarBottom: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: tokens.spacingHorizontalXS,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
     paddingLeft: `calc(${tokens.spacingHorizontalL} + 32px + ${tokens.spacingHorizontalXS} + 32px + ${tokens.spacingHorizontalS})`,
@@ -151,11 +151,14 @@ export const useChatInputAreaStyles = makeStyles({
     overflow: 'hidden',
   },
   conversionText: {
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
     minWidth: 0,
     flex: 1,
+    maxHeight: '80px',
+    overflowY: 'auto',
   },
   originalBadge: {
     display: 'inline-block',

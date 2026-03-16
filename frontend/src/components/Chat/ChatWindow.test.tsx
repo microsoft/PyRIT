@@ -2169,8 +2169,8 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByTestId("converter-panel-list")).toBeInTheDocument();
       expect(screen.getByTestId("converter-panel-select")).toBeInTheDocument();
       expect(screen.getByTestId("converter-item-Base64Converter")).toBeInTheDocument();
-      expect(screen.getByText("In: text")).toBeInTheDocument();
-      expect(screen.getByText("Out: text")).toBeInTheDocument();
+      expect(screen.getByText("In:")).toBeInTheDocument();
+      expect(screen.getByText("Out:")).toBeInTheDocument();
       expect(screen.getByTestId("converter-output")).toBeInTheDocument();
       expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
       expect(screen.getByText("Converted output will appear here.")).toBeInTheDocument();
@@ -2322,7 +2322,7 @@ describe("ChatWindow Integration", () => {
     await userEvent.click(input);
 
     // Find and click the second converter option
-    const option = await screen.findByRole("option", { name: "CharSwapConverter" });
+    const option = await screen.findByRole("option", { name: /CharSwapConverter/ });
     await userEvent.click(option);
 
     await waitFor(() => {

@@ -71,12 +71,13 @@ interface ChatInputAreaProps {
   onToggleConverterPanel?: () => void
   isConverterPanelOpen?: boolean
   onInputChange?: (value: string) => void
+  onAttachmentsChange?: (types: string[]) => void
   convertedValue?: string | null
   originalValue?: string | null
   onClearConversion?: () => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, convertedValue, originalValue, onClearConversion }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue, onClearConversion }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -165,6 +166,11 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     }
     onInputChange?.(input)
   }, [input, onInputChange])
+
+  useEffect(() => {
+    const types = [...new Set(attachments.map((a) => a.type))]
+    onAttachmentsChange?.(types)
+  }, [attachments, onAttachmentsChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
@@ -317,7 +323,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           {convertedValue && (
             <div className={styles.conversionBarBottom} data-testid="converted-indicator">
               <span className={styles.convertedBadge}>Converted</span>
-              <Text size={200} className={styles.conversionText} truncate>
+              <Text size={200} className={styles.conversionText}>
                 {convertedValue}
               </Text>
               <Button
