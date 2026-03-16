@@ -6,7 +6,7 @@ import {
   Text,
   tokens,
 } from '@fluentui/react-components'
-import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular } from '@fluentui/react-icons'
 import { MessageAttachment, TargetInstance } from '../../types'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 
@@ -278,7 +278,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             <Button
               className={styles.iconButton}
               appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
-              icon={<ArrowSyncRegular />}
+              icon={<ArrowShuffleRegular />}
               onClick={onToggleConverterPanel}
               disabled={disabled || !onToggleConverterPanel}
               data-testid="toggle-converter-panel-btn"

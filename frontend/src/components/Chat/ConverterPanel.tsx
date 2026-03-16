@@ -229,8 +229,8 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                   >
                     <Option value={converter.converter_type} text={converter.converter_type}>
                       <span className={styles.optionContent}>
-                        {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
                         {converter.converter_type}
+                        {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
                       </span>
                     </Option>
                   </Tooltip>

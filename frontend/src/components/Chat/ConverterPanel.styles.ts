@@ -96,7 +96,7 @@ export const useConverterPanelStyles = makeStyles({
   },
   llmBadge: {
     display: 'inline-block',
-    marginRight: tokens.spacingHorizontalXXS,
+    marginLeft: tokens.spacingHorizontalXS,
     padding: `0 ${tokens.spacingHorizontalXXS}`,
     borderRadius: tokens.borderRadiusSmall,
     backgroundColor: tokens.colorPalettePurpleBackground2,
