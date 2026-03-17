@@ -391,6 +391,7 @@ export default function ChatWindow({
 
     try {
       await attacksApi.changeMainConversation(attackResultId, convId)
+      setPanelRefreshKey(k => k + 1)
     } catch (err) {
       console.error('Failed to change main conversation:', err)
     }
@@ -528,7 +529,12 @@ export default function ChatWindow({
           onNewConversation={handleNewConversation}
           onChangeMainConversation={handleChangeMainConversation}
           onClose={() => setIsPanelOpen(false)}
-          locked={!activeTarget || isOperatorLocked || isCrossTargetLocked}
+          lockedReason={
+            !activeTarget ? 'Configure a target to enable this action.'
+            : isOperatorLocked ? 'Cannot modify — attack belongs to a different operator.'
+            : isCrossTargetLocked ? 'Cannot modify — attack was created with a different target.'
+            : undefined
+          }
           refreshKey={panelRefreshKey}
         />
       )}
