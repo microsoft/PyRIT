@@ -423,6 +423,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Any: SQLAlchemy combined condition with bound parameters.
         """
         if len(converter_classes) == 0:
+            # Explicitly "no converters": match attacks where the converter list
+            # is absent, null, or empty in the stored JSON.
             return text(
                 """("AttackResultEntries".atomic_attack_identifier IS NULL
                 OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
