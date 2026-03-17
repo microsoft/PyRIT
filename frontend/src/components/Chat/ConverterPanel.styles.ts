@@ -60,10 +60,41 @@ export const useConverterPanelStyles = makeStyles({
     justifyContent: 'center',
     paddingTop: tokens.spacingVerticalL,
   },
+  outputFilterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+    flexWrap: 'wrap',
+  },
+  filterChip: {
+    minWidth: 'auto',
+    padding: `0 ${tokens.spacingHorizontalS}`,
+    height: '24px',
+    fontSize: tokens.fontSizeBase200,
+  },
   converterList: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
+  },
+  groupHeader: {
+    fontWeight: tokens.fontWeightSemibold as unknown as string,
+    fontSize: tokens.fontSizeBase200,
+  },
+  header_text: {
+    color: tokens.colorPaletteBlueForeground2,
+  },
+  header_image_path: {
+    color: tokens.colorPaletteGreenForeground2,
+  },
+  header_audio_path: {
+    color: tokens.colorPaletteYellowForeground2,
+  },
+  header_video_path: {
+    color: tokens.colorPalettePurpleForeground2,
+  },
+  header_binary_path: {
+    color: tokens.colorPaletteRedForeground2,
   },
   converterCard: {
     display: 'flex',

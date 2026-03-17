@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
@@ -79,18 +79,30 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
   }, [activeInputTypes])
 
   const filteredConverters = useMemo(() => {
-    // First filter by supported input types
-    const byType = converters.filter((c) => {
+    // Filter by supported input types
+    let filtered = converters.filter((c) => {
       const supported = c.supported_input_types ?? []
       if (supported.length === 0) return true
       return supported.some((s) => inputTypeSet.has(s))
     })
     // Then filter by search query
-    if (query === selectedConverterType) {
-      return byType
+    if (query !== selectedConverterType) {
+      filtered = filtered.filter((c) => c.converter_type.toLowerCase().includes(query.toLowerCase()))
     }
-    return byType.filter((c) => c.converter_type.toLowerCase().includes(query.toLowerCase()))
+    return filtered
   }, [converters, query, selectedConverterType, inputTypeSet])
+
+  // Group filtered converters by their primary output type
+  const groupedConverters = useMemo(() => {
+    const groups: Record<string, typeof filteredConverters> = {}
+    const order = ['text', 'image_path', 'audio_path', 'video_path', 'binary_path']
+    for (const c of filteredConverters) {
+      const outType = (c.supported_output_types ?? [])[0] ?? 'text'
+      if (!groups[outType]) groups[outType] = []
+      groups[outType].push(c)
+    }
+    return order.filter((t) => groups[t]?.length).map((t) => ({ type: t, converters: groups[t] }))
+  }, [filteredConverters])
 
   const selectedConverter = converters.find(
     (converter) => converter.converter_type === selectedConverterType
@@ -220,20 +232,22 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                 placeholder="Search converters..."
                 data-testid="converter-panel-select"
               >
-                {filteredConverters.map((converter) => (
-                  <Tooltip
-                    key={converter.converter_type}
-                    content={converter.description || converter.converter_type}
-                    relationship="description"
-                    positioning="after"
-                  >
-                    <Option value={converter.converter_type} text={converter.converter_type}>
-                      <span className={styles.optionContent}>
-                        {converter.converter_type}
-                        {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
+                {groupedConverters.map((group) => (
+                  <React.Fragment key={group.type}>
+                    <Option key={`__header_${group.type}`} text="" disabled value="">
+                      <span className={`${styles.groupHeader} ${styles[`header_${group.type}` as keyof typeof styles] ?? ''}`}>
+                        — {group.type.replace('_path', '')} output —
                       </span>
                     </Option>
-                  </Tooltip>
+                    {group.converters.map((converter) => (
+                      <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type}>
+                        <span className={styles.optionContent}>
+                          {converter.converter_type}
+                          {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
+                        </span>
+                      </Option>
+                    ))}
+                  </React.Fragment>
                 ))}
               </Combobox>
             </Field>
