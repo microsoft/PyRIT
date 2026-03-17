@@ -23,17 +23,12 @@ async def test_azure_content_filter_scorer_image_integration(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer with image input.
 
-    This test requires AZURE_CONTENT_SAFETY_API_KEY and AZURE_CONTENT_SAFETY_API_ENDPOINT
-    environment variables to be set. Uses a sample image from the assets folder.
+    This test requires AZURE_CONTENT_SAFETY_API_ENDPOINT to be set.
+    Authentication uses Entra ID by default (via `az login`). Alternatively,
+    set AZURE_CONTENT_SAFETY_API_KEY for API key auth.
+    Uses a sample image from the assets folder.
     """
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-        # Verify required environment variables are set
-        api_key = os.getenv("AZURE_CONTENT_SAFETY_API_KEY")
-        endpoint = os.getenv("AZURE_CONTENT_SAFETY_API_ENDPOINT")
-
-        if not api_key or not endpoint:
-            pytest.skip("Azure Content Safety credentials not configured")
-
         scorer = AzureContentFilterScorer()
 
         image_path = HOME_PATH / "assets" / "architecture_components.png"
@@ -62,13 +57,6 @@ async def test_azure_content_filter_scorer_long_text_chunking_integration(memory
     This verifies that the chunking and aggregation logic works correctly with the real API.
     """
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-        # Verify required environment variables are set
-        api_key = os.getenv("AZURE_CONTENT_SAFETY_API_KEY")
-        endpoint = os.getenv("AZURE_CONTENT_SAFETY_API_ENDPOINT")
-
-        if not api_key or not endpoint:
-            pytest.skip("Azure Content Safety credentials not configured")
-
         scorer = AzureContentFilterScorer()
 
         # This should be greater than the rate limit
@@ -89,5 +77,64 @@ async def test_azure_content_filter_scorer_long_text_chunking_integration(memory
             assert "azure_severity" in score.score_metadata
 
         # Long benign text should still have low scores
+        max_score = max(float(s.score_value) for s in scores)
+        assert max_score > 0, "text should have > 0 score"
+
+
+@pytest.mark.asyncio
+async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
+    """
+    Integration test for Azure Content Filter Scorer image scoring with explicit API key auth.
+
+    This test requires AZURE_CONTENT_SAFETY_API_KEY to be set.
+    """
+    api_key = os.getenv("AZURE_CONTENT_SAFETY_API_KEY")
+    assert api_key, "AZURE_CONTENT_SAFETY_API_KEY must be set to test API key auth"
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        scorer = AzureContentFilterScorer(api_key=api_key)
+
+        image_path = HOME_PATH / "assets" / "architecture_components.png"
+        scores = await scorer.score_image_async(image_path=str(image_path))
+
+        assert len(scores) > 0, "Expected scores for harm categories"
+
+        for score in scores:
+            assert score.score_type == "float_scale"
+            assert score.score_category is not None
+            assert 0.0 <= float(score.score_value) <= 1.0
+            assert "azure_severity" in score.score_metadata
+
+        max_score = max(float(s.score_value) for s in scores)
+        assert max_score < 0.5, "Architecture diagram should have low harm scores"
+
+
+@pytest.mark.asyncio
+async def test_azure_content_filter_scorer_text_with_api_key(memory) -> None:
+    """
+    Integration test for Azure Content Filter Scorer text scoring with explicit API key auth.
+
+    This test requires AZURE_CONTENT_SAFETY_API_KEY to be set.
+    """
+    api_key = os.getenv("AZURE_CONTENT_SAFETY_API_KEY")
+    assert api_key, "AZURE_CONTENT_SAFETY_API_KEY must be set to test API key auth"
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        scorer = AzureContentFilterScorer(api_key=api_key)
+
+        base_text = "I hate you " * 10000
+
+        assert len(base_text) > AzureContentFilterScorer.MAX_TEXT_LENGTH
+
+        scores = await scorer.score_text_async(text=base_text)
+
+        assert len(scores) > 0, "Expected aggregated scores for harm categories"
+
+        for score in scores:
+            assert score.score_type == "float_scale"
+            assert score.score_category is not None
+            assert 0.0 <= float(score.score_value) <= 1.0
+            assert "azure_severity" in score.score_metadata
+
         max_score = max(float(s.score_value) for s in scores)
         assert max_score > 0, "text should have > 0 score"

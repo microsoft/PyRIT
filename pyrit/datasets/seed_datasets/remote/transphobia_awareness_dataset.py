@@ -21,7 +21,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     This dataset contains user-generated queries related to transphobia with human
     annotations and model responses from Quora questions.
 
-    Reference:
+    Reference: [@scheuerman2025transphobia]
     Scheuerman, M., Weathington, K., Petterson, A., Doyle, D. T., Das, D., DeVito, M. A., & Brubaker, J.
     (2025). Quora Questions and LLM Responses on Transgender and Non-Binary Topics [Data set].
     Zenodo. https://doi.org/10.5281/zenodo.15482694

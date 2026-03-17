@@ -21,7 +21,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
     Available subsets: cc_llm, cc_manual, ehai, fbrt_llm, fbrt_llm_661_sampled,
     fbrt_manual, mixed_mmqa_omaq, multimedqa, omaq, omiye_et_al, trinds.
 
-    Reference: https://arxiv.org/abs/2403.12025
+    Reference: [@pfohl2024equitymedqa]
     """
 
     DATA_SUBSETS: list[str] = [

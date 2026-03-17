@@ -126,6 +126,7 @@ def render_function(func: dict, heading_level: str = "###") -> str:
     ret = func.get("returns_annotation", "")
     ret_str = f" → {ret}" if ret else ""
 
+    # Heading shows just the name; full signature in a code block below
     parts = [f"{heading_level} `{prefix}{name}`\n"]
     parts.append(f"```python\n{prefix}{name}{sig}{ret_str}\n```\n")
 
@@ -190,7 +191,13 @@ def render_alias(alias: dict) -> str:
 def render_module(data: dict) -> str:
     """Render a full module page."""
     mod_name = data["name"]
-    parts = [f"# {mod_name}\n"]
+    short_name = mod_name.rsplit(".", 1)[-1]
+    parts = [
+        "---",
+        f"short_title: {short_name}",
+        "---\n",
+        f"# {mod_name}\n",
+    ]
 
     ds = data.get("docstring", {})
     if ds and ds.get("text"):
@@ -200,12 +207,19 @@ def render_module(data: dict) -> str:
 
     classes = [m for m in members if m.get("kind") == "class"]
     functions = [m for m in members if m.get("kind") == "function"]
+    aliases = [m for m in members if m.get("kind") == "alias"]
 
     if functions:
         parts.append("## Functions\n")
         parts.extend(render_function(f) for f in functions)
 
     parts.extend(render_class(cls) for cls in classes)
+
+    if aliases:
+        parts.append("## Re-exports\n")
+        for a in aliases:
+            target = a.get("target", "")
+            parts.append(f"- `{a['name']}` → `{target}`\n")
 
     return "\n".join(parts)
 

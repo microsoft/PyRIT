@@ -27,7 +27,7 @@ What PyRIT Offers
 ::::{card}
 🎯 **Automated Red Teaming**
 
-Run multi-turn attack strategies like Crescendo, TAP, and Skeleton Key against AI systems with minimal setup. Single-turn and multi-turn attacks supported out of the box.
+Run multi-turn attack strategies like Crescendo [@russinovich2024crescendo], TAP [@mehrotra2023tap], and Skeleton Key [@microsoft2024skeletonkey] against AI systems with minimal setup. Single-turn and multi-turn attacks supported out of the box.
 ::::
 
 ::::{card}

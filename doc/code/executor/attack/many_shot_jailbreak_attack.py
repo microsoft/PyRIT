@@ -16,7 +16,7 @@
 # It includes using a faux dialogue between a human and an AI assistant within a single prompt for the LLM.
 # The goal is to have the AI assistant respond to potentially harmful queries.
 #
-# For more details, you can reference the [Many-Shot Jailbreaking Research by Anthropic](https://www.anthropic.com/research/many-shot-jailbreaking).
+# For more details, you can reference the Many-Shot Jailbreaking research [@anthropic2024manyshot].
 #
 # Note:
 # The dataset sources can be found at:

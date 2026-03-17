@@ -12,7 +12,7 @@
 # %% [markdown]
 # # GPTFuzzer Prompt Generator - optional
 #
-# Based on GPTFuzzer by Yu et al. (https://arxiv.org/abs/2309.10253, https://github.com/sherdencooper/GPTFuzz),
+# Based on GPTFuzzer by Yu et al. [@yu2023gptfuzzer],
 # this notebook demonstrates the process of generating new jailbreak templates from existing ones by applying
 # various conversion techniques. The underlying algorithm uses Monte Carlo Tree Search (MCTS) to explore the
 # space of possible templates and select the most promising ones.

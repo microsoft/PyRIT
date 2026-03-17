@@ -20,7 +20,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/Bertievidgen/SimpleSafetyTests
-        - https://arxiv.org/abs/2311.08370
+        - [@vidgen2023simplesafetytests]
     License: CC BY 4.0
 
     Warning: This dataset contains prompts related to harmful and unsafe content categories.

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import json
 import logging
 import re
@@ -23,7 +22,7 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import get_azure_openai_auth
+from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
@@ -39,46 +38,6 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_async_token_provider(
-    api_key: Optional[str | Callable[[], str | Awaitable[str]]],
-) -> Optional[str | Callable[[], Awaitable[str]]]:
-    """
-    Ensure the api_key is either a string or an async callable.
-
-    If a synchronous callable token provider is provided, it's automatically wrapped
-    in an async function to make it compatible with AsyncOpenAI.
-
-    Args:
-        api_key: Either a string API key or a callable that returns a token (sync or async).
-
-    Returns:
-        Either a string API key or an async callable that returns a token.
-    """
-    if api_key is None or isinstance(api_key, str) or not callable(api_key):
-        return api_key
-
-    # Check if the callable is already async
-    if asyncio.iscoroutinefunction(api_key):
-        return api_key
-
-    # Wrap synchronous token provider in async function
-    logger.info(
-        "Detected synchronous token provider."
-        " Automatically wrapping in async function for compatibility with AsyncOpenAI."
-    )
-
-    async def async_token_provider() -> str:
-        """
-        Async wrapper for synchronous token provider.
-
-        Returns:
-            str: The token string from the synchronous provider.
-        """
-        return api_key()  # type: ignore[return-value]
-
-    return async_token_provider
 
 
 class OpenAITarget(PromptTarget):
@@ -198,7 +157,7 @@ class OpenAITarget(PromptTarget):
                 )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)
-        self._api_key = _ensure_async_token_provider(resolved_api_key)
+        self._api_key = ensure_async_token_provider(resolved_api_key)
 
         self._initialize_openai_client()
 

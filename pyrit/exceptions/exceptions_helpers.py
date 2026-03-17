@@ -115,10 +115,16 @@ def extract_json_from_string(response_msg: str) -> str:
         str: The extracted JSON string if found, otherwise the original string.
 
     """
-    json_pattern = re.compile(r"\{.*\}|\[.*\]")
-    match = json_pattern.search(response_msg)
-    if match:
-        return match.group(0)
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(response_msg):
+        if char not in "[{":
+            continue
+
+        try:
+            _, end_index = decoder.raw_decode(response_msg, idx=index)
+            return response_msg[index:end_index]
+        except json.JSONDecodeError:
+            continue
 
     return response_msg
 

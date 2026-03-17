@@ -519,7 +519,7 @@ class FuzzerGenerator(
 
     Paper Reference:
         GPTFUZZER - Red Teaming Large Language Models with Auto-Generated Jailbreak Prompts
-        Link: https://arxiv.org/pdf/2309.10253
+        Link: [@yu2023gptfuzzer]
         Authors: Jiahao Yu, Xingwei Lin, Zheng Yu, Xinyu Xing
         GitHub: https://github.com/sherdencooper/GPTFuzz
     """

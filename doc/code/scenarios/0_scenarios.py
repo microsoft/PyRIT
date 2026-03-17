@@ -31,7 +31,7 @@
 #
 # Some examples of scenarios you might create:
 #
-# - **VibeCheckScenario**: Randomly selects a few prompts from HarmBench to quickly assess model behavior
+# - **VibeCheckScenario**: Randomly selects a few prompts from HarmBench [@mazeika2024harmbench] to quickly assess model behavior
 # - **QuickViolence**: Checks how resilient a model is to violent objectives using multiple attack techniques
 # - **ComprehensiveFoundry**: Tests a target with all available attack converters and strategies
 # - **CustomCompliance**: Tests against specific compliance requirements with curated datasets and attacks

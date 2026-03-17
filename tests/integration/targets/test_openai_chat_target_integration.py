@@ -199,3 +199,53 @@ async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, p
     tool_call_data = json.loads(tool_call_pieces[0].converted_value)
     assert tool_call_data["function"]["name"] == "get_stock_price"
     assert "msft" in tool_call_data["function"]["arguments"].lower()
+
+
+# ============================================================================
+# Token Usage Metadata Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platform_openai_chat_args):
+    """
+    Test that token usage metadata is captured from a real API response.
+
+    This test verifies that:
+    1. Token usage keys are present in prompt_metadata of the response
+    2. Token counts are non-negative integers
+    3. Model name is a non-empty string
+    """
+    target = OpenAIChatTarget(**platform_openai_chat_args)
+
+    conv_id = str(uuid.uuid4())
+
+    user_piece = MessagePiece(
+        role="user",
+        original_value="Say hello in one word.",
+        original_value_data_type="text",
+        conversation_id=conv_id,
+    )
+
+    result = await target.send_prompt_async(message=user_piece.to_message())
+    assert result is not None
+    assert len(result) >= 1
+
+    first_piece = result[0].message_pieces[0]
+    metadata = first_piece.prompt_metadata
+
+    # Verify token usage keys are present
+    assert "token_usage_model_name" in metadata, "Response should contain token_usage_model_name in metadata"
+    assert "token_usage_prompt_tokens" in metadata, "Response should contain token_usage_prompt_tokens in metadata"
+    assert "token_usage_completion_tokens" in metadata
+    assert "token_usage_total_tokens" in metadata
+
+    # Verify values are reasonable
+    assert isinstance(metadata["token_usage_model_name"], str)
+    assert len(metadata["token_usage_model_name"]) > 0
+    assert metadata["token_usage_prompt_tokens"] > 0
+    assert metadata["token_usage_completion_tokens"] > 0
+    assert metadata["token_usage_total_tokens"] > 0
+    assert metadata["token_usage_total_tokens"] == (
+        metadata["token_usage_prompt_tokens"] + metadata["token_usage_completion_tokens"]
+    )

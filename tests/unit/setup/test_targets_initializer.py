@@ -286,7 +286,8 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
-        init = TargetInitializer(tags=["default"])
+        init = TargetInitializer()
+        init.params = {"tags": ["default"]}
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -305,7 +306,8 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
-        init = TargetInitializer(tags=["scorer"])
+        init = TargetInitializer()
+        init.params = {"tags": ["scorer"]}
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
@@ -324,7 +326,28 @@ class TestTargetInitializerTags:
         os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
 
-        init = TargetInitializer(tags=["default", "scorer"])
+        init = TargetInitializer()
+        init.params = {"tags": ["default", "scorer"]}
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is not None
+
+        # Clean up
+        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
+        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
+
+    @pytest.mark.asyncio
+    async def test_all_tag_registers_all_targets(self) -> None:
+        """Test that tags=['all'] registers both default and scorer targets."""
+        os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
+        os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        init.params = {"tags": ["all"]}
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()

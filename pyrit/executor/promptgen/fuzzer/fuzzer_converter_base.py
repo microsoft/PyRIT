@@ -29,7 +29,7 @@ class FuzzerConverter(PromptConverter):
     Base class for GPTFUZZER converters.
 
     Adapted from GPTFUZZER: Red Teaming Large Language Models with Auto-Generated Jailbreak Prompts.
-    Paper: https://arxiv.org/pdf/2309.10253 by Jiahao Yu, Xingwei Lin, Zheng Yu, Xinyu Xing.
+    Paper: [@yu2023gptfuzzer]
     GitHub: https://github.com/sherdencooper/GPTFuzz/tree/master
     """
 

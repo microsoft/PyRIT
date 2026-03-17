@@ -21,7 +21,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     This dataset contains unsafe prompts annotated with harm categories from interactions
     between humans and LLMs. The dataset can be filtered by harm categories.
 
-    Reference: https://huggingface.co/datasets/nvidia/Aegis-AI-Content-Safety-Dataset-2.0
+    Reference: [@ghosh2025aegis]
     License: CC-BY-4.0
 
     The NVIDIA Aegis AI Content Safety Dataset 2.0 (also known as Nemotron Content Safety

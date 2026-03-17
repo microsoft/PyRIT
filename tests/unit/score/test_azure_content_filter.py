@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 
+import inspect
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -55,7 +56,7 @@ async def test_score_async_unsupported_data_type_returns_empty_list(
 @pytest.mark.asyncio
 async def test_score_piece_async_text(patch_central_database, text_message_piece: MessagePiece):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
-    mock_client = MagicMock()
+    mock_client = AsyncMock()
     mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Hate"}]}
     scorer._azure_cf_client = mock_client
     scores = await scorer._score_piece_async(text_message_piece)
@@ -72,7 +73,7 @@ async def test_score_piece_async_text(patch_central_database, text_message_piece
 @pytest.mark.asyncio
 async def test_score_piece_async_image(patch_central_database, image_message_piece: MessagePiece):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
-    mock_client = MagicMock()
+    mock_client = AsyncMock()
     mock_client.analyze_image.return_value = {"categoriesAnalysis": [{"severity": "3", "category": "Hate"}]}
     scorer._azure_cf_client = mock_client
     # Patch _get_base64_image_data to avoid actual file IO
@@ -102,25 +103,62 @@ def test_explicit_category():
     assert len(scorer._harm_categories) == 1
 
 
-def test_async_callable_api_key_raises():
+def test_async_callable_api_key_accepted():
     async def async_provider():
         return "token"
 
-    with pytest.raises(ValueError, match="Async token providers are not supported"):
-        AzureContentFilterScorer(api_key=async_provider, endpoint="bar")
+    scorer = AzureContentFilterScorer(api_key=async_provider, endpoint="bar")
+    # Async callable should be passed through as-is
+    assert callable(scorer._api_key)
+    assert inspect.iscoroutinefunction(scorer._api_key)
 
 
-def test_sync_callable_returning_coroutine_raises():
+@pytest.mark.asyncio
+async def test_async_callable_api_key_returns_token():
+    async def async_provider():
+        return "token"
+
+    scorer = AzureContentFilterScorer(api_key=async_provider, endpoint="bar")
+    result = await scorer._api_key()
+    assert result == "token"
+
+
+def test_sync_callable_returning_coroutine_accepted():
     async def async_fn():
         return "token"
 
-    with pytest.raises(ValueError, match="returns a coroutine/awaitable"):
-        AzureContentFilterScorer(api_key=lambda: async_fn(), endpoint="bar")
+    sync_lambda = lambda: async_fn()  # noqa: E731
+    # Confirm the lambda itself is NOT a coroutine function (it's sync)
+    assert not inspect.iscoroutinefunction(sync_lambda)
+
+    scorer = AzureContentFilterScorer(api_key=sync_lambda, endpoint="bar")
+    # After init, the sync callable should be wrapped in an async function
+    assert callable(scorer._api_key)
+    assert inspect.iscoroutinefunction(scorer._api_key)
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_returning_coroutine_returns_token():
+    async def async_fn():
+        return "token"
+
+    sync_lambda = lambda: async_fn()  # noqa: E731
+    scorer = AzureContentFilterScorer(api_key=sync_lambda, endpoint="bar")
+    result = await scorer._api_key()
+    assert result == "token"
 
 
 def test_sync_callable_api_key_accepted():
     scorer = AzureContentFilterScorer(api_key=lambda: "token", endpoint="bar")
     assert callable(scorer._api_key)
+    assert inspect.iscoroutinefunction(scorer._api_key)
+
+
+@pytest.mark.asyncio
+async def test_sync_callable_api_key_returns_token():
+    scorer = AzureContentFilterScorer(api_key=lambda: "token", endpoint="bar")
+    result = await scorer._api_key()
+    assert result == "token"
 
 
 @pytest.mark.asyncio
@@ -129,7 +167,7 @@ async def test_azure_content_filter_scorer_adds_to_memory():
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Hate"}]}
 
         scorer._azure_cf_client = mock_client
@@ -143,7 +181,7 @@ async def test_azure_content_filter_scorer_adds_to_memory():
 async def test_azure_content_filter_scorer_score(patch_central_database):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
 
-    mock_client = MagicMock()
+    mock_client = AsyncMock()
     mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Hate"}]}
 
     scorer._azure_cf_client = mock_client
@@ -181,7 +219,7 @@ async def test_azure_content_filter_scorer_chunks_long_text(patch_central_databa
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         # Mock returns for two chunks
         mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "3", "category": "Hate"}]}
         scorer._azure_cf_client = mock_client
@@ -205,7 +243,7 @@ async def test_azure_content_filter_scorer_accepts_short_text(patch_central_data
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "3", "category": "Hate"}]}
         scorer._azure_cf_client = mock_client
 

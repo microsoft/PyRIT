@@ -17,7 +17,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
     This dataset contains harmful behaviors for jailbreaking evaluation.
 
-    Reference: https://arxiv.org/abs/2404.01318
+    Reference: [@chao2024jailbreakbench]
 
     Content Warning: This dataset contains prompts aimed at provoking harmful responses
     and may contain offensive content. Users should check with their legal department
