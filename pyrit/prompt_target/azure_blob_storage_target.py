@@ -75,8 +75,8 @@ class AzureBlobStorageTarget(PromptTarget):
             env_var_name=self.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE, passed_value=container_url
         )
 
-        self._sas_token = sas_token
-        self._client_async: AsyncContainerClient = None
+        self._sas_token: Optional[str] = sas_token
+        self._client_async: Optional[AsyncContainerClient] = None
 
         super().__init__(endpoint=self._container_url, max_requests_per_minute=max_requests_per_minute)
 

@@ -19,7 +19,7 @@
 #
 # The `Foundry` scenario provides a comprehensive testing approach that includes:
 # - **Converter-based attacks**: Apply various encoding/obfuscation techniques (Base64, Caesar cipher, etc.)
-# - **Multi-turn attacks**: Complex conversational attack strategies (Crescendo, RedTeaming)
+# - **Multi-turn attacks**: Complex conversational attack strategies (Crescendo [@russinovich2024crescendo], RedTeaming)
 # - **Strategy composition**: Combine multiple converters together
 # - **Difficulty levels**: Organized into EASY, MODERATE, and DIFFICULT categories
 #
@@ -44,7 +44,7 @@ printer = ConsoleScenarioResultPrinter()
 # %% [markdown]
 # ## Define Seed Groups
 #
-# By default, `RedTeamAgent` selects four random objectives from HarmBench. Here we'll retrieve only two for demonstration. If you didn't pass any `seed_groups`, the default would be almost the same except with `max_dataset_size=4`.
+# By default, `RedTeamAgent` selects four random objectives from HarmBench [@mazeika2024harmbench]. Here we'll retrieve only two for demonstration. If you didn't pass any `seed_groups`, the default would be almost the same except with `max_dataset_size=4`.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider

@@ -195,7 +195,7 @@ class OpenAIVideoTarget(OpenAITarget):
 
         text_piece = message.get_piece_by_type(data_type="text")
 
-        # Validate and strip video_path pieces for remix mode
+        # Validate video_path pieces for remix mode (does not strip them)
         self._validate_video_remix_pieces(message=message)
 
         image_piece = message.get_piece_by_type(data_type="image_path")
@@ -515,13 +515,13 @@ class OpenAIVideoTarget(OpenAITarget):
     @staticmethod
     def _validate_video_remix_pieces(*, message: Message) -> None:
         """
-        Validate and reconcile video remix pieces.
+        Validate video remix pieces.
 
         When the frontend sends a video_path piece alongside a text piece for
         remix mode, both must carry matching ``video_id`` in their
-        ``prompt_metadata``.  After validation the video_path pieces are
-        stripped because the target only needs the ``video_id`` on the text
-        piece to perform the remix.
+        ``prompt_metadata``.  The video_path pieces are kept in the message
+        so the normalizer stores the complete user request (including the
+        video attachment) for display in the UI.
 
         Raises:
             ValueError: If video_path pieces are present without ``video_id``,
@@ -560,5 +560,6 @@ class OpenAIVideoTarget(OpenAITarget):
                     f"video_id mismatch: text piece has '{text_video_id}' but video_path piece has '{vp_video_id}'."
                 )
 
-        # Strip video_path pieces — the target uses video_id from text metadata
-        message.message_pieces = [p for p in message.message_pieces if p.converted_value_data_type != "video_path"]
+        # Video_path pieces are used only for validation — the target operates
+        # via video_id from prompt_metadata.  Do NOT strip them so the normalizer
+        # stores the complete user request (including the video attachment).

@@ -1928,3 +1928,71 @@ def test_construct_request_body_with_tools(patch_central_database):
 
     assert target._extra_body_parameters.get("tools") == tools
     assert target._extra_body_parameters.get("tool_choice") == "auto"
+
+
+# ============================================================================
+# Token Usage Metadata Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_captures_token_usage(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that token usage from the API response is stored in prompt_metadata."""
+    mock_response = create_mock_completion(content="Hello")
+    mock_response.model = "gpt-4o-2024-05-13"
+    mock_response.usage = MagicMock()
+    mock_response.usage.prompt_tokens = 10
+    mock_response.usage.completion_tokens = 20
+    mock_response.usage.total_tokens = 30
+    mock_response.usage.cached_tokens = 5
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.prompt_metadata["token_usage_model_name"] == "gpt-4o-2024-05-13"
+    assert piece.prompt_metadata["token_usage_prompt_tokens"] == 10
+    assert piece.prompt_metadata["token_usage_completion_tokens"] == 20
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 30
+    assert piece.prompt_metadata["token_usage_cached_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_no_usage_no_metadata(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that no token usage metadata is written when response.usage is None."""
+    mock_response = create_mock_completion(content="Hello")
+    mock_response.usage = None
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert "token_usage_model_name" not in piece.prompt_metadata
+    assert "token_usage_prompt_tokens" not in piece.prompt_metadata
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_token_usage_defaults_on_missing_attrs(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that missing usage attributes default to 0 and missing model defaults to 'unknown'."""
+    mock_response = create_mock_completion(content="Hello")
+    # Create a usage object without cached_tokens
+    mock_usage = MagicMock(spec=[])
+    mock_usage.prompt_tokens = 5
+    mock_usage.completion_tokens = 10
+    mock_usage.total_tokens = 15
+    mock_response.usage = mock_usage
+    # Remove model attribute to test default
+    del mock_response.model
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.prompt_metadata["token_usage_model_name"] == "unknown"
+    assert piece.prompt_metadata["token_usage_prompt_tokens"] == 5
+    assert piece.prompt_metadata["token_usage_completion_tokens"] == 10
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 15
+    assert piece.prompt_metadata["token_usage_cached_tokens"] == 0

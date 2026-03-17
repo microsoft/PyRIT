@@ -195,6 +195,19 @@ class TestScorerInitializerInitialize:
         assert registry.get_instance_by_name("inverted_refusal_gpt4o_unsafe_temp9") is None
         assert registry.get_instance_by_name("refusal_gpt4o") is not None
 
+    @pytest.mark.asyncio
+    async def test_default_tag_registers_all_current_scorers(self) -> None:
+        """Test that tags=['default'] registers all current scorers (all are tagged default)."""
+        self._register_all_scorer_targets()
+        os.environ.update(self.CONTENT_SAFETY_ENV_VARS)
+
+        init = ScorerInitializer()
+        init.params = {"tags": ["default"]}
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        assert len(registry) == 24
+
 
 class TestScorerInitializerGetInfo:
     """Tests for ScorerInitializer.get_info_async method."""

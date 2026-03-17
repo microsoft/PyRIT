@@ -19,7 +19,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
         - ``one_char`` (default: U+2064) to represent binary 1.
 
     Replicates functionality detailed in:
-        - https://embracethered.com/blog/posts/2025/sneaky-bits-and-ascii-smuggler/
+        - [@embracethered2025sneakybits]
     """
 
     def __init__(

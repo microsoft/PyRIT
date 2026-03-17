@@ -16,7 +16,7 @@ from pyrit.prompt_target.websocket_copilot_target import CopilotMessageType
 @pytest.fixture
 def mock_authenticator():
     token_payload = {"tid": "test_tenant_id", "oid": "test_object_id", "exp": 9999999999}
-    mock_token = jwt.encode(token_payload, "secret", algorithm="HS256")
+    mock_token = jwt.encode(token_payload, "a]T3!s$ecReT#kEy_4_tEst!ng@2024+", algorithm="HS256")
     if isinstance(mock_token, bytes):
         mock_token = mock_token.decode("utf-8")
     authenticator = MagicMock(spec=CopilotAuthenticator)
@@ -267,7 +267,7 @@ class TestBuildWebsocketUrl:
             token_payload = {"tid": "test_tenant_id", "oid": "test_object_id", "exp": 9999999999}
             del token_payload[missing_id]
 
-            mock_token = jwt.encode(token_payload, "secret", algorithm="HS256")
+            mock_token = jwt.encode(token_payload, "a]T3!s$ecReT#kEy_4_tEst!ng@2024+", algorithm="HS256")
             if isinstance(mock_token, bytes):
                 mock_token = mock_token.decode("utf-8")
             mock_authenticator.get_token = AsyncMock(return_value=mock_token)
@@ -848,7 +848,7 @@ class TestSendPromptAsync:
 
         assert len(responses) == 1
         assert responses[0].message_pieces[0].converted_value == "Response from Copilot"
-        assert responses[0].message_pieces[0].role == "assistant"
+        assert responses[0].message_pieces[0].api_role == "assistant"
 
     @pytest.mark.asyncio
     async def test_send_prompt_async_with_exceptions(self, mock_authenticator, make_message_piece, mock_memory):
@@ -884,7 +884,7 @@ class TestSendPromptAsync:
 
             assert len(responses) == 1
             assert responses[0].message_pieces[0].converted_value == "Image description response"
-            assert responses[0].message_pieces[0].role == "assistant"
+            assert responses[0].message_pieces[0].api_role == "assistant"
 
     @pytest.mark.asyncio
     async def test_send_prompt_async_with_mixed_content(self, mock_authenticator, make_message_piece, mock_memory):

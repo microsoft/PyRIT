@@ -11,8 +11,7 @@ class CharacterSpaceConverter(PromptConverter):
     """
     Spaces out the input prompt and removes specified punctuations.
 
-    For more information on the bypass strategy, refer to:
-    https://www.robustintelligence.com/blog-posts/bypassing-metas-llama-classifier-a-simple-jailbreak
+    For more information on the bypass strategy, refer to [@robustintelligence2024bypass].
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)

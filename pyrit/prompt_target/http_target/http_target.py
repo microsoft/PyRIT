@@ -280,7 +280,6 @@ class HTTPTarget(PromptTarget):
         headers_dict: dict[str, str],
     ) -> str:
         # If path is already a full URL, return it as is
-        path = path.lower()
         if path.startswith(("http://", "https://")):
             return path
 

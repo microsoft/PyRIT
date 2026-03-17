@@ -40,8 +40,7 @@ from pyrit.prompt_target import (
         ("AZURE_OPENAI_GPT4_CHAT_ENDPOINT", "AZURE_OPENAI_GPT4_CHAT_MODEL", True),
         ("AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT", "AZURE_OPENAI_GPT5_COMPLETIONS_MODEL", True),
         ("AZURE_OPENAI_GPTV_CHAT_ENDPOINT", "AZURE_OPENAI_GPTV_CHAT_MODEL", True),
-        ("AZURE_FOUNDRY_DEEPSEEK_ENDPOINT", "", True),
-        ("AZURE_FOUNDRY_PHI4_ENDPOINT", "", True),
+        ("AZURE_FOUNDRY_MISTRAL_LARGE_ENDPOINT", "AZURE_FOUNDRY_MISTRAL_LARGE_MODEL", True),
     ],
 )
 async def test_openai_chat_target_entra_auth(sqlite_instance, endpoint, model_name, supports_seed):
@@ -70,7 +69,7 @@ async def test_openai_chat_target_entra_auth(sqlite_instance, endpoint, model_na
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
-        ("OPENAI_IMAGE_ENDPOINT1", "OPENAI_IMAGE_MODEL1"),
+        ("OPENAI_IMAGE_ENDPOINT", "OPENAI_IMAGE_MODEL"),
         ("OPENAI_IMAGE_ENDPOINT2", "OPENAI_IMAGE_MODEL2"),
     ],
 )
@@ -329,10 +328,10 @@ async def test_video_target_entra_auth(sqlite_instance):
 @pytest.mark.asyncio
 async def test_video_target_remix_entra_auth(sqlite_instance):
     """Test video remix mode with Entra authentication."""
-    endpoint = os.environ["OPENAI_VIDEO2_ENDPOINT"]
+    endpoint = os.environ["OPENAI_VIDEO_ENDPOINT"]
     target = OpenAIVideoTarget(
         endpoint=endpoint,
-        model_name=os.environ["OPENAI_VIDEO2_MODEL"],
+        model_name=os.environ["OPENAI_VIDEO_MODEL"],
         api_key=get_azure_openai_auth(endpoint),
         n_seconds=4,
     )

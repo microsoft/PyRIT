@@ -150,6 +150,63 @@ class TestGetTarget:
         assert result.target_registry_name == "target-1"
         assert result.target_type == "MockTarget"
 
+    @pytest.mark.asyncio
+    async def test_list_targets_includes_extra_params_in_target_specific(self) -> None:
+        """Test that extra identifier params (reasoning_effort etc.) appear in target_specific_params."""
+        service = TargetService()
+
+        mock_target = MagicMock()
+        identifier = ComponentIdentifier(
+            class_name="OpenAIResponseTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "o3",
+                "temperature": 1.0,
+                "reasoning_effort": "high",
+                "reasoning_summary": "auto",
+                "max_output_tokens": 4096,
+            },
+        )
+        mock_target.get_identifier.return_value = identifier
+        service._registry.register_instance(mock_target, name="response-target")
+
+        result = await service.list_targets_async()
+
+        assert len(result.items) == 1
+        target = result.items[0]
+        assert target.temperature == 1.0
+        assert target.target_specific_params is not None
+        assert target.target_specific_params["reasoning_effort"] == "high"
+        assert target.target_specific_params["reasoning_summary"] == "auto"
+        assert target.target_specific_params["max_output_tokens"] == 4096
+
+    @pytest.mark.asyncio
+    async def test_get_target_includes_extra_params_in_target_specific(self) -> None:
+        """Test that get_target returns target_specific_params with extra identifier params."""
+        service = TargetService()
+
+        mock_target = MagicMock()
+        identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "frequency_penalty": 0.5,
+                "seed": 42,
+            },
+        )
+        mock_target.get_identifier.return_value = identifier
+        service._registry.register_instance(mock_target, name="chat-target")
+
+        result = await service.get_target_async(target_registry_name="chat-target")
+
+        assert result is not None
+        assert result.target_specific_params is not None
+        assert result.target_specific_params["frequency_penalty"] == 0.5
+        assert result.target_specific_params["seed"] == 42
+
 
 class TestGetTargetObject:
     """Tests for TargetService.get_target_object method."""

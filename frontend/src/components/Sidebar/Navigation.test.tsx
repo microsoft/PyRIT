@@ -12,19 +12,72 @@ const renderWithProvider = (ui: React.ReactElement) => {
 };
 
 describe("Navigation", () => {
-  it("renders the chat button (disabled)", () => {
-    renderWithProvider(
-      <Navigation onToggleTheme={jest.fn()} isDarkMode={false} />
-    );
+  const defaultProps = {
+    currentView: "chat" as const,
+    onNavigate: jest.fn(),
+    onToggleTheme: jest.fn(),
+    isDarkMode: false,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("renders the chat button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
 
     const chatButton = screen.getByTitle("Chat");
     expect(chatButton).toBeInTheDocument();
-    expect(chatButton).toBeDisabled();
+    expect(chatButton).not.toBeDisabled();
+  });
+
+  it("renders the configuration button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+
+    const configButton = screen.getByTitle("Configuration");
+    expect(configButton).toBeInTheDocument();
+  });
+
+  it("calls onNavigate with 'chat' when chat button is clicked", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByTitle("Chat"));
+    expect(onNavigate).toHaveBeenCalledWith("chat");
+  });
+
+  it("calls onNavigate with 'config' when config button is clicked", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByTitle("Configuration"));
+    expect(onNavigate).toHaveBeenCalledWith("config");
+  });
+
+  it("renders the attack history button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+
+    const historyButton = screen.getByTitle("Attack History");
+    expect(historyButton).toBeInTheDocument();
+  });
+
+  it("calls onNavigate with 'history' when history button is clicked", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByTitle("Attack History"));
+    expect(onNavigate).toHaveBeenCalledWith("history");
   });
 
   it("renders theme toggle button with light mode title when in dark mode", () => {
     renderWithProvider(
-      <Navigation onToggleTheme={jest.fn()} isDarkMode={true} />
+      <Navigation {...defaultProps} isDarkMode={true} />
     );
 
     const themeButton = screen.getByTitle("Light Mode");
@@ -33,7 +86,7 @@ describe("Navigation", () => {
 
   it("renders theme toggle button with dark mode title when in light mode", () => {
     renderWithProvider(
-      <Navigation onToggleTheme={jest.fn()} isDarkMode={false} />
+      <Navigation {...defaultProps} isDarkMode={false} />
     );
 
     const themeButton = screen.getByTitle("Dark Mode");
@@ -43,7 +96,7 @@ describe("Navigation", () => {
   it("calls onToggleTheme when theme button is clicked", () => {
     const mockToggleTheme = jest.fn();
     renderWithProvider(
-      <Navigation onToggleTheme={mockToggleTheme} isDarkMode={false} />
+      <Navigation {...defaultProps} onToggleTheme={mockToggleTheme} />
     );
 
     const themeButton = screen.getByTitle("Dark Mode");
@@ -53,9 +106,7 @@ describe("Navigation", () => {
   });
 
   it("theme button is not disabled", () => {
-    renderWithProvider(
-      <Navigation onToggleTheme={jest.fn()} isDarkMode={false} />
-    );
+    renderWithProvider(<Navigation {...defaultProps} />);
 
     const themeButton = screen.getByTitle("Dark Mode");
     expect(themeButton).not.toBeDisabled();

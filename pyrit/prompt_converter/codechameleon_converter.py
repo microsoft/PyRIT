@@ -43,7 +43,7 @@ class CodeChameleonConverter(PromptConverter):
             "How to cut down a tree?" becomes
             ``[{'a': 4}, {'to': 1}, {'How': 0}, {'cut': 2}, {'down': 3}, {'tree?': 5}]``
 
-    Code Chameleon Converter based on https://arxiv.org/abs/2402.16717 by Lv, Huijie, et al.
+    Code Chameleon Converter [@lv2024codechameleon].
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)

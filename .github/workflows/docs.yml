@@ -22,6 +22,10 @@ concurrency:
   group: "pages"
   cancel-in-progress: false
 
+env:
+  # BASE_URL determines the website path prefix, including CSS & JS assets
+  BASE_URL: /${{ github.event.repository.name }}
+
 # This job installs dependencies, builds the book, and pushes it to `gh-pages`
 jobs:
   deploy-book:
