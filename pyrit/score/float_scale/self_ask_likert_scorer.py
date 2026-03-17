@@ -186,7 +186,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
 
         Raises:
-            ValueError: If both `likert_scale` and `custom_likert_path` are provided,
+            ValueError: If both `likert_scale` and `custom_likert_path` are provided, if neither is provided,
                 or if the provided Likert scale or system prompt YAML file is improperly formatted.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
