@@ -528,7 +528,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Uses json_extract() on the atomic_attack_identifier JSON column.
 
         When converter_classes is empty, matches attacks with no converters
-        (request_converter_identifiers is absent or null in the JSON).
+        (children.attack.children.request_converters is absent or null in the JSON).
         When non-empty, uses json_each() to check all specified classes are present
         (AND logic, case-insensitive).
 
@@ -579,8 +579,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
-        from the request_converter_identifiers array in the atomic_attack_identifier
-        JSON column.
+        from the children.attack.children.request_converters array in the
+        atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
