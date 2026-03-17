@@ -30,7 +30,7 @@ class PersuasionConverter(PromptConverter):
     """
     Rephrases prompts using a variety of persuasion techniques.
 
-    Based on https://arxiv.org/abs/2401.06373 by Zeng et al.
+    Based on [@zeng2024persuasion].
 
     Supported persuasion techniques:
         - "authority_endorsement":

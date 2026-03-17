@@ -92,7 +92,7 @@ Examples:
 
     parser.add_argument(
         "--initializers",
-        type=str,
+        type=frontend_core._parse_initializer_arg,
         nargs="+",
         help=frontend_core.ARG_HELP["initializers"],
     )
@@ -165,12 +165,15 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
 
     # Run initializers up-front (backend runs them once at startup, not per-scenario)
     initializer_instances = None
-    if context._initializer_names:
-        print(f"Running {len(context._initializer_names)} initializer(s)...")
+    if context._initializer_configs:
+        print(f"Running {len(context._initializer_configs)} initializer(s)...")
         initializer_instances = []
-        for name in context._initializer_names:
-            initializer_class = context.initializer_registry.get_class(name)
-            initializer_instances.append(initializer_class())
+        for config in context._initializer_configs:
+            initializer_class = context.initializer_registry.get_class(config.name)
+            instance = initializer_class()
+            if config.args:
+                instance.set_params_from_args(args=config.args)
+            initializer_instances.append(instance)
 
         # Re-initialize with initializers applied
         await initialize_pyrit_async(
@@ -196,14 +199,14 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
     print(f"🚀 Starting PyRIT backend on http://{parsed_args.host}:{parsed_args.port}")
     print(f"   API Docs: http://{parsed_args.host}:{parsed_args.port}/docs")
 
-    config = uvicorn.Config(
+    uvicorn_config = uvicorn.Config(
         "pyrit.backend.main:app",
         host=parsed_args.host,
         port=parsed_args.port,
         log_level=parsed_args.log_level,
         reload=parsed_args.reload,
     )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(uvicorn_config)
     await server.serve()
 
     return 0

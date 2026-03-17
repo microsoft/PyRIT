@@ -23,7 +23,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/PKU-Alignment/BeaverTails
-        - https://arxiv.org/abs/2307.04657
+        - [@ji2023beavertails]
         - https://github.com/PKU-Alignment/beavertails
     License: CC BY-NC 4.0
 

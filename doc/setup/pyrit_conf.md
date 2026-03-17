@@ -44,16 +44,18 @@ A list of built-in initializers to run during PyRIT initialization. Initializers
 Each entry can be:
 
 - **A simple string** — just the initializer name
-- **A dictionary** — with `name` and optional `args` for constructor arguments
+- **A dictionary** — with `name` and optional `args` (each arg is a list of strings passed to `initialize_async`)
 
 Example:
 
 ```yaml
 initializers:
   - simple
-  - name: airt
+  - name: target
     args:
-      some_param: value
+      tags:
+        - default
+        - scorer
 ```
 
 Use `pyrit list initializers` in the CLI to see all registered initializers. See the [initializer documentation notebook](../code/setup/pyrit_initializer.ipynb) for reference.

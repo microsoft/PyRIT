@@ -35,9 +35,11 @@ async def evaluate_scorers() -> None:
     5. Save results to scorer_evals directory
     """
     print("Initializing PyRIT...")
+    target_init = TargetInitializer()
+    target_init.params = {"tags": ["default", "scorer"]}
     await initialize_pyrit_async(
         memory_db_type=IN_MEMORY,
-        initializers=[TargetInitializer(tags=["default", "scorer"]), ScorerInitializer()],
+        initializers=[target_init, ScorerInitializer()],
     )
 
     registry = ScorerRegistry.get_registry_singleton()

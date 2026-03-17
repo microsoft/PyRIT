@@ -6,13 +6,14 @@
 from pyrit.setup.initializers.airt import AIRTInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer
 from pyrit.setup.initializers.components.targets import TargetInitializer
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 from pyrit.setup.initializers.scenarios.objective_list import ScenarioObjectiveListInitializer
 from pyrit.setup.initializers.scenarios.openai_objective_target import ScenarioObjectiveTargetInitializer
 from pyrit.setup.initializers.simple import SimpleInitializer
 
 __all__ = [
+    "InitializerParameter",
     "PyRITInitializer",
     "AIRTInitializer",
     "ScorerInitializer",

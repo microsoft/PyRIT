@@ -77,7 +77,7 @@ class FrontendCore:
         config_file: Optional[Path] = None,
         database: Optional[str] = None,
         initialization_scripts: Optional[list[Path]] = None,
-        initializer_names: Optional[list[str]] = None,
+        initializer_names: Optional[list[Any]] = None,
         env_files: Optional[list[Path]] = None,
         log_level: Optional[int] = None,
     ):
@@ -94,7 +94,9 @@ class FrontendCore:
                 The file uses .pyrit_conf extension but is YAML format.
             database: Database type (InMemory, SQLite, or AzureSQL).
             initialization_scripts: Optional list of initialization script paths.
-            initializer_names: Optional list of built-in initializer names to run.
+            initializer_names: Optional list of initializer entries. Each entry can be
+                a string name (e.g., "simple") or a dict with 'name' and optional 'args'
+                (e.g., {"name": "target", "args": {"tags": "default,scorer"}}).
             env_files: Optional list of environment file paths to load in order.
             log_level: Logging level constant (e.g., logging.WARNING). Defaults to logging.WARNING.
 
@@ -130,9 +132,7 @@ class FrontendCore:
         # Use canonical mapping from configuration_loader
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
         self._initialization_scripts = config._resolve_initialization_scripts()
-        self._initializer_names = (
-            [ic.name for ic in config._initializer_configs] if config._initializer_configs else None
-        )
+        self._initializer_configs = config._initializer_configs if config._initializer_configs else None
         self._env_files = config._resolve_env_files()
         self._operator = config.operator
         self._operation = config.operation
@@ -289,15 +289,18 @@ async def run_scenario_async(
 
     # Run initializers before scenario
     initializer_instances = None
-    if context._initializer_names:
-        print(f"Running {len(context._initializer_names)} initializer(s)...")
+    if context._initializer_configs:
+        print(f"Running {len(context._initializer_configs)} initializer(s)...")
         sys.stdout.flush()
 
         initializer_instances = []
 
-        for name in context._initializer_names:
-            initializer_class = context.initializer_registry.get_class(name)
-            initializer_instances.append(initializer_class())
+        for config in context._initializer_configs:
+            initializer_class = context.initializer_registry.get_class(config.name)
+            instance = initializer_class()
+            if config.args:
+                instance.set_params_from_args(args=config.args)
+            initializer_instances.append(instance)
 
     # Re-initialize PyRIT with the scenario-specific initializers
     # This resets memory and applies initializer defaults
@@ -478,6 +481,13 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
             print(f"      - {env_var}")
     else:
         print("    Required Environment Variables: None")
+
+    if initializer_metadata.supported_parameters:
+        print("    Supported Parameters:")
+        for param_name, param_desc, param_required, param_default in initializer_metadata.supported_parameters:
+            req_str = " (required)" if param_required else ""
+            default_str = f" [default: {param_default}]" if param_default else ""
+            print(f"      - {param_name}{req_str}{default_str}: {param_desc}")
 
     if initializer_metadata.class_description:
         print("    Description:")
@@ -775,7 +785,11 @@ ARG_HELP = {
         "initialization scripts, and env files. CLI arguments override config file values. "
         "If not specified, ~/.pyrit/.pyrit_conf is loaded if it exists."
     ),
-    "initializers": "Built-in initializer names to run before the scenario (e.g., openai_objective_target)",
+    "initializers": (
+        "Built-in initializer names to run before the scenario. "
+        "Supports optional params with name:key=val syntax "
+        "(e.g., target:tags=default,scorer dataset:mode=strict)"
+    ),
     "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
     "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
     "override earlier ones.",
@@ -790,6 +804,51 @@ ARG_HELP = {
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
 }
+
+
+def _parse_initializer_arg(arg: str) -> str | dict[str, Any]:
+    """
+    Parse an initializer CLI argument into a string or dict for ConfigurationLoader.
+
+    Supports two formats:
+    - Simple name: "simple" → "simple"
+    - Name with params: "target:tags=default,scorer" → {"name": "target", "args": {"tags": ["default", "scorer"]}}
+
+    For multiple params on one initializer, separate with semicolons: "name:key1=val1;key2=val2"
+    For multiple initializers with params, space-separate them: "target:tags=a,b dataset:mode=strict"
+
+    Args:
+        arg: The CLI argument string.
+
+    Returns:
+        str | dict[str, Any]: A plain name string, or a dict with 'name' and 'args' keys.
+
+    Raises:
+        ValueError: If the argument format is invalid.
+    """
+    if ":" not in arg:
+        return arg
+
+    name, params_str = arg.split(":", 1)
+    if not name:
+        raise ValueError(f"Invalid initializer argument '{arg}': missing name before ':'")
+
+    args: dict[str, list[str]] = {}
+    for pair in params_str.split(";"):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError(f"Invalid initializer parameter '{pair}' in '{arg}': expected key=value format")
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid initializer parameter in '{arg}': empty key")
+        args[key] = [v.strip() for v in value.split(",")]
+
+    if args:
+        return {"name": name, "args": args}
+    return name
 
 
 def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
@@ -839,11 +898,11 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
     i = 1
     while i < len(parts):
         if parts[i] == "--initializers":
-            # Collect initializers until next flag
+            # Collect initializers until next flag, parsing name:key=val syntax
             result["initializers"] = []
             i += 1
             while i < len(parts) and not parts[i].startswith("--"):
-                result["initializers"].append(parts[i])
+                result["initializers"].append(_parse_initializer_arg(parts[i]))
                 i += 1
         elif parts[i] == "--initialization-scripts":
             # Collect script paths until next flag
