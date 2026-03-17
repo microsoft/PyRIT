@@ -2,86 +2,58 @@
 applyTo: '**/tests/**'
 ---
 
-# PyRIT Test Generation Instructions
+# PyRIT Test Instructions
 
-When generating unit tests for PyRIT components, follow these comprehensive guidelines to ensure consistent, maintainable, and thorough test coverage.
+Readable, maintainable tests. Reuse helpers from `conftest.py` and `mocks.py` in each test tier.
 
-Tests should be readable, and it should be clear what is being tested and how. Tests should also be maintainable, and it should be easy to update them when the code changes. We should make sure we reuse code. If there are common patterns across tests, we should extract those into helper functions or fixtures. This makes it easier to write new tests and maintain existing ones.
+## Test Tiers
 
-## Core Testing Requirements
+Most tests should be unit tests. Integration and end-to-end tests are for testing that systems work toegether.
 
-### Database/Memory Isolation
+- **Unit** (`tests/unit/`): Mock all external dependencies. Fast, parallel (`pytest -n 4`). Run: `make unit-test`
+- **Integration** (`tests/integration/`): Real APIs, real credentials. Requires `RUN_ALL_TESTS=true`. Sequential. Run: `make integration-test`
+- **End-to-End** (`tests/end_to_end/`): Full scenarios via `pyrit_scan` CLI, no mocking, very slow. Run: `make end-to-end-test`
 
-For unit tests (in tests/unit):
-- Always use `@pytest.mark.usefixtures("patch_central_database")` decorator on unit test classes that may interact with the Central Memory
-- This ensures tests run in isolation without affecting the actual database
+## Unit Test Rules
 
-### Async Testing
-- Use `@pytest.mark.asyncio` decorator for all async test methods
-- Use `AsyncMock` instead of `MagicMock` when mocking async methods
-- Properly await all async operations in tests
+- Directory mirrors `pyrit/` (e.g. `pyrit/prompt_converter/` → `tests/unit/converter/`)
+- File naming: `test_[component].py`
+- Group tests in classes prefixed with `Test`
+- Use `@pytest.mark.usefixtures("patch_central_database")` on classes touching Central Memory
+- Use `@pytest.mark.asyncio` and `AsyncMock` for async methods
+- Reuse `tests/unit/mocks.py` helpers: `MockPromptTarget`, `get_sample_conversations`, `get_mock_target_identifier`, `openai_chat_response_json_dict`
+- Key fixtures from `tests/unit/conftest.py`: `patch_central_database`, `sqlite_instance`
+- No network calls should ever happen in unit tests, but file access is okay
+- Unit tests should be fast and can be run in parallel.
 
+## Integration Test Rules
 
-### Using Pre-Configured Settings
+- Mark with `@pytest.mark.run_only_if_all_tests` (skipped unless `RUN_ALL_TESTS=true`)
+- File naming: `test_[component]_integration.py`
+- Has its own `conftest.py` (`azuresql_instance` fixture, `initialize_pyrit_async`) and `mocks.py`
+- Minimize mocking — test real integrations
 
-Check conftest and mocks.py to see if there are common utilities that can be reused across tests.
+## What to Test
 
-One common issue is setting the central database. Use the `patch_central_database` is a common solution.
+- **Init**: valid/invalid params, defaults, required-only vs all-optional
+- **Core methods**: normal inputs, boundary conditions, return values, side effects
+- **Errors**: invalid input, exception propagation, cleanup on failure
 
+## Mocking & Style Preferences
 
-### Test Organization
-- Group related tests into classes with descriptive names starting with `Test`
-- Place tests in `tests/unit/[module]/test_[component].py`
-- Each test class should focus on a specific aspect of the component
+- Use `unittest.mock.patch` / `patch.object` — not `monkeypatch`
+- Prefer `patch.object(instance, "method", new_callable=AsyncMock)` over broad module-path patches
+- Use `AsyncMock` directly for async methods, `MagicMock` for sync
+- Use `spec=ClassName` on mocks when you need to constrain to a real interface
+- Use `side_effect` for sequences or raising exceptions
+- For environment variables: `patch.dict("os.environ", {...})`
+- Check calls with `assert_called_once()`, `.call_args`, or `.call_count` — avoid `assert_called_once_with` for complex args, prefer `.call_args` inspection
 
-## Test Structure Guidelines
+## Test Structure Preferences
 
-### 1. Initialization Tests
-Test all initialization scenarios:
-- Valid initialization with required parameters only
-- Initialization with all optional parameters
-- Invalid parameter combinations that should raise exceptions
-- Default value verification
-- Configuration object handling
-
-### 2. Core Functionality Tests
-For each public method:
-- Test normal operation with valid inputs
-- Test boundary conditions
-- Test return values and side effects
-- Verify state changes
-- Test method interactions
-
-### 3. Error Handling Tests
-Comprehensive error scenario coverage:
-- Invalid input handling
-- Exception propagation
-- Recovery mechanisms
-- Error message clarity
-- Resource cleanup on failure
-
-### 4. Integration Tests
-Test component interactions:
-- Mock external dependencies appropriately
-- Verify correct calls to dependencies
-- Test data flow between components
-- Validate contracts between components
-
-## Mocking Best Practices
-
-### Dependency Isolation
-- Mock all external dependencies (APIs, databases, file systems)
-- Mock at the appropriate level - not too high, not too low
-- Use dependency injection patterns where possible
-
-### Mock Configuration
-```python
-# Example patterns to follow:
-# For async methods
-mock_obj.method_name.return_value = AsyncMock(return_value=expected_result)
-
-# For sync methods
-mock_obj.method_name.return_value = expected_result
-
-# For side effects
-mock_obj.method_name.side_effect = [result1, result2, Exception("error")]
+- **Standalone test functions preferred** over test classes (use classes only when `usefixtures` or grouping is needed)
+- **Fixtures**: define at module level with `@pytest.fixture`, not as class methods. Use `yield` for setup/teardown
+- **Test naming**: `test_<method_or_noun>_<scenario>` (e.g. `test_convert_async_default_settings`, `test_init_with_no_key_raises`)
+- **Assertions**: use plain `assert` statements. Use `pytest.raises(ExceptionType, match="...")` for error cases
+- **Test data**: define constants at module level, use `mocks.py` helpers, or inline small data. Don't create separate data files for unit tests
+- **Parametrize**: use `@pytest.mark.parametrize` for data-driven tests with multiple inputs

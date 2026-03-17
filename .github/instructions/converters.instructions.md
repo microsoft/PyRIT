@@ -81,6 +81,7 @@ class MyConverter(PromptConverter):
         ...
 ```
 
-## Exports
+## Exports and External Updates
 
-New converters MUST be added to `pyrit/prompt_converter/__init__.py` — both the import and the `__all__` list.
+- New converters MUST be added to `pyrit/prompt_converter/__init__.py` — both the import and the `__all__` list.
+- The modality table with new/updated converters `doc/code/converters/0_converters.ipynb` and the associated .py pct file must also be updated.
