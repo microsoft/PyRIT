@@ -38,6 +38,10 @@ export const useConverterPanelStyles = makeStyles({
     minHeight: '48px',
     gap: tokens.spacingHorizontalS,
   },
+  tabBar: {
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    flexShrink: 0,
+  },
   headerTitle: {
     display: 'flex',
     flexDirection: 'column',

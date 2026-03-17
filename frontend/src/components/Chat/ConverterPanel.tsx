@@ -1,10 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Text, Tooltip } from '@fluentui/react-components'
+import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Tab, TabList, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { ConverterCatalogEntry } from '../../types'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
+
+const PIECE_TYPE_LABELS: Record<string, string> = {
+  text: 'Text',
+  image: 'Image',
+  audio: 'Audio',
+  video: 'Video',
+}
+
+const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
+  text: 'text',
+  image: 'image_path',
+  audio: 'audio_path',
+  video: 'video_path',
+}
 
 interface ConverterPanelProps {
   onClose: () => void
@@ -16,6 +30,7 @@ interface ConverterPanelProps {
 export default function ConverterPanel({ onClose, previewText = '', activeInputTypes = ['text'], onUseConvertedValue }: ConverterPanelProps) {
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterCatalogEntry[]>([])
+  const [activeTab, setActiveTab] = useState('text')
   const [selectedConverterType, setSelectedConverterType] = useState('')
   const [query, setQuery] = useState('')
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
@@ -40,9 +55,6 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
           return
         }
         setConverters(response.items)
-        const first = response.items[0]?.converter_type || ''
-        setSelectedConverterType((current) => current || first)
-        setQuery((current) => current || first)
       } catch (err) {
         if (!isMounted) {
           return
@@ -65,32 +77,41 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
     }
   }, [])
 
-  // Map frontend attachment types to backend data type prefixes
-  const inputTypeSet = useMemo(() => {
-    const set = new Set<string>()
+  // Tabs: always show Text, plus one for each attachment type
+  const tabs = useMemo(() => {
+    const seen = new Set<string>()
+    const result: string[] = ['text']
+    seen.add('text')
     for (const t of activeInputTypes) {
-      if (t === 'text') set.add('text')
-      else if (t === 'image') set.add('image_path')
-      else if (t === 'audio') set.add('audio_path')
-      else if (t === 'video') set.add('video_path')
+      if (!seen.has(t) && t !== 'text') {
+        result.push(t)
+        seen.add(t)
+      }
     }
-    if (set.size === 0) set.add('text')
-    return set
+    return result
   }, [activeInputTypes])
 
+  // Reset to text tab when tabs change and active tab is no longer available
+  useEffect(() => {
+    if (!tabs.includes(activeTab)) {
+      setActiveTab('text')
+    }
+  }, [tabs, activeTab])
+
+  // Filter converters by the active tab's input type
+  const activeDataType = PIECE_TYPE_TO_DATA_TYPE[activeTab] ?? 'text'
+
   const filteredConverters = useMemo(() => {
-    // Filter by supported input types
     let filtered = converters.filter((c) => {
       const supported = c.supported_input_types ?? []
       if (supported.length === 0) return true
-      return supported.some((s) => inputTypeSet.has(s))
+      return supported.includes(activeDataType)
     })
-    // Then filter by search query
     if (query !== selectedConverterType) {
       filtered = filtered.filter((c) => c.converter_type.toLowerCase().includes(query.toLowerCase()))
     }
     return filtered
-  }, [converters, query, selectedConverterType, inputTypeSet])
+  }, [converters, query, selectedConverterType, activeDataType])
 
   // Group filtered converters by their primary output type
   const groupedConverters = useMemo(() => {
@@ -106,7 +127,7 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
 
   const selectedConverter = converters.find(
     (converter) => converter.converter_type === selectedConverterType
-  ) ?? converters[0]
+  )
 
   const handlePreview = async () => {
     if (!selectedConverterType || !previewText.trim()) {
@@ -183,6 +204,30 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
           data-testid="close-converter-panel-btn"
         />
       </div>
+      {tabs.length > 1 && (
+        <TabList
+          selectedValue={activeTab}
+          onTabSelect={(_, data) => {
+            const newTab = data.value as string
+            setActiveTab(newTab)
+            setSelectedConverterType('')
+            setQuery('')
+            setParamValues({})
+            setPreviewOutput('')
+            setPreviewConverterInstanceId(null)
+            setPreviewError(null)
+          }}
+          size="small"
+          className={styles.tabBar}
+          data-testid="converter-piece-tabs"
+        >
+          {tabs.map((t) => (
+            <Tab key={t} value={t} data-testid={`converter-tab-${t}`}>
+              {PIECE_TYPE_LABELS[t] ?? t}
+            </Tab>
+          ))}
+        </TabList>
+      )}
       <div className={styles.body}>
         {isLoading && (
           <div className={styles.loading} data-testid="converter-panel-loading">

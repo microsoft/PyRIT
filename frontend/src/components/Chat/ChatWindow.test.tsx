@@ -2168,16 +2168,25 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("converter-panel-list")).toBeInTheDocument();
       expect(screen.getByTestId("converter-panel-select")).toBeInTheDocument();
+      expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
+      expect(screen.getByText("Converted output will appear here.")).toBeInTheDocument();
+    });
+
+    // Select a converter
+    const input = screen.getByRole("combobox");
+    await userEvent.click(input);
+    const option = await screen.findByRole("option", { name: /Base64Converter/ });
+    await userEvent.click(option);
+
+    await waitFor(() => {
       expect(screen.getByTestId("converter-item-Base64Converter")).toBeInTheDocument();
       expect(screen.getByText("In:")).toBeInTheDocument();
       expect(screen.getByText("Out:")).toBeInTheDocument();
       expect(screen.getByTestId("converter-output")).toBeInTheDocument();
-      expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
-      expect(screen.getByText("Converted output will appear here.")).toBeInTheDocument();
       // No params section when parameters is empty
       expect(screen.queryByTestId("converter-params")).not.toBeInTheDocument();
     });
-  });
+  }, 15000);
 
   it("should show parameter form when converter has parameters", async () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
@@ -2213,12 +2222,18 @@ describe("ChatWindow Integration", () => {
 
     await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
 
+    // Select the converter that has parameters
+    const input = screen.getByRole("combobox");
+    await userEvent.click(input);
+    const option = await screen.findByRole("option", { name: /Base64Converter/ });
+    await userEvent.click(option);
+
     await waitFor(() => {
       expect(screen.getByTestId("converter-params")).toBeInTheDocument();
       expect(screen.getByTestId("param-encoding_func")).toBeInTheDocument();
       expect(screen.getByText("Parameters")).toBeInTheDocument();
     });
-  });
+  }, 15000);
 
   it("should preview conversion when Preview button is clicked", async () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
@@ -2258,6 +2273,12 @@ describe("ChatWindow Integration", () => {
     // Open converter panel
     await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
 
+    // Select converter
+    const combobox = screen.getByRole("combobox");
+    await userEvent.click(combobox);
+    const converterOption = await screen.findByRole("option", { name: /Base64Converter/ });
+    await userEvent.click(converterOption);
+
     await waitFor(() => {
       expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
     });
@@ -2278,7 +2299,7 @@ describe("ChatWindow Integration", () => {
       original_value: "hello",
       converter_ids: ["test-conv-id"],
     });
-  });
+  }, 15000);
 
   it("should switch converter details when a different dropdown option is selected", async () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
@@ -2312,13 +2333,17 @@ describe("ChatWindow Integration", () => {
 
     await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
 
-    // Wait for initial render with first converter selected
+    // Select first converter
+    const input = screen.getByRole("combobox");
+    await userEvent.click(input);
+    const firstOption = await screen.findByRole("option", { name: /Base64Converter/ });
+    await userEvent.click(firstOption);
+
     await waitFor(() => {
       expect(screen.getByTestId("converter-item-Base64Converter")).toBeInTheDocument();
     });
 
     // Click combobox to open the dropdown listbox
-    const input = screen.getByRole("combobox");
     await userEvent.click(input);
 
     // Find and click the second converter option
