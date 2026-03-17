@@ -423,14 +423,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Any: SQLAlchemy combined condition with bound parameters.
         """
         if len(converter_classes) == 0:
-            # Explicitly "no converters": match attacks where the converter list
-            # is absent, null, or empty in the stored JSON.
             return text(
                 """("AttackResultEntries".atomic_attack_identifier IS NULL
                 OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.request_converter_identifiers') IS NULL
+                    '$.children.attack.children.request_converters') IS NULL
                 OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.request_converter_identifiers') = '[]')"""
+                    '$.children.attack.children.request_converters') = '[]')"""
             )
 
         conditions = []
@@ -439,7 +437,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             param_name = f"conv_cls_{i}"
             conditions.append(
                 f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.request_converter_identifiers'))
+                    '$.children.attack.children.request_converters'))
                     WHERE LOWER(JSON_VALUE(value, '$.class_name')) = :{param_name})"""
             )
             bindparams_dict[param_name] = cls.lower()
@@ -485,7 +483,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     """SELECT DISTINCT JSON_VALUE(c.value, '$.class_name') AS cls
                     FROM "AttackResultEntries"
                     CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
-                        '$.children.attack.request_converter_identifiers')) AS c
+                        '$.children.attack.children.request_converters')) AS c
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL"""
                 )

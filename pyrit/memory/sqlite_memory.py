@@ -540,7 +540,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             # is absent, null, or empty in the stored JSON.
             converter_json = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier,
-                "$.children.attack.request_converter_identifiers",
+                "$.children.attack.children.request_converters",
             )
             return or_(
                 AttackResultEntry.atomic_attack_identifier.is_(None),
@@ -555,7 +555,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 text(
                     f"""EXISTS(SELECT 1 FROM json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.request_converter_identifiers'))
+                            '$.children.attack.children.request_converters'))
                         WHERE LOWER(json_extract(value, '$.class_name')) = :{param_name})"""
                 ).bindparams(**{param_name: cls.lower()})
             )
@@ -592,7 +592,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     FROM "AttackResultEntries",
                     json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.request_converter_identifiers')
+                            '$.children.attack.children.request_converters')
                     ) AS j
                     WHERE cls IS NOT NULL"""
                 )
