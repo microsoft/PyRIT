@@ -291,7 +291,7 @@ class AzureBlobStorageIO(StorageIO):
 
             # Download the blob
             blob_stream = await blob_client.download_blob()
-            return await blob_stream.readall()
+            return bytes(await blob_stream.readall())
 
         except Exception as exc:
             logger.exception(f"Failed to read file at {blob_name}: {exc}")
@@ -362,7 +362,7 @@ class AzureBlobStorageIO(StorageIO):
             _, blob_name = self.parse_blob_url(str(path))
             blob_client = self._client_async.get_blob_client(blob=blob_name)
             blob_properties = await blob_client.get_blob_properties()
-            return blob_properties.size > 0
+            return bool(blob_properties.size > 0)
         except ResourceNotFoundError:
             return False
         finally:
