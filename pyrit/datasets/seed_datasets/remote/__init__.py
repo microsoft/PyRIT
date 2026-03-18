@@ -31,6 +31,9 @@ from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
 from pyrit.datasets.seed_datasets.remote.equitymedqa_dataset import (
     _EquityMedQADataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.ethical_redteam_dataset import (
+    _EthicalRedTeamDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import (
     _ForbiddenQuestionsDataset,
 )  # noqa: F401
@@ -119,6 +122,7 @@ __all__ = [
     "_CCPSensitivePromptsDataset",
     "_DarkBenchDataset",
     "_EquityMedQADataset",
+    "_EthicalRedTeamDataset",
     "_ForbiddenQuestionsDataset",
     "_HarmBenchDataset",
     "_HarmBenchMultimodalDataset",
