@@ -13,21 +13,29 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
   video: 'Video',
 }
 
-const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
+export const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
   text: 'text',
   image: 'image_path',
   audio: 'audio_path',
   video: 'video_path',
 }
 
+export interface PieceConversion {
+  converterInstanceId: string
+  convertedValue: string
+  originalValue: string
+  pieceType: string
+}
+
 interface ConverterPanelProps {
   onClose: () => void
   previewText?: string
+  attachmentData?: Record<string, string>
   activeInputTypes?: string[]
-  onUseConvertedValue?: (original: string, converted: string, converterInstanceId: string) => void
+  onUseConvertedValue?: (conversion: PieceConversion) => void
 }
 
-export default function ConverterPanel({ onClose, previewText = '', activeInputTypes = ['text'], onUseConvertedValue }: ConverterPanelProps) {
+export default function ConverterPanel({ onClose, previewText = '', attachmentData = {}, activeInputTypes = ['text'], onUseConvertedValue }: ConverterPanelProps) {
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterCatalogEntry[]>([])
   const [activeTab, setActiveTab] = useState('text')
@@ -140,7 +148,9 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
   const hasRequiredParamErrors = missingRequiredParams.length > 0
 
   const handlePreview = async () => {
-    if (!selectedConverterType || !previewText.trim()) {
+    // For text tab, use chat input text; for other tabs, use attachment data
+    const previewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
+    if (!selectedConverterType || !previewValue.trim()) {
       return
     }
     if (hasRequiredParamErrors) {
@@ -159,8 +169,9 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
       })
 
       const previewResponse = await convertersApi.previewConversion({
-        original_value: previewText,
+        original_value: previewValue,
         converter_ids: [createResponse.converter_id],
+        original_value_data_type: activeDataType,
       })
 
       setPreviewOutput(previewResponse.converted_value)
@@ -180,11 +191,12 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
       autoPreviewTimer.current = null
     }
 
+    const currentPreviewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
+
     if (
       !selectedConverter ||
       selectedConverter.is_llm_based ||
-      !previewText.trim() ||
-      !(selectedConverter.supported_output_types ?? []).includes('text') ||
+      !currentPreviewValue.trim() ||
       hasRequiredParamErrors
     ) {
       return
@@ -451,15 +463,21 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                 size="small"
                 icon={isPreviewing ? <Spinner size="tiny" /> : <PlayRegular />}
                 onClick={handlePreview}
-                disabled={isPreviewing || !previewText.trim() || !selectedConverterType}
+                disabled={isPreviewing || !(activeTab === 'text' ? previewText.trim() : attachmentData[activeTab]) || !selectedConverterType}
                 data-testid="converter-preview-btn"
               >
                 {isPreviewing ? 'Converting...' : 'Preview'}
               </Button>
 
-              {!previewText.trim() && (
+              {activeTab === 'text' && !previewText.trim() && (
                 <Text size={200} className={styles.hintText}>
                   Type in the chat input box to preview a conversion.
+                </Text>
+              )}
+
+              {activeTab !== 'text' && !attachmentData[activeTab] && (
+                <Text size={200} className={styles.hintText}>
+                  Attach a {activeTab} file to preview a conversion.
                 </Text>
               )}
 
@@ -473,7 +491,30 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                 <Text weight="semibold" size={300}>Output</Text>
                 <div className={styles.outputBox}>
                   {previewOutput ? (
-                    <pre className={styles.previewPre} data-testid="converter-preview-result">{previewOutput}</pre>
+                    previewOutput.match(/\.(png|jpg|jpeg|gif|bmp|webp)$/i) ? (
+                      <img
+                        src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
+                        alt="Converter output"
+                        className={styles.previewImage}
+                        data-testid="converter-preview-result"
+                      />
+                    ) : previewOutput.match(/\.(wav|mp3|ogg|flac)$/i) ? (
+                      <audio
+                        controls
+                        src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
+                        className={styles.previewAudio}
+                        data-testid="converter-preview-result"
+                      />
+                    ) : previewOutput.match(/\.(mp4|webm|mov)$/i) ? (
+                      <video
+                        controls
+                        src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
+                        className={styles.previewVideo}
+                        data-testid="converter-preview-result"
+                      />
+                    ) : (
+                      <pre className={styles.previewPre} data-testid="converter-preview-result">{previewOutput}</pre>
+                    )
                   ) : (
                     <Text size={200} className={styles.hintText}>
                       Converted output will appear here.
@@ -486,7 +527,12 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                 <Button
                   appearance="primary"
                   size="small"
-                  onClick={() => onUseConvertedValue?.(previewText, previewOutput, previewConverterInstanceId)}
+                  onClick={() => onUseConvertedValue?.({
+                    pieceType: activeTab,
+                    converterInstanceId: previewConverterInstanceId,
+                    convertedValue: previewOutput,
+                    originalValue: activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? ''),
+                  })}
                   disabled={!onUseConvertedValue}
                   data-testid="use-converted-btn"
                 >

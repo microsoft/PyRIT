@@ -269,4 +269,18 @@ export const useConverterPanelStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground1,
   },
+  previewImage: {
+    maxWidth: '100%',
+    maxHeight: '200px',
+    borderRadius: tokens.borderRadiusMedium,
+    objectFit: 'contain' as const,
+  },
+  previewAudio: {
+    width: '100%',
+  },
+  previewVideo: {
+    maxWidth: '100%',
+    maxHeight: '200px',
+    borderRadius: tokens.borderRadiusMedium,
+  },
 })

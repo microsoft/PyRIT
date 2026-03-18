@@ -13,10 +13,11 @@ Converters can be:
 """
 
 import inspect
+import mimetypes
 import re
 import uuid
 from functools import lru_cache
-from typing import Any, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Literal, Optional, Union, cast, get_args, get_origin
 
 from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -33,6 +34,7 @@ from pyrit.backend.models.converters import (
     PreviewStep,
 )
 from pyrit.models import PromptDataType
+from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
 from pyrit.registry.instance_registries import ConverterRegistry
 
@@ -290,12 +292,41 @@ class ConverterService:
         """
         Preview conversion through a converter pipeline.
 
+        For non-text data types (image_path, audio_path, etc.), persists base64 data
+        to a temporary file so converters can operate on file paths.
+
         Returns:
             ConverterPreviewResponse with step-by-step conversion results.
         """
+        original_value = request.original_value
+        data_type = request.original_value_data_type
+
+        # For path-based data types, persist base64/data-uri to a file
+        if str(data_type).endswith("_path") and not original_value.startswith("/"):
+            value = original_value
+            if value.startswith("data:"):
+                _, _, value = value.partition(",")
+
+            ext = ".bin"
+            mime_guess = {
+                "image_path": ".png",
+                "audio_path": ".wav",
+                "video_path": ".mp4",
+                "binary_path": ".bin",
+            }
+            ext = mime_guess.get(str(data_type), ".bin")
+
+            serializer = data_serializer_factory(
+                category="prompt-memory-entries",
+                data_type=cast("PromptDataType", data_type),
+                extension=ext,
+            )
+            await serializer.save_b64_image(data=value)
+            original_value = str(serializer.value)
+
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters(
-            converters=converters, initial_value=request.original_value, initial_type=request.original_value_data_type
+            converters=converters, initial_value=original_value, initial_type=data_type
         )
 
         return ConverterPreviewResponse(
@@ -448,7 +479,7 @@ class ConverterService:
 
         for conv_id, conv_type, conv_obj in converters:
             input_value, input_type = current_value, current_type
-            result = await conv_obj.convert_async(prompt=current_value)
+            result = await conv_obj.convert_async(prompt=current_value, input_type=current_type)
             current_value, current_type = result.output_text, result.output_type
 
             steps.append(

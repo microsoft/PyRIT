@@ -71,14 +71,16 @@ interface ChatInputAreaProps {
   onToggleConverterPanel?: () => void
   isConverterPanelOpen?: boolean
   onInputChange?: (value: string) => void
-  onAttachmentsChange?: (types: string[]) => void
+  onAttachmentsChange?: (types: string[], data: Record<string, string>) => void
   convertedValue?: string | null
   originalValue?: string | null
   onClearConversion?: () => void
   onConvertedValueChange?: (value: string) => void
+  mediaConversions?: Array<{ pieceType: string; convertedValue: string }>
+  onClearMediaConversion?: (pieceType: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue, onClearConversion, onConvertedValueChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue, onClearConversion, onConvertedValueChange, mediaConversions = [], onClearMediaConversion }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -170,7 +172,24 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   useEffect(() => {
     const types = [...new Set(attachments.map((a) => a.type))]
-    onAttachmentsChange?.(types)
+
+    // Convert attachment files to base64 data URIs for the converter panel
+    const buildData = async () => {
+      const data: Record<string, string> = {}
+      for (const att of attachments) {
+        if (!data[att.type] && att.file) {
+          const reader = new FileReader()
+          const base64 = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string)
+            reader.readAsDataURL(att.file!)
+          })
+          data[att.type] = base64
+        }
+      }
+      onAttachmentsChange?.(types, data)
+    }
+
+    void buildData()
   }, [attachments, onAttachmentsChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -341,6 +360,29 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               </Button>
             </div>
           )}
+          {mediaConversions.map((mc) => (
+            <div key={mc.pieceType} className={styles.conversionBarBottom} data-testid={`converted-${mc.pieceType}-indicator`}>
+              <span className={styles.convertedBadge}>Converted {mc.pieceType}</span>
+              {mc.convertedValue.match(/\.(png|jpg|jpeg|gif|bmp|webp)$/i) ? (
+                <img
+                  src={`/api/media?path=${encodeURIComponent(mc.convertedValue)}`}
+                  alt={`Converted ${mc.pieceType}`}
+                  className={styles.convertedMediaPreview}
+                />
+              ) : mc.convertedValue.match(/\.(wav|mp3|ogg|flac)$/i) ? (
+                <audio controls src={`/api/media?path=${encodeURIComponent(mc.convertedValue)}`} className={styles.convertedMediaPreview} />
+              ) : (
+                <Text size={200} className={styles.convertedTextarea}>{mc.convertedValue}</Text>
+              )}
+              <Button
+                appearance="subtle"
+                size="small"
+                onClick={() => onClearMediaConversion?.(mc.pieceType)}
+              >
+                ✕
+              </Button>
+            </div>
+          ))}
         </div>
         </>
         )}

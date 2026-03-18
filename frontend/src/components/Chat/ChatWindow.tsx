@@ -10,6 +10,8 @@ import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
+import type { PieceConversion } from './ConverterPanel'
+import { PIECE_TYPE_TO_DATA_TYPE } from './ConverterPanel'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
@@ -69,11 +71,15 @@ export default function ChatWindow({
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
-  const [convertedValue, setConvertedValue] = useState<string | null>(null)
-  const [originalValue, setOriginalValue] = useState<string | null>(null)
-  const [activeConverterInstanceId, setActiveConverterInstanceId] = useState<string | null>(null)
+  const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
+  const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
+
+  const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
+    setAttachmentTypes(types)
+    setAttachmentData(data)
+  }, [])
 
   // Auto-open conversation sidebar when loading a historical attack with multiple conversations
   useEffect(() => {
@@ -167,17 +173,18 @@ export default function ChatWindow({
   const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
     if (!activeTarget) { return }
 
-    // Capture converter state upfront before any async work or state clears
-    const converterInstanceId = activeConverterInstanceId
+    // Capture all piece conversions upfront before any async work or state clears
+    const conversions = { ...pieceConversions }
+    const textConversion = conversions['text']
 
     // Track which conversation this send belongs to (may be updated after attack creation)
     let sendConvId = activeConversationId || '__pending__'
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
-    // When a converter is active, show a preview locally while the backend applies it
-    const hasConversion = converterInstanceId != null && convertedValue != null
-    const displayContent = hasConversion ? convertedValue : originalValue
+    // When a text converter is active, show a preview locally
+    const hasTextConversion = textConversion != null && convertedValue != null
+    const displayContent = hasTextConversion ? convertedValue : originalValue
 
     // Add user message with attachments for display
     const userMessage: Message = {
@@ -185,7 +192,7 @@ export default function ChatWindow({
       content: displayContent,
       timestamp: new Date().toISOString(),
       attachments: attachments.length > 0 ? attachments : undefined,
-      originalContent: hasConversion ? originalValue : undefined,
+      originalContent: hasTextConversion ? originalValue : undefined,
     }
     setMessages(prev => [...prev, userMessage])
 
@@ -208,11 +215,18 @@ export default function ChatWindow({
       // Build message pieces from text + attachments — always use original text
       const pieces = await buildMessagePieces(originalValue, attachments)
 
-      // If a converter was previewed, set converted_value on the text piece directly.
-      // The backend skips converter application when converted_value is already set,
-      // but still stores converter_identifiers metadata.
-      if (hasConversion && pieces.length > 0 && pieces[0].data_type === 'text') {
-        pieces[0].converted_value = convertedValue
+      // Apply per-piece-type conversions from the converter panel
+      // Each piece type (text, image, audio, video) can have its own converter
+      const allConverterIds: string[] = []
+      for (const [pieceType, conv] of Object.entries(conversions)) {
+        const dataType = PIECE_TYPE_TO_DATA_TYPE[pieceType]
+        if (!dataType) continue
+        allConverterIds.push(conv.converterInstanceId)
+        for (const piece of pieces) {
+          if (piece.data_type === dataType && !piece.converted_value) {
+            piece.converted_value = conv.convertedValue
+          }
+        }
       }
 
       // Create attack lazily on first message
@@ -255,7 +269,7 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
-      const converterIds = converterInstanceId ? [converterInstanceId] : undefined
+      const converterIds = allConverterIds.length > 0 ? allConverterIds : undefined
       const response = await attacksApi.addMessage(currentAttackResultId!, {
         role: 'user',
         pieces,
@@ -267,9 +281,7 @@ export default function ChatWindow({
       })
 
       // Clear converter state after successful send
-      setConvertedValue(null)
-      setOriginalValue(null)
-      setActiveConverterInstanceId(null)
+      setPieceConversions({})
 
       // Only update displayed messages if the user is still viewing this conversation.
       // If they switched away the response is persisted server-side and will appear
@@ -491,11 +503,10 @@ export default function ChatWindow({
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
           previewText={chatInputText}
+          attachmentData={attachmentData}
           activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
-          onUseConvertedValue={(original, converted, converterInstanceId) => {
-            setOriginalValue(original)
-            setConvertedValue(converted)
-            setActiveConverterInstanceId(converterInstanceId)
+          onUseConvertedValue={(conversion) => {
+            setPieceConversions((prev) => ({ ...prev, [conversion.pieceType]: conversion }))
           }}
         />
       )}
@@ -571,11 +582,23 @@ export default function ChatWindow({
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
-          onAttachmentsChange={setAttachmentTypes}
-          convertedValue={convertedValue}
-          originalValue={originalValue}
-          onClearConversion={() => { setConvertedValue(null); setOriginalValue(null); setActiveConverterInstanceId(null) }}
-          onConvertedValueChange={setConvertedValue}
+          onAttachmentsChange={handleAttachmentsChange}
+          convertedValue={pieceConversions['text']?.convertedValue ?? null}
+          originalValue={pieceConversions['text']?.originalValue ?? null}
+          onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
+          onConvertedValueChange={(val) => setPieceConversions((prev) => {
+            const existing = prev['text']
+            if (!existing) return prev
+            return { ...prev, text: { ...existing, convertedValue: val } }
+          })}
+          mediaConversions={Object.entries(pieceConversions)
+            .filter(([k]) => k !== 'text')
+            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue }))}
+          onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {
+            const next = { ...prev }
+            delete next[pieceType]
+            return next
+          })}
         />
       </div>
       {isPanelOpen && (

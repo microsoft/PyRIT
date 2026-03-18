@@ -2298,6 +2298,7 @@ describe("ChatWindow Integration", () => {
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith({
       original_value: "hello",
       converter_ids: ["test-conv-id"],
+      original_value_data_type: "text",
     });
   }, 15000);
 

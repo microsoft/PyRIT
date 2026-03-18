@@ -178,6 +178,14 @@ export const useChatInputAreaStyles = makeStyles({
     wordBreak: 'break-word',
     padding: 0,
   },
+  convertedMediaPreview: {
+    maxHeight: '60px',
+    maxWidth: '100%',
+    borderRadius: tokens.borderRadiusSmall,
+    objectFit: 'contain' as const,
+    flex: 1,
+    minWidth: 0,
+  },
   originalBadge: {
     display: 'inline-block',
     padding: `0 ${tokens.spacingHorizontalXS}`,

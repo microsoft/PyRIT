@@ -130,7 +130,7 @@ export const convertersApi = {
     return response.data
   },
 
-  previewConversion: async (request: { original_value: string; converter_ids: string[] }): Promise<{ converted_value: string }> => {
+  previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string }> => {
     const response = await apiClient.post('/converters/preview', request)
     return response.data
   },
