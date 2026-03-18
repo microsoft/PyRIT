@@ -167,13 +167,16 @@ export default function ChatWindow({
   const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
     if (!activeTarget) { return }
 
+    // Capture converter state upfront before any async work or state clears
+    const converterInstanceId = activeConverterInstanceId
+
     // Track which conversation this send belongs to (may be updated after attack creation)
     let sendConvId = activeConversationId || '__pending__'
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
     // When a converter is active, show a preview locally while the backend applies it
-    const hasConversion = activeConverterInstanceId != null && convertedValue != null
+    const hasConversion = converterInstanceId != null && convertedValue != null
     const displayContent = hasConversion ? convertedValue : originalValue
 
     // Add user message with attachments for display
@@ -252,7 +255,7 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
-      const converterIds = activeConverterInstanceId ? [activeConverterInstanceId] : undefined
+      const converterIds = converterInstanceId ? [converterInstanceId] : undefined
       const response = await attacksApi.addMessage(currentAttackResultId!, {
         role: 'user',
         pieces,
@@ -572,6 +575,7 @@ export default function ChatWindow({
           convertedValue={convertedValue}
           originalValue={originalValue}
           onClearConversion={() => { setConvertedValue(null); setOriginalValue(null); setActiveConverterInstanceId(null) }}
+          onConvertedValueChange={setConvertedValue}
         />
       </div>
       {isPanelOpen && (

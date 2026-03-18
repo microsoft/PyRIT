@@ -75,9 +75,10 @@ interface ChatInputAreaProps {
   convertedValue?: string | null
   originalValue?: string | null
   onClearConversion?: () => void
+  onConvertedValueChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue, onClearConversion }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue, onClearConversion, onConvertedValueChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -323,9 +324,13 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           {convertedValue && (
             <div className={styles.conversionBarBottom} data-testid="converted-indicator">
               <span className={styles.convertedBadge}>Converted</span>
-              <Text size={200} className={styles.conversionText}>
-                {convertedValue}
-              </Text>
+              <textarea
+                className={styles.convertedTextarea}
+                value={convertedValue}
+                onChange={(e) => onConvertedValueChange?.(e.target.value)}
+                rows={1}
+                data-testid="converted-value-input"
+              />
               <Button
                 appearance="subtle"
                 size="small"
