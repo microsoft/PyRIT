@@ -96,7 +96,7 @@ class DataTypeSerializer(abc.ABC):
     data_sub_directory: str
     file_extension: str
 
-    _file_path: Union[Path, str] = None
+    _file_path: Optional[Union[Path, str]] = None
 
     @property
     def _memory(self) -> MemoryInterface:
@@ -118,7 +118,7 @@ class DataTypeSerializer(abc.ABC):
         if self._is_azure_storage_url(self.value):
             # Scenarios where a user utilizes an in-memory DuckDB but also needs to interact
             # with an Azure Storage Account, ex., XPIAWorkflow.
-            return self._memory.results_storage_io
+            return self._memory.results_storage_io or DiskStorageIO()
         return DiskStorageIO()
 
     @abc.abstractmethod
@@ -141,10 +141,12 @@ class DataTypeSerializer(abc.ABC):
 
         """
         file_path = await self.get_data_filename(file_name=output_filename)
+        assert self._memory.results_storage_io is not None, "Storage IO not initialized"
+        assert self._memory.results_storage_io is not None, "Storage IO not initialized"
         await self._memory.results_storage_io.write_file(file_path, data)
         self.value = str(file_path)
 
-    async def save_b64_image(self, data: str | bytes, output_filename: str = None) -> None:
+    async def save_b64_image(self, data: str | bytes, output_filename: Optional[str] = None) -> None:
         """
         Save a base64-encoded image to storage.
 
@@ -155,6 +157,7 @@ class DataTypeSerializer(abc.ABC):
         """
         file_path = await self.get_data_filename(file_name=output_filename)
         image_bytes = base64.b64decode(data)
+        assert self._memory.results_storage_io is not None
         await self._memory.results_storage_io.write_file(file_path, image_bytes)
         self.value = str(file_path)
 
@@ -190,6 +193,7 @@ class DataTypeSerializer(abc.ABC):
 
             async with aiofiles.open(local_temp_path, "rb") as f:
                 audio_data = await f.read()
+                assert self._memory.results_storage_io is not None
                 await self._memory.results_storage_io.write_file(file_path, audio_data)
             os.remove(local_temp_path)
 
@@ -253,7 +257,7 @@ class DataTypeSerializer(abc.ABC):
             ValueError: If in-memory data cannot be converted to bytes.
 
         """
-        input_bytes: bytes = None
+        input_bytes: Optional[bytes] = None
 
         if self.data_on_disk():
             storage_io = self._get_storage_io()
@@ -297,7 +301,7 @@ class DataTypeSerializer(abc.ABC):
             raise RuntimeError("Data sub directory not set")
 
         ticks = int(time.time() * 1_000_000)
-        results_path = self._memory.results_path
+        results_path = self._memory.results_path or ""
         file_name = file_name if file_name else str(ticks)
 
         if self._is_azure_storage_url(results_path):
@@ -305,6 +309,7 @@ class DataTypeSerializer(abc.ABC):
             self._file_path = full_data_directory_path + f"/{file_name}.{self.file_extension}"
         else:
             full_data_directory_path = results_path + self.data_sub_directory
+            assert self._memory.results_storage_io is not None
             await self._memory.results_storage_io.create_directory_if_not_exists(Path(full_data_directory_path))
             self._file_path = Path(full_data_directory_path, f"{file_name}.{self.file_extension}")
 

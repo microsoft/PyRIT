@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft Corporation.
+from typing import Optional
 # Licensed under the MIT license.
 
 import logging
@@ -14,7 +15,7 @@ class CentralMemory:
     The provided memory instance will be reused for future calls.
     """
 
-    _memory_instance: MemoryInterface = None
+    _memory_instance: Optional[MemoryInterface] = None
 
     @classmethod
     def set_memory_instance(cls, passed_memory: MemoryInterface) -> None:

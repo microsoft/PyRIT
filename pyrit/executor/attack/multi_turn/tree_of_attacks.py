@@ -166,7 +166,7 @@ class TAPAttackResult(AttackResult):
     @property
     def tree_visualization(self) -> Optional[Tree]:
         """Get the tree visualization from metadata."""
-        return cast("Optional[Tree]", self.metadata.get("tree_visualization", None))
+        return self.metadata.get("tree_visualization", None)
 
     @tree_visualization.setter
     def tree_visualization(self, value: Tree) -> None:
@@ -1359,6 +1359,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                     "TAP attack requires a FloatScaleThresholdScorer for objective_scorer. "
                     "Please wrap your scorer in FloatScaleThresholdScorer with an appropriate threshold."
                 )
+            assert objective_scorer is not None, "objective_scorer is required"
             tap_scoring_config = TAPAttackScoringConfig(
                 objective_scorer=objective_scorer,
                 refusal_scorer=attack_scoring_config.refusal_scorer,

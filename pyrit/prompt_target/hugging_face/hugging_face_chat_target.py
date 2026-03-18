@@ -230,18 +230,18 @@ class HuggingFaceChatTarget(PromptChatTarget):
                     ".cache",
                     "huggingface",
                     "hub",
-                    f"models--{self.model_id.replace('/', '--')}",
+                    f"models--{(self.model_id or '').replace('/', '--')}",
                 )
 
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id, None, self.huggingface_token, Path(cache_dir))
+                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
                     await download_specific_files(
-                        self.model_id, self.necessary_files, self.huggingface_token, Path(cache_dir)
+                        self.model_id or "", self.necessary_files, self.huggingface_token, Path(cache_dir)
                     )
 
                 # Load the tokenizer and model from the specified directory
@@ -345,7 +345,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             response = construct_response_from_request(
                 request=request,
                 response_text_pieces=[assistant_response],
-                prompt_metadata={"model_id": model_identifier},
+                prompt_metadata={"model_id": model_identifier or ""},
             )
             return [response]
 

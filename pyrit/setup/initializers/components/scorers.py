@@ -153,23 +153,24 @@ class ScorerInitializer(PyRITInitializer):
         unsafe_temp9: Optional[PromptChatTarget] = target_registry.get_instance_by_name(GPT4O_UNSAFE_TEMP9_TARGET)  # type: ignore[assignment]
 
         # Refusal Scorers
-        self._try_register(scorer_registry, REFUSAL_GPT4O, lambda: SelfAskRefusalScorer(chat_target=gpt4o), gpt4o)
+        self._try_register(scorer_registry, REFUSAL_GPT4O, lambda: SelfAskRefusalScorer(chat_target=gpt4o),  # type: ignore[arg-type]
+            gpt4o,)
         self._try_register(
             scorer_registry,
             INVERTED_REFUSAL_GPT4O,
-            lambda: TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=gpt4o)),
+            lambda: TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=gpt4o)),  # type: ignore[arg-type]
             gpt4o,
         )
         self._try_register(
             scorer_registry,
             INVERTED_REFUSAL_GPT4O_UNSAFE,
-            lambda: TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=unsafe)),
+            lambda: TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=unsafe)),  # type: ignore[arg-type]
             unsafe,
         )
         self._try_register(
             scorer_registry,
             INVERTED_REFUSAL_GPT4O_UNSAFE_TEMP9,
-            lambda: TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=unsafe_temp9)),
+            lambda: TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=unsafe_temp9)),  # type: ignore[arg-type]
             unsafe_temp9,
         )
 
@@ -198,7 +199,7 @@ class ScorerInitializer(PyRITInitializer):
                 aggregator=TrueFalseScoreAggregator.AND,
                 scorers=[
                     FloatScaleThresholdScorer(scorer=AzureContentFilterScorer(), threshold=0.5),
-                    TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=unsafe_temp9)),
+                    TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=unsafe_temp9)),  # type: ignore[arg-type]
                 ],
             ),
             unsafe_temp9,
@@ -207,7 +208,7 @@ class ScorerInitializer(PyRITInitializer):
             scorer_registry,
             SCALE_GPT4O_TEMP9_THRESHOLD_09,
             lambda: FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer(chat_target=gpt4o_temp9),
+                scorer=SelfAskScaleScorer(chat_target=gpt4o_temp9),  # type: ignore[arg-type]
                 threshold=0.9,
             ),
             gpt4o_temp9,
@@ -219,10 +220,10 @@ class ScorerInitializer(PyRITInitializer):
                 aggregator=TrueFalseScoreAggregator.AND,
                 scorers=[
                     FloatScaleThresholdScorer(
-                        scorer=SelfAskScaleScorer(chat_target=gpt4o_temp9),
+                        scorer=SelfAskScaleScorer(chat_target=gpt4o_temp9),  # type: ignore[arg-type]
                         threshold=0.9,
                     ),
-                    TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=gpt4o)),
+                    TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=gpt4o)),  # type: ignore[arg-type]
                 ],
             ),
             gpt4o_temp9,
@@ -252,7 +253,7 @@ class ScorerInitializer(PyRITInitializer):
             scorer_registry,
             TASK_ACHIEVED_GPT4O_TEMP9,
             lambda: SelfAskTrueFalseScorer(
-                chat_target=gpt4o_temp9,
+                chat_target=gpt4o_temp9,  # type: ignore[arg-type]
                 true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED.value,
             ),
             gpt4o_temp9,
@@ -261,7 +262,7 @@ class ScorerInitializer(PyRITInitializer):
             scorer_registry,
             TASK_ACHIEVED_REFINED_GPT4O_TEMP9,
             lambda: SelfAskTrueFalseScorer(
-                chat_target=gpt4o_temp9,
+                chat_target=gpt4o_temp9,  # type: ignore[arg-type]
                 true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED.value,
             ),
             gpt4o_temp9,
@@ -274,7 +275,7 @@ class ScorerInitializer(PyRITInitializer):
                 self._try_register(
                     scorer_registry,
                     scorer_name,
-                    lambda s=scale: SelfAskLikertScorer(chat_target=gpt4o, likert_scale=s),  # type: ignore[misc]
+                    lambda s=scale: SelfAskLikertScorer(chat_target=gpt4o, likert_scale=s),  # type: ignore[arg-type, misc]
                     gpt4o,
                 )
 

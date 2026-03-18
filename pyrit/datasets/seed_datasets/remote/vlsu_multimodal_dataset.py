@@ -171,6 +171,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             group_id = uuid.uuid4()
 
             try:
+                if image_url is None or text is None:
+                    continue
                 local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
 
                 # Create text prompt (sequence=0, sent first)
@@ -179,13 +181,13 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
                     data_type="text",
                     name="ML-VLSU Text",
                     dataset_name=self.dataset_name,
-                    harm_categories=[combined_category],
+                    harm_categories=[combined_category or ""],
                     description="Text component of ML-VLSU multimodal prompt.",
                     source=self.source,
                     prompt_group_id=group_id,
                     sequence=0,
                     metadata={
-                        "category": combined_category,
+                        "category": combined_category or "",
                         "text_grade": text_grade,
                         "image_grade": image_grade,
                         "combined_grade": combined_grade,
@@ -198,13 +200,13 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
                     data_type="image_path",
                     name="ML-VLSU Image",
                     dataset_name=self.dataset_name,
-                    harm_categories=[combined_category],
+                    harm_categories=[combined_category or ""],
                     description="Image component of ML-VLSU multimodal prompt.",
                     source=self.source,
                     prompt_group_id=group_id,
                     sequence=1,
                     metadata={
-                        "category": combined_category,
+                        "category": combined_category or "",
                         "text_grade": text_grade,
                         "image_grade": image_grade,
                         "combined_grade": combined_grade,
@@ -245,8 +247,10 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
         # Return existing path if image already exists
-        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
+        serializer.value = str((serializer._memory.results_path or "") + serializer.data_sub_directory + f"/{filename}")
         try:
+            assert serializer._memory.results_storage_io is not None
+            assert serializer._memory.results_storage_io is not None
             if await serializer._memory.results_storage_io.path_exists(serializer.value):
                 return serializer.value
         except Exception as e:

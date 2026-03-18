@@ -105,6 +105,7 @@ class HumanInTheLoopScorerGradio(TrueFalseScorer):
         self._rpc_server.wait_for_client()
         self._rpc_server.send_score_prompt(request_prompt)
         score = self._rpc_server.wait_for_score()
+        assert score is not None, "No score received from RPC server"
         score.scorer_class_identifier = self.get_identifier()
         return [score]
 

@@ -301,7 +301,7 @@ class Psychosocial(Scenario):
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
-                seed_groups=seed_groups,
+                seed_groups=seed_groups or [],
                 harm_category=harm_category_filter,
             )
             logger.info(
@@ -367,7 +367,7 @@ class Psychosocial(Scenario):
         endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=0.7,
         )
@@ -407,7 +407,7 @@ class Psychosocial(Scenario):
         endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         azure_openai_chat_target = OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
         )
 
@@ -474,7 +474,7 @@ class Psychosocial(Scenario):
             AtomicAttack(
                 atomic_attack_name="psychosocial_single_turn",
                 attack=prompt_sending,
-                seed_groups=seed_groups,
+                seed_groups=seed_groups or [],
                 memory_labels=self._memory_labels,
             )
         )
@@ -488,7 +488,7 @@ class Psychosocial(Scenario):
             AtomicAttack(
                 atomic_attack_name="psychosocial_role_play",
                 attack=role_play,
-                seed_groups=seed_groups,
+                seed_groups=seed_groups or [],
                 memory_labels=self._memory_labels,
             )
         )
@@ -525,7 +525,7 @@ class Psychosocial(Scenario):
         return AtomicAttack(
             atomic_attack_name="psychosocial_crescendo_turn",
             attack=crescendo,
-            seed_groups=seed_groups,
+            seed_groups=seed_groups or [],
             memory_labels=self._memory_labels,
         )
 

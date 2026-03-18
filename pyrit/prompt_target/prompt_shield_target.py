@@ -85,14 +85,17 @@ class PromptShieldTarget(PromptTarget):
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
         )
+        assert endpoint_value is not None, "Endpoint value is required"
         super().__init__(max_requests_per_minute=max_requests_per_minute, endpoint=endpoint_value)
 
-        self._api_version = api_version
+        self._api_version = api_version or "2024-09-01"
 
         # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(
+        _api_key_value = default_values.get_required_value(
             env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
         )
+        assert _api_key_value is not None, "API key is required"
+        self._api_key = _api_key_value
 
         self._force_entry_field: PromptShieldEntryField = field
 

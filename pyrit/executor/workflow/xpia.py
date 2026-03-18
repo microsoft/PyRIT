@@ -357,7 +357,9 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         Returns:
             str: The response from the processing target.
         """
+        assert context.processing_callback is not None, "processing_callback is not set"
         processing_response = await context.processing_callback()
+        assert self._memory is not None, "Memory not initialized"
         self._memory.add_message_to_memory(
             request=Message(
                 message_pieces=[

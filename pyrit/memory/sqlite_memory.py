@@ -111,6 +111,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         try:
             # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
+            if self.engine is None:
+                raise RuntimeError("Engine is not initialized")
             Base.metadata.create_all(self.engine, checkfirst=True)
         except Exception as e:
             logger.exception(f"Error during table creation: {e}")
@@ -337,7 +339,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         Drop and recreates all tables in the database.
         """
+        if self.engine is None:
+
+            raise RuntimeError("Engine is not initialized")
+
         Base.metadata.drop_all(self.engine)
+        if self.engine is None:
+
+            raise RuntimeError("Engine is not initialized")
+
         Base.metadata.create_all(self.engine)
 
     def dispose_engine(self) -> None:

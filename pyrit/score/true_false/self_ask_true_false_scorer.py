@@ -140,6 +140,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         if true_false_question_path:
             true_false_question_path = verify_and_resolve_path(true_false_question_path)
             true_false_question = yaml.safe_load(true_false_question_path.read_text(encoding="utf-8"))
+        assert true_false_question is not None, "Failed to load true_false_question YAML"
 
         for key in ["category", "true_description", "false_description"]:
             if key not in true_false_question:

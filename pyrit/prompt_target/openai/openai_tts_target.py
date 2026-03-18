@@ -132,7 +132,7 @@ class OpenAITTSTarget(OpenAITarget):
 
         # Use unified error handler for consistent error handling
         response = await self._handle_openai_request(
-            api_call=lambda: self._async_client.audio.speech.create(
+            api_call=lambda: self._client.audio.speech.create(
                 model=body_parameters["model"],
                 voice=body_parameters["voice"],
                 input=body_parameters["input"],

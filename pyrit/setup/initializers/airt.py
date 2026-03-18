@@ -125,7 +125,7 @@ class AIRTInitializer(PyRITInitializer):
 
         # 1. Setup converter target
         self._setup_converter_target(
-            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name
+            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name or ""
         )
 
         # 2. Setup scorers
@@ -133,12 +133,12 @@ class AIRTInitializer(PyRITInitializer):
             endpoint=scorer_endpoint,
             api_key=scorer_api_key,
             content_safety_api_key=content_safety_api_key,
-            model_name=scorer_model_name,
+            model_name=scorer_model_name or "",
         )
 
         # 3. Setup adversarial targets
         self._setup_adversarial_targets(
-            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name
+            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name or ""
         )
 
     def _setup_converter_target(self, *, endpoint: str, api_key: str, model_name: str) -> None:

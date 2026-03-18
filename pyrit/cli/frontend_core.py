@@ -41,7 +41,7 @@ except ImportError:
         """Dummy termcolor fallback for colored printing if termcolor is not installed."""
 
         @staticmethod
-        def cprint(text: str, color: str = None, attrs: list = None) -> None:  # type: ignore[type-arg]
+        def cprint(text: str, color: Optional[str] = None, attrs: Optional[list[Any]] = None) -> None:
             """Print text without color."""
             print(text)
 
