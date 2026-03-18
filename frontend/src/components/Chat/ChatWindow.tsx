@@ -74,6 +74,10 @@ export default function ChatWindow({
       setIsPanelOpen(true)
     }
   }, [attackResultId, relatedConversationCount])
+  // Set by panel click to bypass the in-flight guard on the next useEffect cycle.
+  // This lets users switch to a sending conversation while still protecting
+  // optimistic messages when handleSend internally updates activeConversationId.
+  const forceLoadRef = useRef(false)
   // Always-current ref of the conversation being viewed so async callbacks can
   // check whether the user navigated away while a request was in-flight.
   const viewedConvRef = useRef(activeConversationId ?? conversationId)
@@ -126,9 +130,12 @@ export default function ChatWindow({
   // Reload messages when activeConversationId changes
   useEffect(() => {
     if (!attackResultId || !activeConversationId) { return }
-    // Skip loading if a send is already in-flight for this conversation —
-    // the send handler will update messages when it completes.
-    if (sendingConvIdsRef.current.has(activeConversationId)) { return }
+    // Allow user-initiated switches (forceLoadRef), but skip re-loading when
+    // handleSend internally updated activeConversationId during an in-flight
+    // send — the optimistic messages are already displayed.
+    const force = forceLoadRef.current
+    forceLoadRef.current = false
+    if (!force && sendingConvIdsRef.current.has(activeConversationId)) { return }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])
 
@@ -143,6 +150,7 @@ export default function ChatWindow({
   // Handle conversation selection from the panel
   // For a different ID the useEffect handles loading; for same ID force a refresh
   const handlePanelSelectConversation = useCallback((convId: string) => {
+    forceLoadRef.current = true
     onSelectConversation(convId)
     if (convId === activeConversationId && attackResultId) {
       loadConversation(attackResultId, convId)

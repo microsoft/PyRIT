@@ -390,6 +390,9 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
+            # SQLite returns naive datetimes — normalize to UTC (same pattern as _ensure_utc)
+            if created_at is not None and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,
@@ -399,10 +402,12 @@ class AttackService:
                 )
             )
 
-        # Sort all conversations by created_at (earliest first, None last)
-        conversations.sort(
-            key=lambda c: (c.created_at is None, c.created_at or datetime.min.replace(tzinfo=timezone.utc))
-        )
+        # Sort conversations by created_at (earliest first). In-flight conversations
+        # have no stored messages yet so created_at is None — treat them as the most
+        # recent (they were just created) so they sort after older conversations
+        # instead of jumping to an arbitrary position.
+        now = datetime.now(timezone.utc)
+        conversations.sort(key=lambda c: c.created_at or now)
 
         return AttackConversationsResponse(
             attack_result_id=attack_result_id,
