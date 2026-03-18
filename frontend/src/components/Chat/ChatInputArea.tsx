@@ -268,6 +268,9 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             <div className={styles.attachmentsContainer}>
               {attachments.map((att, index) => (
                 <div key={index} className={styles.attachmentChip}>
+                  {mediaConversions.some((mc) => mc.pieceType === att.type) && (
+                    <span className={styles.originalBadge}>Original</span>
+                  )}
                   <Caption1>
                     {att.type === 'image' && '🖼️'}
                     {att.type === 'audio' && '🎵'}
@@ -363,17 +366,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           {mediaConversions.map((mc) => (
             <div key={mc.pieceType} className={styles.conversionBarBottom} data-testid={`converted-${mc.pieceType}-indicator`}>
               <span className={styles.convertedBadge}>Converted {mc.pieceType}</span>
-              {mc.convertedValue.match(/\.(png|jpg|jpeg|gif|bmp|webp)$/i) ? (
-                <img
-                  src={`/api/media?path=${encodeURIComponent(mc.convertedValue)}`}
-                  alt={`Converted ${mc.pieceType}`}
-                  className={styles.convertedMediaPreview}
-                />
-              ) : mc.convertedValue.match(/\.(wav|mp3|ogg|flac)$/i) ? (
-                <audio controls src={`/api/media?path=${encodeURIComponent(mc.convertedValue)}`} className={styles.convertedMediaPreview} />
-              ) : (
-                <Text size={200} className={styles.convertedTextarea}>{mc.convertedValue}</Text>
-              )}
+              <Text size={200} className={styles.convertedFilename}>{mc.convertedValue.split('/').pop()}</Text>
               <Button
                 appearance="subtle"
                 size="small"
