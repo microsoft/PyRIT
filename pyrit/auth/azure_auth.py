@@ -198,7 +198,7 @@ def get_access_token_from_interactive_login(scope: str) -> str:
     """
     try:
         token_provider = get_bearer_token_provider(InteractiveBrowserCredential(), scope)
-        return token_provider()
+        return str(token_provider())
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}': {e}")
         raise
@@ -222,7 +222,7 @@ def get_azure_token_provider(scope: str) -> Callable[[], str]:
         >>> token = token_provider()  # Get current token
     """
     try:
-        return get_bearer_token_provider(DefaultAzureCredential(), scope)
+        return get_bearer_token_provider(DefaultAzureCredential(), scope)  # type: ignore[no-any-return]
     except Exception as e:
         logger.error(f"Failed to obtain token provider for '{scope}': {e}")
         raise

@@ -63,7 +63,7 @@ class OpenAITextEmbedding(EmbeddingSupport):
         # Create async client - type: ignore needed because get_required_value returns str
         # but api_key parameter accepts str | Callable[[], str | Awaitable[str]]
         self._async_client = AsyncOpenAI(
-            api_key=api_key,  # type: ignore[arg-type]
+            api_key=api_key,
             base_url=endpoint,
         )
 

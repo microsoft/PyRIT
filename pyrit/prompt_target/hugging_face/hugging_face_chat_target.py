@@ -168,7 +168,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             **kwargs: Additional keyword arguments to pass to the model loader.
         """
         logger.info(f"Loading model and tokenizer from path: {path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call, unused-ignore]
+        self.tokenizer = AutoTokenizer.from_pretrained(
             path, trust_remote_code=self.trust_remote_code
         )
         self.model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=self.trust_remote_code, **kwargs)
@@ -246,7 +246,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
                 # Load the tokenizer and model from the specified directory
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call, unused-ignore]
+                self.tokenizer = AutoTokenizer.from_pretrained(
                     self.model_id, cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
                 )
                 self.model = AutoModelForCausalLM.from_pretrained(
@@ -257,7 +257,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)  # type: ignore[arg-type]
+            self.model = self.model.to(self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -309,7 +309,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
         try:
             # Ensure model is on the correct device (should already be the case from `load_model_and_tokenizer`)
-            self.model.to(self.device)  # type: ignore[arg-type]
+            self.model.to(self.device)
 
             # Record the length of the input tokens to later extract only the generated tokens
             input_length = input_ids.shape[-1]
