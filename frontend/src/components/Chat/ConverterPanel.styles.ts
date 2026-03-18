@@ -240,6 +240,16 @@ export const useConverterPanelStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     cursor: 'help',
   },
+  paramInputError: {
+    borderColor: tokens.colorPaletteRedBorder1,
+    ':focus': {
+      borderColor: tokens.colorPaletteRedBorder1,
+    },
+  },
+  paramErrorText: {
+    color: tokens.colorPaletteRedForeground1,
+    fontWeight: tokens.fontWeightSemibold as unknown as string,
+  },
   outputBox: {
     padding: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusMedium,

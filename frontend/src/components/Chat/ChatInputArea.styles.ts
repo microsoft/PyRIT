@@ -35,6 +35,7 @@ export const useChatInputAreaStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground3,
     borderRadius: '28px',
     border: `1px solid ${tokens.colorNeutralStroke1}`,
+    overflow: 'hidden',
     transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
     ':focus-within': {
       borderTopColor: tokens.colorBrandStroke1,

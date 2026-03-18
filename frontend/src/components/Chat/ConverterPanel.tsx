@@ -39,6 +39,7 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
   const [previewConverterInstanceId, setPreviewConverterInstanceId] = useState<string | null>(null)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [showValidation, setShowValidation] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -129,10 +130,24 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
     (converter) => converter.converter_type === selectedConverterType
   )
 
+  const missingRequiredParams = useMemo(() => {
+    if (!selectedConverter) return []
+    return (selectedConverter.parameters ?? [])
+      .filter((p) => p.required && !paramValues[p.name]?.trim())
+      .map((p) => p.name)
+  }, [selectedConverter, paramValues])
+
+  const hasRequiredParamErrors = missingRequiredParams.length > 0
+
   const handlePreview = async () => {
     if (!selectedConverterType || !previewText.trim()) {
       return
     }
+    if (hasRequiredParamErrors) {
+      setShowValidation(true)
+      return
+    }
+    setShowValidation(false)
     setIsPreviewing(true)
     setPreviewError(null)
     setPreviewOutput('')
@@ -156,6 +171,36 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
       setIsPreviewing(false)
     }
   }
+
+  // Auto-preview for non-LLM text-output converters (they're fast/cheap)
+  const autoPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (autoPreviewTimer.current) {
+      clearTimeout(autoPreviewTimer.current)
+      autoPreviewTimer.current = null
+    }
+
+    if (
+      !selectedConverter ||
+      selectedConverter.is_llm_based ||
+      !previewText.trim() ||
+      !(selectedConverter.supported_output_types ?? []).includes('text') ||
+      hasRequiredParamErrors
+    ) {
+      return
+    }
+
+    autoPreviewTimer.current = setTimeout(() => {
+      handlePreview()
+    }, 300)
+
+    return () => {
+      if (autoPreviewTimer.current) {
+        clearTimeout(autoPreviewTimer.current)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConverterType, previewText, paramValues, selectedConverter])
 
   const [panelWidth, setPanelWidth] = useState(320)
   const isDragging = useRef(false)
@@ -216,6 +261,7 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
             setPreviewOutput('')
             setPreviewConverterInstanceId(null)
             setPreviewError(null)
+            setShowValidation(false)
           }}
           size="small"
           className={styles.tabBar}
@@ -272,6 +318,7 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                   setPreviewOutput('')
                   setPreviewConverterInstanceId(null)
                   setPreviewError(null)
+                  setShowValidation(false)
                 }}
                 onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
                 placeholder="Search converters..."
@@ -340,7 +387,9 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                 >
                   Parameters
                 </Button>
-                {paramsExpanded && (selectedConverter.parameters ?? []).map((param) => (
+                {paramsExpanded && (selectedConverter.parameters ?? []).map((param) => {
+                  const isMissing = showValidation && param.required && !paramValues[param.name]?.trim()
+                  return (
                   <div key={param.name} className={styles.paramBlock}>
                     <span className={styles.paramLabel}>
                       <Text size={200} weight="semibold">{param.name}{param.required ? ' *' : ''}</Text>
@@ -371,12 +420,17 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                         onChange={(_, data) =>
                           setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
                         }
+                        className={isMissing ? styles.paramInputError : undefined}
                         data-testid={`param-${param.name}`}
                       />
                     )}
+                    {isMissing && (
+                      <Text size={100} className={styles.paramErrorText}>Required</Text>
+                    )}
                     <Text size={100} className={styles.hintText}>{param.type_name}</Text>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
