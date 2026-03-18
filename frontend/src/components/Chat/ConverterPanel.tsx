@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Tab, TabList, Text, Tooltip } from '@fluentui/react-components'
+import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Switch, Tab, TabList, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -399,7 +399,16 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                         </Tooltip>
                       )}
                     </span>
-                    {param.choices ? (
+                    {param.type_name === 'bool' || param.type_name === 'Optional[bool]' ? (
+                      <Switch
+                        checked={(paramValues[param.name] ?? param.default_value ?? 'false').toLowerCase() === 'true'}
+                        onChange={(_, data) =>
+                          setParamValues((prev) => ({ ...prev, [param.name]: data.checked ? 'true' : 'false' }))
+                        }
+                        label={(paramValues[param.name] ?? param.default_value ?? 'false').toLowerCase() === 'true' ? 'True' : 'False'}
+                        data-testid={`param-${param.name}`}
+                      />
+                    ) : param.choices ? (
                       <Select
                         value={paramValues[param.name] ?? param.default_value ?? ''}
                         onChange={(_, data) =>
@@ -427,7 +436,9 @@ export default function ConverterPanel({ onClose, previewText = '', activeInputT
                     {isMissing && (
                       <Text size={100} className={styles.paramErrorText}>Required</Text>
                     )}
-                    <Text size={100} className={styles.hintText}>{param.type_name}</Text>
+                    {param.type_name !== 'bool' && param.type_name !== 'Optional[bool]' && !param.choices && (
+                      <Text size={100} className={styles.hintText}>{param.type_name}</Text>
+                    )}
                   </div>
                   )
                 })}
