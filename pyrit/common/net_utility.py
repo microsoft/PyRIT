@@ -82,7 +82,7 @@ def remove_url_parameters(url: str) -> str:
 PostType = Literal["json", "data"]
 
 
-@retry(stop=stop_after_attempt(2), wait=wait_fixed(1), reraise=True)
+@retry(stop=stop_after_attempt(2), wait=wait_fixed(1), reraise=True)  # type: ignore[untyped-decorator]
 async def make_request_and_raise_if_error_async(
     endpoint_uri: str,
     method: str,
