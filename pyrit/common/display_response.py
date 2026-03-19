@@ -30,8 +30,8 @@ async def display_image_response(response_piece: MessagePiece) -> None:
         image_location = response_piece.converted_value
 
         try:
-            assert memory.results_storage_io is not None, "Storage IO not initialized"
-            assert memory.results_storage_io is not None, "Storage IO not initialized"
+            if memory.results_storage_io is None:
+                raise RuntimeError("Storage IO not initialized")
             image_bytes = await memory.results_storage_io.read_file(image_location)
         except Exception as e:
             if isinstance(memory.results_storage_io, AzureBlobStorageIO):

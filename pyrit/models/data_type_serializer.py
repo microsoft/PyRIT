@@ -141,8 +141,8 @@ class DataTypeSerializer(abc.ABC):
 
         """
         file_path = await self.get_data_filename(file_name=output_filename)
-        assert self._memory.results_storage_io is not None, "Storage IO not initialized"
-        assert self._memory.results_storage_io is not None, "Storage IO not initialized"
+        if self._memory.results_storage_io is None:
+            raise RuntimeError("Storage IO not initialized")
         await self._memory.results_storage_io.write_file(file_path, data)
         self.value = str(file_path)
 
@@ -157,7 +157,8 @@ class DataTypeSerializer(abc.ABC):
         """
         file_path = await self.get_data_filename(file_name=output_filename)
         image_bytes = base64.b64decode(data)
-        assert self._memory.results_storage_io is not None
+        if self._memory.results_storage_io is None:
+            raise RuntimeError("Storage IO not initialized")
         await self._memory.results_storage_io.write_file(file_path, image_bytes)
         self.value = str(file_path)
 
@@ -301,7 +302,11 @@ class DataTypeSerializer(abc.ABC):
             raise RuntimeError("Data sub directory not set")
 
         ticks = int(time.time() * 1_000_000)
-        results_path = self._memory.results_path or ""
+        if self._memory.results_path:
+            results_path = str(self._memory.results_path)
+        else:
+            from pyrit.common.path import DB_DATA_PATH
+            results_path = str(DB_DATA_PATH)
         file_name = file_name if file_name else str(ticks)
 
         if self._is_azure_storage_url(results_path):
