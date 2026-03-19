@@ -420,6 +420,11 @@ class ScoreEntry(Base):
         try:
             return ScorerEvaluationIdentifier(scorer_identifier).eval_hash
         except Exception:
+            logger.warning(
+                f"Failed to compute eval_hash for scorer {scorer_identifier.class_name}; "
+                "eval_hash will not be stored.",
+                exc_info=True,
+            )
             return None
 
     def get_score(self) -> Score:
