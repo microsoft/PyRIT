@@ -13,12 +13,14 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.identifiers import build_atomic_attack_identifier
+from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
 from pyrit.models import AttackResult, SeedAttackGroup
@@ -252,16 +254,11 @@ class AtomicAttack:
                 )
 
                 # Persist the enriched identifier back to the database.
-                # Compute eval_hash before truncation so it survives the DB round-trip.
-                from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
-
-                attack_eval_hash = None
-                try:
-                    attack_eval_hash = AtomicAttackEvaluationIdentifier(
-                        result.atomic_attack_identifier
-                    ).eval_hash
-                except Exception:
-                    pass
+                # Set eval_hash before truncation so it survives the DB round-trip.
+                with contextlib.suppress(Exception):
+                    if result.atomic_attack_identifier.eval_hash is None:
+                        eval_hash = AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
+                        object.__setattr__(result.atomic_attack_identifier, "eval_hash", eval_hash)
 
                 if result.attack_result_id:
                     memory.update_attack_result_by_id(
@@ -269,7 +266,6 @@ class AtomicAttack:
                         update_fields={
                             "atomic_attack_identifier": result.atomic_attack_identifier.to_dict(
                                 max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
-                                eval_hash=attack_eval_hash,
                             ),
                         },
                     )

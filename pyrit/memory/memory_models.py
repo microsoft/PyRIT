@@ -33,6 +33,10 @@ from sqlalchemy.types import Uuid
 import pyrit
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.identifiers.evaluation_identifier import (
+    AtomicAttackEvaluationIdentifier,
+    ScorerEvaluationIdentifier,
+)
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -50,6 +54,8 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
+
+logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
@@ -398,11 +404,11 @@ class ScoreEntry(Base):
         self.score_metadata = entry.score_metadata
         # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
-        # Compute eval_hash from untruncated identifier before truncation
-        scorer_eval_hash = self._compute_scorer_eval_hash(normalized_scorer)
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        if normalized_scorer.eval_hash is None:
+            self._set_scorer_eval_hash(normalized_scorer)
         self.scorer_class_identifier = normalized_scorer.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
-            eval_hash=scorer_eval_hash,
         )
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
@@ -413,19 +419,18 @@ class ScoreEntry(Base):
         self.pyrit_version = pyrit.__version__
 
     @staticmethod
-    def _compute_scorer_eval_hash(scorer_identifier: ComponentIdentifier) -> Optional[str]:
-        """Compute scorer eval_hash from an untruncated identifier."""
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
+    def _set_scorer_eval_hash(scorer_identifier: ComponentIdentifier) -> None:
+        """
+        Set eval_hash on the scorer identifier so it survives truncation.
+        """
         try:
-            return ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+            eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+            object.__setattr__(scorer_identifier, "eval_hash", eval_hash)
         except Exception:
             logger.warning(
-                f"Failed to compute eval_hash for scorer {scorer_identifier.class_name}; "
-                "eval_hash will not be stored.",
+                f"Failed to compute eval_hash for scorer {scorer_identifier.class_name}; eval_hash will not be stored.",
                 exc_info=True,
             )
-            return None
 
     def get_score(self) -> Score:
         """
@@ -790,12 +795,12 @@ class AttackResultEntry(Base):
         self.attack_identifier = (
             _attack_strategy_id.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH) if _attack_strategy_id else {}
         )
-        # Compute eval_hash from untruncated identifier before truncation
-        attack_eval_hash = self._compute_attack_eval_hash(entry.atomic_attack_identifier)
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
+            self._set_attack_eval_hash(entry.atomic_attack_identifier)
         self.atomic_attack_identifier = (
             entry.atomic_attack_identifier.to_dict(
                 max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
-                eval_hash=attack_eval_hash,
             )
             if entry.atomic_attack_identifier
             else None
@@ -825,21 +830,18 @@ class AttackResultEntry(Base):
         self.pyrit_version = pyrit.__version__
 
     @staticmethod
-    def _compute_attack_eval_hash(attack_identifier: Optional[ComponentIdentifier]) -> Optional[str]:
-        """Compute attack eval_hash from an untruncated identifier."""
-        if attack_identifier is None:
-            return None
-        from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
-
+    def _set_attack_eval_hash(attack_identifier: ComponentIdentifier) -> None:
+        """
+        Set eval_hash on the attack identifier so it survives truncation.
+        """
         try:
-            return AtomicAttackEvaluationIdentifier(attack_identifier).eval_hash
+            eval_hash = AtomicAttackEvaluationIdentifier(attack_identifier).eval_hash
+            object.__setattr__(attack_identifier, "eval_hash", eval_hash)
         except Exception:
             logger.warning(
-                f"Failed to compute eval_hash for attack {attack_identifier.class_name}; "
-                "eval_hash will not be stored.",
+                f"Failed to compute eval_hash for attack {attack_identifier.class_name}; eval_hash will not be stored.",
                 exc_info=True,
             )
-            return None
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> Optional[uuid.UUID]:
@@ -1006,8 +1008,6 @@ class ScenarioResultEntry(Base):
         Args:
             entry (ScenarioResult): The scenario result object to convert into a database entry.
         """
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
         self.id = entry.id
         self.scenario_name = entry.scenario_identifier.name
         self.scenario_description = entry.scenario_identifier.description
@@ -1018,16 +1018,13 @@ class ScenarioResultEntry(Base):
         self.objective_target_identifier = entry.objective_target_identifier.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
         )
-        # Compute eval_hash from untruncated identifier BEFORE truncation, then include
-        # it in the serialized dict so it survives the DB round-trip.
-        scorer_eval_hash = None
-        if entry.objective_scorer_identifier:
-            scorer_eval_hash = ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip.
+        if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
+            ScoreEntry._set_scorer_eval_hash(entry.objective_scorer_identifier)
 
         self.objective_scorer_identifier = (
             entry.objective_scorer_identifier.to_dict(
                 max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
-                eval_hash=scorer_eval_hash,
             )
             if entry.objective_scorer_identifier
             else None

@@ -4,8 +4,7 @@
 """
 Tests for pyrit.score.scorer_evaluation.scorer_evaluation_identifier.
 
-Covers ``ScorerEvaluationIdentifier`` ClassVar values, eval-hash delegation, and
-the ``Scorer.get_eval_hash()`` convenience method.
+Covers ``ScorerEvaluationIdentifier`` ClassVar values and eval-hash delegation.
 """
 
 import pytest
@@ -85,10 +84,10 @@ class TestScorerEvaluationIdentifierEvalHash:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScorerGetEvalHash:
-    """Tests for Scorer.get_eval_hash() convenience method (adapted from old TestGetEvalHash)."""
+    """Tests for ScorerEvaluationIdentifier eval_hash computation."""
 
-    def test_get_eval_hash_uses_scorer_identity(self):
-        """Test that Scorer.get_eval_hash() delegates to ScorerEvaluationIdentifier."""
+    def test_eval_hash_uses_scorer_identity(self):
+        """Test that ScorerEvaluationIdentifier computes eval_hash from identifier."""
 
         class FakeScorer(Identifiable):
             def _build_identifier(self) -> ComponentIdentifier:
@@ -109,8 +108,8 @@ class TestScorerGetEvalHash:
         )
         assert eval_hash == expected
 
-    def test_get_eval_hash_filters_operational_params(self):
-        """Test that Scorer.get_eval_hash() filters operational params from target children."""
+    def test_eval_hash_filters_operational_params(self):
+        """Test that eval_hash filters operational params from target children."""
 
         class ScorerLike(Identifiable):
             def __init__(self, *, endpoint: str):
@@ -135,7 +134,7 @@ class TestScorerGetEvalHash:
         # But different component hashes (endpoint is in full identity)
         assert scorer_a.get_identifier().hash != scorer_b.get_identifier().hash
 
-    def test_get_eval_hash_no_target_children_equals_component_hash(self):
+    def test_eval_hash_no_target_children_equals_component_hash(self):
         """Test that eval hash equals component hash when there are no target children."""
 
         class SimpleScorer(Identifiable):

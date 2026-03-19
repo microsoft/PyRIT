@@ -59,7 +59,7 @@ class FloatScaleScorer(Scorer):
             return None
 
         return find_harm_metrics_by_eval_hash(
-            eval_hash=self.get_eval_hash(),
+            eval_hash=self.get_identifier().eval_hash,
             harm_category=self.evaluation_file_mapping.harm_category,
         )
 

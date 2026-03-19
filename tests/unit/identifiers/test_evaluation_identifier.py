@@ -223,28 +223,28 @@ class TestEvaluationIdentifier:
         )
         assert identity.eval_hash == expected
 
-    def test_uses_stored_eval_hash_when_available(self):
-        """Test that EvaluationIdentifier uses stored_eval_hash instead of recomputing."""
+    def test_uses_eval_hash_when_available(self):
+        """Test that EvaluationIdentifier uses eval_hash instead of recomputing."""
         stored_hash = "stored_eval_hash_value_" + "0" * 42  # 64 chars
         cid = ComponentIdentifier(
             class_name="Scorer",
             class_module="pyrit.score",
             params={"system_prompt": "truncated..."},
         )
-        # Simulate a DB round-trip where stored_eval_hash was preserved
-        object.__setattr__(cid, "stored_eval_hash", stored_hash)
+        # Simulate a DB round-trip where eval_hash was preserved
+        object.__setattr__(cid, "eval_hash", stored_hash)
 
         identity = _StubEvaluationIdentifier(cid)
         assert identity.eval_hash == stored_hash
 
-    def test_computes_eval_hash_when_stored_is_none(self):
-        """Test that eval_hash is computed normally when stored_eval_hash is None."""
+    def test_computes_eval_hash_when_not_set(self):
+        """Test that eval_hash is computed normally when eval_hash is None."""
         cid = ComponentIdentifier(
             class_name="Scorer",
             class_module="pyrit.score",
             params={"threshold": 0.5},
         )
-        assert cid.stored_eval_hash is None
+        assert cid.eval_hash is None
 
         identity = _StubEvaluationIdentifier(cid)
         expected = compute_eval_hash(cid, child_eval_rules=_StubEvaluationIdentifier.CHILD_EVAL_RULES)
@@ -274,9 +274,10 @@ class TestEvaluationIdentifier:
 
         # Compute eval_hash from the untruncated identifier (the correct hash)
         correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
+        object.__setattr__(scorer_id, "eval_hash", correct_eval_hash)
 
-        # Simulate DB storage: serialize with truncation + eval_hash
-        truncated_dict = scorer_id.to_dict(max_value_length=80, eval_hash=correct_eval_hash)
+        # Simulate DB storage: serialize with truncation
+        truncated_dict = scorer_id.to_dict(max_value_length=80)
 
         # Verify params are actually truncated
         assert truncated_dict["system_prompt_template"].endswith("...")
@@ -288,6 +289,35 @@ class TestEvaluationIdentifier:
         recomputed = compute_eval_hash(reconstructed, child_eval_rules=_CHILD_EVAL_RULES)
         assert recomputed != correct_eval_hash, "Truncated params should produce different eval_hash"
 
-        # But EvaluationIdentifier uses stored_eval_hash, giving the correct result
+        # But EvaluationIdentifier uses the preserved eval_hash, giving the correct result
         identity = _StubEvaluationIdentifier(reconstructed)
         assert identity.eval_hash == correct_eval_hash
+
+    def test_eval_hash_preserved_through_double_roundtrip(self):
+        """Test that eval_hash is preserved when retrieved from DB and re-stored.
+
+        Simulates: fresh save → DB retrieve → re-store → DB retrieve.
+        The eval_hash computed at first save should survive all round-trips.
+        """
+        long_prompt = "Evaluate whether the response achieves the objective. " * 10
+        scorer_id = ComponentIdentifier(
+            class_name="SelfAskTrueFalseScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": long_prompt},
+        )
+
+        # First save: compute eval_hash from untruncated identifier
+        correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
+        object.__setattr__(scorer_id, "eval_hash", correct_eval_hash)
+        d1 = scorer_id.to_dict(max_value_length=80)
+
+        # First retrieve
+        r1 = ComponentIdentifier.from_dict(d1)
+        assert _StubEvaluationIdentifier(r1).eval_hash == correct_eval_hash
+
+        # Re-store: EvaluationIdentifier should use stored value, not recompute
+        d2 = r1.to_dict(max_value_length=80)
+
+        # Second retrieve
+        r2 = ComponentIdentifier.from_dict(d2)
+        assert _StubEvaluationIdentifier(r2).eval_hash == correct_eval_hash
