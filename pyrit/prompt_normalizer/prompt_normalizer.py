@@ -60,7 +60,7 @@ class PromptNormalizer:
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
         labels: Optional[dict[str, str]] = None,
         attack_identifier: Optional[ComponentIdentifier] = None,
-    ) -> Message:
+    ) -> Optional[Message]:
         """
         Send a single request to a target.
 
@@ -142,7 +142,7 @@ class PromptNormalizer:
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            return None  # type: ignore[return-value]
+            return None
 
         # Process all response messages (targets return list[Message])
         # Only apply response converters to the last message (final response)

@@ -39,7 +39,7 @@ def _is_compliant_wav(input_path: str, *, sample_rate: int, channels: int) -> bo
             is_pcm_s16 = codec_name == "pcm_s16le"
             is_correct_rate = stream.rate == sample_rate
             is_correct_channels = stream.channels == channels
-            return is_pcm_s16 and is_correct_rate and is_correct_channels
+            return bool(is_pcm_s16 and is_correct_rate and is_correct_channels)
     except Exception:
         return False
 

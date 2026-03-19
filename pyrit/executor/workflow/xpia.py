@@ -339,6 +339,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
             conversation_id=context.attack_setup_target_conversation_id,
         )
 
+        assert setup_response is not None, "Setup response was None"
         setup_response_text = setup_response.get_value()
         self._logger.info(f'Received the following response from the prompt target: "{setup_response_text}"')
 
@@ -573,6 +574,7 @@ class XPIATestWorkflow(XPIAWorkflow):
                 conversation_id=context.processing_conversation_id,
             )
 
+            assert response is not None, "Response was None"
             return response.get_value()
 
         # Set the processing callback on the context

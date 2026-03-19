@@ -134,6 +134,7 @@ class AzureBlobStorageTarget(PromptTarget):
         # If not, the file will be put in the root of the container.
         blob_path = f"{blob_prefix}/{file_name}" if blob_prefix else file_name
         try:
+            assert self._client_async is not None, "Blob storage client not initialized"
             blob_client = self._client_async.get_blob_client(blob=blob_path)
             if await blob_client.exists():
                 logger.info(msg=f"Blob {blob_path} already exists. Deleting it before uploading a new version.")

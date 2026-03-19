@@ -238,6 +238,7 @@ class ContextComplianceAttack(PromptSendingAttack):
             labels=context.memory_labels,
         )
 
+        assert response is not None, "Response was None"
         return response.get_value()
 
     async def _get_benign_question_answer_async(
@@ -265,6 +266,7 @@ class ContextComplianceAttack(PromptSendingAttack):
             labels=context.memory_labels,
         )
 
+        assert response is not None, "Response was None"
         return response.get_value()
 
     async def _get_objective_as_question_async(self, *, objective: str, context: SingleTurnAttackContext[Any]) -> str:
@@ -290,6 +292,7 @@ class ContextComplianceAttack(PromptSendingAttack):
             labels=context.memory_labels,
         )
 
+        assert response is not None, "Response was None"
         return response.get_value()
 
     def _construct_assistant_response(self, *, benign_answer: str, objective_question: str) -> str:

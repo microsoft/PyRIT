@@ -415,11 +415,13 @@ class CopilotAuthenticator(Authenticator):
 
                 logger.info("Waiting for email input...")
                 await page.wait_for_selector("#i0116", timeout=self._elements_timeout)
+                assert self._username is not None, "Username is not set"
                 await page.fill("#i0116", self._username)
                 await page.click("#idSIButton9")
 
                 logger.info("Waiting for password input...")
                 await page.wait_for_selector("#i0118", timeout=self._elements_timeout)
+                assert self._password is not None, "Password is not set"
                 await page.fill("#i0118", self._password)
                 await page.click("#idSIButton9")
 
@@ -450,7 +452,7 @@ class CopilotAuthenticator(Authenticator):
                 else:
                     logger.error(f"Failed to retrieve bearer token within {self._token_capture_timeout} seconds.")
 
-                return bearer_token  # type: ignore[no-any-return]
+                return bearer_token
             except Exception as e:
                 logger.error("Failed to retrieve access token using Playwright.")
 
