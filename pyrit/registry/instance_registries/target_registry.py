@@ -63,7 +63,7 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
             name: Optional custom registry name. If not provided,
                 derived from class name with identifier hash appended
                 (e.g., OpenAIChatTarget -> openai_chat_abc123).
-            tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
+            tags: Optional tags for categorization. Accepts a ``dict[str, str]``
                 or a ``list[str]`` (each string becomes a key with value ``""``).
         """
         if name is None:

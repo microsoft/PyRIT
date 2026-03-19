@@ -35,12 +35,12 @@ class RegistryEntry(Generic[T]):
     A wrapper around a registered instance, holding its name, tags, and the instance itself.
 
     Tags are always stored as ``dict[str, str]``. When callers pass a plain
-    ``list[str]``, each string is normalised to a key with an empty-string value.
+    ``list[str]``, each string is normalized to a key with an empty-string value.
 
     Attributes:
         name: The registry name for this entry.
         instance: The registered object.
-        tags: Key-value tags for categorisation and filtering.
+        tags: Key-value tags for categorization and filtering.
     """
 
     name: str
