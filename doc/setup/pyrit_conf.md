@@ -132,7 +132,7 @@ Because initializers run last, they can modify anything set up in earlier steps 
 The CLI and shell automatically load `~/.pyrit/.pyrit_conf`. You can also point to a different config file:
 
 ```bash
-pyrit scan run --config-file ./my_project_config.yaml --database InMemory
+pyrit_scan run --config-file ./my_project_config.yaml --database InMemory
 ```
 
 Individual CLI arguments (like `--database`) override values from the config file.

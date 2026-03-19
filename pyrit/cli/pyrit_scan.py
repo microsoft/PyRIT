@@ -43,7 +43,7 @@ Examples:
   pyrit_scan garak.encoding --initialization-scripts ./my_config.py
 
   # Run specific strategies or options
-  pyrit scan foundry --strategies base64 rot13 --initializers openai_objective_target
+  pyrit_scan foundry --strategies base64 rot13 --initializers openai_objective_target
   pyrit_scan foundry --initializers openai_objective_target --max-concurrency 10 --max-retries 3
   pyrit_scan garak.encoding --initializers openai_objective_target --memory-labels '{"run_id":"test123"}'
 """,
