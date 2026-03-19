@@ -118,7 +118,7 @@ display(compressed_img)
 # %% [markdown]
 # ### TransparencyAttackConverter
 #
-# The `TransparencyAttackConverter` creates dual-perception PNG images based on the research paper [Transparency Attacks: How Imperceptible Image Layers Can Fool AI Perception](https://arxiv.org/abs/2401.15817).
+# The `TransparencyAttackConverter` creates dual-perception PNG images based on the research paper "Transparency Attacks" [@mckee2024transparency].
 #
 # This converter leverages a blending algorithm that creates images where visible content changes based on the background color. Benign content is visible on light backgrounds, while attack content becomes visible on dark backgrounds.
 

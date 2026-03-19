@@ -30,16 +30,27 @@ memory_db_type: sqlite
 #
 # Each initializer can be specified as:
 # - A simple string (name only)
-# - A dictionary with 'name' and optional 'args' for constructor arguments
+# - A dictionary with 'name' and optional 'args' for parameters
+#
+# Parameters are lists of strings. Use the CLI command
+# `pyrit_scan --list-initializers` to see available parameters.
 #
 # Example:
 # initializers:
 #   - simple
-#   - name: airt
+#   - name: target
 #     args:
-#       some_param: value
+#       tags:
+#         - default
+#         - scorer
 initializers:
-  - simple
+  - name: simple
+  - name: scorer
+  - name: target
+    args:
+      tags:
+        - default
+        - scorer
 
 # Operator and Operation Labels
 # ------------------------------

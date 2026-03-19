@@ -47,7 +47,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     Note: The first call may be slow as images need to be downloaded from remote URLs.
     Subsequent calls will be faster since images are cached locally.
 
-    Reference: https://arxiv.org/abs/2501.01151
+    Reference: [@palaskar2025vlsu]
     """
 
     def __init__(

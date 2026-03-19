@@ -95,7 +95,7 @@ Examples:
 
     parser.add_argument(
         "--initializers",
-        type=str,
+        type=frontend_core._parse_initializer_arg,
         nargs="+",
         help=frontend_core.ARG_HELP["initializers"],
     )

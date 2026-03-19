@@ -38,7 +38,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     Subsequent calls will be faster since images are cached locally.
 
     Reference: https://www.harmbench.org/
-    Paper: https://arxiv.org/abs/2402.04249
+    Paper: [@mazeika2024harmbench]
     """
 
     def __init__(

@@ -42,7 +42,7 @@ class _JsonResponseConfig:
             return cls(enabled=False)
 
         schema_val = metadata.get(_METADATAKEYS["JSON_SCHEMA"])
-        if schema_val:
+        if schema_val is not None:
             if isinstance(schema_val, str):
                 try:
                     schema = json.loads(schema_val) if schema_val else None

@@ -69,16 +69,20 @@ repos:
 
   - repo: local
     hooks:
-      - id: validate-jupyter-book
-        name: Validate Jupyter Book Structure
-        entry: python ./build_scripts/validate_jupyter_book.py
+      - id: remove-notebook-headers
+        name: Remove Notebook Headers
+        entry: python ./build_scripts/remove_notebook_headers.py
         language: python
-        files: ^(doc/.*\.(py|ipynb|md|rst)|doc/_toc\.yml)$
+        files: ^doc.*\.(ipynb)$
+      - id: sanitize-notebook-paths
+        name: Sanitize Notebook Paths
+        entry: python ./build_scripts/sanitize_notebook_paths.py
+        language: python
+        files: ^doc.*\.(ipynb)$
+      - id: validate-docs
+        name: Validate Documentation Structure
+        entry: python ./build_scripts/validate_docs.py
+        language: python
+        files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
         pass_filenames: false
         additional_dependencies: ['pyyaml']
-      - id: website
-        name: Jupyter Book Build Check
-        entry: python ./build_scripts/conditional_jb_build.py
-        language: system
-        types: [python]
-        pass_filenames: false

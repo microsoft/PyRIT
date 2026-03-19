@@ -19,6 +19,9 @@ from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import (
 from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import (
     _BeaverTailsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
+    _CBTBenchDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import (
     _CCPSensitivePromptsDataset,
 )  # noqa: F401
@@ -112,6 +115,7 @@ __all__ = [
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
+    "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
     "_DarkBenchDataset",
     "_EquityMedQADataset",

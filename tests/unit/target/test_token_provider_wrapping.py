@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.prompt_target.openai.openai_target import _ensure_async_token_provider
+from pyrit.auth import ensure_async_token_provider
 
 
 class TestTokenProviderWrapping:
@@ -15,13 +15,13 @@ class TestTokenProviderWrapping:
     def test_string_api_key_unchanged(self):
         """Test that string API keys are returned unchanged."""
         api_key = "sk-test-key-12345"
-        result = _ensure_async_token_provider(api_key)
+        result = ensure_async_token_provider(api_key)
         assert result == api_key
         assert isinstance(result, str)
 
     def test_none_api_key_unchanged(self):
         """Test that None is returned unchanged."""
-        result = _ensure_async_token_provider(None)
+        result = ensure_async_token_provider(None)
         assert result is None
 
     def test_async_token_provider_unchanged(self):
@@ -30,7 +30,7 @@ class TestTokenProviderWrapping:
         async def async_token_provider():
             return "async-token"
 
-        result = _ensure_async_token_provider(async_token_provider)
+        result = ensure_async_token_provider(async_token_provider)
         assert result is async_token_provider
         assert asyncio.iscoroutinefunction(result)
 
@@ -40,7 +40,7 @@ class TestTokenProviderWrapping:
         def sync_token_provider():
             return "sync-token"
 
-        result = _ensure_async_token_provider(sync_token_provider)
+        result = ensure_async_token_provider(sync_token_provider)
 
         # Should return a different callable (the wrapper)
         assert result is not sync_token_provider
@@ -54,7 +54,7 @@ class TestTokenProviderWrapping:
         def sync_token_provider():
             return "my-sync-token"
 
-        wrapped = _ensure_async_token_provider(sync_token_provider)
+        wrapped = ensure_async_token_provider(sync_token_provider)
 
         # Call the wrapped provider
         token = await wrapped()
@@ -67,7 +67,7 @@ class TestTokenProviderWrapping:
         async def async_token_provider():
             return "my-async-token"
 
-        result = _ensure_async_token_provider(async_token_provider)
+        result = ensure_async_token_provider(async_token_provider)
 
         # Should be the same function
         assert result is async_token_provider
@@ -86,7 +86,7 @@ class TestTokenProviderWrapping:
             call_count += 1
             return f"token-{call_count}"
 
-        wrapped = _ensure_async_token_provider(sync_token_provider)
+        wrapped = ensure_async_token_provider(sync_token_provider)
 
         # Call multiple times
         token1 = await wrapped()
@@ -97,15 +97,15 @@ class TestTokenProviderWrapping:
         assert call_count == 2
 
     def test_sync_provider_wrapping_logs_info(self):
-        """Test that wrapping a sync provider logs an info message."""
+        """Test that wrapping a sync provider logs a debug message."""
 
         def sync_token_provider():
             return "token"
 
-        with patch("pyrit.prompt_target.openai.openai_target.logger") as mock_logger:
-            _ensure_async_token_provider(sync_token_provider)
-            mock_logger.info.assert_called_once()
-            call_args = mock_logger.info.call_args[0][0]
+        with patch("pyrit.auth.azure_auth.logger") as mock_logger:
+            ensure_async_token_provider(sync_token_provider)
+            mock_logger.debug.assert_called_once()
+            call_args = mock_logger.debug.call_args[0][0]
             assert "synchronous token provider" in call_args.lower()
             assert "wrapping" in call_args.lower()
 
@@ -124,7 +124,7 @@ class TestOpenAITargetWithTokenProviders:
 
         with (
             patch("pyrit.prompt_target.openai.openai_target.AsyncOpenAI") as mock_openai,
-            patch("pyrit.prompt_target.openai.openai_target.logger") as mock_logger,
+            patch("pyrit.auth.azure_auth.logger") as mock_logger,
         ):
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
@@ -135,14 +135,14 @@ class TestOpenAITargetWithTokenProviders:
                 api_key=sync_token_provider,
             )
 
-            # Verify that info log was called about wrapping
-            mock_logger.info.assert_called()
+            # Verify that debug log was called about wrapping
+            mock_logger.debug.assert_called()
             info_call_found = False
-            for call in mock_logger.info.call_args_list:
+            for call in mock_logger.debug.call_args_list:
                 if "synchronous token provider" in str(call).lower():
                     info_call_found = True
                     break
-            assert info_call_found, "Expected info log about wrapping sync token provider"
+            assert info_call_found, "Expected debug log about wrapping sync token provider"
 
             # Verify AsyncOpenAI was initialized
             mock_openai.assert_called_once()
@@ -223,7 +223,7 @@ class TestOpenAITargetWithTokenProviders:
 
         with (
             patch("pyrit.prompt_target.openai.openai_target.AsyncOpenAI") as mock_openai,
-            patch("pyrit.prompt_target.openai.openai_target.logger") as mock_logger,
+            patch("pyrit.auth.azure_auth.logger") as mock_logger,
         ):
             mock_client = AsyncMock()
             mock_openai.return_value = mock_client
@@ -235,7 +235,7 @@ class TestOpenAITargetWithTokenProviders:
             )
 
             # Verify that sync provider was wrapped
-            mock_logger.info.assert_called()
+            mock_logger.debug.assert_called()
 
             # Get the wrapped api_key
             call_kwargs = mock_openai.call_args[1]

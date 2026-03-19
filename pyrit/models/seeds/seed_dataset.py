@@ -234,11 +234,11 @@ class SeedDataset(YamlLoadable):
 
         if first is None and last is None:
             return values
-        if first and last and first + last >= len(values):
+        if first is not None and last is not None and first + last >= len(values):
             return values  # simply return all values in case of an overlap
 
         first_part = values[:first] if first is not None else []
-        last_part = values[-last:] if last is not None else []
+        last_part = values[-last:] if last else []
 
         return first_part + last_part
 

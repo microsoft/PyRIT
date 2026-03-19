@@ -20,7 +20,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     - 'alert': 15k red teaming prompts
     - 'alert_adversarial': 30k adversarial red teaming prompts
 
-    Reference: https://huggingface.co/datasets/Babelscape/ALERT
+    Reference: [@tedeschi2024alert]
     """
 
     def __init__(

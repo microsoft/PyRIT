@@ -25,14 +25,14 @@ class TestFrontendCore:
 
         assert context._database == frontend_core.SQLITE
         assert context._initialization_scripts is None
-        assert context._initializer_names is None
+        assert context._initializer_configs is None
         assert context._log_level == logging.WARNING
         assert context._initialized is False
 
     def test_init_with_all_parameters(self):
         """Test initialization with all parameters."""
         scripts = [Path("/test/script.py")]
-        initializers = ["test_init"]
+        initializers = ["alpha_init", "beta_init", "gamma_init"]
 
         context = frontend_core.FrontendCore(
             database=frontend_core.IN_MEMORY,
@@ -46,7 +46,8 @@ class TestFrontendCore:
         assert context._initialization_scripts is not None
         assert len(context._initialization_scripts) == 1
         assert context._initialization_scripts[0].parts[-2:] == ("test", "script.py")
-        assert context._initializer_names == initializers
+        assert context._initializer_configs is not None
+        assert [ic.name for ic in context._initializer_configs] == initializers
         assert context._log_level == logging.DEBUG
 
     def test_init_with_invalid_database(self):
@@ -517,6 +518,49 @@ class TestFormatFunctions:
         assert "Test description" in captured.out
 
 
+class TestParseInitializerArg:
+    """Tests for _parse_initializer_arg function."""
+
+    def test_simple_name_returns_string(self) -> None:
+        """Test that a plain name without ':' returns the string as-is."""
+        assert frontend_core._parse_initializer_arg("simple") == "simple"
+
+    def test_name_with_single_param(self) -> None:
+        """Test name:key=value parsing."""
+        result = frontend_core._parse_initializer_arg("target:tags=default")
+        assert result == {"name": "target", "args": {"tags": ["default"]}}
+
+    def test_name_with_comma_separated_values(self) -> None:
+        """Test that comma-separated values are split into a list."""
+        result = frontend_core._parse_initializer_arg("target:tags=default,scorer")
+        assert result == {"name": "target", "args": {"tags": ["default", "scorer"]}}
+
+    def test_name_with_multiple_params(self) -> None:
+        """Test semicolon-separated multiple params."""
+        result = frontend_core._parse_initializer_arg("target:tags=default;mode=strict")
+        assert result == {"name": "target", "args": {"tags": ["default"], "mode": ["strict"]}}
+
+    def test_missing_name_before_colon_raises(self) -> None:
+        """Test that ':key=val' with no name raises ValueError."""
+        with pytest.raises(ValueError, match="missing name before ':'"):
+            frontend_core._parse_initializer_arg(":tags=default")
+
+    def test_missing_equals_in_param_raises(self) -> None:
+        """Test that 'name:badparam' without '=' raises ValueError."""
+        with pytest.raises(ValueError, match="expected key=value format"):
+            frontend_core._parse_initializer_arg("target:badparam")
+
+    def test_empty_key_raises(self) -> None:
+        """Test that 'name:=value' with empty key raises ValueError."""
+        with pytest.raises(ValueError, match="empty key"):
+            frontend_core._parse_initializer_arg("target:=value")
+
+    def test_colon_but_no_params_returns_string(self) -> None:
+        """Test that 'name:' with trailing colon but no params returns the name string."""
+        result = frontend_core._parse_initializer_arg("target:")
+        assert result == "target"
+
+
 class TestParseRunArguments:
     """Tests for parse_run_arguments function."""
 
@@ -534,6 +578,31 @@ class TestParseRunArguments:
 
         assert result["scenario_name"] == "test_scenario"
         assert result["initializers"] == ["init1", "init2"]
+
+    def test_parse_run_arguments_with_initializer_params(self):
+        """Test parsing initializers with key=value params."""
+        result = frontend_core.parse_run_arguments(
+            args_string="test_scenario --initializers simple target:tags=default"
+        )
+
+        assert result["initializers"][0] == "simple"
+        assert result["initializers"][1] == {"name": "target", "args": {"tags": ["default"]}}
+
+    def test_parse_run_arguments_with_initializer_multiple_params(self):
+        """Test parsing initializers with multiple key=value params separated by semicolons."""
+        result = frontend_core.parse_run_arguments(
+            args_string="test_scenario --initializers target:tags=default;mode=strict"
+        )
+
+        assert result["initializers"][0] == {"name": "target", "args": {"tags": ["default"], "mode": ["strict"]}}
+
+    def test_parse_run_arguments_with_initializer_comma_list(self):
+        """Test parsing initializer params with comma-separated values into lists."""
+        result = frontend_core.parse_run_arguments(
+            args_string="test_scenario --initializers target:tags=default,scorer"
+        )
+
+        assert result["initializers"][0] == {"name": "target", "args": {"tags": ["default", "scorer"]}}
 
     def test_parse_run_arguments_with_strategies(self):
         """Test parsing with strategies."""

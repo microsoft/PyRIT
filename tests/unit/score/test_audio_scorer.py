@@ -227,3 +227,98 @@ class TestAudioFloatScaleScorer:
 
             # Empty transcript returns empty list
             assert len(scores) == 0
+
+
+class TestPyAVAudioConversion:
+    """Tests for PyAV audio conversion functions"""
+
+    @pytest.fixture
+    def compliant_wav_file(self):
+        """Create a compliant 16kHz mono PCM WAV file"""
+        import av
+        import numpy as np
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            output_path = tmp.name
+
+        sample_rate = 16000
+        duration = 0.5
+        t = np.linspace(0, duration, int(sample_rate * duration), dtype=np.float32)
+        audio_data = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+
+        with av.open(output_path, "w", format="wav") as container:
+            stream = container.add_stream("pcm_s16le", rate=sample_rate, layout="mono")
+            frame = av.AudioFrame.from_ndarray(audio_data.reshape(1, -1), format="s16", layout="mono")
+            frame.rate = sample_rate
+            for packet in stream.encode(frame):
+                container.mux(packet)
+            for packet in stream.encode(None):
+                container.mux(packet)
+
+        yield output_path
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+    @pytest.fixture
+    def non_compliant_wav_file(self):
+        """Create a 44100Hz mono WAV (wrong sample rate)"""
+        import av
+        import numpy as np
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            output_path = tmp.name
+
+        sample_rate = 44100  # Wrong sample rate
+        duration = 0.5
+        t = np.linspace(0, duration, int(sample_rate * duration), dtype=np.float32)
+        audio_data = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+
+        with av.open(output_path, "w", format="wav") as container:
+            stream = container.add_stream("pcm_s16le", rate=sample_rate, layout="mono")
+            frame = av.AudioFrame.from_ndarray(audio_data.reshape(1, -1), format="s16", layout="mono")
+            frame.rate = sample_rate
+            for packet in stream.encode(frame):
+                container.mux(packet)
+            for packet in stream.encode(None):
+                container.mux(packet)
+
+        yield output_path
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+    def test_is_compliant_wav_true(self, compliant_wav_file):
+        """Test that _is_compliant_wav returns True for compliant files"""
+        from pyrit.score.audio_transcript_scorer import _is_compliant_wav
+
+        assert _is_compliant_wav(compliant_wav_file, sample_rate=16000, channels=1) is True
+
+    def test_is_compliant_wav_false_wrong_rate(self, non_compliant_wav_file):
+        """Test that _is_compliant_wav returns False for wrong sample rate"""
+        from pyrit.score.audio_transcript_scorer import _is_compliant_wav
+
+        assert _is_compliant_wav(non_compliant_wav_file, sample_rate=16000, channels=1) is False
+
+    def test_is_compliant_wav_nonexistent_file(self):
+        """Test that _is_compliant_wav returns False for nonexistent files"""
+        from pyrit.score.audio_transcript_scorer import _is_compliant_wav
+
+        assert _is_compliant_wav("/nonexistent/file.wav", sample_rate=16000, channels=1) is False
+
+    def test_audio_to_wav_returns_original_for_compliant(self, compliant_wav_file):
+        """Test that _audio_to_wav returns the original path for compliant files"""
+        from pyrit.score.audio_transcript_scorer import _audio_to_wav
+
+        result = _audio_to_wav(compliant_wav_file, sample_rate=16000, channels=1)
+        assert result == compliant_wav_file
+
+    def test_audio_to_wav_converts_non_compliant(self, non_compliant_wav_file):
+        """Test that _audio_to_wav converts non-compliant files"""
+        from pyrit.score.audio_transcript_scorer import _audio_to_wav, _is_compliant_wav
+
+        result = _audio_to_wav(non_compliant_wav_file, sample_rate=16000, channels=1)
+        try:
+            assert result != non_compliant_wav_file
+            assert _is_compliant_wav(result, sample_rate=16000, channels=1) is True
+        finally:
+            if result != non_compliant_wav_file and os.path.exists(result):
+                os.remove(result)
