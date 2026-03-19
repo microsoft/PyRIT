@@ -358,7 +358,8 @@ class AnecdoctorGenerator(
             RuntimeError: If knowledge graph extraction fails.
         """
         # Processing model is guaranteed to exist when this method is called
-        assert self._processing_model is not None
+        if self._processing_model is None:
+            raise ValueError("self._processing_model is not initialized")
 
         self._logger.debug("Extracting knowledge graph from evaluation data")
 

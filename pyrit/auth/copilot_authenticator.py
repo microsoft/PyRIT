@@ -415,13 +415,15 @@ class CopilotAuthenticator(Authenticator):
 
                 logger.info("Waiting for email input...")
                 await page.wait_for_selector("#i0116", timeout=self._elements_timeout)
-                assert self._username is not None, "Username is not set"
+                if self._username is None:
+                    raise ValueError("Username is not set")
                 await page.fill("#i0116", self._username)
                 await page.click("#idSIButton9")
 
                 logger.info("Waiting for password input...")
                 await page.wait_for_selector("#i0118", timeout=self._elements_timeout)
-                assert self._password is not None, "Password is not set"
+                if self._password is None:
+                    raise ValueError("Password is not set")
                 await page.fill("#i0118", self._password)
                 await page.click("#idSIButton9")
 

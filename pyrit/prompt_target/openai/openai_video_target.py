@@ -194,7 +194,8 @@ class OpenAIVideoTarget(OpenAITarget):
         self._validate_request(message=message)
 
         text_piece = message.get_piece_by_type(data_type="text")
-        assert text_piece is not None, "No text piece found in message"
+        if text_piece is None:
+            raise ValueError("No text piece found in message")
 
         # Validate video_path pieces for remix mode (does not strip them)
         self._validate_video_remix_pieces(message=message)

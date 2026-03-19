@@ -97,7 +97,8 @@ class AppRPCServer:
         def send_score_prompt(self, prompt: MessagePiece, task: Optional[str] = None) -> None:
             if not self.is_client_ready():
                 raise RPCClientNotReadyException
-            assert self._callback_score_prompt is not None
+            if self._callback_score_prompt is None:
+                raise ValueError("self._callback_score_prompt is not initialized")
             self._callback_score_prompt(prompt, task)
 
         def is_ping_missed(self) -> bool:
@@ -166,7 +167,8 @@ class AppRPCServer:
         """
         self.stop_request()
         if self._server is not None:
-            assert self._server_thread is not None
+            if self._server_thread is None:
+                raise ValueError("self._server_thread is not initialized")
             self._server_thread.join()
 
         if self._is_alive_thread is not None:
@@ -216,7 +218,8 @@ class AppRPCServer:
             raise RPCServerStoppedException
 
         score_ref = self._rpc_service.pop_score_received()
-        assert self._client_ready_semaphore is not None
+        if self._client_ready_semaphore is None:
+            raise ValueError("self._client_ready_semaphore is not initialized")
         self._client_ready_semaphore.release()
         if score_ref is None:
             return None

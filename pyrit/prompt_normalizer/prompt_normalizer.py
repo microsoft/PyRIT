@@ -36,7 +36,8 @@ class PromptNormalizer:
 
     @property
     def memory(self) -> MemoryInterface:
-        assert self._memory is not None, "Memory is not initialized"
+        if self._memory is None:
+            raise ValueError("Memory is not initialized")
         return self._memory
 
     def __init__(self, start_token: str = "⟪", end_token: str = "⟫") -> None:

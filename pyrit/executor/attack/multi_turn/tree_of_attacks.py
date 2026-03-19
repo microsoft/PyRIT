@@ -545,7 +545,8 @@ class _TreeOfAttacksNode:
             )
 
         # Store the last response text for reference
-        assert response is not None, "Response was None"
+        if response is None:
+            raise ValueError("Response was None")
         response_piece = response.get_piece()
         self.last_response = response_piece.converted_value
         logger.debug(f"Node {self.node_id}: Received response from target")
@@ -602,7 +603,8 @@ class _TreeOfAttacksNode:
             )
 
         # Store the last response text for reference
-        assert response is not None, "Response was None"
+        if response is None:
+            raise ValueError("Response was None")
         response_piece = response.get_piece()
         self.last_response = response_piece.converted_value
         logger.debug(f"Node {self.node_id}: Received response from target")
@@ -1113,7 +1115,8 @@ class _TreeOfAttacksNode:
                 attack_identifier=self._attack_id,
             )
 
-        assert response is not None, "Response was None"
+        if response is None:
+            raise ValueError("Response was None")
         return response.get_value()
 
     def _parse_red_teaming_response(self, red_teaming_response: str) -> str:
@@ -1362,7 +1365,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                     "TAP attack requires a FloatScaleThresholdScorer for objective_scorer. "
                     "Please wrap your scorer in FloatScaleThresholdScorer with an appropriate threshold."
                 )
-            assert objective_scorer is not None, "objective_scorer is required"
+            if objective_scorer is None:
+                raise ValueError("objective_scorer is required")
             tap_scoring_config = TAPAttackScoringConfig(
                 objective_scorer=objective_scorer,
                 refusal_scorer=attack_scoring_config.refusal_scorer,

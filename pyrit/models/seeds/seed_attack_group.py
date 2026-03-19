@@ -87,5 +87,6 @@ class SeedAttackGroup(SeedGroup):
 
         """
         obj = self._get_objective()
-        assert obj is not None, "SeedAttackGroup should always have an objective"
+        if obj is None:
+            raise ValueError("SeedAttackGroup should always have an objective")
         return obj

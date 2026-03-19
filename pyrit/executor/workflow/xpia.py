@@ -339,7 +339,8 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
             conversation_id=context.attack_setup_target_conversation_id,
         )
 
-        assert setup_response is not None, "Setup response was None"
+        if setup_response is None:
+            raise ValueError("Setup response was None")
         setup_response_text = setup_response.get_value()
         self._logger.info(f'Received the following response from the prompt target: "{setup_response_text}"')
 
@@ -358,9 +359,11 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         Returns:
             str: The response from the processing target.
         """
-        assert context.processing_callback is not None, "processing_callback is not set"
+        if context.processing_callback is None:
+            raise ValueError("processing_callback is not set")
         processing_response = await context.processing_callback()
-        assert self._memory is not None, "Memory not initialized"
+        if self._memory is None:
+            raise ValueError("Memory not initialized")
         self._memory.add_message_to_memory(
             request=Message(
                 message_pieces=[
@@ -563,7 +566,8 @@ class XPIATestWorkflow(XPIAWorkflow):
         # Create the processing callback using the test context
         async def process_async() -> str:
             # processing_prompt is validated to be non-None in _validate_context
-            assert context.processing_prompt is not None
+            if context.processing_prompt is None:
+                raise ValueError("context.processing_prompt is not initialized")
             response = await self._prompt_normalizer.send_prompt_async(
                 message=context.processing_prompt,
                 target=self._processing_target,
@@ -574,7 +578,8 @@ class XPIATestWorkflow(XPIAWorkflow):
                 conversation_id=context.processing_conversation_id,
             )
 
-            assert response is not None, "Response was None"
+            if response is None:
+                raise ValueError("Response was None")
             return response.get_value()
 
         # Set the processing callback on the context

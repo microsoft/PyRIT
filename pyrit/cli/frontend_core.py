@@ -187,7 +187,8 @@ class FrontendCore:
             raise RuntimeError(
                 "FrontendCore not initialized. Call 'await context.initialize_async()' before accessing registries."
             )
-        assert self._scenario_registry is not None
+        if self._scenario_registry is None:
+            raise ValueError("self._scenario_registry is not initialized")
         return self._scenario_registry
 
     @property
@@ -202,7 +203,8 @@ class FrontendCore:
             raise RuntimeError(
                 "FrontendCore not initialized. Call 'await context.initialize_async()' before accessing registries."
             )
-        assert self._initializer_registry is not None
+        if self._initializer_registry is None:
+            raise ValueError("self._initializer_registry is not initialized")
         return self._initializer_registry
 
 

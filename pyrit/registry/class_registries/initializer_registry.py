@@ -91,7 +91,8 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             self._discovery_path = Path(PYRIT_PATH) / "setup" / "initializers"
 
         # At this point _discovery_path is guaranteed to be a Path
-        assert self._discovery_path is not None
+        if self._discovery_path is None:
+            raise ValueError("self._discovery_path is not initialized")
 
         # Track file paths for collision detection and resolution
         self._initializer_paths: dict[str, Path] = {}

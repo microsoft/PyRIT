@@ -194,7 +194,8 @@ class DataTypeSerializer(abc.ABC):
 
             async with aiofiles.open(local_temp_path, "rb") as f:
                 audio_data = await f.read()
-                assert self._memory.results_storage_io is not None
+                if self._memory.results_storage_io is None:
+                    raise ValueError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file(file_path, audio_data)
             os.remove(local_temp_path)
 
@@ -314,7 +315,8 @@ class DataTypeSerializer(abc.ABC):
             self._file_path = full_data_directory_path + f"/{file_name}.{self.file_extension}"
         else:
             full_data_directory_path = results_path + self.data_sub_directory
-            assert self._memory.results_storage_io is not None
+            if self._memory.results_storage_io is None:
+                raise ValueError("self._memory.results_storage_io is not initialized")
             await self._memory.results_storage_io.create_directory_if_not_exists(Path(full_data_directory_path))
             self._file_path = Path(full_data_directory_path, f"{file_name}.{self.file_extension}")
 

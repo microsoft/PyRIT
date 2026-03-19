@@ -62,7 +62,8 @@ class OpenAITarget(PromptTarget):
 
     @property
     def _client(self) -> AsyncOpenAI:
-        assert self._async_client is not None, "AsyncOpenAI client is not initialized"
+        if self._async_client is None:
+            raise ValueError("AsyncOpenAI client is not initialized")
         return self._async_client
 
     def __init__(
@@ -430,7 +431,8 @@ class OpenAITarget(PromptTarget):
 
             # Extract MessagePiece for validation and construction (most targets use single piece)
             request_piece = request.message_pieces[0] if request.message_pieces else None
-            assert request_piece is not None, "No message pieces in request"
+            if request_piece is None:
+                raise ValueError("No message pieces in request")
 
             # Check for content filter via subclass implementation
             if self._check_content_filter(response):
@@ -457,8 +459,10 @@ class OpenAITarget(PromptTarget):
                     return error_str
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
-            assert request_piece is not None, "No message pieces in request"
-            assert request_piece is not None, "No message pieces in request"
+            if request_piece is None:
+                raise ValueError("No message pieces in request")
+            if request_piece is None:
+                raise ValueError("No message pieces in request")
             return self._handle_content_filter_response(_ErrorResponse(), request_piece)
         except BadRequestError as e:
             # Handle 400 errors - includes input policy filters and some Azure output-filter 400s
@@ -477,7 +481,8 @@ class OpenAITarget(PromptTarget):
             )
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
-            assert request_piece is not None, "No message pieces in request"
+            if request_piece is None:
+                raise ValueError("No message pieces in request")
             return handle_bad_request_exception(
                 response_text=str(payload),
                 request=request_piece,

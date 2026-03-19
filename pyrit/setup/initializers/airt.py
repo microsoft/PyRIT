@@ -109,8 +109,10 @@ class AIRTInitializer(PyRITInitializer):
         scorer_model_name = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2")
 
         # Type assertions - safe because validate() already checked these
-        assert converter_endpoint is not None
-        assert scorer_endpoint is not None
+        if converter_endpoint is None:
+            raise ValueError("converter_endpoint is not initialized")
+        if scorer_endpoint is None:
+            raise ValueError("scorer_endpoint is not initialized")
         # model name can be empty in certain cases (e.g., custom model deployments that don't need model name)
 
         # Check for API keys first, fall back to Entra auth if not set
