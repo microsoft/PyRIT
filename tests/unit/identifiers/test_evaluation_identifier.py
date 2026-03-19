@@ -222,3 +222,72 @@ class TestEvaluationIdentifier:
             },
         )
         assert identity.eval_hash == expected
+
+    def test_uses_stored_eval_hash_when_available(self):
+        """Test that EvaluationIdentifier uses stored_eval_hash instead of recomputing."""
+        stored_hash = "stored_eval_hash_value_" + "0" * 42  # 64 chars
+        cid = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"system_prompt": "truncated..."},
+        )
+        # Simulate a DB round-trip where stored_eval_hash was preserved
+        object.__setattr__(cid, "stored_eval_hash", stored_hash)
+
+        identity = _StubEvaluationIdentifier(cid)
+        assert identity.eval_hash == stored_hash
+
+    def test_computes_eval_hash_when_stored_is_none(self):
+        """Test that eval_hash is computed normally when stored_eval_hash is None."""
+        cid = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5},
+        )
+        assert cid.stored_eval_hash is None
+
+        identity = _StubEvaluationIdentifier(cid)
+        expected = compute_eval_hash(cid, child_eval_rules=_StubEvaluationIdentifier.CHILD_EVAL_RULES)
+        assert identity.eval_hash == expected
+
+    def test_truncation_roundtrip_preserves_eval_hash(self):
+        """Regression test: eval_hash survives DB round-trip with param truncation.
+
+        This is the core scenario for the bug fix. A scorer with a long system_prompt
+        gets stored to the DB with truncation. The eval_hash computed from the untruncated
+        identifier is included in to_dict(). After from_dict() reconstruction, the
+        EvaluationIdentifier should use the stored eval_hash (not recompute from truncated params).
+        """
+        # Build a scorer identifier with a long system_prompt and a target child
+        long_prompt = "Evaluate whether the response achieves the objective. " * 10
+        target_child = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "endpoint": "https://api.openai.com", "temperature": 0.0},
+        )
+        scorer_id = ComponentIdentifier(
+            class_name="SelfAskTrueFalseScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": long_prompt},
+            children={"prompt_target": target_child},
+        )
+
+        # Compute eval_hash from the untruncated identifier (the correct hash)
+        correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
+
+        # Simulate DB storage: serialize with truncation + eval_hash
+        truncated_dict = scorer_id.to_dict(max_value_length=80, eval_hash=correct_eval_hash)
+
+        # Verify params are actually truncated
+        assert truncated_dict["system_prompt_template"].endswith("...")
+
+        # Reconstruct from truncated dict (simulates DB read)
+        reconstructed = ComponentIdentifier.from_dict(truncated_dict)
+
+        # The reconstructed identifier has truncated params, so recomputing would give wrong hash
+        recomputed = compute_eval_hash(reconstructed, child_eval_rules=_CHILD_EVAL_RULES)
+        assert recomputed != correct_eval_hash, "Truncated params should produce different eval_hash"
+
+        # But EvaluationIdentifier uses stored_eval_hash, giving the correct result
+        identity = _StubEvaluationIdentifier(reconstructed)
+        assert identity.eval_hash == correct_eval_hash

@@ -113,6 +113,7 @@ class ComponentIdentifier:
     KEY_CLASS_NAME: ClassVar[str] = "class_name"
     KEY_CLASS_MODULE: ClassVar[str] = "class_module"
     KEY_HASH: ClassVar[str] = "hash"
+    KEY_EVAL_HASH: ClassVar[str] = "eval_hash"
     KEY_PYRIT_VERSION: ClassVar[str] = "pyrit_version"
     KEY_CHILDREN: ClassVar[str] = "children"
     LEGACY_KEY_TYPE: ClassVar[str] = "__type__"
@@ -130,6 +131,10 @@ class ComponentIdentifier:
     hash: str = field(init=False, compare=False)
     #: Version tag for storage. Not included in hash.
     pyrit_version: str = field(default_factory=lambda: pyrit.__version__, compare=False)
+    #: Evaluation hash preserved from DB round-trip. Computed before truncation and
+    #: stored alongside the identity so that EvaluationIdentifier can use it directly
+    #: instead of recomputing from potentially truncated params.
+    stored_eval_hash: Optional[str] = field(default=None, init=False, compare=False)
 
     def __post_init__(self) -> None:
         """Compute the content-addressed hash at creation time."""
@@ -231,7 +236,7 @@ class ComponentIdentifier:
             return cls.from_dict(value)
         raise TypeError(f"Expected ComponentIdentifier or dict, got {type(value).__name__}")
 
-    def to_dict(self, *, max_value_length: Optional[int] = None) -> dict[str, Any]:
+    def to_dict(self, *, max_value_length: Optional[int] = None, eval_hash: Optional[str] = None) -> dict[str, Any]:
         """
         Serialize to a JSON-compatible dictionary for DB/JSONL storage.
 
@@ -246,6 +251,10 @@ class ComponentIdentifier:
                 DB storage where column sizes may be limited. The truncation applies
                 only to param values, not to structural keys like class_name or hash.
                 The limit is propagated to children. Defaults to None (no truncation).
+            eval_hash (Optional[str]): If provided, the evaluation hash is included in
+                the serialized dict. This should be computed before truncation so that
+                it can be recovered via ``from_dict()`` even when param values are
+                truncated. Defaults to None (no eval_hash stored).
 
         Returns:
             Dict[str, Any]: JSON-serializable dictionary suitable for database storage
@@ -257,6 +266,11 @@ class ComponentIdentifier:
             self.KEY_HASH: self.hash,
             self.KEY_PYRIT_VERSION: self.pyrit_version,
         }
+
+        # Include eval_hash if explicitly provided or if preserved from a prior round-trip
+        effective_eval_hash = eval_hash if eval_hash is not None else self.stored_eval_hash
+        if effective_eval_hash is not None:
+            result[self.KEY_EVAL_HASH] = effective_eval_hash
 
         for key, value in self.params.items():
             result[key] = self._truncate_value(value=value, max_length=max_value_length)
@@ -324,6 +338,7 @@ class ComponentIdentifier:
         class_module = data.pop(cls.KEY_CLASS_MODULE, None) or data.pop(cls.LEGACY_KEY_MODULE, None) or "unknown"
 
         stored_hash = data.pop(cls.KEY_HASH, None)
+        stored_eval_hash = data.pop(cls.KEY_EVAL_HASH, None)
         pyrit_version = data.pop(cls.KEY_PYRIT_VERSION, pyrit.__version__)
 
         # Reconstruct children
@@ -345,6 +360,11 @@ class ComponentIdentifier:
         # potentially truncated DB values would produce a wrong hash.
         if stored_hash:
             object.__setattr__(identifier, "hash", stored_hash)
+
+        # Preserve stored eval_hash if available — computed before truncation
+        # so that EvaluationIdentifier can use it directly.
+        if stored_eval_hash:
+            object.__setattr__(identifier, "stored_eval_hash", stored_eval_hash)
 
         return identifier
 

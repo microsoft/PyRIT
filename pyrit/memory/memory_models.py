@@ -398,7 +398,12 @@ class ScoreEntry(Base):
         self.score_metadata = entry.score_metadata
         # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
-        self.scorer_class_identifier = normalized_scorer.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+        # Compute eval_hash from untruncated identifier before truncation
+        scorer_eval_hash = self._compute_scorer_eval_hash(normalized_scorer)
+        self.scorer_class_identifier = normalized_scorer.to_dict(
+            max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            eval_hash=scorer_eval_hash,
+        )
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -406,6 +411,16 @@ class ScoreEntry(Base):
         self.task = entry.objective
         self.objective = entry.objective
         self.pyrit_version = pyrit.__version__
+
+    @staticmethod
+    def _compute_scorer_eval_hash(scorer_identifier: ComponentIdentifier) -> Optional[str]:
+        """Compute scorer eval_hash from an untruncated identifier."""
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+
+        try:
+            return ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+        except Exception:
+            return None
 
     def get_score(self) -> Score:
         """
@@ -964,6 +979,8 @@ class ScenarioResultEntry(Base):
         Args:
             entry (ScenarioResult): The scenario result object to convert into a database entry.
         """
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+
         self.id = entry.id
         self.scenario_name = entry.scenario_identifier.name
         self.scenario_description = entry.scenario_identifier.description
@@ -974,9 +991,17 @@ class ScenarioResultEntry(Base):
         self.objective_target_identifier = entry.objective_target_identifier.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
         )
-        # Convert ComponentIdentifier to dict for JSON storage
+        # Compute eval_hash from untruncated identifier BEFORE truncation, then include
+        # it in the serialized dict so it survives the DB round-trip.
+        scorer_eval_hash = None
+        if entry.objective_scorer_identifier:
+            scorer_eval_hash = ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+
         self.objective_scorer_identifier = (
-            entry.objective_scorer_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.objective_scorer_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+                eval_hash=scorer_eval_hash,
+            )
             if entry.objective_scorer_identifier
             else None
         )
