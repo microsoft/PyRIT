@@ -790,8 +790,13 @@ class AttackResultEntry(Base):
         self.attack_identifier = (
             _attack_strategy_id.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH) if _attack_strategy_id else {}
         )
+        # Compute eval_hash from untruncated identifier before truncation
+        attack_eval_hash = self._compute_attack_eval_hash(entry.atomic_attack_identifier)
         self.atomic_attack_identifier = (
-            entry.atomic_attack_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.atomic_attack_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+                eval_hash=attack_eval_hash,
+            )
             if entry.atomic_attack_identifier
             else None
         )
@@ -818,6 +823,23 @@ class AttackResultEntry(Base):
 
         self.timestamp = datetime.now(tz=timezone.utc)
         self.pyrit_version = pyrit.__version__
+
+    @staticmethod
+    def _compute_attack_eval_hash(attack_identifier: Optional[ComponentIdentifier]) -> Optional[str]:
+        """Compute attack eval_hash from an untruncated identifier."""
+        if attack_identifier is None:
+            return None
+        from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+
+        try:
+            return AtomicAttackEvaluationIdentifier(attack_identifier).eval_hash
+        except Exception:
+            logger.warning(
+                f"Failed to compute eval_hash for attack {attack_identifier.class_name}; "
+                "eval_hash will not be stored.",
+                exc_info=True,
+            )
+            return None
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> Optional[uuid.UUID]:
