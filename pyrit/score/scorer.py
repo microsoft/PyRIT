@@ -84,7 +84,8 @@ class Scorer(Identifiable, abc.ABC):
         if identifier.eval_hash is None:
             from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
 
-            object.__setattr__(identifier, "eval_hash", ScorerEvaluationIdentifier(identifier).eval_hash)
+            identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
+            self._identifier = identifier
         return identifier
 
     @property

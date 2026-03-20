@@ -230,9 +230,7 @@ class TestEvaluationIdentifier:
             class_name="Scorer",
             class_module="pyrit.score",
             params={"system_prompt": "truncated..."},
-        )
-        # Simulate a DB round-trip where eval_hash was preserved
-        object.__setattr__(cid, "eval_hash", stored_hash)
+        ).with_eval_hash(stored_hash)
 
         identity = _StubEvaluationIdentifier(cid)
         assert identity.eval_hash == stored_hash
@@ -274,7 +272,7 @@ class TestEvaluationIdentifier:
 
         # Compute eval_hash from the untruncated identifier (the correct hash)
         correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
-        object.__setattr__(scorer_id, "eval_hash", correct_eval_hash)
+        scorer_id = scorer_id.with_eval_hash(correct_eval_hash)
 
         # Simulate DB storage: serialize with truncation
         truncated_dict = scorer_id.to_dict(max_value_length=80)
@@ -308,7 +306,7 @@ class TestEvaluationIdentifier:
 
         # First save: compute eval_hash from untruncated identifier
         correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
-        object.__setattr__(scorer_id, "eval_hash", correct_eval_hash)
+        scorer_id = scorer_id.with_eval_hash(correct_eval_hash)
         d1 = scorer_id.to_dict(max_value_length=80)
 
         # First retrieve

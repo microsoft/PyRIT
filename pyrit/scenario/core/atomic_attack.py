@@ -257,8 +257,9 @@ class AtomicAttack:
                 # Set eval_hash before truncation so it survives the DB round-trip.
                 with contextlib.suppress(Exception):
                     if result.atomic_attack_identifier.eval_hash is None:
-                        eval_hash = AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
-                        object.__setattr__(result.atomic_attack_identifier, "eval_hash", eval_hash)
+                        result.atomic_attack_identifier = result.atomic_attack_identifier.with_eval_hash(
+                            AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
+                        )
 
                 if result.attack_result_id:
                     memory.update_attack_result_by_id(

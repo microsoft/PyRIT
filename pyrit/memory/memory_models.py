@@ -406,7 +406,16 @@ class ScoreEntry(Base):
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
         if normalized_scorer.eval_hash is None:
-            self._set_scorer_eval_hash(normalized_scorer)
+            try:
+                normalized_scorer = normalized_scorer.with_eval_hash(
+                    ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to compute eval_hash for scorer {normalized_scorer.class_name}; "
+                    "eval_hash will not be stored.",
+                    exc_info=True,
+                )
         self.scorer_class_identifier = normalized_scorer.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
         )
@@ -417,20 +426,6 @@ class ScoreEntry(Base):
         self.task = entry.objective
         self.objective = entry.objective
         self.pyrit_version = pyrit.__version__
-
-    @staticmethod
-    def _set_scorer_eval_hash(scorer_identifier: ComponentIdentifier) -> None:
-        """
-        Set eval_hash on the scorer identifier so it survives truncation.
-        """
-        try:
-            eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-            object.__setattr__(scorer_identifier, "eval_hash", eval_hash)
-        except Exception:
-            logger.warning(
-                f"Failed to compute eval_hash for scorer {scorer_identifier.class_name}; eval_hash will not be stored.",
-                exc_info=True,
-            )
 
     def get_score(self) -> Score:
         """
@@ -797,7 +792,16 @@ class AttackResultEntry(Base):
         )
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
         if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
-            self._set_attack_eval_hash(entry.atomic_attack_identifier)
+            try:
+                entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
+                    AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to compute eval_hash for attack {entry.atomic_attack_identifier.class_name}; "
+                    "eval_hash will not be stored.",
+                    exc_info=True,
+                )
         self.atomic_attack_identifier = (
             entry.atomic_attack_identifier.to_dict(
                 max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
@@ -828,20 +832,6 @@ class AttackResultEntry(Base):
 
         self.timestamp = datetime.now(tz=timezone.utc)
         self.pyrit_version = pyrit.__version__
-
-    @staticmethod
-    def _set_attack_eval_hash(attack_identifier: ComponentIdentifier) -> None:
-        """
-        Set eval_hash on the attack identifier so it survives truncation.
-        """
-        try:
-            eval_hash = AtomicAttackEvaluationIdentifier(attack_identifier).eval_hash
-            object.__setattr__(attack_identifier, "eval_hash", eval_hash)
-        except Exception:
-            logger.warning(
-                f"Failed to compute eval_hash for attack {attack_identifier.class_name}; eval_hash will not be stored.",
-                exc_info=True,
-            )
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> Optional[uuid.UUID]:
@@ -1020,7 +1010,16 @@ class ScenarioResultEntry(Base):
         )
         # Ensure eval_hash is set before truncation so it survives the DB round-trip.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
-            ScoreEntry._set_scorer_eval_hash(entry.objective_scorer_identifier)
+            try:
+                entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
+                    ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to compute eval_hash for scorer "
+                    f"{entry.objective_scorer_identifier.class_name}; eval_hash will not be stored.",
+                    exc_info=True,
+                )
 
         self.objective_scorer_identifier = (
             entry.objective_scorer_identifier.to_dict(

@@ -546,13 +546,12 @@ class TestComponentIdentifierRoundtrip:
 
     def test_roundtrip_preserves_eval_hash(self):
         """Test that eval_hash is preserved through to_dict -> from_dict round-trip."""
+        expected_eval_hash = "abc123" * 10 + "abcd"  # 64 chars
         original = ComponentIdentifier(
             class_name="Scorer",
             class_module="pyrit.score",
             params={"system_prompt": "Score the response"},
-        )
-        expected_eval_hash = "abc123" * 10 + "abcd"  # 64 chars
-        object.__setattr__(original, "eval_hash", expected_eval_hash)
+        ).with_eval_hash(expected_eval_hash)
         d = original.to_dict()
         assert d["eval_hash"] == expected_eval_hash
 
@@ -567,13 +566,12 @@ class TestComponentIdentifierRoundtrip:
         the dict, it survives truncation.
         """
         long_prompt = "You are a scorer that evaluates responses. " * 20  # >80 chars
+        eval_hash_before_truncation = "correct_eval_hash_" + "0" * 46  # 64 chars
         original = ComponentIdentifier(
             class_name="SelfAskTrueFalseScorer",
             class_module="pyrit.score",
             params={"system_prompt_template": long_prompt},
-        )
-        eval_hash_before_truncation = "correct_eval_hash_" + "0" * 46  # 64 chars
-        object.__setattr__(original, "eval_hash", eval_hash_before_truncation)
+        ).with_eval_hash(eval_hash_before_truncation)
 
         # Serialize with truncation (simulates DB storage)
         truncated_dict = original.to_dict(max_value_length=80)
@@ -608,9 +606,7 @@ class TestComponentIdentifierRoundtrip:
         original = ComponentIdentifier(
             class_name="Test",
             class_module="mod",
-        )
-        # Simulate setting eval_hash then round-tripping
-        object.__setattr__(original, "eval_hash", eval_hash)
+        ).with_eval_hash(eval_hash)
         d1 = original.to_dict()
         reconstructed = ComponentIdentifier.from_dict(d1)
 
@@ -628,7 +624,7 @@ class TestComponentIdentifierRoundtrip:
         )
         original_hash = original.hash
         eval_hash = "eval_" + "a1b2c3d4" * 7 + "a1b2c3"  # 64 chars
-        object.__setattr__(original, "eval_hash", eval_hash)
+        original = original.with_eval_hash(eval_hash)
 
         # First round-trip: store with truncation
         d1 = original.to_dict(max_value_length=80)
