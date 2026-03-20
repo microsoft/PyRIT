@@ -198,6 +198,10 @@ class SelfAskLikertScorer(FloatScaleScorer):
             raise ValueError("Only one of 'likert_scale' or 'custom_likert_path' should be provided, not both.")
         if likert_scale is None and custom_likert_path is None:
             raise ValueError("One of 'likert_scale' or 'custom_likert_path' must be provided.")
+
+        self._scoring_instructions_template: Optional[SeedPrompt] = (
+            None  # Will be set in _set_likert_scale_system_prompt
+        )
         if custom_system_prompt_path is not None:
             self._validate_custom_system_prompt_path(custom_system_prompt_path)
             self._scoring_instructions_template = SeedPrompt.from_yaml_file(custom_system_prompt_path)
@@ -293,7 +297,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
 
         # Only load the default system prompt template if a custom one wasn't already
         # set via custom_system_prompt_path in __init__.
-        if not hasattr(self, "_scoring_instructions_template"):
+        if self._scoring_instructions_template is None:
             self._scoring_instructions_template = SeedPrompt.from_yaml_file(
                 SCORER_LIKERT_PATH / "likert_system_prompt.yaml"
             )

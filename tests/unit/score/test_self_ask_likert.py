@@ -468,6 +468,24 @@ def test_custom_likert_path_non_yaml_rejected(tmp_path: Path):
             SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=bad_file)
 
 
+def test_custom_system_prompt_non_yaml_rejected(tmp_path: Path):
+    """Verify that a non-YAML custom_system_prompt_path raises ValueError."""
+    bad_file = tmp_path / "prompt.txt"
+    bad_file.write_text("not yaml", encoding="utf-8")
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with pytest.raises(ValueError, match="must be a YAML file"):
+            SelfAskLikertScorer(
+                chat_target=chat_target,
+                likert_scale=LikertScalePaths.CYBER_SCALE,
+                custom_system_prompt_path=bad_file,
+            )
+
+
 def test_custom_system_prompt_path_used_in_system_prompt(tmp_path: Path):
     """Verify that a custom system prompt template is rendered instead of the default."""
     memory = MagicMock(MemoryInterface)
@@ -505,3 +523,82 @@ def test_custom_system_prompt_missing_params_rejected(tmp_path: Path):
                 custom_likert_path=custom_likert_path,
                 custom_system_prompt_path=bad_prompt_path,
             )
+
+
+def test_both_likert_scale_and_custom_path_raises():
+    """Verify that providing both likert_scale and custom_likert_path raises ValueError."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with pytest.raises(ValueError, match="Only one of"):
+            SelfAskLikertScorer(
+                chat_target=chat_target,
+                likert_scale=LikertScalePaths.CYBER_SCALE,
+                custom_likert_path=Path("dummy.yaml"),
+            )
+
+
+def test_neither_likert_scale_nor_custom_path_raises():
+    """Verify that providing neither likert_scale nor custom_likert_path raises ValueError."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with pytest.raises(ValueError, match="One of"):
+            SelfAskLikertScorer(chat_target=chat_target)
+
+
+def test_custom_system_prompt_file_not_found():
+    """Verify that a non-existent custom_system_prompt_path raises FileNotFoundError."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with pytest.raises(FileNotFoundError, match="Custom system prompt file not found"):
+            SelfAskLikertScorer(
+                chat_target=chat_target,
+                likert_scale=LikertScalePaths.CYBER_SCALE,
+                custom_system_prompt_path=Path("/does/not/exist.yaml"),
+            )
+
+
+def test_custom_likert_yaml_not_a_dict_rejected(tmp_path: Path):
+    """Verify that a YAML file whose top-level structure is not a dict raises ValueError."""
+    yaml_file = tmp_path / "bad_structure.yaml"
+    yaml_file.write_text("- item1\n- item2\n", encoding="utf-8")
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with pytest.raises(ValueError, match="must contain a YAML mapping/dictionary"):
+            SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=yaml_file)
+
+
+def test_likert_scale_single_unique_value_rejected(tmp_path: Path):
+    """Verify that a scale with only one distinct score value raises ValueError."""
+    yaml_file = tmp_path / "single_value.yaml"
+    yaml_file.write_text(
+        yaml.safe_dump(
+            {
+                "category": "test_harm",
+                "scale_descriptions": [
+                    {"score_value": "3", "description": "Only level"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with pytest.raises(ValueError, match="at least two distinct score values"):
+            SelfAskLikertScorer(chat_target=chat_target, custom_likert_path=yaml_file)
