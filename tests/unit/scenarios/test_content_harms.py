@@ -223,7 +223,7 @@ class TestContentHarmsBasic:
     """Basic tests for ContentHarms initialization and properties."""
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_initialization_with_minimal_parameters(
         self,
@@ -251,7 +251,7 @@ class TestContentHarmsBasic:
         assert scenario._objective_target == mock_objective_target
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_initialization_with_custom_strategies(
         self,
@@ -287,11 +287,11 @@ class TestContentHarmsBasic:
             objective_scorer=mock_objective_scorer,
         )
 
-        # The scorer is stored in _scorer_config.objective_scorer
-        assert scenario._scorer_config.objective_scorer == mock_objective_scorer
+        # The scorer is stored in _objective_scorer
+        assert scenario._objective_scorer == mock_objective_scorer
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_initialization_with_custom_max_concurrency(
         self,
@@ -313,7 +313,7 @@ class TestContentHarmsBasic:
         assert scenario._max_concurrency == 10
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_initialization_with_custom_dataset_path(
         self,
@@ -336,7 +336,7 @@ class TestContentHarmsBasic:
         assert scenario is not None
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_initialization_defaults_to_all_strategy(
         self,
@@ -376,19 +376,13 @@ class TestContentHarmsBasic:
 
         assert scenario._adversarial_chat is not None
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.endpoint",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test_key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
-    def test_get_default_scorer(self, mock_objective_target):
-        """Test default scorer creation."""
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
+    def test_get_default_objective_scorer(self, mock_get_scorer, mock_objective_target, mock_objective_scorer):
+        """Test default objective scorer is set from base class."""
+        mock_get_scorer.return_value = mock_objective_scorer
         scenario = ContentHarms()
 
-        assert scenario._objective_scorer is not None
+        assert scenario._objective_scorer == mock_objective_scorer
 
     def test_scenario_version(self):
         """Test that scenario has correct version."""
@@ -414,7 +408,7 @@ class TestContentHarmsBasic:
             await scenario.initialize_async(objective_target=mock_objective_target)
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_initialization_with_max_retries(
         self,
@@ -436,7 +430,7 @@ class TestContentHarmsBasic:
         assert scenario._max_retries == 3
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_memory_labels_are_stored(
         self,
@@ -493,7 +487,7 @@ class TestContentHarmsBasic:
 
         assert scenario._objective_target == mock_objective_target
         assert scenario._adversarial_chat == mock_adversarial_target
-        assert scenario._scorer_config.objective_scorer == mock_objective_scorer
+        assert scenario._objective_scorer == mock_objective_scorer
         assert scenario._memory_labels == memory_labels
         assert scenario._max_concurrency == 5
         assert scenario._max_retries == 2
@@ -705,7 +699,7 @@ class TestContentHarmsAttackGroups:
     """Tests for the single-turn and multi-turn attack generation."""
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_get_single_turn_attacks_returns_prompt_sending_and_role_play(
         self,
@@ -737,7 +731,7 @@ class TestContentHarmsAttackGroups:
         assert RolePlayAttack in attack_types
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_get_multi_turn_attacks_returns_many_shot_and_tap(
         self,
@@ -769,7 +763,7 @@ class TestContentHarmsAttackGroups:
         assert TreeOfAttacksWithPruningAttack in attack_types
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_get_strategy_attacks_includes_all_groups(
         self,
@@ -809,7 +803,7 @@ class TestContentHarmsAttackGroups:
         assert TreeOfAttacksWithPruningAttack in attack_types
 
     @pytest.mark.asyncio
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarms._get_default_scorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     async def test_get_strategy_attacks_raises_when_not_initialized(
         self,

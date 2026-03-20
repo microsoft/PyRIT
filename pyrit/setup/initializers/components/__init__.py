@@ -3,11 +3,13 @@
 
 """Component initializers for targets, scorers, and other components."""
 
-from pyrit.setup.initializers.components.scorers import ScorerInitializer
-from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer
+from pyrit.setup.initializers.components.scorers import ScorerInitializer, ScorerInitializerTags
+from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer, TargetInitializerTags
 
 __all__ = [
     "ScorerInitializer",
+    "ScorerInitializerTags",
     "TargetConfig",
     "TargetInitializer",
+    "TargetInitializerTags",
 ]

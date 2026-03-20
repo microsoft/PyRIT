@@ -28,4 +28,13 @@ Do NOT leave comments about:
 
 Aim for fewer, higher-signal comments. A review with 2-3 important comments is better than 15 trivial ones.
 
-Follow `.github/instructions/style-guide.instructions.md` for style guidelines. And look in `.github/instructions/` for specific instructions on the different components.
+## Instruction Files
+
+BEFORE editing any file, you MUST read the `.github/instructions/` files whose `applyTo` patterns match the files you are about to edit. For example:
+- Editing `pyrit/**/*.py` → read `style-guide.instructions.md` and `user-custom.instructions.md`
+- Editing `pyrit/scenario/**` → also read `scenarios.instructions.md`
+- Editing `pyrit/prompt_converter/**` → also read `converters.instructions.md`
+- Editing `tests/**` → also read `test.instructions.md`
+- Editing `doc/**/*.py` or `doc/**/*.ipynb` → also read `docs.instructions.md`
+
+Follow every rule in the applicable instruction files. Do not skip this step.

@@ -31,7 +31,11 @@ from pyrit.scenario.core.scenario_strategy import (
     ScenarioCompositeStrategy,
     ScenarioStrategy,
 )
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
+
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import ScorerRegistry
+from pyrit.setup.initializers.components import ScorerInitializerTags
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -170,6 +174,15 @@ class Scenario(ABC):
         Returns:
             DatasetConfiguration: The default dataset configuration.
         """
+
+    @staticmethod
+    def _get_default_objective_scorer() -> TrueFalseScorer:
+        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        if entries and isinstance(entries[0].instance, TrueFalseScorer):
+            return entries[0].instance
+        return TrueFalseInverterScorer(
+            scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
+        )
 
     @apply_defaults
     async def initialize_async(

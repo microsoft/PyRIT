@@ -15,7 +15,8 @@ Note: This module only includes PRIMARY endpoint configurations from .env_exampl
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from enum import Enum
+from typing import Any, Optional
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
 from pyrit.prompt_target import (
@@ -36,10 +37,15 @@ from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyR
 logger = logging.getLogger(__name__)
 
 
-# Literal type for target tags
-TargetTag = Literal["default", "scorer", "all"]
+class TargetInitializerTags(str, Enum):
+    """Tags used by TargetInitializer for filtering which targets to register."""
 
-ALL_TARGET_TAGS: list[str] = ["default", "scorer"]
+    DEFAULT = "default"
+    SCORER = "scorer"
+    ALL = "all"
+
+
+ALL_TARGET_TAGS: list[str] = [TargetInitializerTags.DEFAULT, TargetInitializerTags.SCORER]
 
 
 @dataclass
@@ -66,7 +72,7 @@ class TargetConfig:
     underlying_model_var: Optional[str] = None
     temperature: Optional[float] = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
-    tags: list[TargetTag] = field(default_factory=lambda: ["default"])
+    tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
 
 
 # Define all supported target configurations.
@@ -322,7 +328,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL",
         temperature=0.0,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_openai_gpt4o_temp9",
@@ -332,7 +338,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL",
         temperature=0.9,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat_temp0",
@@ -342,7 +348,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL",
         temperature=0.0,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat_temp9",
@@ -352,7 +358,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL",
         temperature=0.9,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
 ]
 
