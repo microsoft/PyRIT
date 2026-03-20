@@ -23,7 +23,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -82,8 +82,6 @@ class Scorer(Identifiable, abc.ABC):
         """
         identifier = super().get_identifier()
         if identifier.eval_hash is None:
-            from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
             identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
             self._identifier = identifier
         return identifier
