@@ -15,6 +15,7 @@ from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,20 @@ class AzureBlobStorageTarget(PromptTarget):
     AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_CONTAINER_URL"
     SAS_TOKEN_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_SAS_TOKEN"
 
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        input_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["url"]),
+            }
+        ),
+        output_modalities=frozenset(
+            {
+                frozenset(["url"]),
+            }
+        ),
+    )
+
     def __init__(
         self,
         *,
@@ -56,6 +71,7 @@ class AzureBlobStorageTarget(PromptTarget):
         sas_token: Optional[str] = None,
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
         max_requests_per_minute: Optional[int] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Azure Blob Storage target.
@@ -68,6 +84,8 @@ class AzureBlobStorageTarget(PromptTarget):
             blob_content_type (SupportedContentType): The content type for blobs.
                 Defaults to PLAIN_TEXT.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
         """
         self._blob_content_type: str = blob_content_type.value
 
@@ -78,7 +96,11 @@ class AzureBlobStorageTarget(PromptTarget):
         self._sas_token: Optional[str] = sas_token
         self._client_async: Optional[AsyncContainerClient] = None
 
-        super().__init__(endpoint=self._container_url, max_requests_per_minute=max_requests_per_minute)
+        super().__init__(
+            endpoint=self._container_url,
+            max_requests_per_minute=max_requests_per_minute,
+            custom_capabilities=custom_capabilities,
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -196,18 +218,3 @@ class AzureBlobStorageTarget(PromptTarget):
         )
 
         return [response]
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received {n_pieces} pieces")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type not in ["text", "url"]:
-            raise ValueError(f"This target only supports text and url prompt input. Received: {piece_type}.")
-
-        request = message.message_pieces[0]
-        messages = self._memory.get_message_pieces(conversation_id=request.conversation_id)
-
-        if len(messages) > 0:
-            raise ValueError("This target only supports a single turn conversation.")

@@ -1131,13 +1131,13 @@ def _make_attack_result_with_identifier(
     converter_class_names: Optional[list[str]] = None,
 ) -> AttackResult:
     """Helper to create an AttackResult with a ComponentIdentifier containing converters."""
-    params = {}
+    children: dict = {}
     if converter_class_names is not None:
-        params["request_converter_identifiers"] = [
+        children["request_converters"] = [
             ComponentIdentifier(
                 class_name=name,
-                class_module="pyrit.converters",
-            ).to_dict()
+                class_module="pyrit.prompt_converter",
+            )
             for name in converter_class_names
         ]
 
@@ -1148,7 +1148,7 @@ def _make_attack_result_with_identifier(
             attack_identifier=ComponentIdentifier(
                 class_name=class_name,
                 class_module="pyrit.attacks",
-                params=params,
+                children=children,
             ),
         ),
     )

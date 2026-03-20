@@ -67,7 +67,12 @@ def test_http_target_sets_endpoint_and_rate_limit(mock_callback_function, sqlite
 async def test_send_prompt_async(mock_request, mock_http_target, mock_http_response):
     message = MagicMock()
     message.message_pieces = [
-        MagicMock(converted_value="test_prompt", prompt_target_identifier=None, attack_identifier=None)
+        MagicMock(
+            converted_value="test_prompt",
+            converted_value_data_type="text",
+            prompt_target_identifier=None,
+            attack_identifier=None,
+        )
     ]
     mock_request.return_value = mock_http_response
     response = await mock_http_target.send_prompt_async(message=message)
@@ -105,7 +110,7 @@ def test_parse_raw_http_respects_url_path(patch_central_database):
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_client_kwargs():
+async def test_send_prompt_async_client_kwargs(patch_central_database):
     with patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request:
         # Create httpx_client_kwargs to test
         httpx_client_kwargs = {"timeout": 10, "verify": False}
@@ -114,7 +119,14 @@ async def test_send_prompt_async_client_kwargs():
         # Use **httpx_client_kwargs to pass them as keyword arguments
         http_target = HTTPTarget(http_request=sample_request, **httpx_client_kwargs)
         message = MagicMock()
-        message.message_pieces = [MagicMock(converted_value="", prompt_target_identifier=None, attack_identifier=None)]
+        message.message_pieces = [
+            MagicMock(
+                converted_value="",
+                converted_value_data_type="text",
+                prompt_target_identifier=None,
+                attack_identifier=None,
+            )
+        ]
         mock_response = MagicMock()
         mock_response.content = b"Response content"
         mock_request.return_value = mock_response
@@ -139,7 +151,7 @@ async def test_send_prompt_async_validation(mock_http_target):
     with pytest.raises(ValueError) as value_error:
         await mock_http_target.send_prompt_async(message=invalid_message)
 
-    assert str(value_error.value) == "This target only supports a single message piece. Received: 0 pieces."
+    assert str(value_error.value) == "Message must contain at least one message piece. Received: 0 pieces."
 
 
 @pytest.mark.asyncio
@@ -150,7 +162,12 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
 
     message = MagicMock()
     message.message_pieces = [
-        MagicMock(converted_value="test_prompt", prompt_target_identifier=None, attack_identifier=None)
+        MagicMock(
+            converted_value="test_prompt",
+            converted_value_data_type="text",
+            prompt_target_identifier=None,
+            attack_identifier=None,
+        )
     ]
 
     mock_response = MagicMock()
@@ -179,7 +196,12 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     # Send first prompt
     message = MagicMock()
     message.message_pieces = [
-        MagicMock(converted_value="test_prompt", prompt_target_identifier=None, attack_identifier=None)
+        MagicMock(
+            converted_value="test_prompt",
+            converted_value_data_type="text",
+            prompt_target_identifier=None,
+            attack_identifier=None,
+        )
     ]
     response = await mock_http_target.send_prompt_async(message=message)
 
@@ -199,7 +221,12 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     # Send second prompt
     second_message = MagicMock()
     second_message.message_pieces = [
-        MagicMock(converted_value="second_test_prompt", prompt_target_identifier=None, attack_identifier=None)
+        MagicMock(
+            converted_value="second_test_prompt",
+            converted_value_data_type="text",
+            prompt_target_identifier=None,
+            attack_identifier=None,
+        )
     ]
     await mock_http_target.send_prompt_async(message=second_message)
 
@@ -226,7 +253,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
 
 
 @pytest.mark.asyncio
-async def test_http_target_with_injected_client():
+async def test_http_target_with_injected_client(patch_central_database):
     custom_client = httpx.AsyncClient(timeout=30.0, verify=False, headers={"X-Custom-Header": "test_value"})
 
     sample_request = (
@@ -249,7 +276,12 @@ async def test_http_target_with_injected_client():
 
         message = MagicMock()
         message.message_pieces = [
-            MagicMock(converted_value="test_prompt", prompt_target_identifier=None, attack_identifier=None)
+            MagicMock(
+                converted_value="test_prompt",
+                converted_value_data_type="text",
+                prompt_target_identifier=None,
+                attack_identifier=None,
+            )
         ]
 
         response = await target.send_prompt_async(message=message)

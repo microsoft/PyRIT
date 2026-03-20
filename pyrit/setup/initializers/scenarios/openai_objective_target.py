@@ -45,7 +45,6 @@ class ScenarioObjectiveTargetInitializer(PyRITInitializer):
         """Get list of required environment variables."""
         return [
             "DEFAULT_OPENAI_FRONTEND_ENDPOINT",
-            "DEFAULT_OPENAI_FRONTEND_KEY",
         ]
 
     async def initialize_async(self) -> None:

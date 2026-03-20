@@ -52,13 +52,19 @@ class OpenAIVideoTarget(OpenAITarget):
     SUPPORTED_RESOLUTIONS: list[VideoSize] = ["720x1280", "1280x720", "1024x1792", "1792x1024"]
     SUPPORTED_DURATIONS: list[VideoSeconds] = ["4", "8", "12"]
     SUPPORTED_IMAGE_FORMATS: list[str] = ["image/jpeg", "image/png", "image/webp"]
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=False)
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=False,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset({frozenset(["text"]), frozenset(["text", "image_path"])}),
+        output_modalities=frozenset({frozenset(["video_path"])}),
+    )
 
     def __init__(
         self,
         *,
         resolution_dimensions: VideoSize = "1280x720",
         n_seconds: int | VideoSeconds = 4,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -84,6 +90,8 @@ class OpenAIVideoTarget(OpenAITarget):
             n_seconds (int | VideoSeconds, Optional): The duration of the generated video.
                 Accepts an int (4, 8, 12) or a VideoSeconds string ("4", "8", "12").
                 Defaults to 4.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -93,7 +101,7 @@ class OpenAIVideoTarget(OpenAITarget):
             MessagePiece. The video_id is returned in the response metadata after any successful
             generation (``response.message_pieces[0].prompt_metadata["video_id"]``).
         """
-        super().__init__(**kwargs)
+        super().__init__(custom_capabilities=custom_capabilities, **kwargs)
 
         self._n_seconds: VideoSeconds = (
             cast("VideoSeconds", str(n_seconds)) if isinstance(n_seconds, int) else n_seconds
@@ -460,6 +468,8 @@ class OpenAIVideoTarget(OpenAITarget):
         Raises:
             ValueError: If the request is invalid.
         """
+        super()._validate_request(message=message)
+
         text_pieces = message.get_pieces_by_type(data_type="text")
         image_pieces = message.get_pieces_by_type(data_type="image_path")
         video_pieces = message.get_pieces_by_type(data_type="video_path")
@@ -493,24 +503,6 @@ class OpenAIVideoTarget(OpenAITarget):
         # Cannot combine video_path and image_path
         if video_pieces and image_pieces:
             raise ValueError("Cannot combine video_path and image_path pieces.")
-
-        messages = self._memory.get_conversation(conversation_id=text_piece.conversation_id)
-
-        n_messages = len(messages)
-        if n_messages > 0:
-            raise ValueError(
-                "This target only supports a single turn conversation. "
-                f"Received: {n_messages} messages which indicates a prior turn."
-            )
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON response data.
-
-        Returns:
-            bool: False, as video generation doesn't return JSON content.
-        """
-        return False
 
     @staticmethod
     def _validate_video_remix_pieces(*, message: Message) -> None:

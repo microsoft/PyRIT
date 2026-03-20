@@ -80,7 +80,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         registry_name="platform_openai_chat",
         target_class=OpenAIChatTarget,
         endpoint_var="PLATFORM_OPENAI_CHAT_ENDPOINT",
-        key_var="PLATFORM_OPENAI_CHAT_API_KEY",
+        key_var="PLATFORM_OPENAI_CHAT_KEY",
         model_var="PLATFORM_OPENAI_CHAT_GPT4O_MODEL",
     ),
     TargetConfig(

@@ -10,7 +10,7 @@ Scorers are registered explicitly via initializers as pre-configured instances.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.instance_registries.base_instance_registry import (
@@ -50,6 +50,7 @@ class ScorerRegistry(BaseInstanceRegistry["Scorer", ComponentIdentifier]):
         scorer: Scorer,
         *,
         name: Optional[str] = None,
+        tags: Optional[Union[dict[str, str], list[str]]] = None,
     ) -> None:
         """
         Register a scorer instance.
@@ -61,11 +62,13 @@ class ScorerRegistry(BaseInstanceRegistry["Scorer", ComponentIdentifier]):
             scorer: The pre-configured scorer instance (not a class).
             name: Optional custom registry name. If not provided,
                 derived from the scorer's unique identifier.
+            tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
+                or a ``list[str]`` (each string becomes a key with value ``""``).
         """
         if name is None:
             name = scorer.get_identifier().unique_name
 
-        self.register(scorer, name=name)
+        self.register(scorer, name=name, tags=tags)
         logger.debug(f"Registered scorer instance: {name} ({scorer.__class__.__name__})")
 
     def get_instance_by_name(self, name: str) -> Optional[Scorer]:

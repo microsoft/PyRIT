@@ -16,7 +16,8 @@ Examples include:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar, Union
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.base import RegistryProtocol
@@ -26,6 +27,25 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")  # The type of instances stored
 MetadataT = TypeVar("MetadataT", bound=ComponentIdentifier)
+
+
+@dataclass
+class RegistryEntry(Generic[T]):
+    """
+    A wrapper around a registered instance, holding its name, tags, and the instance itself.
+
+    Tags are always stored as ``dict[str, str]``. When callers pass a plain
+    ``list[str]``, each string is normalized to a key with an empty-string value.
+
+    Attributes:
+        name: The registry name for this entry.
+        instance: The registered object.
+        tags: Key-value tags for categorization and filtering.
+    """
+
+    name: str
+    instance: T
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT]):
@@ -71,10 +91,28 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         if cls in cls._instances:
             del cls._instances[cls]
 
+    @staticmethod
+    def _normalize_tags(tags: Optional[Union[dict[str, str], list[str]]] = None) -> dict[str, str]:
+        """
+        Normalize tags into a ``dict[str, str]``.
+
+        Args:
+            tags: Tags as a dict, a list of string keys (values default to ``""``),
+                or ``None`` (returns empty dict).
+
+        Returns:
+            A ``dict[str, str]`` of normalised tags.
+        """
+        if tags is None:
+            return {}
+        if isinstance(tags, list):
+            return dict.fromkeys(tags, "")
+        return dict(tags)
+
     def __init__(self) -> None:
         """Initialize the instance registry."""
-        # Maps registry names to registered items
-        self._registry_items: dict[str, T] = {}
+        # Maps registry names to registry entries
+        self._registry_items: dict[str, RegistryEntry[T]] = {}
         self._metadata_cache: Optional[list[MetadataT]] = None
 
     def register(
@@ -82,6 +120,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         instance: T,
         *,
         name: str,
+        tags: Optional[Union[dict[str, str], list[str]]] = None,
     ) -> None:
         """
         Register an instance.
@@ -89,8 +128,11 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         Args:
             instance: The pre-configured instance to register.
             name: The registry name for this instance.
+            tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
+                or a ``list[str]`` (each string becomes a key with value ``""``).
         """
-        self._registry_items[name] = instance
+        normalized = self._normalize_tags(tags)
+        self._registry_items[name] = RegistryEntry(name=name, instance=instance, tags=normalized)
         self._metadata_cache = None
 
     def get(self, name: str) -> Optional[T]:
@@ -103,6 +145,21 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         Returns:
             The instance, or None if not found.
         """
+        entry = self._registry_items.get(name)
+        if entry is None:
+            return None
+        return entry.instance
+
+    def get_entry(self, name: str) -> Optional[RegistryEntry[T]]:
+        """
+        Get a full registry entry by name, including tags.
+
+        Args:
+            name: The registry name of the entry.
+
+        Returns:
+            The RegistryEntry, or None if not found.
+        """
         return self._registry_items.get(name)
 
     def get_names(self) -> list[str]:
@@ -114,14 +171,38 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         return sorted(self._registry_items.keys())
 
-    def get_all_instances(self) -> dict[str, T]:
+    def get_all_instances(self) -> list[RegistryEntry[T]]:
         """
-        Get all registered instances as a name -> instance mapping.
+        Get all registered entries sorted by name.
 
         Returns:
-            Dict mapping registry names to their instances.
+            List of RegistryEntry objects sorted by name.
         """
-        return dict(self._registry_items)
+        return [self._registry_items[name] for name in sorted(self._registry_items.keys())]
+
+    def get_by_tag(
+        self,
+        *,
+        tag: str,
+        value: Optional[str] = None,
+    ) -> list[RegistryEntry[T]]:
+        """
+        Get all entries that have a given tag, optionally matching a specific value.
+
+        Args:
+            tag: The tag key to match.
+            value: If provided, only entries whose tag value equals this are returned.
+                If ``None``, any entry that has the tag key is returned regardless of value.
+
+        Returns:
+            List of matching RegistryEntry objects sorted by name.
+        """
+        results: list[RegistryEntry[T]] = []
+        for name in sorted(self._registry_items.keys()):
+            entry = self._registry_items[name]
+            if tag in entry.tags and (value is None or entry.tags[tag] == value):
+                results.append(entry)
+        return results
 
     def list_metadata(
         self,
@@ -152,8 +233,8 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         if self._metadata_cache is None:
             items = []
             for name in sorted(self._registry_items.keys()):
-                instance = self._registry_items[name]
-                items.append(self._build_metadata(name, instance))
+                entry = self._registry_items[name]
+                items.append(self._build_metadata(name, entry.instance))
             self._metadata_cache = items
 
         if not include_filters and not exclude_filters:

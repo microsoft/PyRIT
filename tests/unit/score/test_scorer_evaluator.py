@@ -31,9 +31,9 @@ def mock_harm_scorer():
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_456"
+    mock_identifier.eval_hash = "test_hash_456"
     mock_identifier.system_prompt_template = "test_system_prompt"
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
-    scorer.get_eval_hash = MagicMock(return_value="test_hash_456")
     return scorer
 
 
@@ -45,9 +45,9 @@ def mock_objective_scorer():
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_123"
+    mock_identifier.eval_hash = "test_hash_123"
     mock_identifier.user_prompt_template = "test_user_prompt"
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
-    scorer.get_eval_hash = MagicMock(return_value="test_hash_123")
     return scorer
 
 
@@ -412,8 +412,8 @@ def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_sco
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    # Make get_eval_hash() raise an exception
-    mock_objective_scorer.get_eval_hash = MagicMock(side_effect=Exception("Identifier computation failed"))
+    # Make get_identifier() raise an exception
+    mock_objective_scorer.get_identifier = MagicMock(side_effect=Exception("Identifier computation failed"))
 
     should_skip, result = evaluator._should_skip_evaluation(
         dataset_version="1.0",
@@ -426,8 +426,11 @@ def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_sco
     assert result is None
     mock_find.assert_not_called()
 
-    # Restore get_eval_hash for other tests
-    mock_objective_scorer.get_eval_hash = MagicMock(return_value="test_hash_123")
+    # Restore get_identifier for other tests
+    mock_id = MagicMock()
+    mock_id.hash = "test_hash_123"
+    mock_id.eval_hash = "test_hash_123"
+    mock_objective_scorer.get_identifier = MagicMock(return_value=mock_id)
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")

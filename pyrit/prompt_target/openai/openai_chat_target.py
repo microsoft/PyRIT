@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 from collections.abc import MutableSequence
+from dataclasses import replace
 from typing import Any, Optional
 
 from pyrit.common import convert_local_image_to_data_url
@@ -24,6 +25,7 @@ from pyrit.models import (
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
@@ -63,6 +65,12 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
     """
 
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_json_output=True,
+        supports_multi_message_pieces=True,
+    )
+
     def __init__(
         self,
         *,
@@ -77,6 +85,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         is_json_supported: bool = True,
         audio_response_config: Optional[OpenAIChatAudioConfig] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -95,7 +104,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             max_completion_tokens (int, Optional): An upper bound for the number of tokens that
                 can be generated for a completion, including visible output tokens and
                 reasoning tokens.
-
                 NOTE: Specify this value when using an o1 series model.
             max_tokens (int, Optional): The maximum number of tokens that can be
                 generated in the chat completion. This value can be used to control
@@ -118,9 +126,11 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 setting the response_format header. Official OpenAI models all support this, but if you are using
                 this target with different models, is_json_supported should be set correctly to avoid issues when
                 using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
+                This value is now deprecated in favor of `custom_capabilities`.
             audio_response_config (OpenAIChatAudioConfig, Optional): Configuration for audio output from models
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
+            custom_capabilities (TargetCapabilities, Optional): Override the default target capabilities.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -135,7 +145,14 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(**kwargs)
+        # initialize custom capabilities with the _DEFAULT_CAPABILITIES and the is_json_supported flag
+        # If custom_capabilities is provided, use it as-is (it takes precedence over the deprecated is_json_supported).
+        # Otherwise, apply is_json_supported to the default capabilities for backwards compatibility.
+        if custom_capabilities is not None:
+            effective_capabilities = custom_capabilities
+        else:
+            effective_capabilities = replace(type(self)._DEFAULT_CAPABILITIES, supports_json_output=is_json_supported)
+        super().__init__(custom_capabilities=effective_capabilities, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
@@ -146,7 +163,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         self._temperature = temperature
         self._top_p = top_p
-        self._is_json_supported = is_json_supported
         self._max_completion_tokens = max_completion_tokens
         self._max_tokens = max_tokens
         self._frequency_penalty = frequency_penalty
@@ -479,15 +495,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         return audio_serializer.value
 
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return self._is_json_supported
-
     async def _build_chat_messages_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries.
@@ -659,27 +666,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
-
-    def _validate_request(self, *, message: Message) -> None:
-        """
-        Validate the structure and content of a message for compatibility of this target.
-
-        Args:
-            message (Message): The message object.
-
-        Raises:
-            ValueError: If any of the message pieces have a data type other than 'text' or 'image_path'.
-        """
-        converted_prompt_data_types = [
-            message_piece.converted_value_data_type for message_piece in message.message_pieces
-        ]
-
-        # Some models may not support all of these
-        for prompt_data_type in converted_prompt_data_types:
-            if prompt_data_type not in ["text", "image_path", "audio_path"]:
-                raise ValueError(
-                    f"This target only supports text, image_path, and audio_path. Received: {prompt_data_type}."
-                )
 
     def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
         if not json_config.enabled:

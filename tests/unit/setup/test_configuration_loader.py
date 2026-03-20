@@ -504,3 +504,22 @@ initializers:
             assert config._initializer_configs[0].name == "cli_init"
         finally:
             config_path.unlink()
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_preserves_silent_from_config_file(self, mock_default_path):
+        """Test that load_with_overrides preserves the silent flag from config files."""
+        mock_default_path.exists.return_value = False
+
+        yaml_content = """
+memory_db_type: sqlite
+silent: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            config_path = pathlib.Path(f.name)
+
+        try:
+            config = ConfigurationLoader.load_with_overrides(config_file=config_path)
+            assert config.silent is True
+        finally:
+            config_path.unlink()

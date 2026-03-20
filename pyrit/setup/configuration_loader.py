@@ -224,6 +224,7 @@ class ConfigurationLoader(YamlLoadable):
             "initializers": [],
             "initialization_scripts": None,  # None = use defaults
             "env_files": None,  # None = use defaults
+            "silent": False,
         }
 
         # 1. Try loading default config file if it exists
@@ -239,6 +240,7 @@ class ConfigurationLoader(YamlLoadable):
                 # Preserve None vs [] distinction from config file
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
+                config_data["silent"] = default_config.silent
                 if default_config.operator:
                     config_data["operator"] = default_config.operator
                 if default_config.operation:
@@ -259,6 +261,7 @@ class ConfigurationLoader(YamlLoadable):
             # Preserve None vs [] distinction from config file
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
+            config_data["silent"] = explicit_config.silent
             if explicit_config.operator:
                 config_data["operator"] = explicit_config.operator
             if explicit_config.operation:

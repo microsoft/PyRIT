@@ -59,6 +59,25 @@ def test_parse_raw_http_request(mock_http_target):
     assert version == "HTTP/1.1"
 
 
+def test_parse_raw_http_request_with_crlf_line_endings(sqlite_instance):
+    request = (
+        "POST /submit HTTP/1.1\r\n"
+        "Host: example.com\r\n"
+        "Content-Type: application/json\r\n"
+        "\r\n"
+        '{"prompt": "{PLACEHOLDER_PROMPT}"}'
+    )
+    target = HTTPTarget(http_request=request)
+
+    headers, body, url, method, version = target.parse_raw_http_request(request)
+
+    assert url == "https://example.com/submit"
+    assert method == "POST"
+    assert headers == {"host": "example.com", "content-type": "application/json"}
+    assert body == '{"prompt": "{PLACEHOLDER_PROMPT}"}'
+    assert version == "HTTP/1.1"
+
+
 def test_parse_raw_http_request_preserves_relative_url_case(sqlite_instance):
     request = "GET /CaseSensitive/Run?token=AbC123&Mode=Keep HTTP/1.1\nHost: Example.COM\n\n"
     target = HTTPTarget(http_request=request)

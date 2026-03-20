@@ -28,9 +28,6 @@ class _ConcreteOpenAITarget(OpenAITarget):
     def _get_provider_examples(self) -> dict[str, str]:
         return {}
 
-    def is_json_response_supported(self) -> bool:
-        return True
-
     async def _construct_message_from_response(self, response, request):
         raise NotImplementedError
 

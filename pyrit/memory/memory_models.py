@@ -33,6 +33,10 @@ from sqlalchemy.types import Uuid
 import pyrit
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.identifiers.evaluation_identifier import (
+    AtomicAttackEvaluationIdentifier,
+    ScorerEvaluationIdentifier,
+)
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -50,6 +54,8 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
+
+logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
@@ -398,7 +404,14 @@ class ScoreEntry(Base):
         self.score_metadata = entry.score_metadata
         # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
-        self.scorer_class_identifier = normalized_scorer.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        if normalized_scorer.eval_hash is None:
+            normalized_scorer = normalized_scorer.with_eval_hash(
+                ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+            )
+        self.scorer_class_identifier = normalized_scorer.to_dict(
+            max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+        )
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -770,8 +783,15 @@ class AttackResultEntry(Base):
         self.attack_identifier = (
             _attack_strategy_id.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH) if _attack_strategy_id else {}
         )
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
+            entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
+                AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
+            )
         self.atomic_attack_identifier = (
-            entry.atomic_attack_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.atomic_attack_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            )
             if entry.atomic_attack_identifier
             else None
         )
@@ -974,9 +994,16 @@ class ScenarioResultEntry(Base):
         self.objective_target_identifier = entry.objective_target_identifier.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
         )
-        # Convert ComponentIdentifier to dict for JSON storage
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip.
+        if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
+            entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
+                ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+            )
+
         self.objective_scorer_identifier = (
-            entry.objective_scorer_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.objective_scorer_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            )
             if entry.objective_scorer_identifier
             else None
         )

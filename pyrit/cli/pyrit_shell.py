@@ -12,16 +12,20 @@ from __future__ import annotations
 
 import asyncio
 import cmd
+import logging
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyrit.cli import frontend_core
     from pyrit.models.scenario_result import ScenarioResult
 
 from pyrit.cli import _banner as banner
-from pyrit.cli import frontend_core
+from pyrit.common.deprecation import print_deprecation_message
 
 
 class PyRITShell(cmd.Cmd):
@@ -61,35 +65,105 @@ class PyRITShell(cmd.Cmd):
     def __init__(
         self,
         *,
-        context: frontend_core.FrontendCore,
         no_animation: bool = False,
+        config_file: Optional[Path] = None,
+        database: Optional[str] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        initializer_names: Optional[list[Any]] = None,
+        env_files: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
+        context: Optional[frontend_core.FrontendCore] = None,
     ) -> None:
         """
         Initialize the PyRIT shell.
 
+        The heavy ``frontend_core`` import, ``FrontendCore`` construction, and
+        ``initialize_async`` call all happen on a background thread so the
+        shell prompt appears immediately.
+
         Args:
-            context: PyRIT context with loaded registries.
-            no_animation: If True, skip the animated startup banner.
+            no_animation (bool): If True, skip the animated startup banner.
+            config_file (Optional[Path]): Path to a YAML configuration file.
+            database (Optional[str]): Database type (InMemory, SQLite, or AzureSQL).
+            initialization_scripts (Optional[list[Path]]): Initialization script paths.
+            initializer_names (Optional[list[Any]]): Initializer entries (names or dicts).
+            env_files (Optional[list[Path]]): Environment file paths to load in order.
+            log_level (Optional[int]): Logging level constant (e.g., ``logging.WARNING``).
+            context (Optional[frontend_core.FrontendCore]): Deprecated. Pre-created FrontendCore
+                context. Use the individual keyword arguments instead.
+
+        Raises:
+            ValueError: If ``context`` is provided together with any other
+                FrontendCore keyword arguments.
         """
         super().__init__()
-        self.context = context
         self._no_animation = no_animation
-        self.default_database = context._database
-        self.default_log_level: Optional[int] = context._log_level
-        self.default_env_files = context._env_files
+        self._context_kwargs: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "config_file": config_file,
+                "database": database,
+                "initialization_scripts": initialization_scripts,
+                "initializer_names": initializer_names,
+                "env_files": env_files,
+                "log_level": log_level,
+            }.items()
+            if v is not None
+        }
+
+        if context is not None:
+            if self._context_kwargs:
+                raise ValueError(
+                    "Cannot pass 'context' together with FrontendCore keyword arguments "
+                    f"({', '.join(self._context_kwargs)}). Use one or the other."
+                )
+            print_deprecation_message(
+                old_item="PyRITShell(context=...)",
+                new_item="PyRITShell(database=..., log_level=..., ...)",
+                removed_in="0.14.0",
+            )
+            self._deprecated_context = context
+        else:
+            self._deprecated_context = None
 
         # Track scenario execution history: list of (command_string, ScenarioResult) tuples
         self._scenario_history: list[tuple[str, ScenarioResult]] = []
 
+        # Set by the background thread after importing frontend_core.
+        self.context: Optional[frontend_core.FrontendCore] = None
+        self.default_database: Optional[str] = None
+        self.default_log_level: Optional[int] = None
+        self.default_env_files: Optional[Sequence[Path]] = None
+
         # Initialize PyRIT in background thread for faster startup.
         self._init_thread = threading.Thread(target=self._background_init, daemon=True)
         self._init_complete = threading.Event()
+        self._init_error: Optional[BaseException] = None
         self._init_thread.start()
 
     def _background_init(self) -> None:
-        """Initialize PyRIT modules in the background. This dramatically speeds up shell startup."""
-        asyncio.run(self.context.initialize_async())
-        self._init_complete.set()
+        """Import heavy modules and initialize PyRIT in the background."""
+        try:
+            from pyrit.cli import frontend_core as fc
+
+            self._fc = fc
+            if self._deprecated_context is not None:
+                self.context = self._deprecated_context
+            else:
+                self.context = fc.FrontendCore(**self._context_kwargs)
+            self.default_database = self.context._database
+            self.default_log_level = self.context._log_level
+            self.default_env_files = self.context._env_files
+            asyncio.run(self.context.initialize_async())
+        except BaseException as exc:
+            self._init_error = exc
+        finally:
+            self._init_complete.set()
+
+    def _raise_init_error(self) -> None:
+        """Re-raise background initialization failures on the calling thread."""
+        if self._init_error is not None:
+            raise self._init_error
 
     def _ensure_initialized(self) -> None:
         """Wait for initialization to complete if not already done."""
@@ -97,14 +171,26 @@ class PyRITShell(cmd.Cmd):
             print("Waiting for PyRIT initialization to complete...")
             sys.stdout.flush()
             self._init_complete.wait()
+        self._raise_init_error()
 
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
-            # Wait for background init to finish BEFORE animation,
-            # so its log output doesn't interfere with cursor positioning
-            self._init_complete.wait()
-            intro = banner.play_animation(no_animation=self._no_animation)
+            # Play animation immediately while background init continues.
+            # Suppress logging during the animation so log lines don't corrupt
+            # the ANSI cursor-positioned frames.
+            prev_disable = logging.root.manager.disable
+            logging.disable(logging.CRITICAL)
+            try:
+                intro = banner.play_animation(no_animation=self._no_animation)
+            finally:
+                logging.disable(prev_disable)
+
+            # If init already failed while the animation played, surface it now.
+            if self._init_complete.is_set():
+                self._raise_init_error()
+        elif self._init_complete.is_set():
+            self._raise_init_error()
         self.intro = intro
         super().cmdloop(intro=self.intro)
 
@@ -112,7 +198,7 @@ class PyRITShell(cmd.Cmd):
         """List all available scenarios."""
         self._ensure_initialized()
         try:
-            asyncio.run(frontend_core.print_scenarios_list_async(context=self.context))
+            asyncio.run(self._fc.print_scenarios_list_async(context=self.context))
         except Exception as e:
             print(f"Error listing scenarios: {e}")
 
@@ -121,10 +207,8 @@ class PyRITShell(cmd.Cmd):
         self._ensure_initialized()
         try:
             # Discover from scenarios directory by default (same as scan)
-            discovery_path = frontend_core.get_default_initializer_discovery_path()
-            asyncio.run(
-                frontend_core.print_initializers_list_async(context=self.context, discovery_path=discovery_path)
-            )
+            discovery_path = self._fc.get_default_initializer_discovery_path()
+            asyncio.run(self._fc.print_initializers_list_async(context=self.context, discovery_path=discovery_path))
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
@@ -170,23 +254,24 @@ class PyRITShell(cmd.Cmd):
             Initializers are specified per-run to allow different setups for different scenarios.
         """
         self._ensure_initialized()
+
         if not line.strip():
             print("Error: Specify a scenario name")
             print("\nUsage: run <scenario_name> [options]")
             print("\nNote: Every scenario requires an initializer.")
             print("\nOptions:")
-            print(f"  --initializers <name> ...       {frontend_core.ARG_HELP['initializers']} (REQUIRED)")
+            print(f"  --initializers <name> ...       {self._fc.ARG_HELP['initializers']} (REQUIRED)")
             print(
-                f"  --initialization-scripts <...>  {frontend_core.ARG_HELP['initialization_scripts']}"
+                f"  --initialization-scripts <...>  {self._fc.ARG_HELP['initialization_scripts']}"
                 " (alternative to --initializers)"
             )
-            print(f"  --strategies, -s <s1> <s2> ...  {frontend_core.ARG_HELP['scenario_strategies']}")
-            print(f"  --max-concurrency <N>           {frontend_core.ARG_HELP['max_concurrency']}")
-            print(f"  --max-retries <N>               {frontend_core.ARG_HELP['max_retries']}")
-            print(f"  --memory-labels <JSON>          {frontend_core.ARG_HELP['memory_labels']}")
+            print(f"  --strategies, -s <s1> <s2> ...  {self._fc.ARG_HELP['scenario_strategies']}")
+            print(f"  --max-concurrency <N>           {self._fc.ARG_HELP['max_concurrency']}")
+            print(f"  --max-retries <N>               {self._fc.ARG_HELP['max_retries']}")
+            print(f"  --memory-labels <JSON>          {self._fc.ARG_HELP['memory_labels']}")
             print(
                 f"  --database <type>               Override default database"
-                f" ({frontend_core.IN_MEMORY}, {frontend_core.SQLITE}, {frontend_core.AZURE_SQL})"
+                f" ({self._fc.IN_MEMORY}, {self._fc.SQLITE}, {self._fc.AZURE_SQL})"
             )
             print(
                 "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
@@ -198,7 +283,7 @@ class PyRITShell(cmd.Cmd):
 
         # Parse arguments using shared parser
         try:
-            args = frontend_core.parse_run_arguments(args_string=line)
+            args = self._fc.parse_run_arguments(args_string=line)
         except ValueError as e:
             print(f"Error: {e}")
             return
@@ -207,9 +292,7 @@ class PyRITShell(cmd.Cmd):
         resolved_scripts = None
         if args["initialization_scripts"]:
             try:
-                resolved_scripts = frontend_core.resolve_initialization_scripts(
-                    script_paths=args["initialization_scripts"]
-                )
+                resolved_scripts = self._fc.resolve_initialization_scripts(script_paths=args["initialization_scripts"])
             except FileNotFoundError as e:
                 print(f"Error: {e}")
                 return
@@ -218,7 +301,7 @@ class PyRITShell(cmd.Cmd):
         resolved_env_files: Optional[list[Path]] = None
         if args["env_files"]:
             try:
-                resolved_env_files = list(frontend_core.resolve_env_files(env_file_paths=args["env_files"]))
+                resolved_env_files = list(self._fc.resolve_env_files(env_file_paths=args["env_files"]))
             except ValueError as e:
                 print(f"Error: {e}")
                 return
@@ -227,7 +310,7 @@ class PyRITShell(cmd.Cmd):
             resolved_env_files = list(self.default_env_files) if self.default_env_files else None
 
         # Create a context for this run with overrides
-        run_context = frontend_core.FrontendCore(
+        run_context = self._fc.FrontendCore(
             database=args["database"] or self.default_database,
             initialization_scripts=resolved_scripts,
             initializer_names=args["initializers"],
@@ -241,7 +324,7 @@ class PyRITShell(cmd.Cmd):
 
         try:
             result = asyncio.run(
-                frontend_core.run_scenario_async(
+                self._fc.run_scenario_async(
                     scenario_name=args["scenario_name"],
                     context=run_context,
                     scenario_strategies=args["scenario_strategies"],
@@ -341,7 +424,9 @@ class PyRITShell(cmd.Cmd):
     def do_help(self, arg: str) -> None:
         """Show help. Usage: help [command]."""
         if not arg:
-            # Show general help
+            from pyrit.cli._cli_args import ARG_HELP, AZURE_SQL, IN_MEMORY, SQLITE
+
+            # Show general help (no full init needed — ARG_HELP is lightweight)
             super().do_help(arg)
             print("\n" + "=" * 70)
             print("Shell Startup Options:")
@@ -360,7 +445,7 @@ class PyRITShell(cmd.Cmd):
             print("Run Command Options (specified when running scenarios):")
             print("=" * 70)
             print("  --initializers <name> [<name> ...]  (REQUIRED)")
-            print(f"      {frontend_core.ARG_HELP['initializers']}")
+            print(f"      {ARG_HELP['initializers']}")
             print("      Every scenario requires at least one initializer")
             print("      Example: run foundry --initializers openai_objective_target load_default_datasets")
             print("      With params: run foundry --initializers target:tags=default,scorer")
@@ -369,22 +454,25 @@ class PyRITShell(cmd.Cmd):
             )
             print()
             print("  --initialization-scripts <path> [<path> ...]  (Alternative to --initializers)")
-            print(f"      {frontend_core.ARG_HELP['initialization_scripts']}")
+            print(f"      {ARG_HELP['initialization_scripts']}")
             print("      Example: run foundry --initialization-scripts ./my_init.py")
             print()
             print("  --strategies, -s <s1> [<s2> ...]")
-            print(f"      {frontend_core.ARG_HELP['scenario_strategies']}")
+            print(f"      {ARG_HELP['scenario_strategies']}")
             print("      Example: run garak.encoding --strategies base64 rot13")
             print()
             print("  --max-concurrency <N>")
-            print(f"      {frontend_core.ARG_HELP['max_concurrency']}")
+            print(f"      {ARG_HELP['max_concurrency']}")
             print()
             print("  --max-retries <N>")
-            print(f"      {frontend_core.ARG_HELP['max_retries']}")
+            print(f"      {ARG_HELP['max_retries']}")
             print()
             print("  --memory-labels <JSON>")
-            print(f"      {frontend_core.ARG_HELP['memory_labels']}")
+            print(f"      {ARG_HELP['memory_labels']}")
             print('      Example: run foundry --memory-labels \'{"env":"test"}\'')
+            print()
+            print(f"  --database <type>               Override ({IN_MEMORY}, {SQLITE}, {AZURE_SQL})")
+            print("  --log-level <level>             Override (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
             print()
             print("Start the shell like:")
             print("  pyrit_shell")
@@ -450,6 +538,8 @@ def main() -> int:
     """
     import argparse
 
+    from pyrit.cli._cli_args import ARG_HELP, AZURE_SQL, IN_MEMORY, SQLITE, validate_log_level
+
     parser = argparse.ArgumentParser(
         prog="pyrit_shell",
         description="PyRIT Interactive Shell - Load modules once, run commands instantly",
@@ -458,17 +548,16 @@ def main() -> int:
     parser.add_argument(
         "--config-file",
         type=Path,
-        help=frontend_core.ARG_HELP["config_file"],
+        help=ARG_HELP["config_file"],
     )
 
     parser.add_argument(
         "--database",
-        choices=[frontend_core.IN_MEMORY, frontend_core.SQLITE, frontend_core.AZURE_SQL],
+        choices=[IN_MEMORY, SQLITE, AZURE_SQL],
         default=None,
         help=(
-            f"Default database type to use"
-            f" ({frontend_core.IN_MEMORY}, {frontend_core.SQLITE}, {frontend_core.AZURE_SQL})"
-            f" (defaults to config file value, or {frontend_core.SQLITE} if not specified)"
+            f"Default database type to use ({IN_MEMORY}, {SQLITE}, {AZURE_SQL})"
+            f" (defaults to config file value, or {SQLITE} if not specified)"
         ),
     )
 
@@ -487,7 +576,7 @@ def main() -> int:
         "--env-files",
         type=str,
         nargs="+",
-        help="Environment files to load in order (default for all runs, can be overridden per-run)",
+        help=ARG_HELP["env_files"],
     )
 
     parser.add_argument(
@@ -499,29 +588,40 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Resolve env files if provided
-    env_files = None
+    # Resolve and validate env file paths (lightweight — no heavy imports needed).
+    env_files: Optional[list[Path]] = None
     if args.env_files:
+        from pyrit.cli._cli_args import resolve_env_files
+
         try:
-            env_files = frontend_core.resolve_env_files(env_file_paths=args.env_files)
+            env_files = resolve_env_files(env_file_paths=args.env_files)
         except ValueError as e:
             print(f"Error: {e}")
             return 1
 
-    # Create context (initializers are specified per-run, not at startup)
-    context = frontend_core.FrontendCore(
-        config_file=args.config_file,
-        database=args.database,
-        initialization_scripts=None,
-        initializer_names=None,
-        env_files=env_files,
-        log_level=args.log_level,
-    )
-
-    # Start shell
+    # Play the banner immediately, before heavy imports.
+    # Suppress logging so background-thread output doesn't corrupt the animation.
+    prev_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
     try:
-        shell = PyRITShell(context=context, no_animation=args.no_animation)
-        shell.cmdloop()
+        intro = banner.play_animation(no_animation=args.no_animation)
+    finally:
+        logging.disable(prev_disable)
+
+    # Create shell with deferred initialization — the background thread
+    # will import frontend_core, create the FrontendCore context, and call
+    # initialize_async while the user is already at the prompt.
+    try:
+        shell = PyRITShell(
+            no_animation=args.no_animation,
+            config_file=args.config_file,
+            database=args.database,
+            initialization_scripts=None,
+            initializer_names=None,
+            env_files=env_files,
+            log_level=validate_log_level(log_level=args.log_level),
+        )
+        shell.cmdloop(intro=intro)
         return 0
     except KeyboardInterrupt:
         print("\n\nInterrupted. Goodbye!")

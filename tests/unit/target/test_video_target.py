@@ -12,6 +12,20 @@ from unit.mocks import get_sample_conversations
 from pyrit.exceptions import RateLimitException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIVideoTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+
+_VIDEO_PATH_CAPABILITIES = TargetCapabilities(
+    supports_multi_turn=False,
+    supports_multi_message_pieces=True,
+    input_modalities=frozenset(
+        {
+            frozenset(["text"]),
+            frozenset(["text", "image_path"]),
+            frozenset(["text", "video_path"]),
+        }
+    ),
+    output_modalities=frozenset({frozenset(["video_path"])}),
+)
 
 
 @pytest.fixture
@@ -74,11 +88,6 @@ def test_video_validate_prompt_type_image_only(video_target: OpenAIVideoTarget):
             role="user", original_value="test", converted_value="test", converted_value_data_type="image_path"
         )
         video_target._validate_request(message=Message([msg]))
-
-
-def test_is_json_response_supported(patch_central_database):
-    target = OpenAIVideoTarget(endpoint="test", api_key="test", model_name="test-model")
-    assert target.is_json_response_supported() is False
 
 
 @pytest.mark.asyncio
@@ -425,7 +434,11 @@ class TestVideoTargetValidation:
             converted_value_data_type="audio_path",
             conversation_id=conversation_id,
         )
-        with pytest.raises(ValueError, match="Unsupported piece types"):
+        with pytest.raises(
+            ValueError,
+            match="This target supports only the following data types.*If your target does support this, set the"
+            " custom_capabilities parameter accordingly",
+        ):
             video_target._validate_request(message=Message([msg_text, msg_audio]))
 
     def test_validate_rejects_remix_with_image(self, video_target: OpenAIVideoTarget):
@@ -537,6 +550,7 @@ class TestVideoTargetRemix:
             endpoint="https://api.openai.com/v1",
             api_key="test",
             model_name="sora-2",
+            custom_capabilities=_VIDEO_PATH_CAPABILITIES,
         )
 
     @pytest.mark.asyncio
@@ -977,14 +991,18 @@ def test_video_validate_previous_conversations(
     message_piece = sample_conversations[0]
 
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = sample_conversations
+    mock_memory.get_message_pieces.return_value = sample_conversations
     mock_memory.add_message_to_memory = AsyncMock()
 
     video_target._memory = mock_memory
 
     request = Message(message_pieces=[message_piece])
 
-    with pytest.raises(ValueError, match="This target only supports a single turn conversation."):
+    with pytest.raises(
+        ValueError,
+        match="This target only supports a single turn conversation.*If your target does support this, set the"
+        " custom_capabilities parameter accordingly",
+    ):
         video_target._validate_request(message=request)
 
 
@@ -998,6 +1016,7 @@ class TestVideoTargetRemixValidation:
             endpoint="https://api.openai.com/v1",
             api_key="test",
             model_name="sora-2",
+            custom_capabilities=_VIDEO_PATH_CAPABILITIES,
         )
 
     def test_validate_accepts_text_and_video_path(self, video_target: OpenAIVideoTarget) -> None:

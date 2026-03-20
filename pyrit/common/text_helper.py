@@ -11,7 +11,7 @@ def read_txt(file: IO[Any]) -> list[dict[str, str]]:
     Returns:
         List[Dict[str, str]]: Parsed TXT content.
     """
-    return [{"prompt": line.strip()} for line in file.readlines()]
+    return [{"prompt": line.strip()} for line in file.readlines() if line.strip()]
 
 
 def write_txt(file: IO[Any], examples: list[dict[str, str]]) -> None:

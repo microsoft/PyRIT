@@ -320,15 +320,6 @@ async def test_optional_kwargs_args_passed_when_loading_model(mock_transformers)
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
 @pytest.mark.asyncio
-async def test_is_json_response_supported():
-    hf_chat = HuggingFaceChatTarget(model_id="dummy", use_cuda=False, trust_remote_code=True)
-    # Await the background task to prevent warnings
-    await hf_chat.load_model_and_tokenizer_task
-    assert hf_chat.is_json_response_supported() is False
-
-
-@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 async def test_hugging_face_chat_sets_endpoint_and_rate_limit(patch_central_database):
     target = HuggingFaceChatTarget(
         model_id="test_model",

@@ -52,6 +52,7 @@ class OpenAITarget(PromptTarget):
     """
 
     ADDITIONAL_REQUEST_HEADERS: str = "OPENAI_ADDITIONAL_REQUEST_HEADERS"
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_message_pieces=True)
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
@@ -70,7 +71,7 @@ class OpenAITarget(PromptTarget):
         max_requests_per_minute: Optional[int] = None,
         httpx_client_kwargs: Optional[dict[str, Any]] = None,
         underlying_model: Optional[str] = None,
-        capabilities: Optional[TargetCapabilities] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -98,7 +99,7 @@ class OpenAITarget(PromptTarget):
                 from the actual model. If not provided, will attempt to fetch from environment variable.
                 If it is not there either, the identifier "model_name" attribute will use the model_name.
                 Defaults to None.
-            capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
 
         Raises:
@@ -135,7 +136,7 @@ class OpenAITarget(PromptTarget):
             endpoint=endpoint_value,
             model_name=self._model_name,
             underlying_model=underlying_model_value,
-            capabilities=capabilities,
+            custom_capabilities=custom_capabilities,
         )
 
         # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
@@ -667,11 +668,11 @@ class OpenAITarget(PromptTarget):
             f"For more details and guidance, please see the .env_example file in the repository."
         )
 
-    @abstractmethod
     def is_json_response_supported(self) -> bool:
         """
-        Abstract method to determine if JSON response format is supported by the target.
+        Determine if JSON response format is supported by the target.
 
         Returns:
             bool: True if JSON response is supported, False otherwise.
         """
+        return self._capabilities.supports_json_output

@@ -34,6 +34,7 @@ from pyrit.prompt_target import (
     OpenAIResponseTarget,
     PromptChatTarget,
 )
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 
 def fake_construct_response_from_request(request, response_text_pieces):
@@ -103,35 +104,6 @@ def test_init_with_no_endpoint_uri_var_raises():
 def test_init_with_no_additional_request_headers_var_raises():
     with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
         OpenAIChatTarget(model_name="gpt-4", endpoint="", api_key="xxxxx", headers="")
-
-
-def test_init_is_json_supported_defaults_to_true(patch_central_database):
-    target = OpenAIChatTarget(
-        model_name="gpt-4",
-        endpoint="https://mock.azure.com/",
-        api_key="mock-api-key",
-    )
-    assert target.is_json_response_supported() is True
-
-
-def test_init_is_json_supported_can_be_set_to_false(patch_central_database):
-    target = OpenAIChatTarget(
-        model_name="gpt-4",
-        endpoint="https://mock.azure.com/",
-        api_key="mock-api-key",
-        is_json_supported=False,
-    )
-    assert target.is_json_response_supported() is False
-
-
-def test_init_is_json_supported_can_be_set_to_true(patch_central_database):
-    target = OpenAIChatTarget(
-        model_name="gpt-4",
-        endpoint="https://mock.azure.com/",
-        api_key="mock-api-key",
-        is_json_supported=True,
-    )
-    assert target.is_json_response_supported() is True
 
 
 @pytest.mark.asyncio()
@@ -284,7 +256,23 @@ async def test_construct_request_body_serializes_complex_message(
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_json: dict, target: OpenAIChatTarget):
+async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_json: dict, patch_central_database):
+    target = OpenAIChatTarget(
+        model_name="gpt-o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        ),
+    )
     mock_memory = MagicMock()
     mock_memory.get_conversation.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
@@ -384,7 +372,23 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async(openai_response_json: dict, target: OpenAIChatTarget):
+async def test_send_prompt_async(openai_response_json: dict, patch_central_database):
+    target = OpenAIChatTarget(
+        model_name="gpt-o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        ),
+    )
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
     assert os.path.exists(tmp_file_name)
@@ -432,7 +436,23 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIChatT
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_empty_response_retries(openai_response_json: dict, target: OpenAIChatTarget):
+async def test_send_prompt_async_empty_response_retries(openai_response_json: dict, patch_central_database):
+    target = OpenAIChatTarget(
+        model_name="gpt-o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        ),
+    )
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
     assert os.path.exists(tmp_file_name)
@@ -556,15 +576,11 @@ def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=message)
 
-    assert "This target only supports text, image_path, and audio_path." in str(excinfo.value), (
+    assert "This target supports only the following data types" in str(excinfo.value), (
         "Error not raised for unsupported data types"
     )
 
     os.remove(image_piece.original_value)
-
-
-def test_is_json_response_supported(target: OpenAIChatTarget):
-    assert target.is_json_response_supported() is True
 
 
 def test_inheritance_from_prompt_chat_target(target: OpenAIChatTarget):

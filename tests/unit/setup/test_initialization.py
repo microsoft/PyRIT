@@ -53,6 +53,59 @@ class TestInitializer(PyRITInitializer):
         with pytest.raises(FileNotFoundError):
             _load_initializers_from_scripts(script_paths=["nonexistent_script.py"])
 
+    def test_ignores_imported_initializer_classes(self):
+        """Test that imported initializer classes are not instantiated from the script."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            helper_path = temp_path / "helper_init.py"
+            script_path = temp_path / "script_init.py"
+
+            helper_path.write_text(
+                """
+from pyrit.setup.initializers import PyRITInitializer
+
+class ImportedInitializer(PyRITInitializer):
+    @property
+    def name(self) -> str:
+        return "Imported"
+
+    @property
+    def description(self) -> str:
+        return "Imported initializer"
+
+    async def initialize_async(self) -> None:
+        pass
+"""
+            )
+
+            script_path.write_text(
+                f"""
+import sys
+
+sys.path.insert(0, {temp_dir!r})
+
+from helper_init import ImportedInitializer
+from pyrit.setup.initializers import PyRITInitializer
+
+class LocalInitializer(PyRITInitializer):
+    @property
+    def name(self) -> str:
+        return "Local"
+
+    @property
+    def description(self) -> str:
+        return "Local initializer"
+
+    async def initialize_async(self) -> None:
+        pass
+"""
+            )
+
+            initializers = _load_initializers_from_scripts(script_paths=[script_path])
+
+            assert len(initializers) == 1
+            assert initializers[0].name == "Local"
+
 
 class TestInitializePyrit:
     """Tests for initialize_pyrit_async function - basic orchestration tests."""
