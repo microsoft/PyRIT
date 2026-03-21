@@ -441,6 +441,38 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                           </option>
                         ))}
                       </Select>
+                    ) : /path|file/i.test(param.name) ? (
+                      <div className={styles.filePickerRow}>
+                        <Input
+                          value={paramValues[param.name] ?? ''}
+                          placeholder={param.default_value ?? 'Select a file...'}
+                          onChange={(_, data) =>
+                            setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
+                          }
+                          className={isMissing ? styles.paramInputError : undefined}
+                          data-testid={`param-${param.name}`}
+                        />
+                        <Button
+                          appearance="subtle"
+                          size="small"
+                          onClick={() => {
+                            const input = document.createElement('input')
+                            input.type = 'file'
+                            input.onchange = () => {
+                              const file = input.files?.[0]
+                              if (file) {
+                                // Use webkitRelativePath or name — for local backend the full path isn't available
+                                // The user can also manually type/paste the path
+                                setParamValues((prev) => ({ ...prev, [param.name]: file.name }))
+                              }
+                            }
+                            input.click()
+                          }}
+                          data-testid={`param-${param.name}-browse`}
+                        >
+                          Browse
+                        </Button>
+                      </div>
                     ) : (
                       <Input
                         value={paramValues[param.name] ?? ''}
@@ -490,7 +522,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
 
               {previewError && (
                 <MessageBar intent="error" data-testid="converter-preview-error">
-                  <MessageBarBody>{previewError}</MessageBarBody>
+                  <MessageBarBody className={styles.errorBody}>{previewError}</MessageBarBody>
                 </MessageBar>
               )}
 

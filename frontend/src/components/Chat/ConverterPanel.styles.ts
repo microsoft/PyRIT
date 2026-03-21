@@ -250,6 +250,11 @@ export const useConverterPanelStyles = makeStyles({
     color: tokens.colorPaletteRedForeground1,
     fontWeight: tokens.fontWeightSemibold as unknown as string,
   },
+  filePickerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
   outputBox: {
     padding: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusMedium,
@@ -268,6 +273,11 @@ export const useConverterPanelStyles = makeStyles({
     fontFamily: tokens.fontFamilyMonospace,
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground1,
+  },
+  errorBody: {
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    overflow: 'visible',
   },
   previewImage: {
     maxWidth: '100%',

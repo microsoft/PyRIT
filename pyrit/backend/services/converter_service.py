@@ -124,7 +124,9 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
 
     params: list[ConverterParameterSchema] = []
     for name, p in sig.parameters.items():
-        if name == "self":
+        if name in ("self", "args", "kwargs"):
+            continue
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
         if not _is_simple_type(p.annotation):
             continue
