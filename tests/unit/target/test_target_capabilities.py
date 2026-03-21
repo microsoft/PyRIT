@@ -7,7 +7,6 @@ import pytest
 
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
-
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 # Clear them so that targets use _DEFAULT_CAPABILITIES instead of _KNOWN_CAPABILITIES.
 _CLEAN_UNDERLYING_MODEL_ENV = {
