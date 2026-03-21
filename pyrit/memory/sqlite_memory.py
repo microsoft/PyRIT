@@ -346,7 +346,10 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         if self.engine:
             self.engine.dispose()
-            logger.info("Engine disposed and all connections closed.")
+            try:
+                logger.info("Engine disposed and all connections closed.")
+            except (ValueError, OSError):
+                pass
 
     def export_conversations(
         self,

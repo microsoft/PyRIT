@@ -668,3 +668,23 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[0]].message_count == 1
     assert result[conv_ids[1]].message_count == 2
     assert result[conv_ids[2]].message_count == 3
+
+
+def test_dispose_engine_tolerates_closed_log_stream():
+    """Verify dispose_engine does not raise when logging streams are already closed (GH-1520)."""
+    import io
+    import logging
+
+    from pyrit.memory.sqlite_memory import SQLiteMemory
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    root = logging.getLogger()
+    root.addHandler(handler)
+
+    try:
+        mem = SQLiteMemory(db_path=":memory:")
+        stream.close()
+        mem.dispose_engine()
+    finally:
+        root.removeHandler(handler)
