@@ -47,6 +47,7 @@ memory_db_type: sqlite
 #         - scorer
 initializers:
   - name: simple
+  - name: load_default_datasets
   - name: scorers
   - name: targets
     args:
