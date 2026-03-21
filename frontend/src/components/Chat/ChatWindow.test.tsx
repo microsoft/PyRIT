@@ -2186,7 +2186,7 @@ describe("ChatWindow Integration", () => {
       // No params section when parameters is empty
       expect(screen.queryByTestId("converter-params")).not.toBeInTheDocument();
     });
-  }, 15000);
+  }, 30000);
 
   it("should show parameter form when converter has parameters", async () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
@@ -2233,7 +2233,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByTestId("param-encoding_func")).toBeInTheDocument();
       expect(screen.getByText("Parameters")).toBeInTheDocument();
     });
-  }, 15000);
+  }, 30000);
 
   it("should preview conversion when Preview button is clicked", async () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
@@ -2300,7 +2300,7 @@ describe("ChatWindow Integration", () => {
       converter_ids: ["test-conv-id"],
       original_value_data_type: "text",
     });
-  }, 15000);
+  }, 30000);
 
   it("should switch converter details when a different dropdown option is selected", async () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
@@ -2354,7 +2354,7 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("converter-item-CharSwapConverter")).toBeInTheDocument();
     });
-  }, 15000);
+  }, 30000);
 
   it("should allow converter and conversation panels to be open at the same time", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });

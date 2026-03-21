@@ -332,7 +332,7 @@ class TestPreviewConversion:
 
         assert result.converted_value == "step2_output"
         assert len(result.steps) == 2
-        mock_converter2.convert_async.assert_called_with(prompt="step1_output")
+        mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
 
 
 class TestGetConverterObjectsForIds:
