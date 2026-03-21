@@ -193,6 +193,13 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
 
     const currentPreviewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
 
+    // Clear preview when input is emptied (e.g. after sending)
+    if (!currentPreviewValue.trim()) {
+      setPreviewOutput('')
+      setPreviewConverterInstanceId(null)
+      setPreviewError(null)
+    }
+
     if (
       !selectedConverter ||
       selectedConverter.is_llm_based ||
@@ -449,7 +456,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                       <Text size={100} className={styles.paramErrorText}>Required</Text>
                     )}
                     {param.type_name !== 'bool' && param.type_name !== 'Optional[bool]' && !param.choices && (
-                      <Text size={100} className={styles.hintText}>{param.type_name}</Text>
+                      <Text size={100} className={styles.hintText}>{param.type_name.replace(/^Optional\[(.+)\]$/, '$1')}</Text>
                     )}
                   </div>
                   )

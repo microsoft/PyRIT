@@ -215,6 +215,8 @@ class ConverterService:
         for converter_type, converter_class in sorted(_CONVERTER_CLASS_REGISTRY.items()):
             if converter_type in ("PromptConverter", "ConverterResult") or "Strategy" in converter_type:
                 continue
+            if converter_type in ("HumanInTheLoopConverter", "SelectiveTextConverter"):
+                continue
 
             supported_input_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_INPUT_TYPES", ())]
             supported_output_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_OUTPUT_TYPES", ())]
