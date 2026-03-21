@@ -1,9 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from unittest.mock import patch
+
 import pytest
 
 from tests.unit.mocks import MockPromptTarget
+
+
+# Env vars that may leak from .env files loaded by other tests in parallel workers.
+_CLEAN_UNDERLYING_MODEL_ENV = {
+    "OPENAI_VIDEO_UNDERLYING_MODEL": "",
+}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -41,6 +49,7 @@ class TestSupportsMultiTurn:
         )
         assert target.capabilities.supports_multi_turn is False
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_video_target_returns_false(self):
         from pyrit.prompt_target import OpenAIVideoTarget
 

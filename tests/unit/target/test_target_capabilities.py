@@ -8,6 +8,17 @@ import pytest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 
+# Env vars that may leak from .env files loaded by other tests in parallel workers.
+# Clear them so that targets use _DEFAULT_CAPABILITIES instead of _KNOWN_CAPABILITIES.
+_CLEAN_UNDERLYING_MODEL_ENV = {
+    "OPENAI_VIDEO_UNDERLYING_MODEL": "",
+    "OPENAI_REALTIME_UNDERLYING_MODEL": "",
+    "OPENAI_CHAT_UNDERLYING_MODEL": "",
+    "OPENAI_IMAGE_UNDERLYING_MODEL": "",
+    "OPENAI_TTS_UNDERLYING_MODEL": "",
+}
+
+
 class TestDefaultCapabilitiesDefined:
     """Verify that every concrete PromptTarget subclass defines _DEFAULT_CAPABILITIES."""
 
@@ -115,6 +126,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.input_modalities == frozenset({frozenset(["text"])})
         assert target.capabilities.output_modalities == frozenset({frozenset(["audio_path"])})
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_video_target_modalities(self):
         from pyrit.prompt_target import OpenAIVideoTarget
 
