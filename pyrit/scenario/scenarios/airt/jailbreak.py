@@ -3,7 +3,7 @@
 
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
@@ -267,7 +267,9 @@ class Jailbreak(Scenario):
         attack: Optional[Union[ManyShotJailbreakAttack, PromptSendingAttack, RolePlayAttack, SkeletonKeyAttack]] = None
         args = {
             "objective_target": self._objective_target,
-            "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
+            "attack_scoring_config": AttackScoringConfig(
+                objective_scorer=cast("TrueFalseScorer", self._objective_scorer)
+            ),
             "attack_converter_config": converter_config,
         }
         match strategy:

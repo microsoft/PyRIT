@@ -809,7 +809,7 @@ class TestScenarioBaselineOnlyExecution:
 
 
 class TestGetDefaultObjectiveScorer:
-    """Tests for Scenario._get_default_objective_scorer static method."""
+    """Tests for Scenario._get_default_objective_scorer method."""
 
     @patch("pyrit.scenario.core.scenario.ScorerRegistry")
     def test_returns_registry_scorer_when_tagged(self, mock_registry_cls) -> None:
@@ -826,7 +826,7 @@ class TestGetDefaultObjectiveScorer:
         mock_registry.get_by_tag.return_value = [mock_entry]
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
-        result = Scenario._get_default_objective_scorer()
+        result = Scenario._get_default_objective_scorer(MagicMock())
         assert result is mock_scorer
 
     @patch("pyrit.scenario.core.scenario.OpenAIChatTarget")
@@ -839,5 +839,5 @@ class TestGetDefaultObjectiveScorer:
         mock_registry.get_by_tag.return_value = []
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
-        result = Scenario._get_default_objective_scorer()
+        result = Scenario._get_default_objective_scorer(MagicMock())
         assert isinstance(result, TrueFalseInverterScorer)

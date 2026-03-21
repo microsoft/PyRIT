@@ -172,10 +172,8 @@ class Scenario(ABC):
             DatasetConfiguration: The default dataset configuration.
         """
 
-    @staticmethod
-    def _get_default_objective_scorer() -> TrueFalseScorer:
+    def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency:
-        # scenario -> setup.initializers (parent __init__) -> objective_list -> scenario
         from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
 
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
