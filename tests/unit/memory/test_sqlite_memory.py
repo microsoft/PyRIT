@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
+import logging
 import os
 import uuid
 from collections.abc import Sequence
@@ -671,10 +673,7 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
 
 
 def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
-    """Verify dispose_engine does not emit 'Logging error' when streams are closed (GH-1520)."""
-    import io
-    import logging
-
+    """Verify dispose_engine does not raise or emit 'Logging error' when streams are closed (GH-1520)."""
     pyrit_logger = logging.getLogger("pyrit")
     prev_level = pyrit_logger.level
     pyrit_logger.setLevel(logging.INFO)
