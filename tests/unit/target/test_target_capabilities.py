@@ -15,6 +15,8 @@ _CLEAN_UNDERLYING_MODEL_ENV = {
     "OPENAI_CHAT_UNDERLYING_MODEL": "",
     "OPENAI_IMAGE_UNDERLYING_MODEL": "",
     "OPENAI_TTS_UNDERLYING_MODEL": "",
+    "OPENAI_COMPLETION_UNDERLYING_MODEL": "",
+    "OPENAI_RESPONSES_UNDERLYING_MODEL": "",
 }
 
 
@@ -89,6 +91,7 @@ class TestTargetCapabilitiesModalities:
         assert caps.input_modalities == frozenset({frozenset(["text"])})
         assert caps.output_modalities == frozenset({frozenset(["text"])})
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_chat_target_modalities(self):
         from pyrit.prompt_target import OpenAIChatTarget
 
@@ -102,6 +105,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.supports_json_output is True
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_image_target_modalities(self):
         from pyrit.prompt_target import OpenAIImageTarget
 
@@ -114,6 +118,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.output_modalities == frozenset({frozenset(["image_path"])})
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_tts_target_modalities(self):
         from pyrit.prompt_target import OpenAITTSTarget
 
@@ -139,6 +144,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.output_modalities == frozenset({frozenset(["video_path"])})
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_realtime_target_modalities(self):
         from pyrit.prompt_target import RealtimeTarget
 
@@ -152,6 +158,7 @@ class TestTargetCapabilitiesModalities:
         assert any("text" in combo for combo in target.capabilities.output_modalities)
         assert any("audio_path" in combo for combo in target.capabilities.output_modalities)
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_response_target_modalities(self):
         from pyrit.prompt_target import OpenAIResponseTarget
 
@@ -166,6 +173,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.supports_json_output is True
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_completion_target_modalities(self):
         from pyrit.prompt_target import OpenAICompletionTarget
 
