@@ -362,6 +362,7 @@ class TestContentHarmsBasic:
         """Test that get_default_strategy returns ALL strategy."""
         assert ContentHarms.get_default_strategy() == ContentHarmsStrategy.ALL
 
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.dict(
         "os.environ",
         {
@@ -370,13 +371,22 @@ class TestContentHarmsBasic:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    def test_get_default_adversarial_target(self, mock_objective_target):
+    def test_get_default_adversarial_target(self, mock_get_scorer, mock_objective_target, mock_objective_scorer):
         """Test default adversarial target creation."""
+        mock_get_scorer.return_value = mock_objective_scorer
         scenario = ContentHarms()
 
         assert scenario._adversarial_chat is not None
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
+    @patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.endpoint",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test_key",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+        },
+    )
     def test_get_default_objective_scorer(self, mock_get_scorer, mock_objective_target, mock_objective_scorer):
         """Test default objective scorer is set from base class."""
         mock_get_scorer.return_value = mock_objective_scorer
@@ -388,6 +398,7 @@ class TestContentHarmsBasic:
         """Test that scenario has correct version."""
         assert ContentHarms.VERSION == 1
 
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.dict(
         "os.environ",
         {
@@ -398,9 +409,10 @@ class TestContentHarmsBasic:
     )
     @pytest.mark.asyncio
     async def test_initialize_raises_exception_when_no_datasets_available(
-        self, mock_objective_target, mock_adversarial_target
+        self, mock_get_scorer, mock_objective_target, mock_adversarial_target, mock_objective_scorer
     ):
         """Test that initialization raises ValueError when datasets are not available in memory."""
+        mock_get_scorer.return_value = mock_objective_scorer
         # Don't mock _get_objectives_by_harm, let it try to load from empty memory
         scenario = ContentHarms(adversarial_chat=mock_adversarial_target)
 
@@ -493,6 +505,7 @@ class TestContentHarmsBasic:
         assert scenario._max_retries == 2
 
     @pytest.mark.asyncio
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
     @patch.dict(
         "os.environ",
@@ -503,7 +516,13 @@ class TestContentHarmsBasic:
         },
     )
     async def test_initialization_with_objectives_by_harm(
-        self, mock_get_seed_attack_groups, mock_objective_target, mock_adversarial_target, mock_seed_groups
+        self,
+        mock_get_seed_attack_groups,
+        mock_get_scorer,
+        mock_objective_target,
+        mock_adversarial_target,
+        mock_objective_scorer,
+        mock_seed_groups,
     ):
         """Test initialization with custom objectives_by_harm parameter."""
         # Setup custom objectives by harm
@@ -512,6 +531,7 @@ class TestContentHarmsBasic:
             "violence": mock_seed_groups("violence"),
         }
 
+        mock_get_scorer.return_value = mock_objective_scorer
         mock_get_seed_attack_groups.return_value = custom_objectives
 
         scenario = ContentHarms(

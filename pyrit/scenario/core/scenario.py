@@ -24,7 +24,8 @@ from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import AttackResult
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import (
@@ -32,10 +33,6 @@ from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
 from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
-
-from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import ScorerRegistry
-from pyrit.setup.initializers.components import ScorerInitializerTags
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -177,12 +174,14 @@ class Scenario(ABC):
 
     @staticmethod
     def _get_default_objective_scorer() -> TrueFalseScorer:
+        # Deferred import to avoid circular dependency:
+        # scenario -> setup.initializers (parent __init__) -> objective_list -> scenario
+        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
+
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
             return entries[0].instance
-        return TrueFalseInverterScorer(
-            scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
-        )
+        return TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
 
     @apply_defaults
     async def initialize_async(

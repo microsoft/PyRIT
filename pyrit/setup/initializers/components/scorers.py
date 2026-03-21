@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class ScorerInitializerTags(str, Enum):
     """Tags applied to scorer registry entries by ScorerInitializer."""
 

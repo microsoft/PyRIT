@@ -185,7 +185,9 @@ class ContentHarms(Scenario):
                 removed_in="0.13.0",
             )
 
-        self._objective_scorer: TrueFalseScorer = objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
         self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
 
         super().__init__(
