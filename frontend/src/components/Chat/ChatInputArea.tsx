@@ -264,118 +264,130 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             style={{ display: 'none' }}
             onChange={handleFileSelect}
           />
-          {attachments.length > 0 && (
-            <div className={styles.attachmentsContainer}>
-              {attachments.map((att, index) => (
-                <div key={index} className={styles.attachmentChip}>
-                  {mediaConversions.some((mc) => mc.pieceType === att.type) && (
-                    <span className={styles.originalBadge}>Original</span>
-                  )}
-                  <Caption1>
-                    {att.type === 'image' && '🖼️'}
-                    {att.type === 'audio' && '🎵'}
-                    {att.type === 'video' && '🎥'}
-                    {att.type === 'file' && '📄'}
-                    {' '}{att.name} ({formatFileSize(att.size)})
-                  </Caption1>
+          <div className={styles.inputColumns}>
+            <div className={styles.columnLeft}>
+              <Button
+                className={styles.iconButton}
+                appearance="subtle"
+                icon={<AttachRegular />}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled}
+                title="Attach files"
+              />
+              <Button
+                className={styles.iconButton}
+                appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
+                icon={<ArrowShuffleRegular />}
+                onClick={onToggleConverterPanel}
+                disabled={disabled || !onToggleConverterPanel}
+                data-testid="toggle-converter-panel-btn"
+                title="Toggle converter panel"
+              />
+            </div>
+            <div className={styles.columnCenter}>
+              {attachments.length > 0 && (
+                <div className={styles.attachmentsContainer}>
+                  {attachments.map((att, index) => {
+                    const conversion = mediaConversions.find((mc) => mc.pieceType === att.type)
+                    return (
+                      <div key={index} className={styles.attachmentGroup}>
+                        <div className={styles.attachmentRow}>
+                          <span className={styles.attachmentContent}>
+                            {conversion && <span className={styles.originalBadge}>Original</span>}
+                            <Caption1>
+                              {att.type === 'image' && '🖼️'}
+                              {att.type === 'audio' && '🎵'}
+                              {att.type === 'video' && '🎥'}
+                              {att.type === 'file' && '📄'}
+                              {' '}{att.name} ({formatFileSize(att.size)})
+                            </Caption1>
+                          </span>
+                          <Button
+                            appearance="transparent"
+                            size="small"
+                            className={styles.dismissBtn}
+                            icon={<DismissRegular />}
+                            onClick={() => removeAttachment(index)}
+                          />
+                        </div>
+                        {conversion && (
+                          <div className={styles.attachmentRow}>
+                            <span className={styles.attachmentContent}>
+                              <span className={styles.convertedBadge}>Converted</span>
+                              <Caption1 className={styles.convertedFilename}>{conversion.convertedValue.split('/').pop()}</Caption1>
+                            </span>
+                            <Button
+                              appearance="transparent"
+                              size="small"
+                              className={styles.dismissBtn}
+                              icon={<DismissRegular />}
+                              onClick={() => onClearMediaConversion?.(att.type)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className={styles.textRow}>
+                {convertedValue && (
+                  <span className={styles.originalBadge} data-testid="original-banner">Original</span>
+                )}
+                <textarea
+                  ref={textareaRef}
+                  className={styles.textInput}
+                  placeholder="Type something here"
+                  value={input}
+                  onChange={handleInput}
+                  onKeyDown={handleKeyDown}
+                  disabled={disabled}
+                  rows={1}
+                  data-testid="chat-input"
+                />
+              </div>
+              {convertedValue && (
+                <div className={styles.convertedRow} data-testid="converted-indicator">
+                  <span className={styles.convertedBadge}>Converted</span>
+                  <textarea
+                    className={styles.convertedTextarea}
+                    value={convertedValue}
+                    onChange={(e) => onConvertedValueChange?.(e.target.value)}
+                    rows={1}
+                    data-testid="converted-value-input"
+                  />
                   <Button
                     appearance="transparent"
                     size="small"
+                    className={styles.dismissBtn}
                     icon={<DismissRegular />}
-                    onClick={() => removeAttachment(index)}
+                    onClick={onClearConversion}
+                    data-testid="clear-conversion-btn"
                   />
                 </div>
-              ))}
+              )}
             </div>
-          )}
-          <div className={styles.inputRow}>
-            <div className={styles.iconButtonsLeft}>
-            <Button
-              className={styles.iconButton}
-              appearance="subtle"
-              icon={<AttachRegular />}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabled}
-              title="Attach files"
-            />
-            <Button
-              className={styles.iconButton}
-              appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
-              icon={<ArrowShuffleRegular />}
-              onClick={onToggleConverterPanel}
-              disabled={disabled || !onToggleConverterPanel}
-              data-testid="toggle-converter-panel-btn"
-              title="Toggle converter panel"
-            />
-            </div>
-          {convertedValue && (
-            <span className={styles.originalBadge} data-testid="original-banner">Original</span>
-          )}
-          <textarea
-            ref={textareaRef}
-            className={styles.textInput}
-            placeholder="Type something here"
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            disabled={disabled}
-            rows={1}
-            data-testid="chat-input"
-          />
-          <div className={styles.iconButtonsRight}>
-            {activeTarget && activeTarget.supports_multi_turn === false && (
-              <Tooltip
-                content="This target does not track conversation history — each turn is sent independently."
-                relationship="description"
-              >
-                <span className={styles.singleTurnWarning}>
-                  <InfoRegular fontSize={18} />
-                </span>
-              </Tooltip>
-            )}
-            <Button
-              className={styles.sendButton}
-              appearance="primary"
-              icon={<SendRegular />}
-              onClick={handleSend}
-              disabled={disabled || (!input && attachments.length === 0)}
-              title="Send message"
-            />
-          </div>
-          </div>
-          {convertedValue && (
-            <div className={styles.conversionBarBottom} data-testid="converted-indicator">
-              <span className={styles.convertedBadge}>Converted</span>
-              <textarea
-                className={styles.convertedTextarea}
-                value={convertedValue}
-                onChange={(e) => onConvertedValueChange?.(e.target.value)}
-                rows={1}
-                data-testid="converted-value-input"
+            <div className={styles.columnRight}>
+              {activeTarget && activeTarget.supports_multi_turn === false && (
+                <Tooltip
+                  content="This target does not track conversation history — each turn is sent independently."
+                  relationship="description"
+                >
+                  <span className={styles.singleTurnWarning}>
+                    <InfoRegular fontSize={18} />
+                  </span>
+                </Tooltip>
+              )}
+              <Button
+                className={styles.sendButton}
+                appearance="primary"
+                icon={<SendRegular />}
+                onClick={handleSend}
+                disabled={disabled || (!input && attachments.length === 0)}
+                title="Send message"
               />
-              <Button
-                appearance="subtle"
-                size="small"
-                onClick={onClearConversion}
-                data-testid="clear-conversion-btn"
-              >
-                ✕
-              </Button>
             </div>
-          )}
-          {mediaConversions.map((mc) => (
-            <div key={mc.pieceType} className={styles.conversionBarBottom} data-testid={`converted-${mc.pieceType}-indicator`}>
-              <span className={styles.convertedBadge}>Converted {mc.pieceType}</span>
-              <Text size={200} className={styles.convertedFilename}>{mc.convertedValue.split('/').pop()}</Text>
-              <Button
-                appearance="subtle"
-                size="small"
-                onClick={() => onClearMediaConversion?.(mc.pieceType)}
-              >
-                ✕
-              </Button>
-            </div>
-          ))}
+          </div>
         </div>
         </>
         )}

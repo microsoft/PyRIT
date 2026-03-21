@@ -14,11 +14,25 @@ export const useChatInputAreaStyles = makeStyles({
   },
   attachmentsContainer: {
     display: 'flex',
-    flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalS,
-    paddingLeft: `calc(${tokens.spacingHorizontalL} + 32px + ${tokens.spacingHorizontalXS} + 32px + ${tokens.spacingHorizontalS})`,
-    paddingRight: tokens.spacingHorizontalL,
-    paddingTop: tokens.spacingVerticalS,
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
+  attachmentRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+  },
+  attachmentContent: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+    flex: 1,
+    minWidth: 0,
+  },
+  attachmentGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
   },
   attachmentChip: {
     display: 'flex',
@@ -45,10 +59,43 @@ export const useChatInputAreaStyles = makeStyles({
       boxShadow: `0 0 0 2px ${tokens.colorBrandBackground2}`,
     },
   },
-  inputRow: {
+  inputColumns: {
     display: 'flex',
     alignItems: 'center',
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+  },
+  columnLeft: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    alignItems: 'center',
+    marginRight: tokens.spacingHorizontalS,
+    alignSelf: 'center',
+  },
+  columnCenter: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
+  },
+  columnRight: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    alignItems: 'center',
+    marginLeft: tokens.spacingHorizontalS,
+    alignSelf: 'center',
+  },
+  textRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+  },
+  convertedRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
   },
   textInput: {
     flex: 1,
@@ -76,23 +123,18 @@ export const useChatInputAreaStyles = makeStyles({
       borderRadius: '4px',
     },
   },
-  iconButtonsLeft: {
-    display: 'flex',
-    gap: tokens.spacingHorizontalXS,
-    marginRight: tokens.spacingHorizontalS,
-    alignItems: 'center',
-  },
-  iconButtonsRight: {
-    display: 'flex',
-    gap: tokens.spacingHorizontalXS,
-    marginLeft: tokens.spacingHorizontalS,
-  },
   iconButton: {
     minWidth: '32px',
     width: '32px',
     height: '32px',
     padding: 0,
     borderRadius: '50%',
+  },
+  dismissBtn: {
+    minWidth: '24px',
+    width: '24px',
+    height: '24px',
+    padding: 0,
   },
   sendButton: {
     minWidth: '32px',
@@ -132,16 +174,6 @@ export const useChatInputAreaStyles = makeStyles({
   noTargetText: {
     color: tokens.colorPaletteRedForeground1,
     fontWeight: tokens.fontWeightSemibold as unknown as string,
-  },
-  conversionBarBottom: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: tokens.spacingHorizontalXS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
-    paddingLeft: `calc(${tokens.spacingHorizontalL} + 32px + ${tokens.spacingHorizontalXS} + 32px + ${tokens.spacingHorizontalS})`,
-    borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
-    backgroundColor: tokens.colorNeutralBackground4,
-    overflow: 'hidden',
   },
   conversionLabel: {
     display: 'flex',
