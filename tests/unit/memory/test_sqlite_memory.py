@@ -670,12 +670,14 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[2]].message_count == 3
 
 
-def test_dispose_engine_tolerates_closed_log_stream():
-    """Verify dispose_engine does not raise when logging streams are already closed (GH-1520)."""
+def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
+    """Verify dispose_engine does not emit 'Logging error' when streams are closed (GH-1520)."""
     import io
     import logging
 
-    from pyrit.memory.sqlite_memory import SQLiteMemory
+    pyrit_logger = logging.getLogger("pyrit")
+    prev_level = pyrit_logger.level
+    pyrit_logger.setLevel(logging.INFO)
 
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
@@ -683,8 +685,11 @@ def test_dispose_engine_tolerates_closed_log_stream():
     root.addHandler(handler)
 
     try:
-        mem = SQLiteMemory(db_path=":memory:")
         stream.close()
-        mem.dispose_engine()
+        sqlite_instance.dispose_engine()
     finally:
         root.removeHandler(handler)
+        pyrit_logger.setLevel(prev_level)
+
+    captured = capsys.readouterr()
+    assert "Logging error" not in captured.err
