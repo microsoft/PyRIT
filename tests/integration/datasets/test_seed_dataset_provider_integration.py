@@ -10,7 +10,7 @@ import pytest
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
-from pyrit.datasets.seed_datasets.remote import _VLSUMultimodalDataset
+from pyrit.datasets.seed_datasets.remote import _VisualLeakBenchDataset, _VLSUMultimodalDataset
 from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetFilter,
 )
@@ -44,7 +44,8 @@ class TestSeedDatasetProviderIntegration:
 
         try:
             # Use max_examples for slow providers that fetch many remote images
-            provider = provider_cls(max_examples=6) if provider_cls == _VLSUMultimodalDataset else provider_cls()
+            _max_examples_providers = (_VLSUMultimodalDataset, _VisualLeakBenchDataset)
+            provider = provider_cls(max_examples=6) if provider_cls in _max_examples_providers else provider_cls()
             dataset = await provider.fetch_dataset(cache=False)
 
             assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
