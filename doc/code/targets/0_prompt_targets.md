@@ -30,6 +30,7 @@ Here are some examples:
 | Example                             | Is `PromptChatTarget`?               | Notes                                                                                           |
 |-------------------------------------|---------------------------------------|-------------------------------------------------------------------------------------------------|
 | **OpenAIChatTarget** (e.g., GPT-4)  | **Yes** (`PromptChatTarget`)         | Designed for conversational prompts (system messages, conversation history, etc.).               |
+| **MiniMaxChatTarget** (e.g., MiniMax-M2.7) | **Yes** (`PromptChatTarget`) | MiniMax AI models via OpenAI-compatible API. Supports multi-turn chat with temperature clamping. |
 | **OpenAIImageTarget**               | **No** (not a `PromptChatTarget`)    | Used for image generation; does not manage conversation history.                                 |
 | **HTTPTarget**                      | **No** (not a `PromptChatTarget`)    | Generic HTTP target. Some apps might allow conversation history, but this target doesn't handle it. |
 | **AzureBlobStorageTarget**          | **No** (not a `PromptChatTarget`)    | Used primarily for storage; not for conversation-based AI.                                       |
