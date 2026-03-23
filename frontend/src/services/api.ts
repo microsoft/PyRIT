@@ -3,7 +3,6 @@ import { toApiError } from './errors'
 import type {
   TargetInstance,
   TargetListResponse,
-  ConverterCatalogEntry,
   ConverterCatalogResponse,
   ConverterInstance,
   ConverterListResponse,

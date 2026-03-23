@@ -80,7 +80,7 @@ interface ChatInputAreaProps {
   onClearMediaConversion?: (pieceType: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue, onClearConversion, onConvertedValueChange, mediaConversions = [], onClearMediaConversion }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, mediaConversions = [], onClearMediaConversion }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])

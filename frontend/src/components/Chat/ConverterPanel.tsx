@@ -13,19 +13,8 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
   video: 'Video',
 }
 
-export const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
-  text: 'text',
-  image: 'image_path',
-  audio: 'audio_path',
-  video: 'video_path',
-}
-
-export interface PieceConversion {
-  converterInstanceId: string
-  convertedValue: string
-  originalValue: string
-  pieceType: string
-}
+import type { PieceConversion } from './converterTypes'
+import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
 
 interface ConverterPanelProps {
   onClose: () => void
