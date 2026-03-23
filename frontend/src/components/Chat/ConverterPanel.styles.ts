@@ -241,9 +241,15 @@ export const useConverterPanelStyles = makeStyles({
     cursor: 'help',
   },
   paramInputError: {
-    borderColor: tokens.colorPaletteRedBorder1,
+    borderTopColor: tokens.colorPaletteRedBorder1,
+    borderRightColor: tokens.colorPaletteRedBorder1,
+    borderBottomColor: tokens.colorPaletteRedBorder1,
+    borderLeftColor: tokens.colorPaletteRedBorder1,
     ':focus': {
-      borderColor: tokens.colorPaletteRedBorder1,
+      borderTopColor: tokens.colorPaletteRedBorder1,
+      borderRightColor: tokens.colorPaletteRedBorder1,
+      borderBottomColor: tokens.colorPaletteRedBorder1,
+      borderLeftColor: tokens.colorPaletteRedBorder1,
     },
   },
   paramErrorText: {

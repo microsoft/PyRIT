@@ -252,6 +252,9 @@ describe("ChatWindow Integration", () => {
       conversations: [],
       main_conversation_id: null,
     });
+    // Default: getMessages never resolves so loadConversation won't trigger
+    // state updates outside act(). Tests that need it override this mock.
+    mockedAttacksApi.getMessages.mockImplementation(() => new Promise(() => {}));
     mockedConvertersApi.listConverters.mockResolvedValue({
       items: [],
     });
