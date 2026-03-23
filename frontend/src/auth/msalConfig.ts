@@ -62,16 +62,18 @@ export function buildMsalConfig(authConfig: AuthConfig): Configuration {
 /**
  * Build the API scopes for token acquisition.
  *
- * Uses the GUID-based app identifier (`<clientId>/.default`) to request an
- * access token. Access tokens with API scopes include the `groups` claim when
- * the app manifest has `groupMembershipClaims: "SecurityGroup"` configured.
+ * Requests the explicit `access` scope rather than `.default` to avoid
+ * triggering admin consent in corporate tenants. The `.default` scope requires
+ * the app to list itself in `requiredResourceAccess`, which triggers mandatory
+ * admin consent in the Microsoft tenant. Using the explicit scope bypasses this.
  *
- * Note: `api://<clientId>/.default` does NOT work when the app requests a
- * token for itself — Entra ID requires the GUID format in that case.
+ * The `access` scope is defined in the app registration's "Expose an API"
+ * configuration. Access tokens include the `groups` claim when the app manifest
+ * has `groupMembershipClaims: "SecurityGroup"` configured.
  */
 export function getApiScopes(clientId: string): string[] {
   if (!clientId) return ['openid', 'profile', 'email']
-  return [`${clientId}/.default`]
+  return [`${clientId}/access`]
 }
 
 export function buildLoginRequest(clientId: string) {

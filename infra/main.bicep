@@ -92,6 +92,9 @@ param maxReplicas int = 1
 @description('Azure Container Registry name (for managed identity pull). Used if acrResourceId is not provided.')
 param acrName string = ''
 
+@description('Enable Private Endpoint for the ACA environment. When false, uses public access with IP restrictions.')
+param enablePrivateEndpoint bool = true
+
 @description('VNet address prefix (used only when creating a new VNet)')
 param vnetAddressPrefix string = '10.0.0.0/16'
 
@@ -136,7 +139,7 @@ var imageUsesLatest = endsWith(containerImage, ':latest')
 
 // Determine whether to create or reference existing resources
 var createLogAnalytics = logAnalyticsWorkspaceId == ''
-var createVnet = infrastructureSubnetId == ''
+var createVnet = enablePrivateEndpoint && infrastructureSubnetId == ''
 var createAcr = acrResourceId == '' && acrName == ''
 
 // ============================================================================
@@ -320,8 +323,7 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-10-02-preview' =
         sharedKey: effectiveLogAnalyticsKeyValue
       }
     }
-    // Disable public network access — only reachable via Private Endpoint
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
     workloadProfiles: [
       {
         name: 'Consumption'
@@ -342,7 +344,7 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-10-02-preview' =
 // Private Endpoint for ACA Environment (corp-reachable via Private Link)
 // The PE must be in a VNet that corp VPN/ExpressRoute can reach.
 // ============================================================================
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-11-01' = {
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-11-01' = if (enablePrivateEndpoint) {
   name: '${appName}-pe'
   location: location
   tags: tags
@@ -365,14 +367,14 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-11-01' = {
 }
 
 // Private DNS Zone for ACA Private Endpoint resolution
-resource privateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = {
+resource privateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = if (enablePrivateEndpoint) {
   name: 'privatelink.${location}.azurecontainerapps.io'
   location: 'global'
   tags: tags
 }
 
 // Link DNS zone to the VNet so clients in the VNet can resolve
-resource dnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = {
+resource dnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (enablePrivateEndpoint) {
   name: '${appName}-dns-link'
   parent: privateDnsZone
   location: 'global'
@@ -386,7 +388,7 @@ resource dnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@
 }
 
 // DNS record group for the private endpoint
-resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = {
+resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = if (enablePrivateEndpoint) {
   name: 'default'
   parent: privateEndpoint
   properties: {
@@ -521,6 +523,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'OTEL_SERVICE_NAME'
               value: appName
             }
+            // DefaultAzureCredential needs the UAMI client ID to pick the correct identity
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: managedIdentity.properties.clientId
+            }
           ]
         }
       ]
@@ -552,8 +559,8 @@ output appFqdn string = containerApp.properties.configuration.ingress.fqdn
 @description('The default domain of the ACA environment')
 output environmentDefaultDomain string = acaEnvironment.properties.defaultDomain
 
-@description('Private Endpoint resource ID (check properties for IP after deployment)')
-output privateEndpointId string = privateEndpoint.id
+@description('Private Endpoint resource ID (empty when PE is disabled)')
+output privateEndpointId string = enablePrivateEndpoint ? privateEndpoint.id : ''
 
 @description('The principal ID of the user-assigned managed identity — grant this Cognitive Services OpenAI User on your AOAI instances and db_datareader/db_datawriter on Azure SQL')
 output managedIdentityPrincipalId string = managedIdentity.properties.principalId

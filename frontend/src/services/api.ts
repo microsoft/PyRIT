@@ -62,7 +62,7 @@ export function setClientId(clientId: string): void {
 
 function getApiScopes(): string[] {
   if (!_clientId) return ['openid', 'profile', 'email']
-  return [`${_clientId}/.default`]
+  return [`${_clientId}/access`]
 }
 
 async function getAccessToken(forceRefresh = false): Promise<string | null> {

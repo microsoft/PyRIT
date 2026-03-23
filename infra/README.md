@@ -34,17 +34,20 @@ Container App   → Application Insights (OTel traces + audit logs, when enabled
   1. **IP restriction** (ingress-level) — `allowedCidr` param restricts to a CIDR range
      (e.g., corp VPN `131.107.0.0/16`). Blocked before auth runs. Empty = all traffic allowed.
   2. **Entra group check** — `allowedGroupObjectId` param. Requires `groupMembershipClaims:
-     "SecurityGroup"` + optional claims configured on the app registration manifest.
-     Note: the `groups` claim may not appear in v2.0 tokens without proper manifest config.
+     "ApplicationGroup"` + optional claims + the security group assigned to the enterprise app
+     (see Prerequisites §3). Using `ApplicationGroup` instead of `SecurityGroup` avoids groups
+     overage (>200 groups) by only emitting app-assigned groups in the token.
   3. **OID allowlist** — `allowedOids` param. Comma-separated user OIDs. Fallback when the
      groups claim is unavailable. The `oid` claim is always present in tokens.
   - If neither group nor OID restriction is set, all authenticated users pass.
+  - The frontend (static SPA) loads without auth. Authorization is enforced at the `/api/*`
+    layer — unauthorized users see the GUI shell but all API calls return 403.
 - **Identity**: User-assigned managed identity — created before the container app so
   RBAC roles (AcrPull, KV Secrets User) are active before the first revision starts.
   Set `AZURE_CLIENT_ID` to the UAMI's client ID so `DefaultAzureCredential` uses
   the correct identity.
 - **Network**: Public ingress with optional IP restriction via `allowedCidr`. Private
-  Endpoint is not currently deployed (future enhancement).
+  Endpoint can be enabled via `enablePrivateEndpoint` (see Notes).
 - **Data**: Azure SQL with managed identity authentication (no passwords)
 - **Secrets**: Key Vault with RBAC (existing vault, secrets referenced via ACA secretRef)
 - **Logging**: Log Analytics (app logs) + optional OTel via Application Insights
@@ -96,10 +99,11 @@ az account show --query tenantId -o tsv
 > ```
 
 To enable the Entra group check, configure the app manifest:
-- Set `groupMembershipClaims` to `"SecurityGroup"`
-- Add `groups` as an optional claim for ID tokens
+- Set `groupMembershipClaims` to `"ApplicationGroup"` (not `"SecurityGroup"` — the latter
+  causes groups overage for users in >200 groups, which breaks the token-based group check)
+- Add `groups` as an optional claim for both ID tokens and access tokens
 
-### 3. Entra security group (optional — for group-based authorization)
+### 3. Entra security group (required for group-based authorization)
 
 ```bash
 # Create security group for authorized users
@@ -108,13 +112,27 @@ To enable the Entra group check, configure the app manifest:
 az ad group create --display-name "PyRIT GUI Users" --mail-nickname pyrit-gui-users
 
 # Get the group Object ID (use this as allowedGroupObjectId)
-az ad group show --group "PyRIT GUI Users" --query id -o tsv
+GROUP_ID=$(az ad group show --group "PyRIT GUI Users" --query id -o tsv)
+echo "allowedGroupObjectId: $GROUP_ID"
 
 # Add users to the group
 az ad group member add --group "PyRIT GUI Users" --member-id <user-object-id>
 
 # List current members
 az ad group member list --group "PyRIT GUI Users" --query '[].displayName' -o tsv
+```
+
+**IMPORTANT: Assign the group to the enterprise application.** This is required for
+`ApplicationGroup` to emit the group ID in tokens:
+
+```bash
+# Get the service principal (enterprise app) object ID
+SP_ID=$(az ad sp show --id $APP_ID --query id -o tsv)
+
+# Assign the security group (uses default access role)
+az rest --method POST \
+  --url "https://graph.microsoft.com/v1.0/servicePrincipals/$SP_ID/appRoleAssignments" \
+  --body "{\"principalId\": \"$GROUP_ID\", \"resourceId\": \"$SP_ID\", \"appRoleId\": \"00000000-0000-0000-0000-000000000000\"}"
 ```
 
 ### 4. Azure SQL server with Entra admin (existing)
@@ -299,10 +317,14 @@ keys in the `.env`.
 - **IP restriction**: When `allowedCidr` is set, only traffic from that CIDR range
   can reach the app at the ingress level (blocked before auth runs). When empty, all
   traffic is allowed and authorization relies solely on MSAL + group/OID checks.
-- **Future: Private Endpoint**: The current deployment uses public ingress with IP
-  restriction. A future enhancement could add an ACA Private Endpoint for full network
-  isolation (private DNS zone, VNet integration). The Bicep already creates VNet/subnet
-  resources that could support this.
+  **Caveat**: Azure Cloud PCs route traffic to Azure services through CGNAT IPs
+  (`100.64.0.0/10`), not the public NAT IPs shown by `ifconfig.me`. IP restrictions
+  based on `ifconfig.me` will not work for Cloud PC → ACA traffic.
+- **Private Endpoint**: Set `enablePrivateEndpoint=true` to create a Private Endpoint,
+  Private DNS zone, and VNet link for the ACA environment. This disables public network
+  access — the app is only reachable via the PE's private network path. Requires that
+  clients (e.g., Cloud PCs, dev machines) are on the PE's VNet or a peered VNet.
+  When disabled (default for test deployments), the app uses public ingress.
 - **Log Analytics shared key**: The ACA environment uses `listKeys()` to connect to
   Log Analytics. This is the standard pattern required by the ACA API. The key is used
   only during deployment and is not exposed to the application.
@@ -323,6 +345,25 @@ keys in the `.env`.
   VNet (`infrastructureSubnetId`), and ACR (`acrResourceId`) can optionally be
   provided as existing resources to skip creation.
 - **Azure CLI**: Version 2.84+ required (2.77 has a known bug).
+
+## Production Hardening
+
+The default configuration (Entra MSAL PKCE + security group authorization) is
+sufficient for test deployments. For production, add defense-in-depth:
+
+1. **Private Endpoint with VNet peering**: Set `enablePrivateEndpoint=true` and
+   provide an `infrastructureSubnetId` on a VNet peered with your clients' network
+   (e.g., Cloud PC VNet, corp VPN gateway VNet). This disables public access entirely.
+2. **Entra Conditional Access Policies**: Require compliant devices, MFA, or
+   specific named locations. Configured in Entra ID → Security → Conditional Access
+   (not in the Bicep template).
+3. **IP restrictions as fallback**: If using public access, set `allowedCidr` to
+   restrict ingress to known corporate IP ranges. Note the CGNAT caveat for Cloud PCs
+   (see Notes above).
+4. **WAF / Front Door**: Place Azure Front Door with WAF policies in front of the
+   ACA ingress for DDoS protection, bot filtering, and geo-restrictions.
+5. **Audit logging**: Enable `enableOtel=true` for Application Insights telemetry
+   and ensure Log Analytics retention meets compliance requirements.
 
 ## Teardown and Redeployment
 
