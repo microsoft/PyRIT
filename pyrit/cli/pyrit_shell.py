@@ -35,6 +35,7 @@ class PyRITShell(cmd.Cmd):
     Commands:
         list-scenarios             - List all available scenarios
         list-initializers          - List all available initializers
+        list-targets               - List all available targets from the registry
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history           - List all previous scenario runs
         print-scenario [N]         - Print detailed results for scenario run(s)
@@ -43,12 +44,12 @@ class PyRITShell(cmd.Cmd):
         exit (quit, q)             - Exit the shell
 
     Shell Startup Options:
-        --database <type>       Database type (InMemory, SQLite, AzureSQL) - default for all runs
+        --config-file <path>    Path to config file (default: ~/.pyrit/.pyrit_conf)
         --log-level <level>     Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) - default for all runs
-        --env-files <path> ...  Environment files to load in order - default for all runs
         --no-animation          Disable the animated startup banner
 
     Run Command Options:
+        --target <name>                 Target name from the TargetRegistry (required)
         --initializers <name> ...       Built-in initializers (supports name:key=val1,val2 syntax)
         --initialization-scripts <...>  Custom Python scripts to run before the scenario
         --env-files <path> ...          Environment files to load in order (overrides startup default)
@@ -212,6 +213,14 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
+    def do_list_targets(self, arg: str) -> None:
+        """List all available targets from the TargetRegistry."""
+        self._ensure_initialized()
+        try:
+            asyncio.run(self._fc.print_targets_list_async(context=self.context))
+        except Exception as e:
+            print(f"Error listing targets: {e}")
+
     def do_run(self, line: str) -> None:
         """
         Run a scenario.
@@ -220,6 +229,7 @@ class PyRITShell(cmd.Cmd):
             run <scenario_name> [options]
 
         Options:
+            --target <name>                 Target name from the TargetRegistry (required)
             --initializers <name> ...       Built-in initializers (supports name:key=val1,val2 syntax)
             --initialization-scripts <...>  Custom Python scripts to run before the scenario
             --env-files <path> ...          Environment files to load in order
@@ -231,36 +241,37 @@ class PyRITShell(cmd.Cmd):
             --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
         Examples:
-            run garak.encoding --initializers openai_objective_target \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets
-            run garak.encoding --initializers custom_target \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets --strategies base64 rot13
-            run foundry --initializers target:tags=default,scorer \
+            run foundry --target my_target --initializers target:tags=default,scorer \
                 dataset:mode=strict --strategies base64
-            run foundry --initializers openai_objective_target \
+            run foundry --target my_target --initializers target \
                 load_default_datasets --max-concurrency 10 --max-retries 3
-            run garak.encoding --initializers custom_target \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets \
                 --memory-labels '{"run_id":"test123","env":"dev"}'
-            run foundry --initializers openai_objective_target \
+            run foundry --target my_target --initializers target \
                 load_default_datasets -s jailbreak crescendo
-            run garak.encoding --initializers openai_objective_target \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets --database InMemory --log-level DEBUG
-            run foundry --initialization-scripts ./my_custom_init.py -s all
+            run foundry --target my_target --initialization-scripts ./my_custom_init.py -s all
 
         Note:
-            Every scenario requires an initializer (--initializers or --initialization-scripts).
+            --target is required for every run.
+            Initializers can be specified per-run or configured in .pyrit_conf.
             Database and log-level defaults are set at shell startup but can be overridden per-run.
-            Initializers are specified per-run to allow different setups for different scenarios.
         """
         self._ensure_initialized()
 
         if not line.strip():
             print("Error: Specify a scenario name")
             print("\nUsage: run <scenario_name> [options]")
-            print("\nNote: Every scenario requires an initializer.")
+            print("\nNote: --target is required. Initializers can be specified per-run or in .pyrit_conf.")
             print("\nOptions:")
-            print(f"  --initializers <name> ...       {self._fc.ARG_HELP['initializers']} (REQUIRED)")
+            print(f"  --target <name>                 {self._fc.ARG_HELP['target']}")
+            print(f"  --initializers <name> ...       {self._fc.ARG_HELP['initializers']}")
             print(
                 f"  --initialization-scripts <...>  {self._fc.ARG_HELP['initialization_scripts']}"
                 " (alternative to --initializers)"
@@ -277,7 +288,7 @@ class PyRITShell(cmd.Cmd):
                 "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
             )
             print("\nExample:")
-            print("  run foundry --initializers openai_objective_target load_default_datasets")
+            print("  run foundry --target my_target --initializers target load_default_datasets")
             print("\nType 'help run' for more details and examples")
             return
 
@@ -327,6 +338,7 @@ class PyRITShell(cmd.Cmd):
                 self._fc.run_scenario_async(
                     scenario_name=args["scenario_name"],
                     context=run_context,
+                    target_name=args["target"],
                     scenario_strategies=args["scenario_strategies"],
                     max_concurrency=args["max_concurrency"],
                     max_retries=args["max_retries"],
@@ -431,10 +443,9 @@ class PyRITShell(cmd.Cmd):
             print("\n" + "=" * 70)
             print("Shell Startup Options:")
             print("=" * 70)
-            print("  --database <type>")
-            print("      Default database type: InMemory, SQLite, or AzureSQL")
-            print("      Default: SQLite")
-            print("      Can be overridden per-run with 'run <scenario> --database <type>'")
+            print("  --config-file <path>")
+            print("      Path to YAML configuration file")
+            print("      Default: ~/.pyrit/.pyrit_conf")
             print()
             print("  --log-level <level>")
             print("      Default logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL")
@@ -444,13 +455,17 @@ class PyRITShell(cmd.Cmd):
             print("=" * 70)
             print("Run Command Options (specified when running scenarios):")
             print("=" * 70)
-            print("  --initializers <name> [<name> ...]  (REQUIRED)")
+            print("  --target <name>  (REQUIRED)")
+            print(f"      {ARG_HELP['target']}")
+            print("      Example: run foundry --target my_target --initializers target load_default_datasets")
+            print()
+            print("  --initializers <name> [<name> ...]")
             print(f"      {ARG_HELP['initializers']}")
-            print("      Every scenario requires at least one initializer")
-            print("      Example: run foundry --initializers openai_objective_target load_default_datasets")
-            print("      With params: run foundry --initializers target:tags=default,scorer")
+            print("      Example: run foundry --target my_target --initializers target load_default_datasets")
+            print("      With params: run foundry --target my_target --initializers target:tags=default,scorer")
             print(
-                "      Multiple with params: run foundry --initializers target:tags=default,scorer dataset:mode=strict"
+                "      Multiple with params: run foundry --target my_target"
+                " --initializers target:tags=default,scorer dataset:mode=strict"
             )
             print()
             print("  --initialization-scripts <path> [<path> ...]  (Alternative to --initializers)")
@@ -476,7 +491,7 @@ class PyRITShell(cmd.Cmd):
             print()
             print("Start the shell like:")
             print("  pyrit_shell")
-            print("  pyrit_shell --database InMemory --log-level DEBUG")
+            print("  pyrit_shell --config-file ./my_config.yaml --log-level DEBUG")
         else:
             # Show help for specific command
             super().do_help(arg)
@@ -538,7 +553,7 @@ def main() -> int:
     """
     import argparse
 
-    from pyrit.cli._cli_args import ARG_HELP, AZURE_SQL, IN_MEMORY, SQLITE, validate_log_level
+    from pyrit.cli._cli_args import ARG_HELP, validate_log_level
 
     parser = argparse.ArgumentParser(
         prog="pyrit_shell",
@@ -549,16 +564,6 @@ def main() -> int:
         "--config-file",
         type=Path,
         help=ARG_HELP["config_file"],
-    )
-
-    parser.add_argument(
-        "--database",
-        choices=[IN_MEMORY, SQLITE, AZURE_SQL],
-        default=None,
-        help=(
-            f"Default database type to use ({IN_MEMORY}, {SQLITE}, {AZURE_SQL})"
-            f" (defaults to config file value, or {SQLITE} if not specified)"
-        ),
     )
 
     parser.add_argument(
@@ -573,13 +578,6 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "--env-files",
-        type=str,
-        nargs="+",
-        help=ARG_HELP["env_files"],
-    )
-
-    parser.add_argument(
         "--no-animation",
         action="store_true",
         default=False,
@@ -587,17 +585,6 @@ def main() -> int:
     )
 
     args = parser.parse_args()
-
-    # Resolve and validate env file paths (lightweight — no heavy imports needed).
-    env_files: Optional[list[Path]] = None
-    if args.env_files:
-        from pyrit.cli._cli_args import resolve_env_files
-
-        try:
-            env_files = resolve_env_files(env_file_paths=args.env_files)
-        except ValueError as e:
-            print(f"Error: {e}")
-            return 1
 
     # Play the banner immediately, before heavy imports.
     # Suppress logging so background-thread output doesn't corrupt the animation.
@@ -615,10 +602,6 @@ def main() -> int:
         shell = PyRITShell(
             no_animation=args.no_animation,
             config_file=args.config_file,
-            database=args.database,
-            initialization_scripts=None,
-            initializer_names=None,
-            env_files=env_files,
             log_level=validate_log_level(log_level=args.log_level),
         )
         shell.cmdloop(intro=intro)

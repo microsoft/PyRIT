@@ -223,6 +223,7 @@ class TestPyRITShell:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_result = MagicMock()
@@ -277,6 +278,7 @@ class TestPyRITShell:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_resolve_scripts.return_value = [Path("/test/script.py")]
@@ -312,6 +314,7 @@ class TestPyRITShell:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_resolve_scripts.side_effect = FileNotFoundError("Script not found")
@@ -345,6 +348,7 @@ class TestPyRITShell:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_asyncio_run.side_effect = [MagicMock()]
@@ -381,6 +385,7 @@ class TestPyRITShell:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_asyncio_run.side_effect = [ValueError("Test error")]
@@ -637,23 +642,22 @@ class TestMain:
 
         assert result == 0
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["database"] is None
         assert call_kwargs["log_level"] == logging.WARNING
         mock_shell.cmdloop.assert_called_once()
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_database_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main with database argument."""
+    def test_main_with_config_file_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
+        """Test main with config-file argument."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
 
-        with patch("sys.argv", ["pyrit_shell", "--database", "InMemory"]):
+        with patch("sys.argv", ["pyrit_shell", "--config-file", "my_config.yaml"]):
             result = pyrit_shell.main()
 
         assert result == 0
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["database"] == "InMemory"
+        assert call_kwargs["config_file"] == Path("my_config.yaml")
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")
@@ -710,8 +714,9 @@ class TestMain:
             pyrit_shell.main()
 
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["initialization_scripts"] is None
-        assert call_kwargs["initializer_names"] is None
+        # main() should not pass initialization_scripts or initializer_names
+        assert "initialization_scripts" not in call_kwargs
+        assert "initializer_names" not in call_kwargs
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")
@@ -769,6 +774,7 @@ class TestPyRITShellRunCommand:
             "log_level": "DEBUG",
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_asyncio_run.side_effect = [MagicMock()]
@@ -804,6 +810,7 @@ class TestPyRITShellRunCommand:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_result1 = MagicMock()

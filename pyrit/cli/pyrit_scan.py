@@ -29,23 +29,23 @@ def parse_args(args: Optional[list[str]] = None) -> Namespace:
         description="""PyRIT Scanner - Run security scenarios against AI systems
 
 Examples:
-  # List available scenarios and initializers
+  # List available scenarios, initializers, and targets
   pyrit_scan --list-scenarios
   pyrit_scan --list-initializers
+  pyrit_scan --list-targets --initializers target
 
-  # Run a scenario with built-in initializers
-  pyrit_scan foundry --initializers openai_objective_target load_default_datasets
+  # Run a scenario with a target and initializers
+  pyrit_scan foundry --target my_target --initializers target load_default_datasets
 
   # Run with a configuration file (recommended for complex setups)
-  pyrit_scan foundry --config-file ./my_config.yaml
+  pyrit_scan foundry --target my_target --config-file ./my_config.yaml
 
   # Run with custom initialization scripts
-  pyrit_scan garak.encoding --initialization-scripts ./my_config.py
+  pyrit_scan garak.encoding --target my_target --initialization-scripts ./my_config.py
 
   # Run specific strategies or options
-  pyrit_scan foundry --strategies base64 rot13 --initializers openai_objective_target
-  pyrit_scan foundry --initializers openai_objective_target --max-concurrency 10 --max-retries 3
-  pyrit_scan garak.encoding --initializers openai_objective_target --memory-labels '{"run_id":"test123"}'
+  pyrit_scan foundry --target my_target --strategies base64 rot13 --initializers target
+  pyrit_scan foundry --target my_target --initializers target --max-concurrency 10 --max-retries 3
 """,
         formatter_class=RawDescriptionHelpFormatter,
     )
@@ -73,6 +73,13 @@ Examples:
         "--list-initializers",
         action="store_true",
         help="List all available scenario initializers and exit",
+    )
+
+    parser.add_argument(
+        "--list-targets",
+        action="store_true",
+        help="List all available targets from the TargetRegistry and exit. "
+        "Requires initializers that register targets (e.g., --initializers target)",
     )
 
     parser.add_argument(
@@ -154,6 +161,12 @@ Examples:
         help=frontend_core.ARG_HELP["max_dataset_size"],
     )
 
+    parser.add_argument(
+        "--target",
+        type=str,
+        help=frontend_core.ARG_HELP["target"],
+    )
+
     return parser.parse_args(args)
 
 
@@ -213,6 +226,25 @@ def main(args: Optional[list[str]] = None) -> int:
         )
         return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
 
+    if parsed_args.list_targets:
+        # Need initializers to populate target registry
+        env_files = None
+        if parsed_args.env_files:
+            try:
+                env_files = frontend_core.resolve_env_files(env_file_paths=parsed_args.env_files)
+            except ValueError as e:
+                print(f"Error: {e}")
+                return 1
+
+        context = frontend_core.FrontendCore(
+            config_file=parsed_args.config_file,
+            database=parsed_args.database,
+            initializer_names=parsed_args.initializers,
+            env_files=env_files,
+            log_level=parsed_args.log_level,
+        )
+        return asyncio.run(frontend_core.print_targets_list_async(context=context))
+
     # Verify scenario was provided
     if not parsed_args.scenario_name:
         print("Error: No scenario specified. Use --help for usage information.")
@@ -252,6 +284,7 @@ def main(args: Optional[list[str]] = None) -> int:
             frontend_core.run_scenario_async(
                 scenario_name=parsed_args.scenario_name,
                 context=context,
+                target_name=parsed_args.target,
                 scenario_strategies=parsed_args.scenario_strategies,
                 max_concurrency=parsed_args.max_concurrency,
                 max_retries=parsed_args.max_retries,

@@ -152,6 +152,24 @@ class TestParseArgs:
 
         assert exc_info.value.code == 0
 
+    def test_parse_args_with_target(self):
+        """Test parsing with --target option."""
+        args = pyrit_scan.parse_args(["test_scenario", "--target", "my_target"])
+
+        assert args.target == "my_target"
+
+    def test_parse_args_target_default_is_none(self):
+        """Test --target defaults to None when not provided."""
+        args = pyrit_scan.parse_args(["test_scenario"])
+
+        assert args.target is None
+
+    def test_parse_args_with_list_targets(self):
+        """Test parsing --list-targets flag."""
+        args = pyrit_scan.parse_args(["--list-targets"])
+
+        assert args.list_targets is True
+
 
 class TestMain:
     """Tests for main function."""

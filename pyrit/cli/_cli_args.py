@@ -286,6 +286,9 @@ ARG_HELP = {
     "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
+    "Targets are registered by initializers (e.g., 'target' initializer). "
+    "Use --list-targets to see available target names after initializers have run",
 }
 
 
@@ -381,6 +384,7 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
         "log_level": None,
         "dataset_names": None,
         "max_dataset_size": None,
+        "target": None,
     }
 
     i = 1
@@ -455,6 +459,12 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
             if i >= len(parts):
                 raise ValueError("--max-dataset-size requires a value")
             result["max_dataset_size"] = validate_integer(parts[i], name="--max-dataset-size", min_value=1)
+            i += 1
+        elif parts[i] == "--target":
+            i += 1
+            if i >= len(parts):
+                raise ValueError("--target requires a value")
+            result["target"] = parts[i]
             i += 1
         else:
             raise ValueError(f"Unknown argument: {parts[i]}")
