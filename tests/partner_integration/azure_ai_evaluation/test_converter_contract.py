@@ -87,9 +87,9 @@ class TestSpecificConvertersImportable:
 
     def test_ascii_smuggler_converter_importable(self):
         """AsciiSmugglerConverter is imported in _agent/_agent_utils.py."""
-        from pyrit.prompt_converter import AsciiArtConverter
+        from pyrit.prompt_converter import AsciiSmugglerConverter
 
-        assert AsciiArtConverter is not None
+        assert AsciiSmugglerConverter is not None
 
     def test_llm_generic_text_converter_importable(self):
         """LLMGenericTextConverter is used for tense/translation strategies."""

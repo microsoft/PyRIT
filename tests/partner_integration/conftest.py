@@ -26,8 +26,11 @@ os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "3"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
 
-# Initialize PyRIT with in-memory database
-asyncio.run(initialize_pyrit_async(memory_db_type=IN_MEMORY))
+
+@pytest.fixture(scope="session", autouse=True)
+def _initialize_pyrit():
+    """Initialize PyRIT with in-memory database once per test session."""
+    asyncio.run(initialize_pyrit_async(memory_db_type=IN_MEMORY))
 
 
 @pytest.fixture

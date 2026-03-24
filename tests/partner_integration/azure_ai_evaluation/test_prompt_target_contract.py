@@ -20,6 +20,19 @@ from pyrit.models import Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptChatTarget
 
 
+class _MinimalTarget(PromptChatTarget):
+    """Minimal concrete PromptChatTarget for contract testing."""
+
+    async def send_prompt_async(self, *, message=None, **kwargs):
+        return []
+
+    def is_json_response_supported(self) -> bool:
+        return False
+
+    def _validate_request(self, *, message) -> None:
+        pass
+
+
 class TestPromptChatTargetContract:
     """Validate PromptChatTarget base class interface stability."""
 
@@ -34,34 +47,12 @@ class TestPromptChatTargetContract:
 
     def test_prompt_chat_target_subclassable_with_send_prompt_async(self):
         """azure-ai-evaluation creates subclasses that implement send_prompt_async."""
-
-        class MinimalTarget(PromptChatTarget):
-            async def send_prompt_async(self, *, message=None, **kwargs):
-                return []
-
-            def is_json_response_supported(self) -> bool:
-                return False
-
-            def _validate_request(self, *, message) -> None:
-                pass
-
-        target = MinimalTarget()
+        target = _MinimalTarget()
         assert isinstance(target, PromptChatTarget)
 
     def test_prompt_chat_target_init_accepts_keyword_args(self):
         """PromptChatTarget.__init__ should accept max_requests_per_minute."""
-
-        class MinimalTarget(PromptChatTarget):
-            async def send_prompt_async(self, *, message=None, **kwargs):
-                return []
-
-            def is_json_response_supported(self) -> bool:
-                return False
-
-            def _validate_request(self, *, message) -> None:
-                pass
-
-        target = MinimalTarget(max_requests_per_minute=60)
+        target = _MinimalTarget(max_requests_per_minute=60)
         assert target is not None
 
     def test_construct_response_from_request_is_callable(self):
@@ -86,17 +77,6 @@ class TestPromptChatTargetContract:
 
     def test_prompt_chat_target_has_memory_attribute(self):
         """azure-ai-evaluation accesses self._memory on PromptChatTarget subclasses."""
-
-        class MinimalTarget(PromptChatTarget):
-            async def send_prompt_async(self, *, message=None, **kwargs):
-                return []
-
-            def is_json_response_supported(self) -> bool:
-                return False
-
-            def _validate_request(self, *, message) -> None:
-                pass
-
-        target = MinimalTarget()
+        target = _MinimalTarget()
         # _memory is set during initialization or via property
         assert hasattr(target, "_memory")

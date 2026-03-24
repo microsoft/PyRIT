@@ -54,7 +54,12 @@ class TestRedTeamModuleImports:
 
 @requires_azure_ai_evaluation
 class TestCallbackChatTargetInheritance:
-    """Verify _CallbackChatTarget correctly extends PromptChatTarget."""
+    """Verify _CallbackChatTarget correctly extends PromptChatTarget.
+
+    NOTE: These tests intentionally import private (_-prefixed) modules from
+    azure-ai-evaluation. This is correct for contract testing — we need to verify
+    the actual subclass relationships that PyRIT API changes could break.
+    """
 
     def test_callback_chat_target_extends_prompt_chat_target(self):
         """_CallbackChatTarget must be a subclass of pyrit.prompt_target.PromptChatTarget."""
@@ -69,6 +74,6 @@ class TestRAIScorerInheritance:
 
     def test_rai_scorer_extends_true_false_scorer(self):
         """RAIServiceScorer must be a subclass of pyrit.score.true_false.TrueFalseScorer."""
-        from azure.ai.evaluation.red_team._foundry._rai_scorer import RAIServiceScorer
+        from azure.ai.evaluation.red_team._foundry._rai_scorer import RAIServiceScorer  # private: intentional
 
         assert issubclass(RAIServiceScorer, TrueFalseScorer)

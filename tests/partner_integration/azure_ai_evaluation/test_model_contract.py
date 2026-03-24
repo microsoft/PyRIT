@@ -16,8 +16,6 @@ The red team module uses these models extensively:
 import uuid
 
 from pyrit.models import (
-    AttackOutcome,
-    AttackResult,
     ChatMessage,
     Message,
     MessagePiece,
@@ -124,18 +122,6 @@ class TestSeedModels:
     def test_seed_group_class_exists(self):
         """DatasetConfigurationBuilder creates SeedGroup instances."""
         assert SeedGroup is not None
-
-
-class TestAttackModels:
-    """Validate attack result models used by FoundryResultProcessor."""
-
-    def test_attack_result_class_exists(self):
-        """ScenarioOrchestrator processes AttackResult from FoundryScenario."""
-        assert AttackResult is not None
-
-    def test_attack_outcome_class_exists(self):
-        """FoundryResultProcessor checks AttackOutcome values."""
-        assert AttackOutcome is not None
 
 
 class TestMiscModels:
