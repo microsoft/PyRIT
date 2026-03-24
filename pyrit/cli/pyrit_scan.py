@@ -44,8 +44,8 @@ Examples:
   pyrit_scan garak.encoding --target my_target --initialization-scripts ./my_config.py
 
   # Run specific strategies or options
-  pyrit_scan foundry --target my_target --strategies base64 rot13 --initializers target
-  pyrit_scan foundry --target my_target --initializers target --max-concurrency 10 --max-retries 3
+  pyrit_scan foundry --target my_target --strategies base64 rot13 --initializers targets
+  pyrit_scan foundry --target my_target --initializers targets --max-concurrency 10 --max-retries 3
 """,
         formatter_class=RawDescriptionHelpFormatter,
     )
