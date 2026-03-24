@@ -81,8 +81,7 @@ class TestSpecificConvertersImportable:
 
         converter_class = getattr(pc, converter_name, None)
         assert converter_class is not None, (
-            f"{converter_name} not found in pyrit.prompt_converter — "
-            f"azure-ai-evaluation depends on this converter"
+            f"{converter_name} not found in pyrit.prompt_converter — azure-ai-evaluation depends on this converter"
         )
 
     def test_ascii_smuggler_converter_importable(self):
