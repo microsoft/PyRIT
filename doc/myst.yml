@@ -24,6 +24,7 @@ project:
       children:
         - file: setup/1a_install_uv.md
           children:
+            - file: setup/install_local.md
             - file: setup/1b_install_docker.md
             - file: setup/1c_install_conda.md
         - file: setup/configuration.md

@@ -1,9 +1,24 @@
 # Configuration
 
-PyRIT configuration determines how the framework connects to AI targets, which initializers to run, and where to store data. There are two main configuration files, both stored in `~/.pyrit/` by default:
+After installing PyRIT, configure your AI endpoint credentials and framework settings. PyRIT reads configuration from `~/.pyrit/` by default.
 
-- **[Populating Secrets (.env files)](./populating_secrets.md)** — Set your AI endpoint credentials. These environment variables tell PyRIT how to connect to OpenAI, Azure, Ollama, or any other provider.
+:::::{grid} 1 1 2 2
+:gutter: 3
 
-- **[Configuration File (.pyrit_conf)](./pyrit_conf.md)** — Declare your database type, initializers, and other settings in a YAML file. PyRIT loads this automatically on startup, so you don't have to pass options every time.
+::::{card} ⚡ Minimal Setup
+:link: ./populating_secrets
+**Just 2 Environment Variables**
 
-See the [Quick Start Guide](./quick_start.md) for a walkthrough of setting up both files.
+Set `OPENAI_CHAT_ENDPOINT` and `OPENAI_CHAT_KEY` in a `.env` file. Works with OpenAI, Azure, Ollama, Groq, or any OpenAI-compatible API. Enough to run most notebooks.
+::::
+
+::::{card} 📄 Config File (Recommended)
+:link: ./pyrit_conf
+**Full Framework Setup** ⭐
+
+Copy `.pyrit_conf_example` and `.env_example` to `~/.pyrit/`. This enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and automated scenarios.
+::::
+
+:::::
+
+See the [Quick Start Guide](./quick_start.md) for a step-by-step walkthrough of setting up both files.
