@@ -288,7 +288,7 @@ class PyRITShell(cmd.Cmd):
                 "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
             )
             print("\nExample:")
-            print("  run foundry --target my_target --initializers target load_default_datasets")
+            print("  run foundry --target my_target --initializers targets load_default_datasets")
             print("\nType 'help run' for more details and examples")
             return
 
