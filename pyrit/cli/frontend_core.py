@@ -294,7 +294,7 @@ async def list_targets_async(
                 initialization_scripts=context._initialization_scripts,
                 initializers=initializer_instances,
                 env_files=context._env_files,
-                silent=getattr(context, '_silent_reinit', False),
+                silent=getattr(context, "_silent_reinit", False),
             )
 
     target_registry = TargetRegistry.get_registry_singleton()
@@ -371,7 +371,7 @@ async def run_scenario_async(
         initialization_scripts=context._initialization_scripts,
         initializers=initializer_instances,
         env_files=context._env_files,
-        silent=getattr(context, '_silent_reinit', False),
+        silent=getattr(context, "_silent_reinit", False),
     )
 
     # Resolve objective target from TargetRegistry
@@ -387,8 +387,7 @@ async def run_scenario_async(
                     "that registers targets (e.g., --initializers target)."
                 )
             raise ValueError(
-                f"Target '{target_name}' not found in registry.\n"
-                f"Available targets: {', '.join(available_names)}"
+                f"Target '{target_name}' not found in registry.\nAvailable targets: {', '.join(available_names)}"
             )
     else:
         objective_target = None
