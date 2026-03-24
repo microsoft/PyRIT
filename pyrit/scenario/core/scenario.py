@@ -178,8 +178,12 @@ class Scenario(ABC):
 
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
-            return entries[0].instance
-        return TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
+            scorer = entries[0].instance
+            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
+            return scorer
+        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
+        logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
+        return scorer
 
     @apply_defaults
     async def initialize_async(

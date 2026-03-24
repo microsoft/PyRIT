@@ -45,9 +45,6 @@ class TargetInitializerTags(str, Enum):
     ALL = "all"
 
 
-ALL_TARGET_TAGS: list[str] = [TargetInitializerTags.DEFAULT, TargetInitializerTags.SCORER]
-
-
 @dataclass
 class TargetConfig:
     """
@@ -486,8 +483,8 @@ class TargetInitializer(PyRITInitializer):
         tags matching the configured tags are registered.
         """
         tags = self.params.get("tags", ["default"])
-        if "all" in tags:
-            tags = ALL_TARGET_TAGS
+        if TargetInitializerTags.ALL in tags:
+            tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
 
         for config in TARGET_CONFIGS:
             if not any(tag in tags for tag in config.tags):

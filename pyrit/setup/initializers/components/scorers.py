@@ -316,7 +316,7 @@ class ScorerInitializer(PyRITInitializer):
             )
             logger.info(f"Tagged {best_name} as {ScorerInitializerTags.BEST_OBJECTIVE_F1} with F1={best_f1:.4f}")
         else:
-            logger.warning("No registered scorer has objective metrics; skipping best_objective_f1 tagging.")
+            logger.warning("No registered scorer with objective metrics; skipping best_objective_f1 tagging.")
 
     def _try_register(
         self,
