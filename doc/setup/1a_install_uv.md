@@ -1,4 +1,4 @@
-# Install PyRIT Library
+# Install PyRIT
 
 ## Choose Your Installation Method
 

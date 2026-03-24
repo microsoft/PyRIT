@@ -26,10 +26,14 @@ project:
           children:
             - file: setup/1b_install_docker.md
             - file: setup/1c_install_conda.md
-        - file: setup/populating_secrets.md
-        - file: setup/pyrit_conf.md
-        - file: setup/jupyter_setup.md
-        - file: setup/use_azure_sql_db.md
+        - file: setup/configuration.md
+          children:
+            - file: setup/populating_secrets.md
+            - file: setup/pyrit_conf.md
+        - file: setup/faq.md
+          children:
+            - file: setup/jupyter_setup.md
+            - file: setup/use_azure_sql_db.md
     - file: contributing/README.md
       children:
         - file: contributing/1a_install_uv.md
