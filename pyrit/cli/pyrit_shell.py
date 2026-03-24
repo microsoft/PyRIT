@@ -457,7 +457,7 @@ class PyRITShell(cmd.Cmd):
             print("=" * 70)
             print("  --target <name>  (REQUIRED)")
             print(f"      {ARG_HELP['target']}")
-            print("      Example: run foundry --target my_target --initializers target load_default_datasets")
+            print("      Example: run foundry --target my_target --initializers targets load_default_datasets")
             print()
             print("  --initializers <name> [<name> ...]")
             print(f"      {ARG_HELP['initializers']}")
