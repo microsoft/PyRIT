@@ -32,7 +32,7 @@ Examples:
   # List available scenarios, initializers, and targets
   pyrit_scan --list-scenarios
   pyrit_scan --list-initializers
-  pyrit_scan --list-targets --initializers target
+  pyrit_scan --list-targets --initializers targets
 
   # Run a scenario with a target and initializers
   pyrit_scan foundry --target my_target --initializers targets load_default_datasets
@@ -79,7 +79,7 @@ Examples:
         "--list-targets",
         action="store_true",
         help="List all available targets from the TargetRegistry and exit. "
-        "Requires initializers that register targets (e.g., --initializers target)",
+        "Requires initializers that register targets (e.g., --initializers targets)",
     )
 
     parser.add_argument(
@@ -87,17 +87,6 @@ Examples:
         type=str,
         nargs="?",
         help="Name of the scenario to run",
-    )
-
-    parser.add_argument(
-        "--database",
-        type=frontend_core.validate_database_argparse,
-        default=None,
-        help=(
-            f"Database type to use for memory storage ({frontend_core.IN_MEMORY}, "
-            f"{frontend_core.SQLITE}, {frontend_core.AZURE_SQL}). "
-            f"Defaults to value from config file, or {frontend_core.SQLITE} if not specified."
-        ),
     )
 
     parser.add_argument(
@@ -112,13 +101,6 @@ Examples:
         type=str,
         nargs="+",
         help=frontend_core.ARG_HELP["initialization_scripts"],
-    )
-
-    parser.add_argument(
-        "--env-files",
-        type=str,
-        nargs="+",
-        help=frontend_core.ARG_HELP["env_files"],
     )
 
     parser.add_argument(
@@ -198,19 +180,9 @@ def main(args: Optional[list[str]] = None) -> int:
                 print(f"Error: {e}")
                 return 1
 
-        env_files = None
-        if parsed_args.env_files:
-            try:
-                env_files = frontend_core.resolve_env_files(env_file_paths=parsed_args.env_files)
-            except ValueError as e:
-                print(f"Error: {e}")
-                return 1
-
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
-            database=parsed_args.database,
             initialization_scripts=initialization_scripts,
-            env_files=env_files,
             log_level=parsed_args.log_level,
         )
 
@@ -228,19 +200,9 @@ def main(args: Optional[list[str]] = None) -> int:
 
     if parsed_args.list_targets:
         # Need initializers to populate target registry
-        env_files = None
-        if parsed_args.env_files:
-            try:
-                env_files = frontend_core.resolve_env_files(env_file_paths=parsed_args.env_files)
-            except ValueError as e:
-                print(f"Error: {e}")
-                return 1
-
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
-            database=parsed_args.database,
             initializer_names=parsed_args.initializers,
-            env_files=env_files,
             log_level=parsed_args.log_level,
         )
         return asyncio.run(frontend_core.print_targets_list_async(context=context))
@@ -259,18 +221,11 @@ def main(args: Optional[list[str]] = None) -> int:
                 script_paths=parsed_args.initialization_scripts
             )
 
-        # Collect environment files
-        env_files = None
-        if parsed_args.env_files:
-            env_files = frontend_core.resolve_env_files(env_file_paths=parsed_args.env_files)
-
         # Create context with initializers
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
-            database=parsed_args.database,
             initialization_scripts=initialization_scripts,
             initializer_names=parsed_args.initializers,
-            env_files=env_files,
             log_level=parsed_args.log_level,
         )
 

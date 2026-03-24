@@ -582,27 +582,27 @@ class TestParseRunArguments:
     def test_parse_run_arguments_with_initializer_params(self):
         """Test parsing initializers with key=value params."""
         result = frontend_core.parse_run_arguments(
-            args_string="test_scenario --initializers simple target:tags=default"
+            args_string="test_scenario --initializers simple targets:tags=default"
         )
 
         assert result["initializers"][0] == "simple"
-        assert result["initializers"][1] == {"name": "target", "args": {"tags": ["default"]}}
+        assert result["initializers"][1] == {"name": "targets", "args": {"tags": ["default"]}}
 
     def test_parse_run_arguments_with_initializer_multiple_params(self):
         """Test parsing initializers with multiple key=value params separated by semicolons."""
         result = frontend_core.parse_run_arguments(
-            args_string="test_scenario --initializers target:tags=default;mode=strict"
+            args_string="test_scenario --initializers targets:tags=default;mode=strict"
         )
 
-        assert result["initializers"][0] == {"name": "target", "args": {"tags": ["default"], "mode": ["strict"]}}
+        assert result["initializers"][0] == {"name": "targets", "args": {"tags": ["default"], "mode": ["strict"]}}
 
     def test_parse_run_arguments_with_initializer_comma_list(self):
         """Test parsing initializer params with comma-separated values into lists."""
         result = frontend_core.parse_run_arguments(
-            args_string="test_scenario --initializers target:tags=default,scorer"
+            args_string="test_scenario --initializers targets:tags=default,scorer"
         )
 
-        assert result["initializers"][0] == {"name": "target", "args": {"tags": ["default", "scorer"]}}
+        assert result["initializers"][0] == {"name": "targets", "args": {"tags": ["default", "scorer"]}}
 
     def test_parse_run_arguments_with_strategies(self):
         """Test parsing with strategies."""
@@ -633,12 +633,6 @@ class TestParseRunArguments:
         result = frontend_core.parse_run_arguments(args_string='test_scenario --memory-labels {"key":"value"}')
 
         assert result["memory_labels"] == {"key": "value"}
-
-    def test_parse_run_arguments_with_database(self):
-        """Test parsing with database override."""
-        result = frontend_core.parse_run_arguments(args_string=f"test_scenario --database {frontend_core.IN_MEMORY}")
-
-        assert result["database"] == frontend_core.IN_MEMORY
 
     def test_parse_run_arguments_with_log_level(self):
         """Test parsing with log-level override."""
@@ -1153,4 +1147,4 @@ class TestPrintTargetsList:
         assert result == 0
         captured = capsys.readouterr()
         assert "No targets found" in captured.out
-        assert "--initializers target" in captured.out
+        assert "--initializers targets" in captured.out

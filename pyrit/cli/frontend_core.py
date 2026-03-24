@@ -321,7 +321,7 @@ async def run_scenario_async(
         scenario_name: Name of the scenario to run.
         context: PyRIT context with loaded registries.
         target_name: Name of a registered target from the TargetRegistry to use as the
-            objective target. Targets are registered by initializers (e.g., the 'target'
+            objective target. Targets are registered by initializers (e.g., the 'targets'
             initializer). Use --list-targets to see available names after initializers run.
         scenario_strategies: Optional list of strategy names.
         max_concurrency: Max concurrent operations.
@@ -384,7 +384,7 @@ async def run_scenario_async(
                 raise ValueError(
                     f"Target '{target_name}' not found. The target registry is empty.\n"
                     "Targets are registered by initializers. Make sure to include an initializer "
-                    "that registers targets (e.g., --initializers target)."
+                    "that registers targets (e.g., --initializers targets)."
                 )
             raise ValueError(
                 f"Target '{target_name}' not found in registry.\nAvailable targets: {', '.join(available_names)}"
@@ -675,7 +675,7 @@ async def print_targets_list_async(*, context: FrontendCore) -> int:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that registers "
-            "targets, for example:\n  --initializers target\n"
+            "targets, for example:\n  --initializers targets\n"
         )
         return 0
 
