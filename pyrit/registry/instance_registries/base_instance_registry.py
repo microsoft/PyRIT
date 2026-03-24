@@ -204,6 +204,29 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
                 results.append(entry)
         return results
 
+    def add_tags(
+        self,
+        *,
+        name: str,
+        tags: Union[dict[str, str], list[str]],
+    ) -> None:
+        """
+        Add tags to an existing registry entry.
+
+        Args:
+            name: The registry name of the entry to tag.
+            tags: Tags to add. Accepts a ``dict[str, str]``
+                or a ``list[str]`` (each string becomes a key with value ``""``).
+
+        Raises:
+            KeyError: If no entry with the given name exists.
+        """
+        entry = self._registry_items.get(name)
+        if entry is None:
+            raise KeyError(f"No entry named '{name}' in registry.")
+        entry.tags.update(self._normalize_tags(tags))
+        self._metadata_cache = None
+
     def list_metadata(
         self,
         *,

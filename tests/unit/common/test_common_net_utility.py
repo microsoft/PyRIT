@@ -119,6 +119,18 @@ def test_extract_url_parameters_special_characters():
     assert params == {"name": "John Doe", "email": "test@example.com"}
 
 
+def test_extract_url_parameters_preserves_blank_values():
+    url = "https://api.example.com/endpoint?api-version=&mode=test"
+    params = extract_url_parameters(url)
+    assert params == {"api-version": "", "mode": "test"}
+
+
+def test_extract_url_parameters_preserves_empty_values():
+    url = "https://api.example.com/endpoint?alpha=&beta=1"
+    params = extract_url_parameters(url)
+    assert params == {"alpha": "", "beta": "1"}
+
+
 def test_remove_url_parameters_simple():
     url = "https://api.example.com/endpoint?api-version=2024-10-21&key=value"
     clean_url = remove_url_parameters(url)
@@ -147,3 +159,28 @@ def test_remove_url_parameters_complex():
     url = "https://user:pass@api.example.com:8080/path/to/endpoint?key1=value1&key2=value2#fragment"
     clean_url = remove_url_parameters(url)
     assert clean_url == "https://user:pass@api.example.com:8080/path/to/endpoint#fragment"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_make_request_and_raise_if_error_preserves_blank_query_values():
+    url = "http://testserver/api/test?api-version=&mode=test"
+    mock_route = respx.get(url).respond(200, json={"status": "ok"})
+
+    response = await make_request_and_raise_if_error_async(endpoint_uri=url, method="GET")
+
+    assert mock_route.called
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_make_request_and_raise_if_error_preserves_empty_query_values():
+    url = "http://testserver/api/test"
+    route = respx.get(url).respond(200, json={"status": "ok"})
+
+    await make_request_and_raise_if_error_async(endpoint_uri=f"{url}?alpha=&beta=1", method="GET")
+
+    assert route.called
+    assert str(route.calls[0].request.url) == "http://testserver/api/test?alpha=&beta=1"

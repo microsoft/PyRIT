@@ -24,14 +24,15 @@ from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import AttackResult
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioCompositeStrategy,
     ScenarioStrategy,
 )
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -170,6 +171,19 @@ class Scenario(ABC):
         Returns:
             DatasetConfiguration: The default dataset configuration.
         """
+
+    def _get_default_objective_scorer(self) -> TrueFalseScorer:
+        # Deferred import to avoid circular dependency:
+        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
+
+        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        if entries and isinstance(entries[0].instance, TrueFalseScorer):
+            scorer = entries[0].instance
+            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
+            return scorer
+        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
+        logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
+        return scorer
 
     @apply_defaults
     async def initialize_async(

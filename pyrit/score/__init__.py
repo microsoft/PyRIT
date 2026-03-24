@@ -45,6 +45,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics import (
     ScorerMetricsWithIdentity,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+    find_objective_metrics_by_eval_hash,
     get_all_harm_metrics,
     get_all_objective_metrics,
 )
@@ -114,6 +115,7 @@ __all__ = [
     "ScorerMetricsWithIdentity",
     "get_all_harm_metrics",
     "get_all_objective_metrics",
+    "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
     "SelfAskCategoryScorer",
     "SelfAskGeneralFloatScaleScorer",
