@@ -223,12 +223,18 @@ async function mockBackendAPIs(page: Page) {
           messages: { messages: [...accumulatedMessages] },
         }),
       });
+    } else if (route.request().method() === "GET") {
+      // FIX: Handle GET so loadConversation doesn't hang in mock mode.
+      // See detailed comment in chat.spec.ts mockBackendAPIs.
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ messages: [...accumulatedMessages] }),
+      });
     } else {
       await route.continue();
     }
   });
-
-  // Conversations list
   await page.route(/\/api\/attacks\/[^/]+\/conversations/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
@@ -340,7 +346,7 @@ async function activateMockTarget(page: Page) {
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
   await setActiveBtn.click();
 
-  await page.getByTitle("Chat").click();
+  await page.getByTitle("Chat", { exact: true }).click();
   await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
 }
 
@@ -351,9 +357,9 @@ async function selectConverter(page: Page, converterName: string) {
   await expect(page.getByTestId("converter-panel")).toBeVisible({ timeout: 5000 });
 
   // Open combobox and select
-  const combobox = page.getByRole("combobox");
+  const combobox = page.getByTestId("converter-panel-select");
   await combobox.click();
-  await page.getByRole("option", { name: new RegExp(converterName) }).click();
+  await page.getByTestId(`converter-option-${converterName}`).click();
 
   // Wait for detail card
   await expect(page.getByTestId(`converter-item-${converterName}`)).toBeVisible({ timeout: 5000 });
@@ -376,19 +382,19 @@ test.describe("Converter Panel", () => {
 
     // Panel should appear with combobox
     await expect(page.getByTestId("converter-panel")).toBeVisible({ timeout: 5000 });
-    const combobox = page.getByRole("combobox");
+    const combobox = page.getByTestId("converter-panel-select");
     await expect(combobox).toBeVisible();
 
     // Open dropdown — converters should be listed
     await combobox.click();
-    await expect(page.getByRole("option", { name: /Base64Converter/ })).toBeVisible();
-    await expect(page.getByRole("option", { name: /CaesarConverter/ })).toBeVisible();
-    await expect(page.getByRole("option", { name: /TranslationConverter/ })).toBeVisible();
+    await expect(page.getByTestId("converter-option-Base64Converter")).toBeVisible();
+    await expect(page.getByTestId("converter-option-CaesarConverter")).toBeVisible();
+    await expect(page.getByTestId("converter-option-TranslationConverter")).toBeVisible();
   });
 
   test("should select a converter, show details and preview output", async ({ page }) => {
     // Type text BEFORE opening panel
-    await page.getByRole("textbox").fill("hello");
+    await page.getByTestId("chat-input").fill("hello");
 
     // Select Base64Converter
     await selectConverter(page, "Base64Converter");
@@ -402,7 +408,7 @@ test.describe("Converter Panel", () => {
 
   test("should apply converted value and send message with original+converted sections", async ({ page }) => {
     // Type text BEFORE opening the converter panel
-    await page.getByRole("textbox").fill("hello");
+    await page.getByTestId("chat-input").fill("hello");
 
     // Select converter and wait for auto-preview
     await selectConverter(page, "Base64Converter");
@@ -421,7 +427,7 @@ test.describe("Converter Panel", () => {
     await expect(page.getByTestId("converter-panel")).not.toBeVisible();
 
     // Send the message
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByTestId("send-message-btn").click();
 
     // Wait for the user message to appear (local optimistic display)
     // The converted value (base64 of "hello") should be shown
@@ -431,7 +437,7 @@ test.describe("Converter Panel", () => {
 
   test("should show converter badge in attack history after sending with converter", async ({ page }) => {
     // Type text BEFORE opening panel
-    await page.getByRole("textbox").fill("hello");
+    await page.getByTestId("chat-input").fill("hello");
     await selectConverter(page, "Base64Converter");
     await expect(page.getByTestId("use-converted-btn")).toBeVisible({ timeout: 10000 });
     await page.getByTestId("use-converted-btn").click();
@@ -439,13 +445,13 @@ test.describe("Converter Panel", () => {
     // Close converter panel before sending
     await page.getByTestId("close-converter-panel-btn").click();
 
-    await page.getByRole("button", { name: /send/i }).click();
+    await page.getByTestId("send-message-btn").click();
 
     // Wait for response to confirm send completed
     await expect(page.getByText(/Mock response for:/)).toBeVisible({ timeout: 15000 });
 
     // Navigate to History view
-    await page.getByTitle("History").click();
+    await page.getByTitle("Attack History").click();
 
     // Converter badge should appear in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
@@ -454,7 +460,7 @@ test.describe("Converter Panel", () => {
   test("should show validation error when required parameter is missing", async ({ page }) => {
     // Type text
     // Type text BEFORE opening panel
-    await page.getByRole("textbox").fill("hello");
+    await page.getByTestId("chat-input").fill("hello");
 
     // Select CaesarConverter (has required caesar_offset param)
     await selectConverter(page, "CaesarConverter");
@@ -476,20 +482,20 @@ test.describe("Converter Panel", () => {
     await expect(page.getByTestId("converter-panel")).toBeVisible({ timeout: 5000 });
 
     // Open combobox
-    const combobox = page.getByRole("combobox");
+    const combobox = page.getByTestId("converter-panel-select");
     await combobox.click();
 
     // Text converters should be visible
-    await expect(page.getByRole("option", { name: /Base64Converter/ })).toBeVisible();
-    await expect(page.getByRole("option", { name: /CaesarConverter/ })).toBeVisible();
+    await expect(page.getByTestId("converter-option-Base64Converter")).toBeVisible();
+    await expect(page.getByTestId("converter-option-CaesarConverter")).toBeVisible();
 
     // Image-only converter should NOT appear
-    await expect(page.getByRole("option", { name: /ImageCompressionConverter/ })).not.toBeVisible();
+    await expect(page.getByTestId("converter-option-ImageCompressionConverter")).not.toBeVisible();
   });
 
   test("should show converter type in history filter options", async ({ page }) => {
     // Navigate to History view
-    await page.getByTitle("History").click();
+    await page.getByTitle("Attack History").click();
 
     // The converter badge should be visible in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });

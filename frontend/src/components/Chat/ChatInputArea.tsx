@@ -385,6 +385,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 onClick={handleSend}
                 disabled={disabled || (!input && attachments.length === 0)}
                 title="Send message"
+                data-testid="send-message-btn"
               />
             </div>
           </div>

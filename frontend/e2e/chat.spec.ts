@@ -92,6 +92,12 @@ async function mockBackendAPIs(page: Page) {
           },
         }),
       });
+    } else if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ messages: [...accumulatedMessages] }),
+      });
     } else {
       await route.continue();
     }
@@ -236,6 +242,9 @@ test.describe("Chat Functionality", () => {
     const input = page.getByRole("textbox");
     await input.fill("First message");
     await page.getByRole("button", { name: /send/i }).click();
+    // mark this to ignore!!
+    // TODO: change all these to not getbyrole - use testid! - make this a follow up to fix the tests!
+    // for the converter tests do this, then clean up the others as future
 
     await expect(page.getByText("First message", { exact: true })).toBeVisible();
     await expect(
@@ -324,7 +333,9 @@ function buildModalityMock(
       }
     });
 
-    // Add message – returns user turn + assistant with given pieces
+    // Add message – returns user turn + assistant with given pieces.
+    // Also handles GET requests for loadConversation.
+    let lastMessages: Record<string, unknown>[] = [];
     await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
       if (route.request().method() === "POST") {
         let userText = "user-input";
@@ -337,37 +348,45 @@ function buildModalityMock(
         } catch {
           // ignore
         }
+        lastMessages = [
+          {
+            turn_number: 0,
+            role: "user",
+            created_at: new Date().toISOString(),
+            pieces: [
+              {
+                piece_id: "u1",
+                original_value_data_type: "text",
+                converted_value_data_type: "text",
+                original_value: userText,
+                converted_value: userText,
+                scores: [],
+                response_error: "none",
+              },
+            ],
+          },
+          {
+            turn_number: 1,
+            role: "assistant",
+            created_at: new Date().toISOString(),
+            pieces: assistantPieces,
+          },
+        ];
         await route.fulfill({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({
             messages: {
-              messages: [
-                {
-                  turn_number: 0,
-                  role: "user",
-                  created_at: new Date().toISOString(),
-                  pieces: [
-                    {
-                      piece_id: "u1",
-                      original_value_data_type: "text",
-                      converted_value_data_type: "text",
-                      original_value: userText,
-                      converted_value: userText,
-                      scores: [],
-                      response_error: "none",
-                    },
-                  ],
-                },
-                {
-                  turn_number: 1,
-                  role: "assistant",
-                  created_at: new Date().toISOString(),
-                  pieces: assistantPieces,
-                },
-              ],
+              messages: lastMessages,
             },
           }),
+        });
+      } else if (route.request().method() === "GET") {
+        // Return accumulated messages so loadConversation doesn't hang
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ messages: [...lastMessages] }),
         });
       } else {
         await route.continue();

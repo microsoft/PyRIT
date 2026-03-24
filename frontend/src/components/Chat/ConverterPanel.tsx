@@ -340,7 +340,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                       </span>
                     </Option>
                     {group.converters.map((converter) => (
-                      <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type}>
+                      <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type} data-testid={`converter-option-${converter.converter_type}`}>
                         <span className={styles.optionContent}>
                           {converter.converter_type}
                           {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
