@@ -12,7 +12,8 @@ source of truth for target configuration and authentication.
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal, Optional
+from enum import Enum
+from typing import TYPE_CHECKING, Optional
 
 from azure.ai.contentsafety.models import TextCategory
 
@@ -30,6 +31,7 @@ from pyrit.score import (
     TrueFalseInverterScorer,
     TrueFalseQuestionPaths,
     TrueFalseScoreAggregator,
+    find_objective_metrics_by_eval_hash,
 )
 from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
 
@@ -38,8 +40,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Shared tag type with TargetInitializer
-ScorerTag = Literal["default"]
+
+class ScorerInitializerTags(str, Enum):
+    """Tags applied to scorer registry entries by ScorerInitializer."""
+
+    DEFAULT = "default"
+    BEST_OBJECTIVE_F1 = "best_objective_f1"
+    DEFAULT_OBJECTIVE_SCORER = "default_objective_scorer"
+
 
 # Target registry names used by scorer configurations.
 GPT4O_TARGET: str = "azure_openai_gpt4o"
@@ -283,6 +291,32 @@ class ScorerInitializer(PyRITInitializer):
                     lambda s=scale: SelfAskLikertScorer(chat_target=gpt4o, likert_scale=s),  # type: ignore[misc]
                     gpt4o,
                 )
+
+        # Register the scorer with the best objective F1 score
+        self._register_best_objective_f1(scorer_registry)
+
+    def _register_best_objective_f1(self, scorer_registry: ScorerRegistry) -> None:
+        """Find the registered scorer with the highest objective F1 and tag it as best_objective_f1."""
+        best_name: str | None = None
+        best_f1: float = -1.0
+
+        for entry in scorer_registry.get_all_instances():
+            eval_hash = entry.instance.get_identifier().eval_hash
+            if not eval_hash:
+                continue
+            metrics = find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
+            if metrics is not None and metrics.f1_score > best_f1:
+                best_f1 = metrics.f1_score
+                best_name = entry.name
+
+        if best_name is not None:
+            scorer_registry.add_tags(
+                name=best_name,
+                tags=[ScorerInitializerTags.BEST_OBJECTIVE_F1, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER],
+            )
+            logger.info(f"Tagged {best_name} as {ScorerInitializerTags.BEST_OBJECTIVE_F1} with F1={best_f1:.4f}")
+        else:
+            logger.warning("No registered scorer with objective metrics; skipping best_objective_f1 tagging.")
 
     def _try_register(
         self,

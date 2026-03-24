@@ -241,30 +241,28 @@ class TestFoundryInitialization:
 
             assert scenario._memory_labels == memory_labels
 
-    @patch("pyrit.scenario.scenarios.foundry.red_team_agent.TrueFalseCompositeScorer")
+    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.dict(
         "os.environ",
         {
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-            "AZURE_CONTENT_SAFETY_API_ENDPOINT": "https://test.content.azure.com/",
-            "AZURE_CONTENT_SAFETY_API_KEY": "test-content-key",
         },
     )
     def test_init_creates_default_scorer_when_not_provided(
-        self, mock_composite, mock_objective_target, mock_memory_seed_groups
+        self, mock_get_scorer, mock_objective_target, mock_memory_seed_groups
     ):
         """Test that initialization creates default scorer when not provided."""
-        # Mock the composite scorer
-        mock_composite_instance = MagicMock(spec=TrueFalseScorer)
-        mock_composite.return_value = mock_composite_instance
+        mock_scorer_instance = MagicMock(spec=TrueFalseScorer)
+        mock_get_scorer.return_value = mock_scorer_instance
 
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent()
 
-            # Verify default scorer was created
-            mock_composite.assert_called_once()
+            # Verify default scorer was used
+            mock_get_scorer.assert_called_once()
+            assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
             # seed_groups are resolved lazily during _get_atomic_attacks_async
             assert scenario._objectives is None
