@@ -681,7 +681,7 @@ async def print_targets_list_async(*, context: FrontendCore) -> int:
 
     target_registry = TargetRegistry.get_registry_singleton()
 
-    print("\nAvailable Targets:")
+    print("\nRegistered Targets:")
     print("=" * 80)
     for name in target_names:
         target = target_registry.get_instance_by_name(name)
