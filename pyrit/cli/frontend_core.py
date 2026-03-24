@@ -661,7 +661,7 @@ async def print_targets_list_async(*, context: FrontendCore) -> int:
     Print a formatted list of all available targets from the TargetRegistry.
 
     Targets are registered by initializers, so this requires initializers to run first.
-    If no targets are found, prints a hint about using the 'target' initializer.
+    If no targets are found, prints a hint about using the 'targets' initializer.
 
     Args:
         context: PyRIT context with loaded registries.
