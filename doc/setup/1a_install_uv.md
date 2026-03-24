@@ -65,3 +65,11 @@ Notebooks and your PyRIT installation must be on the same version. This pip inst
 ### Option 3: Local Installation with Pip/Conda
 
 We highly recommend using Option 2, but if you would prefer to use conda, See the [Conda Installation Guide](./1c_install_conda.md) for complete instructions for running PyRIT in a conda environment
+
+## Next Step: Configure PyRIT
+
+After installing, you need to configure your AI endpoint credentials before running PyRIT.
+
+```{tip}
+See the [Quick Start Guide](./quick_start.md) for a complete walkthrough, or jump directly to [Populating Secrets](./populating_secrets.md) to set up your `.env` file with your provider credentials.
+```

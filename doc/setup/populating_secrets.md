@@ -47,15 +47,66 @@ flowchart LR
 
 ### Creating Your .env File
 
-1. Copy `.env_example` to `.env` in your home directory in ~/.pyrit/.env
-2. Add your API credentials. For example, for Azure OpenAI:
+1. Copy `.env_example` to `~/.pyrit/.env`
+2. Add your API credentials for your provider of choice:
 
+::::{tab-set}
+
+:::{tab-item} OpenAI
 ```bash
-OPENAI_CHAT_ENDPOINT="https://your-resource.openai.azure.com/openai/deployments/your-deployment/chat/completions"
-OPENAI_CHAT_KEY="your-api-key-here"
+OPENAI_CHAT_ENDPOINT="https://api.openai.com/v1"
+OPENAI_CHAT_KEY="sk-your-key-here"
+OPENAI_CHAT_MODEL="gpt-4o"
 ```
 
-To find these values in Azure Portal: `Azure Portal > Azure AI Services > Azure OpenAI > Your OpenAI Resource > Resource Management > Keys and Endpoint`
+Get your API key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
+:::
+
+:::{tab-item} Azure OpenAI
+```bash
+OPENAI_CHAT_ENDPOINT="https://your-resource.openai.azure.com/openai/v1"
+OPENAI_CHAT_KEY="your-azure-key-here"
+OPENAI_CHAT_MODEL="your-deployment-name"
+```
+
+Find these values in Azure Portal: `Azure AI Services > Azure OpenAI > Your Resource > Keys and Endpoint`.
+:::
+
+:::{tab-item} Ollama (Local)
+```bash
+OPENAI_CHAT_ENDPOINT="http://127.0.0.1:11434/v1"
+OPENAI_CHAT_KEY="not-needed"
+OPENAI_CHAT_MODEL="llama2"
+```
+
+Requires [Ollama](https://ollama.com/) running locally. No API key needed.
+:::
+
+:::{tab-item} Groq
+```bash
+OPENAI_CHAT_ENDPOINT="https://api.groq.com/openai/v1"
+OPENAI_CHAT_KEY="gsk_your-key-here"
+OPENAI_CHAT_MODEL="llama3-8b-8192"
+```
+
+Get your API key from [console.groq.com](https://console.groq.com/).
+:::
+
+:::{tab-item} OpenRouter
+```bash
+OPENAI_CHAT_ENDPOINT="https://openrouter.ai/api/v1"
+OPENAI_CHAT_KEY="sk-or-v1-your-key-here"
+OPENAI_CHAT_MODEL="anthropic/claude-3.7-sonnet"
+```
+
+Get your API key from [openrouter.ai](https://openrouter.ai/).
+:::
+
+::::
+
+```{note}
+All these providers use the same three environment variables (`OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_KEY`, `OPENAI_CHAT_MODEL`) because PyRIT's `OpenAIChatTarget` works with any OpenAI-compatible API. Just point the endpoint to your provider and you're set.
+```
 
 ### Using .env.local for Overrides
 

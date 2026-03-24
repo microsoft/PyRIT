@@ -60,6 +60,35 @@ initializers:
 
 Use `pyrit list initializers` in the CLI to see all registered initializers. See the [initializer documentation notebook](../code/setup/pyrit_initializer.ipynb) for reference.
 
+#### Recommended Defaults
+
+Most users should enable the following initializers. These are what the `.pyrit_conf_example` ships with and are required for features like `pyrit_scan` and automated scenarios.
+
+| Initializer | What It Registers | When You Need It |
+|---|---|---|
+| `simple` | Baseline defaults for converters, scorers, and attack configs using your `OPENAI_CHAT_*` env vars | Always — provides the foundation for most PyRIT operations |
+| `targets` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
+| `scorers` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
+| `load_default_datasets` | Seed datasets for all registered scenarios into memory | **Required for `pyrit_scan` scenarios** — they need data to run |
+
+```{note}
+**Execution order is automatic.** Initializers are sorted by their built-in `execution_order` regardless of how you list them in the config: `simple`/`targets` run first (order 1), then `scorers` (order 2), then `load_default_datasets` (order 10). This ensures dependencies are satisfied — for example, `scorers` needs targets to be registered first.
+```
+
+The recommended config:
+
+```yaml
+initializers:
+  - name: simple
+  - name: load_default_datasets
+  - name: scorers
+  - name: targets
+    args:
+      tags:
+        - default
+        - scorer
+```
+
 ### `initialization_scripts`
 
 Paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.

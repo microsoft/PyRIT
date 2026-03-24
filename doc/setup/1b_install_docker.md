@@ -107,6 +107,14 @@ print(pyrit.__version__)
 
 Check out the [cookbooks](../cookbooks/README.md) for example workflows and tutorials.
 
+## Next Step: Configure PyRIT
+
+After installing, you need to configure your AI endpoint credentials before running PyRIT.
+
+```{tip}
+See the [Quick Start Guide](./quick_start.md) for a complete walkthrough, or jump directly to [Populating Secrets](./populating_secrets.md) to set up your `.env` file with your provider credentials.
+```
+
 ## Directory Structure
 
 The Docker setup includes these directories:
