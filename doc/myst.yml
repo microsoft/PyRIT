@@ -34,6 +34,9 @@ project:
             - file: getting_started/pyrit_conf.md
         - file: getting_started/troubleshooting.md
           children:
+            - file: getting_started/troubleshooting_docker.md
+            - file: getting_started/troubleshooting_devcontainers.md
+            - file: getting_started/troubleshooting_local_dev.md
             - file: getting_started/jupyter_setup.md
             - file: getting_started/use_azure_sql_db.md
             - file: getting_started/deploy_hf_model_aml.ipynb
@@ -212,7 +215,7 @@ site:
     - title: Cookbooks
       url: /cookbooks/readme
     - title: Getting Started
-      url: /getting_started/readme
+      url: /getting-started/readme
     - title: Contributing
       url: /contributing/readme
     - title: User Guide

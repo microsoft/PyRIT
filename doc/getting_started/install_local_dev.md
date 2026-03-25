@@ -192,34 +192,7 @@ Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 
 ## Troubleshooting
 
-### uv command not found
-
-Make sure uv is in your PATH. Restart PowerShell after installation.
-
-### Import errors
-
-Ensure you're using `uv run python` or have activated the virtual environment:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-### Dependency conflicts
-
-Try regenerating the lock file:
-
-```powershell
-Remove-Item uv.lock
-uv sync --extra dev
-```
-
-### Module not found errors
-
-PyRIT is installed in editable mode, so changes to the source code are immediately reflected. If you see import errors:
-
-```bash
-uv sync --reinstall-package pyrit
-```
+Having issues? See the [Local Dev Troubleshooting](./troubleshooting_local_dev.md) guide for common problems and solutions.
 
 ## Advantages over Other Methods
 

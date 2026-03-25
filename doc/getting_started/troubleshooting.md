@@ -2,6 +2,14 @@
 
 Common issues and advanced setup guides.
 
+## Installation Issues
+
+- **[User Docker Installation](./troubleshooting_docker.md)** — JupyterLab not accessible, permission errors, missing environment files, container build failures.
+
+- **[Contributor Docker Installation](./troubleshooting_devcontainers.md)** — DevContainer build failures, VS Code extension issues, performance problems.
+
+- **[Contributor Local Installation](./troubleshooting_local_dev.md)** — uv command not found, import errors, dependency conflicts, module not found errors.
+
 ## Setup Issues
 
 - **[Jupyter Cannot Find PyRIT](./jupyter_setup.md)** — How to configure the correct Jupyter kernel when PyRIT isn't recognized in notebooks.
