@@ -126,7 +126,7 @@ Install from source in editable mode:
 
 ### Step 2: Configure
 
-After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For the quickest start, see the [Configuration](getting_started/configuration) page.
+After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For the quickest start, see the [Configure PyRIT](getting_started/configuration) page.
 
 :::::{grid} 1 1 2 2
 :gutter: 3

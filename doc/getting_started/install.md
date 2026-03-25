@@ -47,5 +47,5 @@ Install from source in editable mode. Full development control, use any IDE or e
 After installing, you need to configure your AI endpoint credentials before running PyRIT.
 
 ```{tip}
-See the [Getting Started](./quick_start.md) guide for a complete walkthrough, or jump directly to [Configuration](./configuration.md) to set up your credentials.
+See the [Getting Started](./quick_start.md) guide for a complete walkthrough, or jump directly to [Configure PyRIT](./configuration.md) to set up your credentials.
 ```
