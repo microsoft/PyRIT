@@ -20,7 +20,7 @@ project:
         - file: cookbooks/3_copyright_violations.ipynb
         - file: cookbooks/4_testing_bias.ipynb
         - file: cookbooks/5_psychosocial_harms.ipynb
-    - file: getting_started/quick_start.md
+    - file: getting_started/README.md
       children:
         - file: getting_started/install.md
           children:
@@ -32,10 +32,15 @@ project:
           children:
             - file: getting_started/populating_secrets.md
             - file: getting_started/pyrit_conf.md
-        - file: getting_started/faq.md
+        - file: getting_started/troubleshooting.md
           children:
             - file: getting_started/jupyter_setup.md
             - file: getting_started/use_azure_sql_db.md
+            - file: getting_started/deploy_hf_model_aml.ipynb
+            - file: getting_started/download_and_register_hf_model_aml.ipynb
+            - file: getting_started/hf_aml_model_endpoint_guide.md
+            - file: getting_started/score_aml_endpoint.ipynb
+            - file: getting_started/troubleshooting_guide_hf_azureml.md
     - file: contributing/README.md
       children:
         - file: contributing/1_git.md
@@ -161,13 +166,6 @@ project:
           children:
             - file: code/front_end/1_pyrit_scan.ipynb
             - file: code/front_end/2_pyrit_shell.md
-    - file: deployment/README.md
-      children:
-        - file: deployment/deploy_hf_model_aml.ipynb
-        - file: deployment/download_and_register_hf_model_aml.ipynb
-        - file: deployment/hf_aml_model_endpoint_guide.md
-        - file: deployment/score_aml_endpoint.ipynb
-        - file: deployment/troubleshooting_guide_hf_azureml.md
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
@@ -214,7 +212,7 @@ site:
     - title: Cookbooks
       url: /cookbooks/readme
     - title: Getting Started
-      url: /getting_started/install
+      url: /getting_started/readme
     - title: Contributing
       url: /contributing/readme
     - title: User Guide

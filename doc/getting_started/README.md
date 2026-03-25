@@ -15,9 +15,9 @@ Choose from four installation options — Docker or local, for users or contribu
 Set up your AI endpoint credentials and initialize the framework.
 ::::
 
-::::{card} ❓ FAQ
-:link: ./faq
-Troubleshooting Jupyter kernels, Azure SQL, and other common issues.
+::::{card} 🔧 Troubleshooting
+:link: ./troubleshooting
+Common issues, model deployment guides, and advanced setup.
 ::::
 
 :::::

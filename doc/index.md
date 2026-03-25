@@ -66,7 +66,7 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 
 ## Getting Started
 
-Getting PyRIT running takes two steps: **install** the package, then **configure** your targets and defaults. For the fastest path, see the [Getting Started](getting_started/quick_start) guide.
+Getting PyRIT running takes two steps: **install** the package, then **configure** your AI endpoints. For the path that's right for you, see the [Getting Started](getting_started/README) guide.
 
 ### Step 1: Install
 
@@ -126,7 +126,7 @@ Install from source in editable mode:
 
 ### Step 2: Configure
 
-After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For the quickest start, see the [Configure PyRIT](getting_started/configuration) page.
+After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For more details, see the [Configure PyRIT](getting_started/configuration) page.
 
 :::::{grid} 1 1 2 2
 :gutter: 3

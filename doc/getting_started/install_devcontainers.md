@@ -1,24 +1,10 @@
 # Contributor Docker Installation
 
-DevContainers provide a pre-configured development environment for PyRIT that ensures consistency across all contributors. This is the recommended setup for contributors using Visual Studio Code.
+DevContainers provide a pre-configured development environment for PyRIT using Docker and VS Code, ensuring consistency across all contributors.
 
 ```{note}
 **Development Version:** This setup uses the **latest development code** from the main branch, not a stable release. The notebooks in your cloned repository will match your code version.
 ```
-
-## Who Should Use DevContainers?
-
-✅ **Use DevContainers if you:**
-- Use Visual Studio Code as your editor. (Note that DevContainers can be used independently but our installation guide leverages VS Code since it's seamless.)
-- Want a pre-configured development environment
-- Want consistency with other contributors
-- Prefer not to manage Python environments manually
-- Need all development tools and extensions pre-installed
-
-❌ **Consider [local installation](./install.md) if you:**
-- Use a different IDE or editor
-- Prefer full control over your development environment
-- Need to customize your setup beyond what DevContainers offer
 
 ## Prerequisites
 
@@ -103,11 +89,13 @@ To view variables populated by code examples:
 **Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](7_notebooks.md) for more details.
 ```
 
-## Populating Secrets
+## Next Step: Configure PyRIT
 
-After setting up your DevContainer, configure your API keys and secrets:
+After setting up your DevContainer, configure your AI endpoint credentials.
 
-See [Populating Secrets](./populating_secrets.md) for detailed instructions.
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
 
 ## Common DevContainer Operations
 

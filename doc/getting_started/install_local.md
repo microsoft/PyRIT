@@ -54,8 +54,8 @@ Notebooks and your PyRIT installation must be on the same version. This pip inst
 
 ## Next Step: Configure PyRIT
 
-After installing, you need to configure your AI endpoint credentials before running PyRIT.
+After installing, configure your AI endpoint credentials.
 
 ```{tip}
-See the [Getting Started](./quick_start.md) guide for a complete walkthrough, or jump directly to [Configure PyRIT](./configuration.md) to set up your `.env` and `.pyrit_conf` files.
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 ```

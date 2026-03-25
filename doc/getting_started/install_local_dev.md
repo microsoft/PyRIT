@@ -1,24 +1,10 @@
 # Contributor Local Installation
 
-This guide covers setting up a PyRIT development environment using [uv](https://github.com/astral-sh/uv), a fast Python package installer and resolver, on Windows.
-
-
-## Choose Your Setup Approach
-
-You can set up PyRIT for development in one of two ways:
-
-1. **Local Installation with UV/Python** (this page) - Install PyRIT in editable mode on your machine
-2. **[Contributor Docker Installation](./install_devcontainers.md)** - Use a pre-configured Docker container with VS Code
+Set up a PyRIT development environment using [uv](https://github.com/astral-sh/uv), a fast Python package installer and resolver.
 
 ```{note}
-**Development Version:** Contributor installations use the **latest development code** from the `main` branch, not a stable release. The notebooks in your cloned repository will match your code version. This documentation website also shows the main branch version.
+**Development Version:** Contributor installations use the **latest development code** from the `main` branch, not a stable release. The notebooks in your cloned repository will match your code version.
 ```
-
-## Overview
-
-To install PyRIT as a library, the simplest way to do it is just `pip install pyrit`. This is documented [here](./install.md).
-
-However, there are many reasons to install as a contributor. Yes, of course, if you want to contribute. But also because of the nature of the tool, it is often the case that targets, attacks, converters, core, etc. code needs to be modified. This section walks through how to install PyRIT as a contributor.
 
 ## Why uv?
 
@@ -195,9 +181,13 @@ uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-## Populating Secrets
+## Next Step: Configure PyRIT
 
-See [this](./populating_secrets.md) for more details on populating secrets.
+After installing, configure your AI endpoint credentials.
+
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
 
 
 ## Troubleshooting

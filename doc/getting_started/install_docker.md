@@ -1,23 +1,9 @@
 # User Docker Installation
 
-Docker provides the fastest way to get started with PyRIT. This method uses a pre-configured container with JupyterLab, eliminating the need for local Python environment setup.
-
-## Who Should Use Docker?
-
-✅ **Use Docker if you:**
-- Want to get started immediately without Python setup
-- Prefer a consistent, isolated environment
-- Are new to PyRIT and want to try it quickly
-- Want JupyterLab pre-configured and ready to go
-- Work on Windows, macOS, or Linux
-
-❌ **Consider [local installation](./install.md) if you:**
-- Need to integrate PyRIT into existing Python workflows
-- Prefer lighter-weight installations
-- Want direct access to PyRIT from your system Python
+Docker provides the fastest way to get started with PyRIT — a pre-configured container with JupyterLab, no local Python environment setup needed.
 
 ```{important}
-**Version Compatibility:** This Docker setup installs the **latest stable release** of PyRIT from PyPI. The notebooks and documentation must match your PyRIT version. If you're using PyRIT from a release (like `v0.9.0`), download notebooks from the corresponding release branch, not from the `main` branch or this website (which shows the latest development version).
+**Version Compatibility:** This Docker setup installs the **latest stable release** of PyRIT from PyPI. If you're using a specific release (like `v0.9.0`), download notebooks from the corresponding release branch.
 ```
 
 ## Prerequisites
@@ -109,10 +95,10 @@ Check out the [cookbooks](../cookbooks/README.md) for example workflows and tuto
 
 ## Next Step: Configure PyRIT
 
-After installing, you need to configure your AI endpoint credentials before running PyRIT.
+After installing, configure your AI endpoint credentials.
 
 ```{tip}
-See the [Quick Start Guide](./quick_start.md) for a complete walkthrough, or jump directly to [Populating Secrets](./populating_secrets.md) to set up your `.env` file with your provider credentials.
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 ```
 
 ## Directory Structure

@@ -79,7 +79,8 @@ All these providers use the same three environment variables (`OPENAI_CHAT_ENDPO
 
 The `.env_example` file in the repository root contains entries for **all** supported targets — OpenAI chat, responses, realtime, image, TTS, video, Azure ML, embeddings, content safety, and more. Most users only need the three `OPENAI_CHAT_*` variables above. Fill in additional sections only as you need them.
 
-## Next Steps
+## What's Next?
 
 - [Configuration File (.pyrit_conf)](./pyrit_conf.md) — Set up the full configuration with initializers, database, and environment file management
-- [Configure PyRIT](./configuration.md) — The quickest way to try PyRIT with just a few environment variables
+- 📖 [Cookbooks](../cookbooks/README.md) — Walk through common red teaming workflows
+- 🖥️ [CLI & Shell](../code/front_end/1_pyrit_scan.ipynb) — Use `pyrit_scan` for automated assessments

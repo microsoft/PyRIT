@@ -57,3 +57,12 @@ Set up `~/.pyrit/.pyrit_conf` for persistent config with initializers that regis
 ::::
 
 :::::
+
+## What's Next?
+
+Once you're configured:
+
+- 📖 [Cookbooks](../cookbooks/README.md) — Walk through common red teaming workflows
+- 🔌 [Targets](../code/targets/0_prompt_targets.md) — Connect to different AI systems
+- 📦 [Scenarios](../code/scenarios/0_scenarios.ipynb) — Run standardized evaluation scenarios
+- 🖥️ [CLI & Shell](../code/front_end/1_pyrit_scan.ipynb) — Use `pyrit_scan` for automated assessments

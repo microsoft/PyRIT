@@ -269,9 +269,8 @@ initializers:
 silent: false
 ```
 
-## Next Steps
+## What's Next?
 
 - [Populating Secrets](./populating_secrets.md) — Provider-specific examples for your `.env` file
-- [Configuration Guide](../code/setup/1_configuration.ipynb) — Interactive examples of `initialize_pyrit_async` options
-- [PyRIT Initializers](../code/setup/pyrit_initializer.ipynb) — Creating and using built-in and custom initializers
-- [Default Values](../code/setup/default_values.md) — How initializer defaults work under the hood
+- 📖 [Cookbooks](../cookbooks/README.md) — Walk through common red teaming workflows
+- 🖥️ [CLI & Shell](../code/front_end/1_pyrit_scan.ipynb) — Use `pyrit_scan` for automated assessments
