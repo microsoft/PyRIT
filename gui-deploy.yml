@@ -32,6 +32,11 @@ parameters:
     type: boolean
     default: false
 
+# Service connection must be a compile-time variable (not from a variable group)
+# because azureSubscription is validated during YAML parsing.
+variables:
+  azureServiceConnection: 'copyrit-gui-azure'
+
 stages:
   # ──────────────────────────────────────────────
   # Stage 1: Build Docker image and push to ACR
