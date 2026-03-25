@@ -248,57 +248,14 @@ resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 // Extract KV name and resource group from the resource ID.
 // keyVaultResourceId format: /subscriptions/.../resourceGroups/<rg>/providers/.../vaults/<name>
 var keyVaultName = last(split(keyVaultResourceId, '/'))
-var keyVaultResourceGroup = split(keyVaultResourceId, '/')[4]
-var keyVaultInSameRg = keyVaultResourceGroup == resourceGroup().name
-
-// Same-RG reference for RBAC role assignment (only when KV is in this RG).
-// Cross-RG vaults require manual RBAC: az role assignment create --assignee-object-id <MI-principal-id>
-//   --role "Key Vault Secrets User" --scope <keyVaultResourceId>
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (keyVaultInSameRg) {
-  name: keyVaultName
-}
 
 // ============================================================================
-// RBAC: Grant roles to UAMI BEFORE container app is created
+// RBAC role assignments are NOT managed by this template.
+// Grant the following roles to the UAMI manually before first deployment:
+//   - Key Vault Secrets User  on the Key Vault
+//   - AcrPull                 on the ACR
+// See Post-Deployment in infra/README.md for commands.
 // ============================================================================
-
-// Key Vault Secrets User — for .env secret reference (only when KV is in same RG)
-// For cross-RG vaults, grant this role manually before deployment.
-resource kvSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultInSameRg) {
-  name: guid(keyVaultResourceId, managedIdentity.name, '4633458b-17de-408a-b874-0445c86b69e6')
-  scope: keyVault
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// AcrPull — for image pull (newly-created ACR)
-resource acrPullRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createAcr) {
-  name: guid(newAcr.id, managedIdentity.name, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-  scope: newAcr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// AcrPull — for image pull (existing ACR by resource ID)
-resource existingAcr 'Microsoft.ContainerRegistry/registries@2023-08-01-preview' existing = if (!createAcr && acrResourceId != '') {
-  name: last(split(acrResourceId, '/'))
-}
-
-resource acrPullRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!createAcr && acrResourceId != '') {
-  name: guid(existingAcr.id, managedIdentity.name, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-  scope: existingAcr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
 
 // ============================================================================
 // Azure Container Apps Environment (workload profiles, public network disabled)
@@ -416,12 +373,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       '${managedIdentity.id}': {}
     }
   }
-  // Ensure RBAC roles are granted before the first revision starts
-  dependsOn: [
-    kvSecretsRole
-    acrPullRoleNew
-    acrPullRoleExisting
-  ]
+  // RBAC roles (AcrPull, KV Secrets User) must be granted manually before
+  // the first deployment — see infra/README.md Post-Deployment §2.
+  dependsOn: []
   properties: {
     managedEnvironmentId: acaEnvironment.id
     configuration: {
