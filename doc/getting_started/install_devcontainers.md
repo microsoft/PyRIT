@@ -48,7 +48,7 @@ Press `Ctrl + Shift + P` (or `Cmd + Shift + P` on macOS) to open the VS Code Com
 Dev Containers: Reopen in Container
 ```
 
-![DevContainer in VS Code Commands Menu](images/DevContainer-vscode.png)
+![DevContainer in VS Code Commands Menu](../contributing/images/DevContainer-vscode.png)
 
 VS Code will:
 1. Build the development container (this may take several minutes the first time)
@@ -86,7 +86,7 @@ To view variables populated by code examples:
 2. Select **Jupyter** from the dropdown menu
 
 ```{important}
-**Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](7_notebooks.md) for more details.
+**Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](../contributing/7_notebooks.md) for more details.
 ```
 
 ## Common DevContainer Operations

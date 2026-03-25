@@ -46,7 +46,7 @@ chmod -R 777 notebooks/ data/ ../assets/
 ls -la ../.env ../.env.local .env.container.settings
 ```
 
-If any are missing, create them from the examples as shown in the [Docker Installation](./install_docker.md) guide.
+If any are missing, create them from the examples as shown in the [Docker Installation](../install_docker.md) guide.
 
 ## Container Build Fails
 
