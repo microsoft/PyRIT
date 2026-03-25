@@ -66,7 +66,7 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 
 ## Getting Started
 
-Getting PyRIT running takes two steps: **install** the package, then **configure** your targets and defaults. For the fastest path, see the [Getting Started](setup/quick_start) guide.
+Getting PyRIT running takes two steps: **install** the package, then **configure** your targets and defaults. For the fastest path, see the [Getting Started](getting_started/quick_start) guide.
 
 ### Step 1: Install
 
@@ -83,7 +83,7 @@ PyRIT offers flexible installation options to suit different needs. Choose the p
 :gutter: 3
 
 ::::{card} 🐋 User Docker Installation
-:link: setup/install_docker
+:link: getting_started/install_docker
 **Quick Start** ⭐
 
 Get started immediately with a pre-configured environment:
@@ -94,7 +94,7 @@ Get started immediately with a pre-configured environment:
 ::::
 
 ::::{card} ☀️ User Local Installation
-:link: setup/install_local
+:link: getting_started/install_local
 **Custom Setup**
 
 Install PyRIT directly on your machine:
@@ -104,7 +104,7 @@ Install PyRIT directly on your machine:
 ::::
 
 ::::{card} 🐋 Contributor Docker Installation
-:link: contributing/install_devcontainers
+:link: getting_started/install_devcontainers
 **Recommended for Contributors** ⭐
 
 Pre-configured Docker container with VS Code:
@@ -114,7 +114,7 @@ Pre-configured Docker container with VS Code:
 ::::
 
 ::::{card} ☀️ Contributor Local Installation
-:link: contributing/install_local_dev
+:link: getting_started/install_local_dev
 **Custom Dev Setup**
 
 Install from source in editable mode:
@@ -126,20 +126,20 @@ Install from source in editable mode:
 
 ### Step 2: Configure
 
-After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For the quickest start, see the [Configuration](setup/configuration) page.
+After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For the quickest start, see the [Configuration](getting_started/configuration) page.
 
 :::::{grid} 1 1 2 2
 :gutter: 3
 
 ::::{card} 🔑 Populating Secrets
-:link: setup/populating_secrets
+:link: getting_started/populating_secrets
 **Set Up Your .env File**
 
 Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, and more.
 ::::
 
 ::::{card} 📄 Config File (Recommended)
-:link: setup/pyrit_conf
+:link: getting_started/pyrit_conf
 **Full Framework Setup** ⭐
 
 Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and scenarios.

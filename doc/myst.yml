@@ -20,22 +20,22 @@ project:
         - file: cookbooks/3_copyright_violations.ipynb
         - file: cookbooks/4_testing_bias.ipynb
         - file: cookbooks/5_psychosocial_harms.ipynb
-    - file: setup/quick_start.md
+    - file: getting_started/quick_start.md
       children:
-        - file: setup/install.md
+        - file: getting_started/install.md
           children:
-            - file: setup/install_docker.md
-            - file: setup/install_local.md
-            - file: contributing/install_devcontainers.md
-            - file: contributing/install_local_dev.md
-        - file: setup/configuration.md
+            - file: getting_started/install_docker.md
+            - file: getting_started/install_local.md
+            - file: getting_started/install_devcontainers.md
+            - file: getting_started/install_local_dev.md
+        - file: getting_started/configuration.md
           children:
-            - file: setup/populating_secrets.md
-            - file: setup/pyrit_conf.md
-        - file: setup/faq.md
+            - file: getting_started/populating_secrets.md
+            - file: getting_started/pyrit_conf.md
+        - file: getting_started/faq.md
           children:
-            - file: setup/jupyter_setup.md
-            - file: setup/use_azure_sql_db.md
+            - file: getting_started/jupyter_setup.md
+            - file: getting_started/use_azure_sql_db.md
     - file: contributing/README.md
       children:
         - file: contributing/1_git.md
@@ -214,7 +214,7 @@ site:
     - title: Cookbooks
       url: /cookbooks/readme
     - title: Getting Started
-      url: /setup/quick-start
+      url: /getting_started/quick-start
     - title: Contributing
       url: /contributing/readme
     - title: User Guide

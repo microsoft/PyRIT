@@ -16,7 +16,7 @@ You can set up PyRIT for development in one of two ways:
 
 ## Overview
 
-To install PyRIT as a library, the simplest way to do it is just `pip install pyrit`. This is documented [here](../setup/install.md).
+To install PyRIT as a library, the simplest way to do it is just `pip install pyrit`. This is documented [here](./install.md).
 
 However, there are many reasons to install as a contributor. Yes, of course, if you want to contribute. But also because of the nature of the tool, it is often the case that targets, attacks, converters, core, etc. code needs to be modified. This section walks through how to install PyRIT as a contributor.
 
@@ -197,7 +197,7 @@ uv run pre-commit run --all-files
 
 ## Populating Secrets
 
-See [this](../setup/populating_secrets.md) for more details on populating secrets.
+See [this](./populating_secrets.md) for more details on populating secrets.
 
 
 ## Troubleshooting

@@ -14,4 +14,4 @@ There are two general types of scorers. `true_false` and `float_scale` (these ca
 
 ## Setup
 
-Before starting this, make sure you are [set up and authenticated to use Azure OpenAI endpoints](../../setup/populating_secrets.md)
+Before starting this, make sure you are [set up and authenticated to use Azure OpenAI endpoints](../../getting_started/populating_secrets.md)

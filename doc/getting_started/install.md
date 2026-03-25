@@ -20,14 +20,14 @@ Install with pip, uv, or conda directly into your Python environment. Lighter we
 ::::
 
 ::::{card} 🐋 Contributor Docker Installation
-:link: ../contributing/install_devcontainers
+:link: ./install_devcontainers
 **Recommended for Contributors** ⭐
 
 Pre-configured Docker container with VS Code. All extensions pre-installed, consistent environment across all contributors.
 ::::
 
 ::::{card} ☀️ Contributor Local Installation
-:link: ../contributing/install_local_dev
+:link: ./install_local_dev
 **Custom Dev Setup**
 
 Install from source in editable mode. Full development control, use any IDE or editor, customize your environment.

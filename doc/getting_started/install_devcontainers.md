@@ -107,7 +107,7 @@ To view variables populated by code examples:
 
 After setting up your DevContainer, configure your API keys and secrets:
 
-See [Populating Secrets](../setup/populating_secrets.md) for detailed instructions.
+See [Populating Secrets](./populating_secrets.md) for detailed instructions.
 
 ## Common DevContainer Operations
 
