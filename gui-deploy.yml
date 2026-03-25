@@ -154,69 +154,69 @@ stages:
   # ──────────────────────────────────────────────
   # Stage 3: Deploy to production (manual trigger)
   # ──────────────────────────────────────────────
-  - stage: DeployProd
-    displayName: 'Deploy to Production'
-    dependsOn: DeployTest
-    condition: and(succeeded(), eq('${{ parameters.deployToProd }}', true))
-    variables:
-      - group: copyrit-gui-common
-      - group: copyrit-gui-prod
-    pool:
-      vmImage: 'ubuntu-latest'
-    jobs:
-      - deployment: DeployToProd
-        displayName: 'Deploy to production environment'
-        environment: 'copyrit-prod'
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - checkout: self
-                  fetchDepth: 1
+  - ${{ if eq(parameters.deployToProd, true) }}:
+    - stage: DeployProd
+      displayName: 'Deploy to Production'
+      dependsOn: DeployTest
+      variables:
+        - group: copyrit-gui-common
+        - group: copyrit-gui-prod
+      pool:
+        vmImage: 'ubuntu-latest'
+      jobs:
+        - deployment: DeployToProd
+          displayName: 'Deploy to production environment'
+          environment: 'copyrit-prod'
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
+                    fetchDepth: 1
 
-                - task: AzureCLI@2
-                  displayName: 'Deploy Bicep to prod'
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: 'bash'
-                    scriptLocation: 'inlineScript'
-                    inlineScript: |
-                      set -euo pipefail
+                  - task: AzureCLI@2
+                    displayName: 'Deploy Bicep to prod'
+                    inputs:
+                      azureSubscription: '$(azureServiceConnection)'
+                      scriptType: 'bash'
+                      scriptLocation: 'inlineScript'
+                      inlineScript: |
+                        set -euo pipefail
 
-                      az deployment group create \
-                        --resource-group $(resourceGroup) \
-                        --template-file $(Build.SourcesDirectory)/infra/main.bicep \
-                        --parameters appName=$(appName) \
-                        --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
-                        --parameters entraTenantId=$(entraTenantId) \
-                        --parameters entraClientId=$(entraClientId) \
-                        --parameters allowedGroupObjectId=$(allowedGroupObjectId) \
-                        --parameters sqlServerFqdn=$(sqlServerFqdn) \
-                        --parameters sqlDatabaseName=$(sqlDatabaseName) \
-                        --parameters keyVaultResourceId=$(keyVaultResourceId) \
-                        --parameters acrResourceId=$(acrResourceId) \
-                        --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
-                        --parameters enableOtel=$(enableOtel)
+                        az deployment group create \
+                          --resource-group $(resourceGroup) \
+                          --template-file $(Build.SourcesDirectory)/infra/main.bicep \
+                          --parameters appName=$(appName) \
+                          --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
+                          --parameters entraTenantId=$(entraTenantId) \
+                          --parameters entraClientId=$(entraClientId) \
+                          --parameters allowedGroupObjectId=$(allowedGroupObjectId) \
+                          --parameters sqlServerFqdn=$(sqlServerFqdn) \
+                          --parameters sqlDatabaseName=$(sqlDatabaseName) \
+                          --parameters keyVaultResourceId=$(keyVaultResourceId) \
+                          --parameters acrResourceId=$(acrResourceId) \
+                          --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
+                          --parameters enableOtel=$(enableOtel)
 
-                - task: AzureCLI@2
-                  displayName: 'Health check'
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: 'bash'
-                    scriptLocation: 'inlineScript'
-                    inlineScript: |
-                      set -euo pipefail
+                  - task: AzureCLI@2
+                    displayName: 'Health check'
+                    inputs:
+                      azureSubscription: '$(azureServiceConnection)'
+                      scriptType: 'bash'
+                      scriptLocation: 'inlineScript'
+                      inlineScript: |
+                        set -euo pipefail
 
-                      FQDN=$(az containerapp show \
-                        --name $(appName) \
-                        --resource-group $(resourceGroup) \
-                        --query "properties.configuration.ingress.fqdn" -o tsv)
+                        FQDN=$(az containerapp show \
+                          --name $(appName) \
+                          --resource-group $(resourceGroup) \
+                          --query "properties.configuration.ingress.fqdn" -o tsv)
 
-                      echo "Testing https://$FQDN/api/health"
+                        echo "Testing https://$FQDN/api/health"
 
-                      curl --retry 5 --retry-delay 15 --retry-all-errors \
-                        --fail --max-time 10 \
-                        "https://$FQDN/api/health"
+                        curl --retry 5 --retry-delay 15 --retry-all-errors \
+                          --fail --max-time 10 \
+                          "https://$FQDN/api/health"
 
-                      echo ""
-                      echo "✅ Production health check passed"
+                        echo ""
+                        echo "✅ Production health check passed"
