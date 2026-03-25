@@ -31,7 +31,8 @@ class TestSimpleInitializerInitialize:
         reset_default_values()
         # Set up required env vars for OpenAI
         os.environ["OPENAI_CHAT_ENDPOINT"] = "https://test.openai.azure.com"
-        os.environ["OPENAI_CHAT_MODEL"] = "gpt-4"
+        os.environ["OPENAI_CHAT_MODEL"] = "gpt-4-deployment"
+        os.environ["OPENAI_CHAT_UNDERLYING_MODEL"] = "gpt-4"
         # Clean up globals
         for attr in ["default_converter_target", "default_objective_scorer", "adversarial_config"]:
             if hasattr(sys.modules["__main__"], attr):
@@ -41,7 +42,7 @@ class TestSimpleInitializerInitialize:
         """Clean up after each test."""
         reset_default_values()
         # Clean up env vars
-        for var in ["OPENAI_CHAT_ENDPOINT", "OPENAI_CHAT_KEY", "OPENAI_CHAT_MODEL"]:
+        for var in ["OPENAI_CHAT_ENDPOINT", "OPENAI_CHAT_KEY", "OPENAI_CHAT_MODEL", "OPENAI_CHAT_UNDERLYING_MODEL"]:
             if var in os.environ:
                 del os.environ[var]
         # Clean up globals
@@ -103,6 +104,26 @@ class TestSimpleInitializerInitialize:
         assert "default_converter_target" in info["global_variables"]
         assert "default_objective_scorer" in info["global_variables"]
         assert "adversarial_config" in info["global_variables"]
+
+    @pytest.mark.asyncio
+    async def test_underlying_model_used_in_identifier_and_falls_back_to_model_name(self):
+        """Test that underlying_model is used in identifier when set, and model_name is used when not."""
+        os.environ["OPENAI_CHAT_KEY"] = "test_key"
+
+        init = SimpleInitializer()
+        await init.initialize_async()
+        converter_target = sys.modules["__main__"].__dict__["default_converter_target"]
+        identifier = converter_target.get_identifier()
+        assert identifier.params["model_name"] == "gpt-4"
+
+        # Without underlying model — should fall back to model name
+        del os.environ["OPENAI_CHAT_UNDERLYING_MODEL"]
+        reset_default_values()
+        init_fallback = SimpleInitializer()
+        await init_fallback.initialize_async()
+        converter_target_fallback = sys.modules["__main__"].__dict__["default_converter_target"]
+        identifier_fallback = converter_target_fallback.get_identifier()
+        assert identifier_fallback.params["model_name"] == "gpt-4-deployment"
 
 
 class TestSimpleInitializerGetInfo:

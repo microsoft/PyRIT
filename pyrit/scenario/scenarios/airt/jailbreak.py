@@ -211,7 +211,7 @@ class Jailbreak(Scenario):
                     api_key=get_azure_openai_auth(endpoint),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 ),
-                refusal_system_prompt_path = RefusalScorerPaths.STRICT
+                refusal_system_prompt_path=RefusalScorerPaths.STRICT,
             )
         )
 

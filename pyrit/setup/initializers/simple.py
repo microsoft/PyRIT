@@ -46,6 +46,7 @@ class SimpleInitializer(PyRITInitializer):
 
     Optional Environment Variables:
     - OPENAI_CHAT_KEY: API key. If not set, Entra ID auth is used for Azure endpoints.
+    - OPENAI_CHAT_UNDERLYING_MODEL: Underlying model name. If not set, model name is used.
 
     This configuration is designed for simple use cases with:
     - Basic OpenAI API integration
@@ -123,21 +124,23 @@ class SimpleInitializer(PyRITInitializer):
         4. Default values for attack types
         """
         api_key = self._get_api_key()  # type: ignore[no-untyped-call]
+        underlying_model = os.getenv("OPENAI_CHAT_UNDERLYING_MODEL", os.getenv("OPENAI_CHAT_MODEL"))
 
         # 1. Setup converter target
-        self._setup_converter_target(api_key=api_key)
+        self._setup_converter_target(api_key=api_key, underlying_model=underlying_model)
 
         # 2. Setup scorers
-        self._setup_scorers(api_key=api_key)
+        self._setup_scorers(api_key=api_key, underlying_model=underlying_model)
 
         # 3. Setup adversarial targets
-        self._setup_adversarial_targets(api_key=api_key)
+        self._setup_adversarial_targets(api_key=api_key, underlying_model=underlying_model)
 
-    def _setup_converter_target(self, *, api_key: str) -> None:
+    def _setup_converter_target(self, *, api_key: str, underlying_model: str) -> None:
         """Set up the default converter target configuration."""
         default_converter_target = OpenAIChatTarget(
             api_key=api_key,
             temperature=1.2,
+            underlying_model=underlying_model,
         )
 
         set_global_variable(name="default_converter_target", value=default_converter_target)
@@ -147,9 +150,9 @@ class SimpleInitializer(PyRITInitializer):
             value=default_converter_target,
         )
 
-    def _setup_scorers(self, *, api_key: str) -> None:
+    def _setup_scorers(self, *, api_key: str, underlying_model: str) -> None:
         """Set up the simple objective scorer."""
-        scorer_target = OpenAIChatTarget(api_key=api_key, temperature=0.3)
+        scorer_target = OpenAIChatTarget(api_key=api_key, temperature=0.3, underlying_model=underlying_model)
 
         # Configure simple objective scorer
         # Returns True if:
@@ -186,12 +189,13 @@ class SimpleInitializer(PyRITInitializer):
                 value=default_objective_scorer_config,
             )
 
-    def _setup_adversarial_targets(self, *, api_key: str) -> None:
+    def _setup_adversarial_targets(self, *, api_key: str, underlying_model: str) -> None:
         """Set up the adversarial target configurations for attacks."""
         adversarial_config = AttackAdversarialConfig(
             target=OpenAIChatTarget(
                 api_key=api_key,
                 temperature=1.3,
+                underlying_model=underlying_model,
             )
         )
 

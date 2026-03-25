@@ -37,9 +37,11 @@ class TestAIRTInitializerInitialize:
         reset_default_values()
         # Set up required env vars for AIRT
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"] = "https://test-converter.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"] = "gpt-4"
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"] = "gpt-4o-unsafe-deployment"
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL"] = "gpt-4o-unsafe"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"] = "https://test-scorer.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"] = "gpt-4"
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"] = "gpt-4o-unsafe-deployment2"
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL2"] = "gpt-4o-unsafe2"
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test-safety.cognitiveservices.azure.com"
         # Clean up globals
         for attr in [
@@ -58,8 +60,10 @@ class TestAIRTInitializerInitialize:
         for var in [
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL2",
             "AZURE_CONTENT_SAFETY_API_ENDPOINT",
         ]:
             if var in os.environ:
@@ -173,6 +177,28 @@ class TestAIRTInitializerInitialize:
         error_message = str(exc_info.value)
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in error_message
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL" in error_message
+
+    @pytest.mark.asyncio
+    async def test_validate_underlying_model(self):
+        """Test that underlying_model is used when set, falling back to model_name when not."""
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.get_azure_openai_auth", return_value="mock_token"),
+            patch("pyrit.setup.initializers.airt.get_azure_token_provider", return_value="mock_token_provider"),
+        ):
+            await init.initialize_async()
+            converter_target = sys.modules["__main__"].__dict__["default_converter_target"]
+            identifier = converter_target.get_identifier()
+            assert identifier.params["model_name"] == "gpt-4o-unsafe"
+
+            # Without underlying model — should fall back to model name
+            del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL"]
+            reset_default_values()
+            init_fallback = AIRTInitializer()
+            await init_fallback.initialize_async()
+            converter_target_fallback = sys.modules["__main__"].__dict__["default_converter_target"]
+            identifier_fallback = converter_target_fallback.get_identifier()
+            assert identifier_fallback.params["model_name"] == "gpt-4o-unsafe-deployment"
 
 
 class TestAIRTInitializerGetInfo:
