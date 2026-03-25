@@ -1,54 +1,21 @@
-# Populating Secrets - Quick Start Guide
+# Populating Secrets
 
-Before running PyRIT, you need to configure access to AI targets. This guide will help you get started quickly.
+PyRIT loads API credentials from environment variables or `.env` files. This page shows how to set up your `.env` file with credentials for your AI provider.
 
-## Fastest Way to Get Started
-
-The simplest way to configure PyRIT requires just two environment variables and three lines of code:
-
-```python
-from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import SimpleInitializer
-
-await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])
+```{tip}
+For the full configuration story — including `.env.local` overrides, custom env file paths, and environment variable precedence — see the [Configuration File](./pyrit_conf.md) guide.
 ```
 
-This sets up PyRIT with sensible defaults using in-memory storage. You just need to set two environment variables:
-- `OPENAI_CHAT_ENDPOINT` - Your AI endpoint URL
-- `OPENAI_CHAT_KEY` - Your API key
+## Creating Your .env File
 
-With this setup, you can run most PyRIT notebooks and examples!
+1. Create the PyRIT config directory and copy the example file:
 
-## Setting Up Environment Variables
-
-PyRIT loads secrets and endpoints from environment variables or `.env` files. The `.env_example` file shows the format and available options.
-
-### Environment Variable Precedence
-
-When `initialize_pyrit_async` runs, environment variables are loaded in a specific order. **Later sources override earlier ones:**
-
-```{mermaid}
-flowchart LR
-    A["1. System Environment"] --> B{"env_files provided?"}
-    B -->|No| C["2. ~/.pyrit/.env"]
-    C --> D["3. ~/.pyrit/.env.local"]
-    B -->|Yes| E["2. Your specified files (in order)"]
+```bash
+mkdir -p ~/.pyrit
+cp .env_example ~/.pyrit/.env
 ```
 
-**Default behavior** (no `env_files` argument):
-
-| Priority | Source | Description |
-|----------|--------|-------------|
-| Lowest | System environment variables | Always loaded as the baseline |
-| Medium | `~/.pyrit/.env` | Default config file (loaded if it exists) |
-| Highest | `~/.pyrit/.env.local` | Local overrides (loaded if it exists) |
-
-**Custom behavior** (with `env_files` argument): Only your specified files are loaded, in order. Default paths are completely ignored.
-
-### Creating Your .env File
-
-1. Copy `.env_example` to `~/.pyrit/.env`
-2. Add your API credentials for your provider of choice:
+2. Edit `~/.pyrit/.env` and fill in the credentials for your provider:
 
 ::::{tab-set}
 
@@ -108,57 +75,11 @@ Get your API key from [openrouter.ai](https://openrouter.ai/).
 All these providers use the same three environment variables (`OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_KEY`, `OPENAI_CHAT_MODEL`) because PyRIT's `OpenAIChatTarget` works with any OpenAI-compatible API. Just point the endpoint to your provider and you're set.
 ```
 
-### Using .env.local for Overrides
+## What's in .env_example?
 
-You can use `~/.pyrit/.env.local` to override values in `~/.pyrit/.env` without modifying the base file. This is useful for:
-- Testing different targets
-- Using personal credentials instead of shared ones
-- Switching between configurations quickly
-
-Simply create `.env.local` in your `~/.pyrit/` directory and add any variables you want to override.
-
-### Custom Environment Files
-
-You can also specify exactly which `.env` files to load using the `env_files` parameter:
-
-```python
-from pathlib import Path
-from pyrit.setup import initialize_pyrit_async
-
-await initialize_pyrit_async(
-    memory_db_type="InMemory",
-    env_files=[Path("./project-config.env"), Path("./local-overrides.env")]
-)
-```
-
-When `env_files` is provided:
-- **Only** the specified files are loaded (default paths are skipped entirely)
-- Files are loaded in order—later files override earlier ones
-- A `ValueError` is raised if any specified file doesn't exist
-
-The CLI also supports custom environment files via the `--env-files` flag.
-
-## Authentication Options
-
-### API Keys (Default)
-The simplest approach is using API keys as shown above. Most targets support this method.
-
-### Azure Entra Authentication (Optional)
-For Azure resources, you can use Entra auth instead of API keys. This requires:
-
-1. Install Azure CLI for your OS:
-   - [Windows](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-windows)
-   - [Linux](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-linux)
-   - [macOS](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos)
-
-2. Log in to Azure:
-   ```bash
-   az login
-   ```
-
-When using Entra auth, you don't need to set API keys for Azure resources.
+The `.env_example` file in the repository root contains entries for **all** supported targets — OpenAI chat, responses, realtime, image, TTS, video, Azure ML, embeddings, content safety, and more. Most users only need the three `OPENAI_CHAT_*` variables above. Fill in additional sections only as you need them.
 
 ## Next Steps
 
-- For detailed configuration options, see the [Configuration Guide](../code/setup/1_configuration.ipynb)
-- For database options beyond in-memory storage, see the [Memory Documentation](../code/memory/0_memory.md)
+- [Configuration File (.pyrit_conf)](./pyrit_conf.md) — Set up the full configuration with initializers, database, and environment file management
+- [Minimal Setup](./minimal_setup.md) — If you just want to try PyRIT without creating any files

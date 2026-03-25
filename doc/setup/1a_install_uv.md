@@ -2,28 +2,44 @@
 
 Choose the installation method that best fits your use case.
 
+### For Users
+
 :::::{grid} 1 1 2 2
 :gutter: 3
 
-::::{card} 🐋 Docker
+::::{card} 🐋 Docker Installation
 :link: ./1b_install_docker
 **Quick Start** ⭐
 
-Pre-configured container with JupyterLab. No Python setup needed. Works on all platforms.
+Get started immediately with a pre-configured environment. No Python setup needed, JupyterLab built-in, works on all platforms.
 ::::
 
-::::{card} ☀️ Local Pip/uv
+::::{card} ☀️ Local Pip/uv Installation
 :link: ./install_local
 **Custom Setup**
 
-Install directly into your Python environment. Lighter weight, integrates with existing workflows.
+Install directly into your Python environment. Lighter weight, full control, integrates with existing workflows.
 ::::
 
-::::{card} ☀️ Local Conda
-:link: ./1c_install_conda
-**Conda Environment**
+:::::
 
-Use conda to manage your Python environment. Same `pip install pyrit` under the hood.
+### For Contributors
+
+:::::{grid} 1 1 2 2
+:gutter: 3
+
+::::{card} 🐋 DevContainers in VS Code
+:link: ../contributing/1b_install_devcontainers
+**Recommended** ⭐
+
+Pre-configured Docker container with VS Code. All extensions pre-installed, consistent environment across all contributors.
+::::
+
+::::{card} ☀️ Local uv Development
+:link: ../contributing/1a_install_uv
+**Custom Dev Setup**
+
+Install from source in editable mode. Full development control, use any IDE or editor, customize your environment.
 ::::
 
 :::::

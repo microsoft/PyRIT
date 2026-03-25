@@ -29,6 +29,7 @@ project:
             - file: setup/1c_install_conda.md
         - file: setup/configuration.md
           children:
+            - file: setup/minimal_setup.md
             - file: setup/populating_secrets.md
             - file: setup/pyrit_conf.md
         - file: setup/faq.md

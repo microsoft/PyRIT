@@ -128,20 +128,27 @@ Install from source in editable mode:
 
 After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default.
 
-:::::{grid} 1 1 2 2
+:::::{grid} 1 1 3 3
 :gutter: 3
 
 ::::{card} ⚡ Minimal Setup
-:link: setup/populating_secrets
-**Just 2 Environment Variables**
+:link: setup/minimal_setup
+**Try PyRIT Quickly**
 
-Set `OPENAI_CHAT_ENDPOINT` and `OPENAI_CHAT_KEY` in a `.env` file, then call `initialize_pyrit_async()`. Works with OpenAI, Azure, Ollama, Groq, or any OpenAI-compatible API.
+Set 2 environment variables in your shell and run 3 lines of Python. No files needed. Great for a first look.
+::::
+
+::::{card} 🔑 Populating Secrets
+:link: setup/populating_secrets
+**Set Up Your .env File**
+
+Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, and more.
 ::::
 
 ::::{card} 📄 Config File (Recommended)
 :link: setup/pyrit_conf
 **Full Framework Setup** ⭐
 
-Copy `.pyrit_conf_example` and `.env_example` to `~/.pyrit/`. This enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and scenarios.
+Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and scenarios.
 ::::
 :::::
