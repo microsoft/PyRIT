@@ -1,4 +1,4 @@
-# Installation & Setup Issues
+# Installation and Setup
 
 Troubleshooting guides for PyRIT installation and environment setup.
 

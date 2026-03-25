@@ -2,7 +2,7 @@
 
 Common issues and advanced setup guides.
 
-## Installation & Setup Issues
+## Installation and Setup
 
 - **[User Docker Installation](./docker.md)** — JupyterLab not accessible, permission errors, missing environment files, container build failures.
 
@@ -14,7 +14,7 @@ Common issues and advanced setup guides.
 
 - **[Azure SQL Database Setup](./azure_sql_db.md)** — Setting up Azure SQL as your memory backend, including Entra ID authentication and user permissions.
 
-## Model Deployment Guides
+## Model Deployment
 
 - **[Deploy HuggingFace Models on Azure ML](./deploy_hf_model_aml.ipynb)** — Deploy HuggingFace models to Azure ML endpoints.
 

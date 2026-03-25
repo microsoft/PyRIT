@@ -1,4 +1,4 @@
-# Model Deployment Guides
+# Model Deployment
 
 Guides for deploying and troubleshooting HuggingFace models on Azure ML.
 
