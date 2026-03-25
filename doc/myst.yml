@@ -214,7 +214,7 @@ site:
     - title: Cookbooks
       url: /cookbooks/readme
     - title: Getting Started
-      url: /getting_started/quick-start
+      url: /getting_started/install
     - title: Contributing
       url: /contributing/readme
     - title: User Guide
