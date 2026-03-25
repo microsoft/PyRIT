@@ -164,6 +164,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
+
 async def get_current_weather(args):
     return {
         "weather": "Sunny",
@@ -171,6 +172,7 @@ async def get_current_weather(args):
         "location": args["location"],
         "unit": args["unit"],
     }
+
 
 # Responses API function tool schema (flat, no nested "function" key)
 function_tool = {

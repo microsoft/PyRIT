@@ -64,6 +64,7 @@ from pyrit.setup import SQLITE, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=SQLITE)  # type: ignore
 
+
 async def processing_callback() -> str:
     gpt4o_endpoint = os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
     client = OpenAI(
@@ -116,6 +117,7 @@ async def processing_callback() -> str:
     assert isinstance(output_item, ResponseOutputMessage)
     content_item = output_item.content[0]
     return content_item.text  # type: ignore[union-attr]
+
 
 import logging
 

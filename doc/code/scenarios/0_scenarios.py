@@ -100,10 +100,12 @@ from pyrit.setup import initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
 
+
 class MyStrategy(ScenarioStrategy):
     ALL = ("all", {"all"})
     StrategyA = ("strategy_a", {"tag1", "tag2"})
     StrategyB = ("strategy_b", {"tag1"})
+
 
 class MyScenario(Scenario):
     version: int = 1
@@ -176,6 +178,7 @@ class MyScenario(Scenario):
                 )
             )
         return atomic_attacks
+
 
 scenario = MyScenario()
 

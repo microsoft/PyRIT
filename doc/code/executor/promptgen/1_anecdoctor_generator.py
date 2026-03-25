@@ -133,6 +133,7 @@ import pandas as pd
 
 from pyrit.executor.promptgen import AnecdoctorContext
 
+
 def visualize_knowledge_graph(kg_result: str):
     """
     Parses the knowledge graph result, converts it to a DataFrame, and visualizes it as a graph.
@@ -158,6 +159,7 @@ def visualize_knowledge_graph(kg_result: str):
     edge_labels = nx.get_edge_attributes(g, "label")
     nx.draw_networkx_edge_labels(g, pos, edge_labels=edge_labels)
     plt.show()
+
 
 # Create Anecdoctor Contexts that match the above generators
 context_english = AnecdoctorContext(

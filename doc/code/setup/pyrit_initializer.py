@@ -32,6 +32,7 @@ from pyrit.common.apply_defaults import set_default_value
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
+
 class CustomInitializer(PyRITInitializer):
     @property
     def name(self) -> str:
@@ -47,6 +48,7 @@ class CustomInitializer(PyRITInitializer):
     @property
     def description(self) -> str:
         return "Sets custom temperature for OpenAI targets"
+
 
 CustomInitializer()
 

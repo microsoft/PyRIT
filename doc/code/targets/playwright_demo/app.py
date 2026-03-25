@@ -15,6 +15,7 @@ model = "llama3.2:1b"  # adapt to your model
 # Define the system prompt
 SYSTEM_PROMPT = {"role": "system", "content": ("You are a helpful bot answering questions with a Cowboy accent.")}
 
+
 def get_answer(messages) -> str:
     """
     Sends the conversation messages to the Ollama model and retrieves the bot's response.
@@ -40,12 +41,14 @@ def get_answer(messages) -> str:
         logging.error("Error in get_answer", exc_info=True)
         return "I'm sorry, something went wrong while processing your request."
 
+
 @app.route("/")
 def index():
     """
     Renders the main page of the chat application.
     """
     return render_template("index.html")
+
 
 @app.route("/send_message", methods=["POST"])
 def send_message():
@@ -71,6 +74,7 @@ def send_message():
     except Exception as e:
         logging.error("Exception in send_message", exc_info=True)
         return jsonify({"error": "An error occurred while processing your request."}), 500
+
 
 if __name__ == "__main__":
     app.run(debug=True)

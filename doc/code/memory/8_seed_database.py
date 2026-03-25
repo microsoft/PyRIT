@@ -86,11 +86,13 @@ print("All dataset names in memory:", all_dataset_names)
 #
 # Below are examples demonstrating different query patterns:
 
+
 # %%
 def print_group(seed_group):
     for seed in seed_group.seeds:
         print(seed)
     print("\n")
+
 
 # Get all seeds in the dataset we just uploaded
 seed_groups = memory.get_seed_groups(dataset_name="pyrit_example_dataset")

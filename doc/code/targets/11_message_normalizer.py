@@ -207,6 +207,7 @@ print(custom_formatted)
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message
 
+
 class SimpleMarkdownNormalizer(MessageStringNormalizer):
     """Custom normalizer that formats messages as Markdown."""
 
@@ -218,6 +219,7 @@ class SimpleMarkdownNormalizer(MessageStringNormalizer):
             content = piece.converted_value
             lines.append(f"**{role}**: {content}")
         return "\n\n".join(lines)
+
 
 # Use the custom normalizer
 md_normalizer = SimpleMarkdownNormalizer()
