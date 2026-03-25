@@ -35,9 +35,6 @@ _PUBLIC_PATHS = {
     "/api/health",
     "/api/auth/config",
     "/api/media",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
 }
 
 
