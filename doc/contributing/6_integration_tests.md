@@ -1,4 +1,4 @@
-# 7. Integration Tests
+# 6. Integration Tests
 
 Integration testing is often optional, but is important for us to test interaction with other systems (and in our terminology this is also lumped with end-to-end tests). These tests are found in the `tests/integration` directory.
 

@@ -99,7 +99,7 @@ This will be the kernel that runs all code examples in Python Notebooks.
 To view the variables that are populated by code examples, go to `View > Output > Jupyter`.
 
 ```{note}
-When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [notebooks.md](8_notebooks.md) for more details.
+When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [notebooks.md](7_notebooks.md) for more details.
 ```
 
 ## Populating Secrets

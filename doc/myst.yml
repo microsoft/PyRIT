@@ -27,6 +27,9 @@ project:
             - file: setup/install_local.md
             - file: setup/1b_install_docker.md
             - file: setup/1c_install_conda.md
+            - file: contributing/1b_install_devcontainers.md
+            - file: contributing/1a_install_uv.md
+            - file: contributing/1c_install_conda.md
         - file: setup/configuration.md
           children:
             - file: setup/minimal_setup.md
@@ -38,19 +41,16 @@ project:
             - file: setup/use_azure_sql_db.md
     - file: contributing/README.md
       children:
-        - file: contributing/1a_install_uv.md
-        - file: contributing/1b_install_devcontainers.md
-        - file: contributing/1c_install_conda.md
-        - file: contributing/2_git.md
-        - file: contributing/3_incorporating_research.md
-        - file: contributing/4_style_guide.md
-        - file: contributing/5_running_tests.md
-        - file: contributing/6_unit_tests.md
-        - file: contributing/7_integration_tests.md
-        - file: contributing/8_notebooks.md
-        - file: contributing/9_pre_commit.md
-        - file: contributing/10_exception.md
-        - file: contributing/11_release_process.md
+        - file: contributing/1_git.md
+        - file: contributing/2_incorporating_research.md
+        - file: contributing/3_style_guide.md
+        - file: contributing/4_running_tests.md
+        - file: contributing/5_unit_tests.md
+        - file: contributing/6_integration_tests.md
+        - file: contributing/7_notebooks.md
+        - file: contributing/8_pre_commit.md
+        - file: contributing/9_exception.md
+        - file: contributing/10_release_process.md
     - file: code/architecture.md
     - file: code/user_guide.md
       children:

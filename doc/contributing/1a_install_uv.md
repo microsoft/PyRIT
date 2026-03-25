@@ -246,4 +246,4 @@ uv sync --reinstall-package pyrit
 
 - [uv Documentation](https://github.com/astral-sh/uv)
 - [PyRIT Contributing Guide](README.md)
-- [Running Tests Guide](5_running_tests.md)
+- [Running Tests Guide](4_running_tests.md)

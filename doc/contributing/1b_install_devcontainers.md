@@ -100,7 +100,7 @@ To view variables populated by code examples:
 2. Select **Jupyter** from the dropdown menu
 
 ```{important}
-**Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](8_notebooks.md) for more details.
+**Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](7_notebooks.md) for more details.
 ```
 
 ## Populating Secrets

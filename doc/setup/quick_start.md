@@ -1,4 +1,4 @@
-# Quick Start Guide
+# Getting Started
 
 Get PyRIT running in minutes. This guide walks you through the complete setup — install, configure, and verify.
 

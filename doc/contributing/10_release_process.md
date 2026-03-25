@@ -1,4 +1,4 @@
-# 11. Releasing PyRIT
+# 10. Releasing PyRIT
 
 This section is for maintainers only.
 If you don't know who the maintainers are but you need to reach them
