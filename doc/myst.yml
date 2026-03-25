@@ -26,13 +26,10 @@ project:
           children:
             - file: setup/install_local.md
             - file: setup/1b_install_docker.md
-            - file: setup/1c_install_conda.md
             - file: contributing/1b_install_devcontainers.md
             - file: contributing/1a_install_uv.md
-            - file: contributing/1c_install_conda.md
         - file: setup/configuration.md
           children:
-            - file: setup/minimal_setup.md
             - file: setup/populating_secrets.md
             - file: setup/pyrit_conf.md
         - file: setup/faq.md
@@ -216,7 +213,7 @@ site:
   nav:
     - title: Cookbooks
       url: /cookbooks/readme
-    - title: Setup
+    - title: Getting Started
       url: /setup/quick-start
     - title: Contributing
       url: /contributing/readme

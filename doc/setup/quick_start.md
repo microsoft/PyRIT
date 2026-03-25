@@ -14,7 +14,7 @@ Or with uv:
 uv pip install pyrit
 ```
 
-See [Docker](./1b_install_docker.md), [uv](./1a_install_uv.md), or [Conda](./1c_install_conda.md) for alternative installation methods.
+See [Docker](./1b_install_docker.md), [Local](./install_local.md), or the [Install PyRIT](./1a_install_uv.md) page for all installation options.
 
 ## Step 2: Create Your Configuration Directory
 

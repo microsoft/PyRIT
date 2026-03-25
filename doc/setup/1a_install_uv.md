@@ -14,11 +14,11 @@ Choose the installation method that best fits your use case.
 Get started immediately with a pre-configured environment. No Python setup needed, JupyterLab built-in, works on all platforms.
 ::::
 
-::::{card} ☀️ Local Pip/uv Installation
+::::{card} ☀️ Local Installation
 :link: ./install_local
 **Custom Setup**
 
-Install directly into your Python environment. Lighter weight, full control, integrates with existing workflows.
+Install with pip, uv, or conda directly into your Python environment. Lighter weight, full control, integrates with existing workflows.
 ::::
 
 :::::
@@ -56,5 +56,5 @@ Install from source in editable mode. Full development control, use any IDE or e
 After installing, you need to configure your AI endpoint credentials before running PyRIT.
 
 ```{tip}
-See the [Quick Start Guide](./quick_start.md) for a complete walkthrough, or jump directly to [Configuration](./configuration.md) to set up your `.env` and `.pyrit_conf` files.
+See the [Getting Started](./quick_start.md) guide for a complete walkthrough, or jump directly to [Configuration](./configuration.md) to set up your credentials.
 ```

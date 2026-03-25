@@ -82,4 +82,4 @@ The `.env_example` file in the repository root contains entries for **all** supp
 ## Next Steps
 
 - [Configuration File (.pyrit_conf)](./pyrit_conf.md) — Set up the full configuration with initializers, database, and environment file management
-- [Minimal Setup](./minimal_setup.md) — If you just want to try PyRIT without creating any files
+- [Configuration](./configuration.md) — The quickest way to try PyRIT with just 2 environment variables

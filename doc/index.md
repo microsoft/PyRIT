@@ -66,7 +66,7 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 
 ## Getting Started
 
-Getting PyRIT running takes two steps: **install** the package, then **configure** your targets and defaults. For the fastest path, see the [Quick Start Guide](setup/quick_start).
+Getting PyRIT running takes two steps: **install** the package, then **configure** your targets and defaults. For the fastest path, see the [Getting Started](setup/quick_start) guide.
 
 ### Step 1: Install
 
@@ -93,13 +93,13 @@ Get started immediately with a pre-configured environment:
 - ✅ Works on all platforms
 ::::
 
-::::{card} ☀️ Local Pip/uv Installation
+::::{card} ☀️ Local Installation
 :link: setup/install_local
 **For Users - Custom Setup**
 
 Install PyRIT directly on your machine:
+- ✅ Pip, uv, or conda
 - ✅ Full Python environment control
-- ✅ Lighter weight installation
 - ✅ Easy integration with existing workflows
 ::::
 
@@ -126,17 +126,10 @@ Install from source in editable mode:
 
 ### Step 2: Configure
 
-After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default.
+After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For the quickest start, see the [Configuration](setup/configuration) page.
 
-:::::{grid} 1 1 3 3
+:::::{grid} 1 1 2 2
 :gutter: 3
-
-::::{card} ⚡ Minimal Setup
-:link: setup/minimal_setup
-**Try PyRIT Quickly**
-
-Set 2 environment variables in your shell and run 3 lines of Python. No files needed. Great for a first look.
-::::
 
 ::::{card} 🔑 Populating Secrets
 :link: setup/populating_secrets

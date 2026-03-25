@@ -6,7 +6,7 @@ Install PyRIT directly into your Python environment for full control and easy in
 
 - Python 3.10, 3.11, 3.12, or 3.13 (check with `python --version`)
 
-## Install
+## Install with pip or uv
 
 ```bash
 pip install pyrit
@@ -18,10 +18,14 @@ Or with uv:
 uv pip install pyrit
 ```
 
-Or sync from the repository root (installs all dependencies):
+## Install with Conda
+
+If you prefer conda for managing environments:
 
 ```bash
-uv sync
+conda create -y -n pyrit python=3.11
+conda activate pyrit
+pip install pyrit
 ```
 
 ## Matching Notebooks to Your Version
@@ -53,5 +57,5 @@ Notebooks and your PyRIT installation must be on the same version. This pip inst
 After installing, you need to configure your AI endpoint credentials before running PyRIT.
 
 ```{tip}
-See the [Quick Start Guide](./quick_start.md) for a complete walkthrough, or jump directly to [Configuration](./configuration.md) to set up your `.env` and `.pyrit_conf` files.
+See the [Getting Started](./quick_start.md) guide for a complete walkthrough, or jump directly to [Configuration](./configuration.md) to set up your `.env` and `.pyrit_conf` files.
 ```

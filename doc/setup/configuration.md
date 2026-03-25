@@ -1,57 +1,50 @@
 # Configuration
 
-After installing PyRIT, you need to tell it where your AI targets are and how to initialize the framework. All configuration lives in `~/.pyrit/` by default.
+The fastest way to try PyRIT — no configuration files needed. Just set two environment variables and run three lines of Python.
 
-## How Configuration Works
+## Set Your Environment Variables
 
-PyRIT's configuration has two parts:
+Set these in your shell before running Python:
 
-1. **Secrets (`.env` file)** — Your API endpoints, keys, and model names. These are environment variables that tell PyRIT how to connect to AI providers like OpenAI, Azure, Ollama, etc.
+::::{tab-set}
 
-2. **Settings (`.pyrit_conf` file)** — Your database type, initializers, and framework preferences. This YAML file tells PyRIT what to set up on startup — which targets to register, which scorers to load, and which datasets to make available.
+:::{tab-item} PowerShell
+```powershell
+$env:OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1"
+$env:OPENAI_CHAT_KEY = "sk-your-key-here"
+$env:OPENAI_CHAT_MODEL = "gpt-4o"
+```
+:::
 
-When PyRIT starts, it loads the `.pyrit_conf`, reads the `.env` files it references, then runs the initializers in order. The result is a fully configured framework ready to use.
+:::{tab-item} Bash / macOS
+```bash
+export OPENAI_CHAT_ENDPOINT="https://api.openai.com/v1"
+export OPENAI_CHAT_KEY="sk-your-key-here"
+export OPENAI_CHAT_MODEL="gpt-4o"
+```
+:::
 
-```{mermaid}
-flowchart LR
-    A[".pyrit_conf"] --> B["Load .env files"]
-    B --> C["Configure database"]
-    C --> D["Run initializers"]
-    D --> E["Ready to use"]
+::::
+
+These work with any OpenAI-compatible API — just change the endpoint and key for your provider (Azure, Ollama, Groq, etc.). See [Populating Secrets](./populating_secrets.md) for provider-specific examples.
+
+## Initialize PyRIT
+
+```python
+from pyrit.setup import initialize_pyrit_async
+from pyrit.setup.initializers import SimpleInitializer
+
+await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])
 ```
 
-## Choose Your Setup
+That's it! This gives you:
+- In-memory database (no persistence, but no setup needed)
+- Default converter target, objective scorer, and attack configs
+- Enough to run most PyRIT notebooks and examples
 
-:::::{grid} 1 1 3 3
-:gutter: 3
+## Going Further
 
-::::{card} ⚡ Minimal Setup
-:link: ./minimal_setup
-**Try PyRIT Quickly**
+This minimal setup is great for trying PyRIT, but it **does not** register targets, scorers, or datasets into the registries. For persistent storage, the full registry, and `pyrit_scan` support:
 
-Set 2 environment variables in your shell and run 3 lines of Python. No files needed. Great for a first look.
-::::
-
-::::{card} 🔑 Populating Secrets
-:link: ./populating_secrets
-**Set Up Your .env File**
-
-Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, and OpenRouter.
-::::
-
-::::{card} 📄 Config File (Recommended)
-:link: ./pyrit_conf
-**Full Framework Setup** ⭐
-
-Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and automated scenarios.
-::::
-
-:::::
-
-## What Goes Where?
-
-| File | Location | Contains | Required? |
-|------|----------|----------|-----------|
-| `.env` | `~/.pyrit/.env` | API keys, endpoints, model names | Yes — PyRIT needs to know where your targets are |
-| `.env.local` | `~/.pyrit/.env.local` | Personal overrides (optional) | No — useful when sharing a `.env` with a team |
-| `.pyrit_conf` | `~/.pyrit/.pyrit_conf` | Database type, initializers, env file paths | No, but recommended — enables `pyrit_scan` and scenarios |
+- **[Populating Secrets](./populating_secrets.md)** — Create a `~/.pyrit/.env` file with your provider credentials so you don't have to set environment variables every time
+- **[Configuration File](./pyrit_conf.md)** ⭐ — Set up `~/.pyrit/.pyrit_conf` for the full framework: initializers, database, and everything `pyrit_scan` needs
