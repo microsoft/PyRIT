@@ -28,7 +28,6 @@ memory_db_type: sqlite
 # - scorers: Registers pre-configured scorers into the ScorerRegistry
 # - load_default_datasets: Loads default datasets for all registered scenarios
 # - objective_list: Sets default objectives for scenarios
-# - openai_objective_target: Sets up OpenAI target for scenarios
 #
 # Each initializer can be specified as:
 # - A simple string (name only)

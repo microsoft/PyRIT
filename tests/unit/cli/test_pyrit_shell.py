@@ -54,9 +54,7 @@ def shell():
 
         s._fc = fc_module
         s.context = mock_context
-        s.default_database = mock_context._database
         s.default_log_level = mock_context._log_level
-        s.default_env_files = mock_context._env_files
         s._init_complete.set()
         yield s, mock_context, mock_fc_class
 
@@ -73,7 +71,6 @@ class TestPyRITShell:
 
         assert shell._init_complete.is_set()
         assert shell.context is ctx
-        assert shell.default_database == "SQLite"
         assert shell.default_log_level == "WARNING"
         assert shell._scenario_history == []
         mock_fc_class.assert_called_once_with()
@@ -214,15 +211,14 @@ class TestPyRITShell:
             "scenario_name": "test_scenario",
             "initializers": ["test_init"],
             "initialization_scripts": None,
-            "env_files": None,
             "scenario_strategies": None,
             "max_concurrency": None,
             "max_retries": None,
             "memory_labels": None,
-            "database": None,
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_result = MagicMock()
@@ -268,15 +264,14 @@ class TestPyRITShell:
             "scenario_name": "test_scenario",
             "initializers": None,
             "initialization_scripts": ["script.py"],
-            "env_files": None,
             "scenario_strategies": None,
             "max_concurrency": None,
             "max_retries": None,
             "memory_labels": None,
-            "database": None,
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_resolve_scripts.return_value = [Path("/test/script.py")]
@@ -303,15 +298,14 @@ class TestPyRITShell:
             "scenario_name": "test_scenario",
             "initializers": None,
             "initialization_scripts": ["missing.py"],
-            "env_files": None,
             "scenario_strategies": None,
             "max_concurrency": None,
             "max_retries": None,
             "memory_labels": None,
-            "database": None,
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_resolve_scripts.side_effect = FileNotFoundError("Script not found")
@@ -320,41 +314,6 @@ class TestPyRITShell:
 
         captured = capsys.readouterr()
         assert "Error: Script not found" in captured.out
-
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_do_run_with_database_override(
-        self,
-        mock_parse_args: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-    ):
-        """Test do_run with database override."""
-        s, ctx, _ = shell
-
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": ["test_init"],
-            "initialization_scripts": None,
-            "env_files": None,
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "database": "InMemory",
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-        }
-
-        mock_asyncio_run.side_effect = [MagicMock()]
-
-        with patch("pyrit.cli.frontend_core.FrontendCore") as mock_frontend:
-            s.do_run("test_scenario --initializers test_init --database InMemory")
-
-            # Verify FrontendCore was created with overridden database
-            call_kwargs = mock_frontend.call_args[1]
-            assert call_kwargs["database"] == "InMemory"
 
     @patch("pyrit.cli.pyrit_shell.asyncio.run")
     @patch("pyrit.cli.frontend_core.parse_run_arguments")
@@ -372,15 +331,14 @@ class TestPyRITShell:
             "scenario_name": "test_scenario",
             "initializers": ["test_init"],
             "initialization_scripts": None,
-            "env_files": None,
             "scenario_strategies": None,
             "max_concurrency": None,
             "max_retries": None,
             "memory_labels": None,
-            "database": None,
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_asyncio_run.side_effect = [ValueError("Test error")]
@@ -637,23 +595,22 @@ class TestMain:
 
         assert result == 0
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["database"] is None
         assert call_kwargs["log_level"] == logging.WARNING
         mock_shell.cmdloop.assert_called_once()
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_database_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main with database argument."""
+    def test_main_with_config_file_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
+        """Test main with config-file argument."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
 
-        with patch("sys.argv", ["pyrit_shell", "--database", "InMemory"]):
+        with patch("sys.argv", ["pyrit_shell", "--config-file", "my_config.yaml"]):
             result = pyrit_shell.main()
 
         assert result == 0
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["database"] == "InMemory"
+        assert call_kwargs["config_file"] == Path("my_config.yaml")
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")
@@ -710,8 +667,9 @@ class TestMain:
             pyrit_shell.main()
 
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["initialization_scripts"] is None
-        assert call_kwargs["initializer_names"] is None
+        # main() should not pass initialization_scripts or initializer_names
+        assert "initialization_scripts" not in call_kwargs
+        assert "initializer_names" not in call_kwargs
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")
@@ -760,15 +718,14 @@ class TestPyRITShellRunCommand:
             "scenario_name": "test_scenario",
             "initializers": ["init1"],
             "initialization_scripts": None,
-            "env_files": None,
             "scenario_strategies": ["s1", "s2"],
             "max_concurrency": 10,
             "max_retries": 5,
             "memory_labels": {"key": "value"},
-            "database": "InMemory",
             "log_level": "DEBUG",
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_asyncio_run.side_effect = [MagicMock()]
@@ -795,15 +752,14 @@ class TestPyRITShellRunCommand:
             "scenario_name": "test_scenario",
             "initializers": ["test_init"],
             "initialization_scripts": None,
-            "env_files": None,
             "scenario_strategies": None,
             "max_concurrency": None,
             "max_retries": None,
             "memory_labels": None,
-            "database": None,
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_result1 = MagicMock()

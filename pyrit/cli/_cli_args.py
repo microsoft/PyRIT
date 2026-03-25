@@ -286,6 +286,9 @@ ARG_HELP = {
     "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
+    "Targets are registered by initializers (e.g., 'targets' initializer). "
+    "Use --list-targets to see available target names after initializers have run",
 }
 
 
@@ -372,15 +375,14 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
         "scenario_name": parts[0],
         "initializers": None,
         "initialization_scripts": None,
-        "env_files": None,
         "scenario_strategies": None,
         "max_concurrency": None,
         "max_retries": None,
         "memory_labels": None,
-        "database": None,
         "log_level": None,
         "dataset_names": None,
         "max_dataset_size": None,
+        "target": None,
     }
 
     i = 1
@@ -398,13 +400,6 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
             i += 1
             while i < len(parts) and not parts[i].startswith("--"):
                 result["initialization_scripts"].append(parts[i])
-                i += 1
-        elif parts[i] == "--env-files":
-            # Collect env file paths until next flag
-            result["env_files"] = []
-            i += 1
-            while i < len(parts) and not parts[i].startswith("--"):
-                result["env_files"].append(parts[i])
                 i += 1
         elif parts[i] in ("--strategies", "-s"):
             # Collect strategies until next flag
@@ -431,12 +426,6 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
                 raise ValueError("--memory-labels requires a value")
             result["memory_labels"] = parse_memory_labels(parts[i])
             i += 1
-        elif parts[i] == "--database":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--database requires a value")
-            result["database"] = validate_database(database=parts[i])
-            i += 1
         elif parts[i] == "--log-level":
             i += 1
             if i >= len(parts):
@@ -456,6 +445,12 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
                 raise ValueError("--max-dataset-size requires a value")
             result["max_dataset_size"] = validate_integer(parts[i], name="--max-dataset-size", min_value=1)
             i += 1
+        elif parts[i] == "--target":
+            i += 1
+            if i >= len(parts):
+                raise ValueError("--target requires a value")
+            result["target"] = parts[i]
+            i += 1
         else:
             raise ValueError(f"Unknown argument: {parts[i]}")
 
@@ -471,22 +466,10 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     """Add arguments shared between pyrit_shell and pyrit_scan."""
     parser.add_argument("--config-file", type=Path, help=ARG_HELP["config_file"])
     parser.add_argument(
-        "--database",
-        type=validate_database_argparse,
-        default=None,
-        help=f"Database type to use ({IN_MEMORY}, {SQLITE}, {AZURE_SQL}). Defaults to config or {SQLITE}.",
-    )
-    parser.add_argument(
         "--log-level",
         type=validate_log_level_argparse,
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
-    )
-    parser.add_argument(
-        "--env-files",
-        type=str,
-        nargs="+",
-        help=ARG_HELP["env_files"],
     )
 
 

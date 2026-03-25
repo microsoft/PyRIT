@@ -397,8 +397,8 @@ class TestGetDefaultCapabilities:
         cls = self._make_target_class(default_caps=custom_caps)
         with patch("pyrit.prompt_target.common.prompt_target.logger") as mock_logger:
             result = cls.get_default_capabilities("totally-unknown-model")
-            mock_logger.warning.assert_called_once()
-            warning_args = mock_logger.warning.call_args[0]
+            mock_logger.info.assert_called_once()
+            warning_args = mock_logger.info.call_args[0]
             assert "totally-unknown-model" in warning_args[1]
         assert result is custom_caps
 
