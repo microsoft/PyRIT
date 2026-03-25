@@ -271,6 +271,4 @@ silent: false
 
 ## What's Next?
 
-- [Populating Secrets](./populating_secrets.md) — Provider-specific examples for your `.env` file
-- 📖 [Cookbooks](../cookbooks/README.md) — Walk through common red teaming workflows
-- 🖥️ [CLI & Shell](../code/front_end/1_pyrit_scan.ipynb) — Use `pyrit_scan` for automated assessments
+Once you're configured, head to the [User Guide](../code/user_guide.md) to start using PyRIT.

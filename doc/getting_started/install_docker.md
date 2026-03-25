@@ -91,16 +91,6 @@ print(pyrit.__version__)
 # Your PyRIT code here
 ```
 
-Check out the [cookbooks](../cookbooks/README.md) for example workflows and tutorials.
-
-## Next Step: Configure PyRIT
-
-After installing, configure your AI endpoint credentials.
-
-```{tip}
-Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
-```
-
 ## Directory Structure
 
 The Docker setup includes these directories:
@@ -192,6 +182,14 @@ To use NVIDIA GPUs with PyRIT:
    print(f"CUDA available: {torch.cuda.is_available()}")
    print(f"GPU count: {torch.cuda.device_count()}")
    ```
+
+## Next Step: Configure PyRIT
+
+After installing, configure your AI endpoint credentials.
+
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
 
 ## Troubleshooting
 

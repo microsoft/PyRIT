@@ -89,14 +89,6 @@ To view variables populated by code examples:
 **Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](7_notebooks.md) for more details.
 ```
 
-## Next Step: Configure PyRIT
-
-After setting up your DevContainer, configure your AI endpoint credentials.
-
-```{tip}
-Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
-```
-
 ## Common DevContainer Operations
 
 ### Rebuild the Container
@@ -112,6 +104,14 @@ To exit the container and return to your local environment:
 
 1. Press `Ctrl + Shift + P` (or `Cmd + Shift + P` on macOS)
 2. Type and select: `Dev Containers: Reopen Folder Locally`
+
+## Next Step: Configure PyRIT
+
+After setting up your DevContainer, configure your AI endpoint credentials.
+
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
 
 ## Troubleshooting
 

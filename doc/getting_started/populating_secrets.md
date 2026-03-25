@@ -82,5 +82,4 @@ The `.env_example` file in the repository root contains entries for **all** supp
 ## What's Next?
 
 - [Configuration File (.pyrit_conf)](./pyrit_conf.md) — Set up the full configuration with initializers, database, and environment file management
-- 📖 [Cookbooks](../cookbooks/README.md) — Walk through common red teaming workflows
-- 🖥️ [CLI & Shell](../code/front_end/1_pyrit_scan.ipynb) — Use `pyrit_scan` for automated assessments
+- [User Guide](../code/user_guide.md) — Start using PyRIT
