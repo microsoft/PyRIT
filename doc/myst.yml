@@ -225,6 +225,7 @@ site:
     - title: Contributing
       url: /contributing/readme
     - title: User Guide
+      url: /code/user-guide
       children:
         - title: Architecture
           url: /code/architecture
