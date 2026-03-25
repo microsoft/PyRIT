@@ -16,7 +16,7 @@ Set up your AI endpoint credentials and initialize the framework.
 ::::
 
 ::::{card} 🔧 Troubleshooting
-:link: ./troubleshooting
+:link: ./troubleshooting/README
 Common issues, model deployment guides, and advanced setup.
 ::::
 

@@ -192,4 +192,4 @@ Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 
 ## Troubleshooting
 
-Having issues? See the [Local Dev Troubleshooting](./troubleshooting_local_dev.md) guide for common problems and solutions.
+Having issues? See the [Local Dev Troubleshooting](./troubleshooting/local_dev.md) guide for common problems and solutions.

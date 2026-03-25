@@ -193,4 +193,4 @@ Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 
 ## Troubleshooting
 
-Having issues? See the [Docker Troubleshooting](./troubleshooting_docker.md) guide for common problems and solutions.
+Having issues? See the [Docker Troubleshooting](./troubleshooting/docker.md) guide for common problems and solutions.

@@ -10,4 +10,4 @@ Guides for deploying and troubleshooting HuggingFace models on Azure ML.
 
 - **[Score Azure ML Endpoints](./score_aml_endpoint.ipynb)** — Score and evaluate Azure ML model endpoints.
 
-- **[Troubleshooting HuggingFace on Azure ML](./troubleshooting_guide_hf_azureml.md)** — Common issues deploying HuggingFace models to Azure ML.
+- **[Troubleshooting HuggingFace on Azure ML](./guide_hf_azureml.md)** — Common issues deploying HuggingFace models to Azure ML.

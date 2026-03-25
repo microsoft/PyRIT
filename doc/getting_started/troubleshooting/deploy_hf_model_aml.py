@@ -24,7 +24,7 @@
 #      pip install azure-ai-ml
 #      pip install azure-identity
 #   ```
-# - Execute the `az login` command to sign in to your Azure subscription. For detailed instructions, refer to the "Authenticate with Azure Subscription" section in the markdown file provided [here](../setup/populating_secrets.md)
+# - Execute the `az login` command to sign in to your Azure subscription. For detailed instructions, refer to the "Authenticate with Azure Subscription" section in the markdown file provided [here](../populating_secrets.md)
 # - A Hugging Face model should be present in the AZURE ML model catalog. If it is missing, execute the [notebook](./download_and_register_hf_model_aml.ipynb) to download and register the Hugging Face model in the AZURE ML registry.
 
 # %% [markdown]
@@ -48,9 +48,9 @@
 #
 # 5. **AZURE_ML_MODEL_NAME_TO_DEPLOY**
 #    - If the model is listed in the AZURE ML Hugging Face model catalog, then supply the model name as shown in the following image.
-#    <br> <img src="./../../assets/aml_hf_model.png" alt="AML Hugging Face model" height="400"/> <br>
+#    <br> <img src="./../../../assets/aml_hf_model.png" alt="AML Hugging Face model" height="400"/> <br>
 #    - If you intend to deploy the model from the AZURE ML workspace model registry, then use the model name as shown in the subsequent image.
-#    <br> <img src="./../../assets/aml_ws_model.png" alt="AML Workspace model" height="400"/> <br>
+#    <br> <img src="./../../../assets/aml_ws_model.png" alt="AML Workspace model" height="400"/> <br>
 # 6. **AZURE_ML_MODEL_VERSION_TO_DEPLOY**
 #    - You can find the details of the model version in the images from previous step associated with the respective model.
 #
@@ -215,7 +215,7 @@ workspace_ml_client.begin_create_or_update(endpoint).wait()
 # **Add deployment to an Azure ML endpoint created above**
 #
 # Please be aware that deploying, particularly larger models, may take some time. Once the deployment is finished, the provisioning state will be marked as 'Succeeded', as illustrated in the image below.
-# <br> <img src="./../../assets/aml_endpoint_deployment.png" alt="AML Endpoint Deployment" height="400"/> <br>
+# <br> <img src="./../../../assets/aml_endpoint_deployment.png" alt="AML Endpoint Deployment" height="400"/> <br>
 
 # %%
 # create a deployment

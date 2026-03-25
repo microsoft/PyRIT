@@ -115,4 +115,4 @@ Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 
 ## Troubleshooting
 
-Having issues? See the [DevContainers Troubleshooting](./troubleshooting_devcontainers.md) guide for common problems and solutions.
+Having issues? See the [DevContainers Troubleshooting](./troubleshooting/devcontainers.md) guide for common problems and solutions.
