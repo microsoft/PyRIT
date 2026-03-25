@@ -74,17 +74,17 @@ PyRIT offers flexible installation options to suit different needs. Choose the p
 
 ::::{important}
 **Version Compatibility:**
-- **User installations** (Docker, Pip/Conda) install the **latest stable release** from PyPI
-- **Contributor installations** (DevContainers, Local Development) use the **latest development code** from the `main` branch
+- **User installations** (Docker, Local) install the **latest stable release** from PyPI
+- **Contributor installations** (Docker, Local) use the **latest development code** from the `main` branch
 - Always match your notebooks to your PyRIT version
 ::::
 
 :::::{grid} 1 1 2 2
 :gutter: 3
 
-::::{card} 🐋 Docker Installation
-:link: setup/1b_install_docker
-**For Users - Quick Start** ⭐
+::::{card} 🐋 User Docker Installation
+:link: setup/install_docker
+**Quick Start** ⭐
 
 Get started immediately with a pre-configured environment:
 - ✅ All dependencies included
@@ -93,9 +93,9 @@ Get started immediately with a pre-configured environment:
 - ✅ Works on all platforms
 ::::
 
-::::{card} ☀️ Local Installation
+::::{card} ☀️ User Local Installation
 :link: setup/install_local
-**For Users - Custom Setup**
+**Custom Setup**
 
 Install PyRIT directly on your machine:
 - ✅ Pip, uv, or conda
@@ -103,19 +103,19 @@ Install PyRIT directly on your machine:
 - ✅ Easy integration with existing workflows
 ::::
 
-::::{card} 🐋 DevContainers in VS Code
-:link: contributing/1b_install_devcontainers
-**For Contributors** ⭐
+::::{card} 🐋 Contributor Docker Installation
+:link: contributing/install_devcontainers
+**Recommended for Contributors** ⭐
 
-Standardized development environment:
-- ✅ Pre-configured VS Code setup
+Pre-configured Docker container with VS Code:
 - ✅ Consistent across all contributors
 - ✅ All extensions pre-installed
+- ✅ One-click setup
 ::::
 
-::::{card} ☀️ Local uv Development
-:link: contributing/1a_install_uv
-**For Contributors - Custom Dev Setup**
+::::{card} ☀️ Contributor Local Installation
+:link: contributing/install_local_dev
+**Custom Dev Setup**
 
 Install from source in editable mode:
 - ✅ Full development control

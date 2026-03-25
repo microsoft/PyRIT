@@ -22,12 +22,12 @@ project:
         - file: cookbooks/5_psychosocial_harms.ipynb
     - file: setup/quick_start.md
       children:
-        - file: setup/1a_install_uv.md
+        - file: setup/install.md
           children:
+            - file: setup/install_docker.md
             - file: setup/install_local.md
-            - file: setup/1b_install_docker.md
-            - file: contributing/1b_install_devcontainers.md
-            - file: contributing/1a_install_uv.md
+            - file: contributing/install_devcontainers.md
+            - file: contributing/install_local_dev.md
         - file: setup/configuration.md
           children:
             - file: setup/populating_secrets.md

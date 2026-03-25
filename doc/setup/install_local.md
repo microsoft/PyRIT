@@ -1,4 +1,4 @@
-# Local Installation with Pip/uv
+# User Local Installation
 
 Install PyRIT directly into your Python environment for full control and easy integration with existing workflows.
 

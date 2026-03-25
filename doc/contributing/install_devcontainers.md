@@ -1,4 +1,4 @@
-# DevContainers Setup in Visual Studio Code
+# Contributor Docker Installation
 
 DevContainers provide a pre-configured development environment for PyRIT that ensures consistency across all contributors. This is the recommended setup for contributors using Visual Studio Code.
 
@@ -15,7 +15,7 @@ DevContainers provide a pre-configured development environment for PyRIT that en
 - Prefer not to manage Python environments manually
 - Need all development tools and extensions pre-installed
 
-❌ **Consider [local installation](./1a_install_uv.md) if you:**
+❌ **Consider [local installation](./install.md) if you:**
 - Use a different IDE or editor
 - Prefer full control over your development environment
 - Need to customize your setup beyond what DevContainers offer
