@@ -6,11 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit (3.13.5)
-#     language: python
-#     name: python3
+#       jupytext_version: 1.17.2
 # ---
 
 # %% [markdown]
@@ -127,6 +123,7 @@ print("First Letter:", await FirstLetterConverter().convert_async(prompt=prompt)
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore
+# Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
@@ -156,7 +153,7 @@ print("Repeat Token:", await repeat_token.convert_async(prompt=prompt))  # type:
 colloquial = ColloquialWordswapConverter()
 print("Colloquial Wordswap:", await colloquial.convert_async(prompt=prompt))  # type: ignore
 
-# CodeChameleon encrypts and wraps in code
+# CodeChameleon [@lv2024codechameleon] encrypts and wraps in code
 code_chameleon = CodeChameleonConverter(encrypt_type="reverse")
 print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # type: ignore
 
@@ -216,11 +213,11 @@ from pyrit.prompt_converter import (
 
 prompt = "secret message"
 
-# ASCII smuggler using Unicode tags
+# ASCII smuggling with Unicode tags [@embracethered2024unicode]
 ascii_smuggler = AsciiSmugglerConverter(action="encode", unicode_tags=True)
 print("ASCII Smuggler:", await ascii_smuggler.convert_async(prompt=prompt))  # type: ignore
 
-# Sneaky bits using zero-width characters
+# Sneaky Bits [@embracethered2025sneakybits] uses zero-width characters
 sneaky_bits = SneakyBitsSmugglerConverter(action="encode")
 print("Sneaky Bits:", await sneaky_bits.convert_async(prompt=prompt))  # type: ignore
 
@@ -248,6 +245,7 @@ from pyrit.prompt_converter import (
     NoiseConverter,
     PersuasionConverter,
     RandomTranslationConverter,
+    ScientificTranslationConverter,
     TenseConverter,
     ToneConverter,
     ToxicSentenceGeneratorConverter,
@@ -289,7 +287,7 @@ print("Random Translation:", await random_translation_converter.convert_async(pr
 tense_converter = TenseConverter(converter_target=attack_llm, tense="far future")
 print("Tense (future):", await tense_converter.convert_async(prompt=prompt))  # type: ignore
 
-# Persuasion applies persuasion techniques
+# Persuasion [@zeng2024persuasion] applies persuasion techniques
 persuasion_converter = PersuasionConverter(converter_target=attack_llm, persuasion_technique="logical_appeal")
 print("Persuasion:", await persuasion_converter.convert_async(prompt=prompt))  # type: ignore
 
@@ -305,6 +303,10 @@ print("Malicious Question:", await malicious_question.convert_async(prompt=promp
 toxic_generator = ToxicSentenceGeneratorConverter(converter_target=attack_llm)
 print("Toxic Sentence:", await toxic_generator.convert_async(prompt="building"))  # type: ignore
 
-# Math prompt transforms into symbolic math
+# MathPrompt [@bethany2024mathprompt] transforms text into symbolic math
 math_prompt_converter = MathPromptConverter(converter_target=attack_llm)
 print("Math Prompt:", await math_prompt_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Scientific converter translates into scientific language
+scientific_translation_converter = ScientificTranslationConverter(converter_target=attack_llm, mode="academic")
+print("Scientific Translation:", await scientific_translation_converter.convert_async(prompt=prompt))  # type: ignore

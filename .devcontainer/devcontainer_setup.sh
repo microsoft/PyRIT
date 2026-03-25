@@ -8,7 +8,7 @@ if [ ! -d "$MYPY_CACHE" ]; then
     echo "Creating mypy cache directory..."
     sudo mkdir -p $MYPY_CACHE
     sudo chown vscode:vscode $MYPY_CACHE
-    sudo chmod 777 $MYPY_CACHE
+    sudo chmod 755 $MYPY_CACHE
 else
     # Check ownership
     OWNER=$(stat -c '%U:%G' $MYPY_CACHE)
@@ -21,9 +21,9 @@ else
     # Check permissions
     PERMS=$(stat -c '%a' $MYPY_CACHE)
 
-    if [ "$PERMS" != "777" ]; then
+    if [ "$PERMS" != "755" ]; then
         echo "Fixing mypy cache directory permissions..."
-        sudo chmod -R 777 $MYPY_CACHE
+        sudo chmod -R 755 $MYPY_CACHE
     fi
 fi
 
@@ -70,6 +70,7 @@ if [ -f "package.json" ]; then
     npm install
 
     # Install Playwright browsers and system dependencies for E2E testing
+    # This may fail if apt repos have signature issues - don't block setup
     echo "📦 Installing Playwright browsers..."
 
     # Remove third-party repos with SHA1 signature issues (rejected since 2026-02-01)
@@ -78,7 +79,11 @@ if [ -f "package.json" ]; then
                /etc/apt/sources.list.d/nodesource.list \
                /etc/apt/sources.list.d/microsoft.list 2>/dev/null || true
 
-    npx playwright install --with-deps chromium
+    if npx playwright install --with-deps chromium; then
+        echo "✅ Playwright browsers installed."
+    else
+        echo "⚠️  Playwright installation failed (apt signature issues). Run 'npx playwright install chromium' manually if needed for E2E tests."
+    fi
 
     echo "✅ Frontend dependencies installed."
 fi

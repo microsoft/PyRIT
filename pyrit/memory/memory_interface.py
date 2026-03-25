@@ -1285,10 +1285,6 @@ class MemoryInterface(abc.ABC):
             try:
                 session.add_all(entries)
                 session.commit()
-                # Populate the attack_result_id back onto the domain objects so callers
-                # can reference the DB-assigned ID immediately after insert.
-                for ar, entry in zip(attack_results, entries, strict=False):
-                    ar.attack_result_id = str(entry.id)
             except SQLAlchemyError:
                 session.rollback()
                 raise

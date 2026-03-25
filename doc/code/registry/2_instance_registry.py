@@ -100,20 +100,20 @@ print(f"True/False refusal scorers: {[m.unique_name for m in specific_scorers]}"
 # %% [markdown]
 # ## Using Target Initializer
 #
-# You can optionally use the `AIRTTargetInitializer` to automatically configure and register targets that use commonly used environment variables (from `.env_example`). This initializer does not strictly require any environment variables - it simply registers whatever endpoints are available.
+# You can optionally use the `TargetInitializer` to automatically configure and register targets that use commonly used environment variables (from `.env_example`). This initializer does not strictly require any environment variables - it simply registers whatever endpoints are available.
 
 # %%
 from pyrit.registry import TargetRegistry
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import AIRTTargetInitializer
+from pyrit.setup.initializers import TargetInitializer
 
 # Using built-in initializer
 await initialize_pyrit_async(  # type: ignore
-    memory_db_type="InMemory", initializers=[AIRTTargetInitializer()]
+    memory_db_type="InMemory", initializers=[TargetInitializer()]
 )
 
 # Get the registry singleton
 registry = TargetRegistry.get_registry_singleton()
 # List registered targets
 target_names = registry.get_names()
-print(f"Registered targets after AIRT initialization: {target_names}")
+print(f"Registered targets after initialization: {target_names}")

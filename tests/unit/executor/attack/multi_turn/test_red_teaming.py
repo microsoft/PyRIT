@@ -360,7 +360,6 @@ class TestContextCreation:
                             return AttackResult(
                                 conversation_id="test-id",
                                 objective="Test objective",
-                                attack_identifier=attack.get_identifier(),
                                 outcome=AttackOutcome.SUCCESS,
                                 executed_turns=1,
                             )
@@ -411,7 +410,6 @@ class TestContextCreation:
                             return AttackResult(
                                 conversation_id="test-id",
                                 objective="Test objective",
-                                attack_identifier=attack.get_identifier(),
                                 outcome=AttackOutcome.SUCCESS,
                                 executed_turns=1,
                             )
@@ -1259,6 +1257,39 @@ class TestAttackExecution:
         assert basic_context.next_message is None
 
     @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+        success_score: Score,
+    ):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        inline_scorer = MagicMock(spec=TrueFalseScorer)
+        inline_scorer.get_identifier.return_value = _mock_scorer_id()
+        scoring_config = AttackScoringConfig(objective_scorer=inline_scorer)
+
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        basic_context.next_message = Message.from_prompt(prompt="Test message", role="user")
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        with patch.object(attack, "_score_response_async", new_callable=AsyncMock, return_value=success_score):
+            result = await attack._perform_async(context=basic_context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
+    @pytest.mark.asyncio
     async def test_perform_attack_with_multi_piece_message_uses_first_piece(
         self,
         mock_objective_target: MagicMock,
@@ -1451,7 +1482,6 @@ class TestAttackLifecycle:
                         mock_perform.return_value = AttackResult(
                             conversation_id="test-conversation-id",
                             objective="Test objective",
-                            attack_identifier=attack.get_identifier(),
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
@@ -1533,7 +1563,6 @@ class TestAttackLifecycle:
                         mock_perform.return_value = AttackResult(
                             conversation_id=basic_context.session.conversation_id,
                             objective=basic_context.objective,
-                            attack_identifier=attack.get_identifier(),
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),

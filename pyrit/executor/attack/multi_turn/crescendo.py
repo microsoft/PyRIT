@@ -30,6 +30,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
@@ -108,8 +109,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     4. Scoring responses to determine if the objective has been achieved.
     5. Continuing until the objective is met or maximum turns/backtracks are reached.
 
-    You can learn more about the Crescendo attack at:
-    https://crescendo-the-multiturn-jailbreak.github.io/
+    You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
     # Default system prompt template path for Crescendo attack
@@ -261,7 +261,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Raises:
             ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.supports_multi_turn:
+        if not self._objective_target.capabilities.supports_multi_turn:
             raise ValueError(
                 "CrescendoAttack requires a multi-turn target. Crescendo fundamentally relies on "
                 "multi-turn conversation history to gradually escalate prompts. "
@@ -393,7 +393,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Prepare the result
         result = CrescendoAttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),

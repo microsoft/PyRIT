@@ -31,7 +31,7 @@ def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDatas
     """
     # Determine which subset of data to load
     data_categories = None
-    if not category:  # if category is not specified, read in all 3 subsets of data
+    if category is None:  # if category is not specified, read in all 3 subsets of data
         data_categories = ["wmdp-cyber", "wmdp-bio", "wmdp-chem"]
     elif category not in ["cyber", "bio", "chem"]:
         raise ValueError(f"Invalid Parameter: {category}. Expected 'cyber', 'bio', or 'chem'")

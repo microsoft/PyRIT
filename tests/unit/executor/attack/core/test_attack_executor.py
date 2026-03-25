@@ -45,7 +45,6 @@ def create_attack_result(objective: str) -> AttackResult:
     return AttackResult(
         conversation_id=str(uuid.uuid4()),
         objective=objective,
-        attack_identifier={"__type__": "TestAttack"},
         outcome=AttackOutcome.SUCCESS,
         executed_turns=1,
     )
@@ -329,6 +328,45 @@ class TestPartialFailureHandling:
     """Tests for partial failure handling."""
 
     @pytest.mark.asyncio
+    async def test_partial_failure_preserves_input_indices(self):
+        """Test that input_indices correctly maps completed results when some fail."""
+        attack = create_mock_attack()
+
+        async def mock_execute(*, context):
+            if "fail" in context.params.objective:
+                raise RuntimeError("Execution failed")
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = mock_execute
+
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["success0", "fail1", "success2"],
+            return_partial_on_failure=True,
+        )
+
+        # success0 is input index 0, fail1 is index 1 (excluded), success2 is index 2
+        assert len(result.completed_results) == 2
+        assert result.input_indices == [0, 2]
+
+    @pytest.mark.asyncio
+    async def test_all_succeed_input_indices_sequential(self):
+        """Test that input_indices is [0, 1, 2, ...] when all succeed."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["obj0", "obj1", "obj2"],
+        )
+
+        assert result.input_indices == [0, 1, 2]
+
+    @pytest.mark.asyncio
     async def test_partial_failure_with_return_partial(self):
         """Test return_partial_on_failure=True returns partial results."""
         attack = create_mock_attack()
@@ -452,6 +490,25 @@ class TestAttackExecutorResult:
         )
 
         assert executor_result.get_results() == results
+
+    def test_input_indices_default_empty(self):
+        """Test that input_indices defaults to empty list."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
+        )
+
+        assert executor_result.input_indices == []
+
+    def test_input_indices_preserved(self):
+        """Test that input_indices are preserved when set."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
+            input_indices=[2],
+        )
+
+        assert executor_result.input_indices == [2]
 
 
 @pytest.mark.usefixtures("patch_central_database")

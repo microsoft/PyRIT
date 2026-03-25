@@ -10,7 +10,7 @@ from pyrit.common.apply_defaults import (
     set_default_value,
     set_global_variable,
 )
-from pyrit.setup.initializers import PyRITInitializer
+from pyrit.setup.initializers import InitializerParameter, PyRITInitializer
 
 
 class TestPyRITInitializerBase:
@@ -672,3 +672,163 @@ class TestGetDynamicDefaultValuesInfoWithoutMemory:
         # Should return helpful messages
         assert "await initialize_pyrit_async()" in str(info["default_values"])
         assert "await initialize_pyrit_async()" in str(info["global_variables"])
+
+
+class TestSupportedParameters:
+    """Tests for the parameter system on PyRITInitializer."""
+
+    def test_default_supported_parameters_is_empty(self) -> None:
+        """Test that base class returns empty supported_parameters."""
+
+        class NoParamsInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "no_params"
+
+            async def initialize_async(self) -> None:
+                pass
+
+        init = NoParamsInit()
+        assert init.supported_parameters == []
+
+    def test_supported_parameters_declared(self) -> None:
+        """Test that subclass can declare supported_parameters."""
+
+        class WithParamsInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "with_params"
+
+            @property
+            def supported_parameters(self) -> list:
+                return [
+                    InitializerParameter(name="mode", description="Operation mode", default="fast"),
+                    InitializerParameter(name="count", description="Item count", required=True),
+                ]
+
+            async def initialize_async(self) -> None:
+                pass
+
+        init = WithParamsInit()
+        assert len(init.supported_parameters) == 2
+        assert init.supported_parameters[0].name == "mode"
+        assert init.supported_parameters[1].required is True
+
+    def test_validate_params_raises_on_unknown(self) -> None:
+        """Test that unknown params raise ValueError."""
+
+        class StrictInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "strict"
+
+            @property
+            def supported_parameters(self) -> list:
+                return [InitializerParameter(name="level", description="Level")]
+
+            async def initialize_async(self) -> None:
+                pass
+
+        init = StrictInit()
+        with pytest.raises(ValueError, match="unknown parameter"):
+            init._validate_params(params={"bogus": ["value"]})
+
+    def test_validate_params_raises_on_missing_required(self) -> None:
+        """Test that missing required params raise ValueError."""
+
+        class RequiredInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "required"
+
+            @property
+            def supported_parameters(self) -> list:
+                return [InitializerParameter(name="key", description="API key", required=True)]
+
+            async def initialize_async(self) -> None:
+                pass
+
+        init = RequiredInit()
+        with pytest.raises(ValueError, match="requires parameter 'key'"):
+            init._validate_params(params={})
+
+    def test_validate_params_accepts_valid(self) -> None:
+        """Test that valid params pass validation."""
+
+        class ValidInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "valid"
+
+            @property
+            def supported_parameters(self) -> list:
+                return [
+                    InitializerParameter(name="mode", description="Mode", default="fast"),
+                    InitializerParameter(name="key", description="Key", required=True),
+                ]
+
+            async def initialize_async(self) -> None:
+                pass
+
+        init = ValidInit()
+        # Should not raise
+        init._validate_params(params={"key": ["abc"], "mode": ["slow"]})
+
+    def test_validate_checks_params_on_instance(self) -> None:
+        """Test that validate() checks self.params."""
+
+        class ParamInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "param_init"
+
+            @property
+            def supported_parameters(self) -> list:
+                return [InitializerParameter(name="x", description="X")]
+
+            async def initialize_async(self) -> None:
+                pass
+
+        init = ParamInit()
+        init.params = {"unknown_key": ["val"]}
+        with pytest.raises(ValueError, match="unknown parameter"):
+            init.validate()
+
+    @pytest.mark.asyncio
+    async def test_params_available_in_initialize_async(self) -> None:
+        """Test that self.params is available inside initialize_async."""
+
+        received_params = {}
+
+        class TrackingInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "tracking"
+
+            async def initialize_async(self) -> None:
+                received_params.update(self.params)
+
+        init = TrackingInit()
+        init.params = {"tags": ["default", "scorer"]}
+        await init.initialize_with_tracking_async()
+
+        assert received_params == {"tags": ["default", "scorer"]}
+
+    @pytest.mark.asyncio
+    async def test_empty_params_remains_empty_dict(self) -> None:
+        """Test that self.params is empty dict when not set."""
+
+        received = {"params": "not_set"}
+
+        class EmptyParamsInit(PyRITInitializer):
+            @property
+            def name(self) -> str:
+                return "empty"
+
+            async def initialize_async(self) -> None:
+                received["params"] = dict(self.params)
+
+        init = EmptyParamsInit()
+        await init.initialize_with_tracking_async()
+
+        assert received["params"] == {}

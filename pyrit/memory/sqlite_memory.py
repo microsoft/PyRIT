@@ -511,19 +511,24 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def _get_attack_result_attack_class_condition(self, *, attack_class: str) -> Any:
         """
         SQLite implementation for filtering AttackResults by attack class.
-        Uses json_extract() to match class_name in the attack_identifier JSON column.
+        Uses json_extract() on the atomic_attack_identifier JSON column.
 
         Returns:
             Any: A SQLAlchemy condition for filtering by attack class.
         """
-        return func.json_extract(AttackResultEntry.attack_identifier, "$.class_name") == attack_class
+        return (
+            func.json_extract(AttackResultEntry.atomic_attack_identifier, "$.children.attack.class_name")
+            == attack_class
+        )
 
     def _get_attack_result_converter_classes_condition(self, *, converter_classes: Sequence[str]) -> Any:
         """
         SQLite implementation for filtering AttackResults by converter classes.
 
+        Uses json_extract() on the atomic_attack_identifier JSON column.
+
         When converter_classes is empty, matches attacks with no converters
-        (request_converter_identifiers is absent or null in the JSON).
+        (children.attack.children.request_converters is absent or null in the JSON).
         When non-empty, uses json_each() to check all specified classes are present
         (AND logic, case-insensitive).
 
@@ -533,10 +538,12 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         if len(converter_classes) == 0:
             # Explicitly "no converters": match attacks where the converter list
             # is absent, null, or empty in the stored JSON.
-            converter_json = func.json_extract(AttackResultEntry.attack_identifier, "$.request_converter_identifiers")
+            converter_json = func.json_extract(
+                AttackResultEntry.atomic_attack_identifier,
+                "$.children.attack.children.request_converters",
+            )
             return or_(
-                AttackResultEntry.attack_identifier.is_(None),
-                AttackResultEntry.attack_identifier == "{}",
+                AttackResultEntry.atomic_attack_identifier.is_(None),
                 converter_json.is_(None),
                 converter_json == "[]",
             )
@@ -547,7 +554,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(
                 text(
                     f"""EXISTS(SELECT 1 FROM json_each(
-                        json_extract("AttackResultEntries".attack_identifier, '$.request_converter_identifiers'))
+                        json_extract("AttackResultEntries".atomic_attack_identifier,
+                            '$.children.attack.children.request_converters'))
                         WHERE LOWER(json_extract(value, '$.class_name')) = :{param_name})"""
                 ).bindparams(**{param_name: cls.lower()})
             )
@@ -555,24 +563,24 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
-        SQLite implementation: extract unique class_name values from attack_identifier JSON.
+        SQLite implementation: extract unique class_name values from
+        the atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique attack class name strings.
         """
         with closing(self.get_session()) as session:
-            rows = (
-                session.query(func.json_extract(AttackResultEntry.attack_identifier, "$.class_name"))
-                .filter(func.json_extract(AttackResultEntry.attack_identifier, "$.class_name").isnot(None))
-                .distinct()
-                .all()
+            class_name_expr = func.json_extract(
+                AttackResultEntry.atomic_attack_identifier, "$.children.attack.class_name"
             )
+            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
         return sorted(row[0] for row in rows)
 
     def get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
-        from the request_converter_identifiers array in attack_identifier JSON.
+        from the children.attack.children.request_converters array in the
+        atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -582,8 +590,10 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 text(
                     """SELECT DISTINCT json_extract(j.value, '$.class_name') AS cls
                     FROM "AttackResultEntries",
-                    json_each(json_extract("AttackResultEntries".attack_identifier,
-                        '$.request_converter_identifiers')) AS j
+                    json_each(
+                        json_extract("AttackResultEntries".atomic_attack_identifier,
+                            '$.children.attack.children.request_converters')
+                    ) AS j
                     WHERE cls IS NOT NULL"""
                 )
             ).fetchall()

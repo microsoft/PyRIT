@@ -20,7 +20,7 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
     hazard categories. It's a 10% subset of the full AILuminate training dataset.
 
     Reference: https://github.com/mlcommons/ailuminate
-    Paper: https://doi.org/10.48550/arXiv.2404.12241
+    Paper: [@vidgen2024ailuminate]
     """
 
     HAZARD_CATEGORIES_MAP = {

@@ -117,7 +117,7 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         Args:
             context: The current attack context.
         """
-        if self._objective_target.supports_multi_turn:
+        if self._objective_target.capabilities.supports_multi_turn:
             return
 
         if context.executed_turns == 0:

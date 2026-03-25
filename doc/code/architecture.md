@@ -20,7 +20,7 @@ Ways to contribute: Check out our documentation on [seed datasets](./datasets/0_
 ## Attacks
 
 Attacks are responsible for putting all the other pieces together. They make use of all other components in PyRIT to execute an attack technique end-to-end.
-PyRIT supports single-turn (e.g. Many Shot Jailbreaks, Role Play, Skeleton Key) and multi-turn attack strategies (e.g. Tree of Attacks, Crescendo)
+PyRIT supports single-turn (e.g. Many Shot Jailbreaks [@anthropic2024manyshot], Role Play, Skeleton Key [@microsoft2024skeletonkey]) and multi-turn attack strategies (e.g. Tree of Attacks [@mehrotra2023tap], Crescendo [@russinovich2024crescendo])
 
 Ways to contribute: Check out our [attack docs](./executor/attack/0_attack.md). There are hundreds of attacks outlined in research papers. A lot of these can be captured within PyRIT. If you find an attack that doesn't fit the attack model please notify the team. Are there scenarios you can write attack modules for?
 

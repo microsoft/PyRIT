@@ -5,6 +5,7 @@
 FastAPI application entry point for PyRIT backend.
 """
 
+import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -15,24 +16,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import pyrit
-from pyrit.backend.middleware import register_error_handlers
-from pyrit.backend.routes import attacks, converters, health, labels, targets, version
+from pyrit.backend.middleware import RequestIdMiddleware, register_error_handlers
+from pyrit.backend.routes import attacks, converters, health, labels, media, targets, version
 from pyrit.memory import CentralMemory
-from pyrit.setup.initialization import initialize_pyrit_async
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application startup and shutdown lifecycle."""
-    # When launched via pyrit_backend CLI, initialization is already done.
-    # Only initialize here for standalone uvicorn usage (e.g. uvicorn pyrit.backend.main:app).
-    if not CentralMemory._memory_instance:
-        await initialize_pyrit_async(memory_db_type="SQLite")
+    # Initialization is handled by the pyrit_backend CLI before uvicorn starts.
+    # Running 'uvicorn pyrit.backend.main:app' directly is not supported;
+    # use 'pyrit_backend' instead.
+    try:
+        CentralMemory.get_memory_instance()
+    except ValueError:
+        logger.warning(
+            "CentralMemory is not initialized. "
+            "Start the server via 'pyrit_backend' CLI instead of running uvicorn directly."
+        )
     yield
-    # Shutdown: nothing to clean up currently
 
 
 app = FastAPI(
@@ -44,6 +51,9 @@ app = FastAPI(
 
 # Register RFC 7807 error handlers
 register_error_handlers(app)
+
+# Attach X-Request-ID to every request/response for log correlation
+app.add_middleware(RequestIdMiddleware)
 
 
 # Configure CORS
@@ -65,6 +75,7 @@ app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(version.router, tags=["version"])
 
 
@@ -91,9 +102,3 @@ def setup_frontend() -> None:
 
 # Set up frontend at module load time (needed when running via uvicorn)
 setup_frontend()
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

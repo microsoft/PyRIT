@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
+from pyrit.identifiers import build_atomic_attack_identifier
+from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+from pyrit.memory import CentralMemory
+from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
 from pyrit.models import AttackResult, SeedAttackGroup
 
 if TYPE_CHECKING:
@@ -205,6 +209,9 @@ class AtomicAttack:
                 **self._attack_execute_params,
             )
 
+            # Enrich atomic_attack_identifier with seed identifiers
+            self._enrich_atomic_attack_identifiers(results=results)
+
             # Log completion status
             if results.has_incomplete:
                 logger.warning(
@@ -221,3 +228,43 @@ class AtomicAttack:
         except Exception as e:
             logger.error(f"Atomic attack execution failed: {str(e)}")
             raise ValueError(f"Failed to execute atomic attack: {str(e)}") from e
+
+    def _enrich_atomic_attack_identifiers(self, *, results: AttackExecutorResult[AttackResult]) -> None:
+        """
+        Enrich each AttackResult's atomic_attack_identifier with seed group information
+        and persist the update to the database.
+
+        Uses ``results.input_indices`` to map each completed result back to its
+        originating seed group by index, then rebuilds the atomic_attack_identifier
+        to include the seed identifiers from the seed group. The enriched identifier
+        is then flushed back to the corresponding ``AttackResultEntry`` row.
+
+        Args:
+            results (AttackExecutorResult[AttackResult]): The execution results to enrich.
+        """
+        memory = CentralMemory.get_memory_instance()
+
+        for result, idx in zip(results.completed_results, results.input_indices, strict=True):
+            attack_strategy_id = result.get_attack_strategy_identifier()
+            if attack_strategy_id and idx < len(self._seed_groups):
+                result.atomic_attack_identifier = build_atomic_attack_identifier(
+                    attack_identifier=attack_strategy_id,
+                    seed_group=self._seed_groups[idx],
+                )
+
+                # Persist the enriched identifier back to the database.
+                # Set eval_hash before truncation so it survives the DB round-trip.
+                if result.atomic_attack_identifier.eval_hash is None:
+                    result.atomic_attack_identifier = result.atomic_attack_identifier.with_eval_hash(
+                        AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
+                    )
+
+                if result.attack_result_id:
+                    memory.update_attack_result_by_id(
+                        attack_result_id=result.attack_result_id,
+                        update_fields={
+                            "atomic_attack_identifier": result.atomic_attack_identifier.to_dict(
+                                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+                            ),
+                        },
+                    )

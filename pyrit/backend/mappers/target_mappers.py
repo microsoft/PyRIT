@@ -9,7 +9,7 @@ from pyrit.backend.models.targets import TargetInstance
 from pyrit.prompt_target import PromptTarget
 
 
-def target_object_to_instance(target_unique_name: str, target_obj: PromptTarget) -> TargetInstance:
+def target_object_to_instance(target_registry_name: str, target_obj: PromptTarget) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.
 
@@ -17,21 +17,39 @@ def target_object_to_instance(target_unique_name: str, target_obj: PromptTarget)
     avoiding leakage of internal PyRIT core structures.
 
     Args:
-        target_unique_name: The unique target instance identifier (registry key / unique_name).
+        target_registry_name: The human-friendly target registry name.
         target_obj: The domain PromptTarget object from the registry.
 
     Returns:
         TargetInstance DTO with metadata derived from the object.
     """
     identifier = target_obj.get_identifier()
+    params = identifier.params
+
+    # Keys that are extracted as top-level TargetInstance fields
+    extracted_keys = {
+        "endpoint",
+        "model_name",
+        "temperature",
+        "top_p",
+        "max_requests_per_minute",
+        "supports_multi_turn",
+        "target_specific_params",
+    }
+
+    # Collect remaining params as target_specific_params so the frontend can display them
+    explicit_specific = params.get("target_specific_params") or {}
+    extra = {k: v for k, v in params.items() if k not in extracted_keys and v is not None}
+    combined_specific = {**extra, **explicit_specific} or None
 
     return TargetInstance(
-        target_unique_name=target_unique_name,
+        target_registry_name=target_registry_name,
         target_type=identifier.class_name,
-        endpoint=identifier.params.get("endpoint") or None,
-        model_name=identifier.params.get("model_name") or None,
-        temperature=identifier.params.get("temperature"),
-        top_p=identifier.params.get("top_p"),
-        max_requests_per_minute=identifier.params.get("max_requests_per_minute"),
-        target_specific_params=identifier.params.get("target_specific_params"),
+        endpoint=params.get("endpoint") or None,
+        model_name=params.get("model_name") or None,
+        temperature=params.get("temperature"),
+        top_p=params.get("top_p"),
+        max_requests_per_minute=params.get("max_requests_per_minute"),
+        supports_multi_turn=target_obj.capabilities.supports_multi_turn,
+        target_specific_params=combined_specific,
     )

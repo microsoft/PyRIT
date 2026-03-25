@@ -151,6 +151,7 @@ Scores enable automated evaluation of attack success, content harmfulness, and o
 - **`conversation_id`**: The conversation that produced this result
 - **`objective`**: Natural-language description of the attacker's goal
 - **`attack_identifier`**: Information identifying the attack strategy used
+- **`atomic_attack_identifier`**: Composite identifier combining the attack strategy with general technique seed identifiers from the dataset
 - **`last_response`**: The final `MessagePiece` generated in the attack
 - **`last_score`**: The final score assigned to the last response
 - **`executed_turns`**: Number of turns executed in the attack

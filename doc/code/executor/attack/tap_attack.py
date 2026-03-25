@@ -12,7 +12,7 @@
 # %% [markdown]
 # # Tree of Attacks with Pruning (Multi-Turn) - optional
 #
-# The `TreeOfAttacksWithPruningAttack` (aka `TAPAttack`) implements the [TAP attack strategy](https://arxiv.org/abs/2312.02119).
+# The `TreeOfAttacksWithPruningAttack` (aka `TAPAttack`) implements the TAP attack strategy [@mehrotra2023tap].
 #
 # The TAP attack strategy systematically explores multiple adversarial prompt paths in parallel
 # using a tree structure. It employs breadth-first search with pruning to efficiently find

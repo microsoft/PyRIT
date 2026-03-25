@@ -33,6 +33,10 @@ from sqlalchemy.types import Uuid
 import pyrit
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.identifiers.evaluation_identifier import (
+    AtomicAttackEvaluationIdentifier,
+    ScorerEvaluationIdentifier,
+)
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -50,6 +54,8 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
+
+logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
@@ -398,7 +404,14 @@ class ScoreEntry(Base):
         self.score_metadata = entry.score_metadata
         # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
-        self.scorer_class_identifier = normalized_scorer.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        if normalized_scorer.eval_hash is None:
+            normalized_scorer = normalized_scorer.with_eval_hash(
+                ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+            )
+        self.scorer_class_identifier = normalized_scorer.to_dict(
+            max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+        )
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -723,6 +736,7 @@ class AttackResultEntry(Base):
     conversation_id = mapped_column(String, nullable=False)
     objective = mapped_column(Unicode, nullable=False)
     attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    atomic_attack_identifier: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
@@ -760,13 +774,26 @@ class AttackResultEntry(Base):
         Args:
             entry (AttackResult): The attack result object to convert into a database entry.
         """
-        self.id = uuid.uuid4()
+        self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
+        # Deprecated column: populated from atomic_attack_identifier for backward compatibility.
+        # Will be removed in 0.15.0.
+        _attack_strategy_id = entry.get_attack_strategy_identifier()
         self.attack_identifier = (
-            entry.attack_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
-            if entry.attack_identifier
-            else {}
+            _attack_strategy_id.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH) if _attack_strategy_id else {}
+        )
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip
+        if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
+            entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
+                AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
+            )
+        self.atomic_attack_identifier = (
+            entry.atomic_attack_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            )
+            if entry.atomic_attack_identifier
+            else None
         )
         self.objective_sha256 = to_sha256(entry.objective)
 
@@ -865,11 +892,23 @@ class AttackResultEntry(Base):
                 )
             )
 
+        # Reconstruct atomic_attack_identifier, with backward compatibility for
+        # legacy rows that only have the attack_identifier column.
+        atomic_id = (
+            ComponentIdentifier.from_dict(self.atomic_attack_identifier) if self.atomic_attack_identifier else None
+        )
+        if atomic_id is None and self.attack_identifier:
+            from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+
+            atomic_id = build_atomic_attack_identifier(
+                attack_identifier=ComponentIdentifier.from_dict(self.attack_identifier),
+            )
+
         return AttackResult(
             conversation_id=self.conversation_id,
             attack_result_id=str(self.id),
             objective=self.objective,
-            attack_identifier=ComponentIdentifier.from_dict(self.attack_identifier) if self.attack_identifier else None,
+            atomic_attack_identifier=atomic_id,
             last_response=self.last_response.get_message_piece() if self.last_response else None,
             last_score=self.last_score.get_score() if self.last_score else None,
             executed_turns=self.executed_turns,
@@ -955,9 +994,16 @@ class ScenarioResultEntry(Base):
         self.objective_target_identifier = entry.objective_target_identifier.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
         )
-        # Convert ComponentIdentifier to dict for JSON storage
+        # Ensure eval_hash is set before truncation so it survives the DB round-trip.
+        if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
+            entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
+                ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+            )
+
         self.objective_scorer_identifier = (
-            entry.objective_scorer_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.objective_scorer_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            )
             if entry.objective_scorer_identifier
             else None
         )

@@ -908,6 +908,30 @@ class TestExecutionPhase:
         for node in nodes:
             node.send_prompt_async.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(self, attack_builder, node_factory, helpers):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(tree_depth=1, tree_width=1)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        context = helpers.create_basic_context()
+
+        success_node = node_factory.create_node(
+            NodeMockConfig(node_id="id_node", objective_score_value=0.9, objective_target_conversation_id="id_conv")
+        )
+
+        with patch.object(attack, "_create_attack_node", return_value=success_node):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
+                result = await attack._perform_async(context=context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestHelperMethods:
@@ -1037,7 +1061,6 @@ class TestEndToEndExecution:
         mock_result = TAPAttackResult(
             conversation_id="test_conv_id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             last_response=None,
             last_score=helpers.create_score(0.5),
             executed_turns=1,
@@ -1084,7 +1107,6 @@ class TestEndToEndExecution:
         mock_result = TAPAttackResult(
             conversation_id="success_conv_id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             last_response=None,
             last_score=helpers.create_score(0.9),
             executed_turns=1,

@@ -10,6 +10,7 @@ This module provides the main entry point for the pyrit_backend command.
 import asyncio
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
+from pathlib import Path
 from typing import Optional
 
 from pyrit.cli import frontend_core
@@ -60,6 +61,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--config-file",
+        type=Path,
+        help=frontend_core.ARG_HELP["config_file"],
+    )
+
+    parser.add_argument(
         "--log-level",
         type=frontend_core.validate_log_level_argparse,
         default="INFO",
@@ -75,16 +82,17 @@ Examples:
     parser.add_argument(
         "--database",
         type=frontend_core.validate_database_argparse,
-        default=frontend_core.SQLITE,
+        default=None,
         help=(
             f"Database type to use for memory storage ({frontend_core.IN_MEMORY}, "
-            f"{frontend_core.SQLITE}, {frontend_core.AZURE_SQL}) (default: {frontend_core.SQLITE})"
+            f"{frontend_core.SQLITE}, {frontend_core.AZURE_SQL}). "
+            f"Defaults to value from config file, or {frontend_core.SQLITE} if not specified."
         ),
     )
 
     parser.add_argument(
         "--initializers",
-        type=str,
+        type=frontend_core._parse_initializer_arg,
         nargs="+",
         help=frontend_core.ARG_HELP["initializers"],
     )
@@ -112,7 +120,7 @@ Examples:
     return parser.parse_args(args)
 
 
-async def initialize_and_run(*, parsed_args: Namespace) -> int:
+async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
     """
     Initialize PyRIT and start the backend server.
 
@@ -141,44 +149,64 @@ async def initialize_and_run(*, parsed_args: Namespace) -> int:
             print(f"Error: {e}")
             return 1
 
-    # Resolve initializer instances if names provided
-    initializer_instances = None
-    if parsed_args.initializers:
-        from pyrit.registry import InitializerRegistry
-
-        registry = InitializerRegistry()
-        initializer_instances = []
-        for name in parsed_args.initializers:
-            try:
-                initializer_class = registry.get_class(name)
-                initializer_instances.append(initializer_class())
-            except Exception as e:
-                print(f"Error: Could not load initializer '{name}': {e}")
-                return 1
-
-    # Initialize PyRIT with the provided configuration
-    print("🔧 Initializing PyRIT...")
-    await initialize_pyrit_async(
-        memory_db_type=parsed_args.database,
+    # Create context using FrontendCore (handles config file merging)
+    context = frontend_core.FrontendCore(
+        config_file=parsed_args.config_file,
+        database=parsed_args.database,
         initialization_scripts=initialization_scripts,
-        initializers=initializer_instances,
+        initializer_names=parsed_args.initializers,
         env_files=env_files,
+        log_level=parsed_args.log_level,
     )
+
+    # Initialize PyRIT (loads registries, sets up memory)
+    print("🔧 Initializing PyRIT...")
+    await context.initialize_async()
+
+    # Run initializers up-front (backend runs them once at startup, not per-scenario)
+    initializer_instances = None
+    if context._initializer_configs:
+        print(f"Running {len(context._initializer_configs)} initializer(s)...")
+        initializer_instances = []
+        for config in context._initializer_configs:
+            initializer_class = context.initializer_registry.get_class(config.name)
+            instance = initializer_class()
+            if config.args:
+                instance.set_params_from_args(args=config.args)
+            initializer_instances.append(instance)
+
+        # Re-initialize with initializers applied
+        await initialize_pyrit_async(
+            memory_db_type=context._database,
+            initialization_scripts=context._initialization_scripts,
+            initializers=initializer_instances,
+            env_files=context._env_files,
+        )
 
     # Start uvicorn server
     import uvicorn
 
+    from pyrit.backend.main import app
+
+    # Expose configured default labels to the version endpoint
+    default_labels: dict[str, str] = {}
+    if context._operator:
+        default_labels["operator"] = context._operator
+    if context._operation:
+        default_labels["operation"] = context._operation
+    app.state.default_labels = default_labels
+
     print(f"🚀 Starting PyRIT backend on http://{parsed_args.host}:{parsed_args.port}")
     print(f"   API Docs: http://{parsed_args.host}:{parsed_args.port}/docs")
 
-    config = uvicorn.Config(
+    uvicorn_config = uvicorn.Config(
         "pyrit.backend.main:app",
         host=parsed_args.host,
         port=parsed_args.port,
         log_level=parsed_args.log_level,
         reload=parsed_args.reload,
     )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(uvicorn_config)
     await server.serve()
 
     return 0
@@ -203,13 +231,13 @@ def main(*, args: Optional[list[str]] = None) -> int:
 
     # Handle list-initializers command
     if parsed_args.list_initializers:
-        context = frontend_core.FrontendCore(log_level=parsed_args.log_level)
+        context = frontend_core.FrontendCore(config_file=parsed_args.config_file, log_level=parsed_args.log_level)
         scenarios_path = frontend_core.get_default_initializer_discovery_path()
         return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
 
     # Run the server
     try:
-        return asyncio.run(initialize_and_run(parsed_args=parsed_args))
+        return asyncio.run(initialize_and_run_async(parsed_args=parsed_args))
     except KeyboardInterrupt:
         print("\n🛑 Backend stopped")
         return 0

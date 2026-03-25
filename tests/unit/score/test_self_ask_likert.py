@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
@@ -134,3 +136,270 @@ async def test_self_ask_likert_scorer_json_missing_key_exception_retries():
         await scorer.score_text_async("this has no bullying")
         # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py
         assert chat_target.send_prompt_async.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Custom (non-1-to-5) scale tests
+# ---------------------------------------------------------------------------
+
+
+def _make_custom_scale_yaml(
+    tmp_path: Path,
+    *,
+    category: str = "test_harm",
+    min_val: int = 0,
+    max_val: int = 7,
+) -> Path:
+    """
+    Create a YAML file with a custom Likert scale range inside a pytest tmp_path.
+
+    The file is automatically cleaned up by pytest after the test session.
+
+    Args:
+        tmp_path (Path): Pytest-provided temporary directory.
+        category (str): The category name for the scale.
+        min_val (int): Minimum score value.
+        max_val (int): Maximum score value.
+
+    Returns:
+        Path: Path to the created YAML file.
+    """
+    scale = {
+        "version": "1.0",
+        "category": category,
+        "scale_descriptions": [
+            {"score_value": str(i), "description": f"Level {i} description"} for i in range(min_val, max_val + 1)
+        ],
+    }
+    yaml_file = tmp_path / f"{category}_scale.yaml"
+    yaml_file.write_text(yaml.safe_dump(scale), encoding="utf-8")
+    return yaml_file
+
+
+@pytest.mark.parametrize("min_val, max_val", [(0, 7), (2, 6), (1, 10)])
+def test_custom_scale_sets_min_max(tmp_path: Path, min_val: int, max_val: int):
+    """Verify that custom YAML scales set _min/_max correctly for various ranges."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        custom_path = _make_custom_scale_yaml(tmp_path, min_val=min_val, max_val=max_val)
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                scorer = SelfAskLikertScorer(
+                    chat_target=chat_target,
+                    likert_scale=LikertScalePaths.CYBER_SCALE,
+                )
+
+        assert scorer._min_scale_value == min_val
+        assert scorer._max_scale_value == max_val
+
+
+def test_default_1_to_5_scale_sets_min_max():
+    """Verify that existing 1-5 harm definition YAMLs still set min=1, max=5."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        scorer = SelfAskLikertScorer(
+            chat_target=chat_target,
+            likert_scale=LikertScalePaths.VIOLENCE_SCALE,
+        )
+
+        assert scorer._min_scale_value == 1
+        assert scorer._max_scale_value == 5
+
+
+@pytest.mark.parametrize("min_val, max_val", [(0, 7), (2, 6), (1, 10)])
+def test_custom_scale_system_prompt_contains_dynamic_range(tmp_path: Path, min_val: int, max_val: int):
+    """Verify the system prompt references the custom min/max, not hardcoded 1/5."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        custom_path = _make_custom_scale_yaml(tmp_path, min_val=min_val, max_val=max_val)
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                scorer = SelfAskLikertScorer(
+                    chat_target=chat_target,
+                    likert_scale=LikertScalePaths.CYBER_SCALE,
+                )
+
+        # The system prompt should mention the custom range boundaries
+        assert f"{min_val} is the least severe" in scorer._system_prompt
+        assert f"{max_val} is the most severe" in scorer._system_prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "min_val, max_val, raw_score, expected_normalised",
+    [
+        (0, 7, 7, 1.0),  # max of 0-7 → 1.0
+        (0, 7, 0, 0.0),  # min of 0-7 → 0.0
+        (2, 6, 6, 1.0),  # max of non-zero-min range → 1.0
+        (2, 6, 2, 0.0),  # min of non-zero-min range → 0.0
+        (2, 6, 4, 0.5),  # mid of 2-6 → (4-2)/(6-2) = 0.5
+    ],
+)
+async def test_custom_scale_score_normalisation(
+    patch_central_database,
+    tmp_path: Path,
+    min_val: int,
+    max_val: int,
+    raw_score: int,
+    expected_normalised: float,
+):
+    """
+    Verify that scoring normalises correctly against arbitrary custom ranges.
+
+    Covers zero-based ranges (0-7), non-zero/non-1 minimums (2-6), and
+    mid-range values to exercise the full normalisation formula.
+    """
+    json_response = (
+        f'{{"score_value": "{raw_score}", "description": "Level {raw_score}", "rationale": "Test rationale."}}'
+    )
+    llm_response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[llm_response])
+
+    custom_path = _make_custom_scale_yaml(tmp_path, min_val=min_val, max_val=max_val)
+    with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
+        with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+            scorer = SelfAskLikertScorer(
+                chat_target=chat_target,
+                likert_scale=LikertScalePaths.CYBER_SCALE,
+            )
+
+    score = await scorer.score_text_async("test content")
+
+    assert len(score) == 1
+    assert score[0].get_value() == pytest.approx(expected_normalised)
+    assert score[0].score_metadata == {"likert_value": raw_score}
+
+
+def test_likert_scale_negative_value_rejected(tmp_path: Path):
+    """Verify that negative score values in a YAML are rejected."""
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        custom_path = _make_custom_scale_yaml(tmp_path, min_val=-1, max_val=5)
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(custom_path))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                with pytest.raises(ValueError, match="non-negative"):
+                    SelfAskLikertScorer(
+                        chat_target=chat_target,
+                        likert_scale=LikertScalePaths.CYBER_SCALE,
+                    )
+
+
+def test_likert_scale_missing_category_rejected(tmp_path: Path):
+    """Verify that a YAML missing the 'category' field raises a clear ValueError."""
+    yaml_file = tmp_path / "no_category.yaml"
+    yaml_file.write_text(
+        yaml.safe_dump(
+            {
+                "scale_descriptions": [{"score_value": "1", "description": "Level 1"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                with pytest.raises(ValueError, match="missing required field 'category'"):
+                    SelfAskLikertScorer(
+                        chat_target=chat_target,
+                        likert_scale=LikertScalePaths.CYBER_SCALE,
+                    )
+
+
+def test_likert_scale_missing_scale_descriptions_rejected(tmp_path: Path):
+    """Verify that a YAML missing 'scale_descriptions' raises a clear ValueError."""
+    yaml_file = tmp_path / "no_descriptions.yaml"
+    yaml_file.write_text(
+        yaml.safe_dump({"category": "test_harm"}),
+        encoding="utf-8",
+    )
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                with pytest.raises(ValueError, match="scale_descriptions"):
+                    SelfAskLikertScorer(
+                        chat_target=chat_target,
+                        likert_scale=LikertScalePaths.CYBER_SCALE,
+                    )
+
+
+def test_likert_scale_non_integer_score_value_rejected(tmp_path: Path):
+    """Verify that a non-integer score_value (e.g., '1.5') raises a clear ValueError."""
+    yaml_file = tmp_path / "float_score.yaml"
+    yaml_file.write_text(
+        yaml.safe_dump(
+            {
+                "category": "test_harm",
+                "scale_descriptions": [
+                    {"score_value": "1.5", "description": "Level 1.5"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                with pytest.raises(ValueError, match="non-negative integer"):
+                    SelfAskLikertScorer(
+                        chat_target=chat_target,
+                        likert_scale=LikertScalePaths.CYBER_SCALE,
+                    )
+
+
+def test_likert_scale_missing_score_value_key_rejected(tmp_path: Path):
+    """Verify that a scale entry missing 'score_value' raises a clear ValueError."""
+    yaml_file = tmp_path / "no_score_value.yaml"
+    yaml_file.write_text(
+        yaml.safe_dump(
+            {
+                "category": "test_harm",
+                "scale_descriptions": [
+                    {"description": "Level without a score_value"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = MagicMock(MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        chat_target = MagicMock()
+        chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+        with patch.object(LikertScalePaths, "path", new_callable=lambda: property(lambda self: Path(yaml_file))):
+            with patch.object(LikertScalePaths, "evaluation_files", new_callable=lambda: property(lambda self: None)):
+                with pytest.raises(ValueError, match="missing required key 'score_value'"):
+                    SelfAskLikertScorer(
+                        chat_target=chat_target,
+                        likert_scale=LikertScalePaths.CYBER_SCALE,
+                    )

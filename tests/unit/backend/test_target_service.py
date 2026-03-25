@@ -67,7 +67,7 @@ class TestListTargets:
         result = await service.list_targets_async()
 
         assert len(result.items) == 1
-        assert result.items[0].target_unique_name == "target-1"
+        assert result.items[0].target_registry_name == "target-1"
         assert result.items[0].target_type == "MockTarget"
         assert result.pagination.has_more is False
 
@@ -86,7 +86,7 @@ class TestListTargets:
         assert len(result.items) == 3
         assert result.pagination.limit == 3
         assert result.pagination.has_more is True
-        assert result.pagination.next_cursor == result.items[-1].target_unique_name
+        assert result.pagination.next_cursor == result.items[-1].target_registry_name
 
     @pytest.mark.asyncio
     async def test_list_targets_cursor_returns_next_page(self) -> None:
@@ -102,7 +102,7 @@ class TestListTargets:
         second_page = await service.list_targets_async(limit=2, cursor=first_page.pagination.next_cursor)
 
         assert len(second_page.items) == 2
-        assert second_page.items[0].target_unique_name != first_page.items[0].target_unique_name
+        assert second_page.items[0].target_registry_name != first_page.items[0].target_registry_name
         assert second_page.pagination.has_more is True
 
     @pytest.mark.asyncio
@@ -131,7 +131,7 @@ class TestGetTarget:
         """Test that get_target returns None for non-existent target."""
         service = TargetService()
 
-        result = await service.get_target_async(target_unique_name="nonexistent-id")
+        result = await service.get_target_async(target_registry_name="nonexistent-id")
 
         assert result is None
 
@@ -144,11 +144,68 @@ class TestGetTarget:
         mock_target.get_identifier.return_value = _mock_target_identifier()
         service._registry.register_instance(mock_target, name="target-1")
 
-        result = await service.get_target_async(target_unique_name="target-1")
+        result = await service.get_target_async(target_registry_name="target-1")
 
         assert result is not None
-        assert result.target_unique_name == "target-1"
+        assert result.target_registry_name == "target-1"
         assert result.target_type == "MockTarget"
+
+    @pytest.mark.asyncio
+    async def test_list_targets_includes_extra_params_in_target_specific(self) -> None:
+        """Test that extra identifier params (reasoning_effort etc.) appear in target_specific_params."""
+        service = TargetService()
+
+        mock_target = MagicMock()
+        identifier = ComponentIdentifier(
+            class_name="OpenAIResponseTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "o3",
+                "temperature": 1.0,
+                "reasoning_effort": "high",
+                "reasoning_summary": "auto",
+                "max_output_tokens": 4096,
+            },
+        )
+        mock_target.get_identifier.return_value = identifier
+        service._registry.register_instance(mock_target, name="response-target")
+
+        result = await service.list_targets_async()
+
+        assert len(result.items) == 1
+        target = result.items[0]
+        assert target.temperature == 1.0
+        assert target.target_specific_params is not None
+        assert target.target_specific_params["reasoning_effort"] == "high"
+        assert target.target_specific_params["reasoning_summary"] == "auto"
+        assert target.target_specific_params["max_output_tokens"] == 4096
+
+    @pytest.mark.asyncio
+    async def test_get_target_includes_extra_params_in_target_specific(self) -> None:
+        """Test that get_target returns target_specific_params with extra identifier params."""
+        service = TargetService()
+
+        mock_target = MagicMock()
+        identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "frequency_penalty": 0.5,
+                "seed": 42,
+            },
+        )
+        mock_target.get_identifier.return_value = identifier
+        service._registry.register_instance(mock_target, name="chat-target")
+
+        result = await service.get_target_async(target_registry_name="chat-target")
+
+        assert result is not None
+        assert result.target_specific_params is not None
+        assert result.target_specific_params["frequency_penalty"] == 0.5
+        assert result.target_specific_params["seed"] == 42
 
 
 class TestGetTargetObject:
@@ -158,7 +215,7 @@ class TestGetTargetObject:
         """Test that get_target_object returns None for non-existent target."""
         service = TargetService()
 
-        result = service.get_target_object(target_unique_name="nonexistent-id")
+        result = service.get_target_object(target_registry_name="nonexistent-id")
 
         assert result is None
 
@@ -168,7 +225,7 @@ class TestGetTargetObject:
         mock_target = MagicMock()
         service._registry.register_instance(mock_target, name="target-1")
 
-        result = service.get_target_object(target_unique_name="target-1")
+        result = service.get_target_object(target_registry_name="target-1")
 
         assert result is mock_target
 
@@ -201,7 +258,7 @@ class TestCreateTarget:
 
         result = await service.create_target_async(request=request)
 
-        assert result.target_unique_name is not None
+        assert result.target_registry_name is not None
         assert result.target_type == "TextTarget"
 
     @pytest.mark.asyncio
@@ -217,7 +274,7 @@ class TestCreateTarget:
         result = await service.create_target_async(request=request)
 
         # Object should be retrievable from registry
-        target_obj = service.get_target_object(target_unique_name=result.target_unique_name)
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj is not None
 
 

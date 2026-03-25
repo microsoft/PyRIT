@@ -487,7 +487,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         markdown_lines.append("|-------|-------|")
         markdown_lines.append(f"| **Objective** | {result.objective} |")
 
-        attack_type = result.attack_identifier.class_name if result.attack_identifier else "Unknown"
+        attack_type = (
+            result.get_attack_strategy_identifier().class_name if result.get_attack_strategy_identifier() else "Unknown"
+        )
 
         markdown_lines.append(f"| **Attack Type** | `{attack_type}` |")
         markdown_lines.append(f"| **Conversation ID** | `{result.conversation_id}` |")

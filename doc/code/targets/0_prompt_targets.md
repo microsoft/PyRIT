@@ -23,7 +23,7 @@ A `Message` object is a normalized object with all the information a target will
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
 
-With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR, TAP, flip attack). These often require a `PromptChatTarget`, which implies you can modify a conversation history. `PromptChatTarget` is a subclass of `PromptTarget`.
+With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@li2024flipattack]). These often require a `PromptChatTarget`, which implies you can modify a conversation history. `PromptChatTarget` is a subclass of `PromptTarget`.
 
 Here are some examples:
 

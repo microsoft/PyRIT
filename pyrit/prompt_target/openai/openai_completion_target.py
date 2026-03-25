@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class OpenAICompletionTarget(OpenAITarget):
     """A prompt target for OpenAI completion endpoints."""
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=False)
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities()
 
     def __init__(
         self,
@@ -29,6 +29,7 @@ class OpenAICompletionTarget(OpenAITarget):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         n: Optional[int] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -62,12 +63,14 @@ class OpenAICompletionTarget(OpenAITarget):
                 tokens based on their existing frequency in the text so far, decreasing the model's likelihood to
                 repeat the same line verbatim.
             n (int, Optional): How many completions to generate for each prompt.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
             *args: Variable length argument list passed to the parent class.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, custom_capabilities=custom_capabilities, **kwargs)
 
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -167,21 +170,3 @@ class OpenAICompletionTarget(OpenAITarget):
         extracted_response = [choice.text for choice in response.choices]
 
         return construct_response_from_request(request=request, response_text_pieces=extracted_response)
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

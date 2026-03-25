@@ -13,8 +13,16 @@ import pytest
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import MessagePiece, Score
 from pyrit.score import HumanInTheLoopScorerGradio
-from pyrit.ui.rpc import RPCAlreadyRunningException
-from pyrit.ui.rpc_client import RPCClient, RPCClientStoppedException
+
+try:
+    from pyrit.ui.rpc import RPCAlreadyRunningException
+    from pyrit.ui.rpc_client import RPCClient, RPCClientStoppedException
+
+    _rpyc_available = True
+except (ImportError, ModuleNotFoundError):
+    _rpyc_available = False
+
+pytestmark = pytest.mark.skipif(not _rpyc_available, reason="rpyc not installed")
 
 
 def if_gradio_installed():

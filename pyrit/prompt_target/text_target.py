@@ -5,10 +5,11 @@ import csv
 import json
 import sys
 from pathlib import Path
-from typing import IO
+from typing import IO, Optional
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 
 class TextTarget(PromptTarget):
@@ -24,14 +25,17 @@ class TextTarget(PromptTarget):
         self,
         *,
         text_stream: IO[str] = sys.stdout,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the TextTarget.
 
         Args:
             text_stream (IO[str]): The text stream to write prompts to. Defaults to sys.stdout.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
         """
-        super().__init__()
+        super().__init__(custom_capabilities=custom_capabilities)
         self._text_stream = text_stream
 
     async def send_prompt_async(self, *, message: Message) -> list[Message]:

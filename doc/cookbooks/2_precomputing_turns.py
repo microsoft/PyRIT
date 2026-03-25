@@ -15,7 +15,7 @@
 # %% [markdown]
 # # 2. Precomputing Turns for Attacks
 #
-# Here is a scenario; you want to use a powerful attack technique like `Crescendo` or `TAP`.  That's great! These are the most successful attacks in our arsenal. But there's a catch. They are slow.
+# Here is a scenario; you want to use a powerful attack technique like `Crescendo` [@russinovich2024crescendo] or `TAP` [@mehrotra2023tap].  That's great! These are the most successful attacks in our arsenal. But there's a catch. They are slow.
 #
 # One way to speed these up is to generate the first N turns in advance, and start these algorithms on a later turn. This is possible on any target where you can modify prompt history (any PromptChatTarget). And it can be extremely useful if you want to test a new model after having tested an old one.
 #
@@ -67,10 +67,10 @@ objective_target = OpenAIChatTarget(
 # Configure the labels you want to send
 # These should be unique to this test to make it easier to retrieve
 
-memory_labels = {"op_name": "new_op", "user_name": "roakey", "test_name": "cookbook_2"}
+memory_labels = {"operation": "op_trash_panda", "operator": "roakey", "test_name": "cookbook_2"}
 
 # Configure any converters you want to use for the first few turns of the conversation.
-# In this case, we are using a tense converter to make the prompts in past tense, and then
+# In this case, we are using a tense converter to make the prompts in past tense [@andriushchenko2024tense], and then
 # we are using a translation converter to translate the prompts to Spanish.
 
 # All of this is very slow (but we only are doing it once)

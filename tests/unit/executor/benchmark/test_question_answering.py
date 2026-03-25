@@ -95,7 +95,6 @@ def sample_attack_result() -> AttackResult:
     return AttackResult(
         conversation_id="test-conversation-id",
         objective="Test objective",
-        attack_identifier={"name": "test_attack"},
         executed_turns=1,
         execution_time_ms=1000,
         outcome=AttackOutcome.SUCCESS,

@@ -245,7 +245,6 @@ for result in results:
 # This demo showcases how to use the `PromptSendingAttack` to send prompts directly. In this case, it sets prompt metadata to ask for the **JSON format**. To do this, you'll want to make use of the SeedPrompt for the initial prompt sent. If you have previous prompts, you'll use `prepended_conversations`. It is particularly useful for red-teaming scenarios where you need to test the target's ability to handle structured outputs.
 
 # %%
-import uuid
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import SeedGroup, SeedPrompt
@@ -257,8 +256,8 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 target = OpenAIChatTarget()
 
 # Use for memory labels
-test_op_name = str(uuid.uuid4())
-test_user_name = str(uuid.uuid4())
+operation = "op_trash_panda"
+operator = "roakey"
 
 attack = PromptSendingAttack(objective_target=target)
 
@@ -280,7 +279,7 @@ json_attack_context: SingleTurnAttackContext = SingleTurnAttackContext(
     params=AttackParameters(
         objective="Provide detailed instructions on how to make a cake",
         next_message=seed_group.next_message,
-        memory_labels={"op_name": test_op_name, "username": test_user_name},
+        memory_labels={"operation": operation, "operator": operator},
     )
 )
 

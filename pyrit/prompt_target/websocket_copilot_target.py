@@ -71,10 +71,18 @@ class WebSocketCopilotTarget(PromptTarget):
         The free version of Copilot is not compatible.
     """
 
-    SUPPORTED_DATA_TYPES = {"text", "image_path"}
     RESPONSE_TIMEOUT_SECONDS: int = 60
     CONNECTION_TIMEOUT_SECONDS: int = 30
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=True)
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["text", "image_path"]),
+            }
+        ),
+    )
 
     def __init__(
         self,
@@ -84,7 +92,7 @@ class WebSocketCopilotTarget(PromptTarget):
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
         authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
-        capabilities: Optional[TargetCapabilities] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -98,8 +106,8 @@ class WebSocketCopilotTarget(PromptTarget):
             authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
-            capabilities (TargetCapabilities, Optional): Override the default capabilities for
-                this target instance. If None, uses the class-level defaults. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -122,7 +130,7 @@ class WebSocketCopilotTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             endpoint=self._websocket_base_url,
             model_name=model_name,
-            capabilities=capabilities,
+            custom_capabilities=custom_capabilities,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -579,13 +587,9 @@ class WebSocketCopilotTarget(PromptTarget):
         Raises:
             ValueError: If message contains unsupported data types or invalid image formats.
         """
+        super()._validate_request(message=message)
         for piece in message.message_pieces:
             piece_type = piece.converted_value_data_type
-            if piece_type not in self.SUPPORTED_DATA_TYPES:
-                supported_types = ", ".join(sorted(self.SUPPORTED_DATA_TYPES))
-                raise ValueError(
-                    f"This target supports only the following data types: {supported_types}. Received: {piece_type}."
-                )
 
             if piece_type == "image_path":
                 mime_type = DataTypeSerializer.get_mime_type(piece.converted_value)

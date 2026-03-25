@@ -702,7 +702,7 @@ def test_insert_prompt_memories_not_inserts_embedding(
 
 
 def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
-    labels = {"op_name": "op1", "user_name": "name1", "harm_category": "dummy1"}
+    labels = {"operation": "op1", "operator": "name1", "harm_category": "dummy1"}
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
@@ -732,8 +732,8 @@ def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
 
     assert len(retrieved_entries) == 2  # Two entries should have the specific memory labels
     for retrieved_entry in retrieved_entries:
-        assert "op_name" in retrieved_entry.labels
-        assert "user_name" in retrieved_entry.labels
+        assert "operation" in retrieved_entry.labels
+        assert "operator" in retrieved_entry.labels
         assert "harm_category" in retrieved_entry.labels
 
 
@@ -970,7 +970,7 @@ def test_get_message_pieces_by_hash(sqlite_instance: MemoryInterface):
 
 def test_get_message_pieces_with_non_matching_memory_labels(sqlite_instance: MemoryInterface):
     attack = PromptSendingAttack(objective_target=get_mock_target())
-    labels = {"op_name": "op1", "user_name": "name1", "harm_category": "dummy1"}
+    labels = {"operation": "op1", "operator": "name1", "harm_category": "dummy1"}
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(

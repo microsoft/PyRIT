@@ -16,18 +16,28 @@ jest.mock("../../services/api", () => ({
 
 // Mock Navigation to simplify testing
 jest.mock("../Sidebar/Navigation", () => {
-  return function MockNavigation({
+  const MockNavigation = ({
     onToggleTheme,
     isDarkMode,
+    currentView,
+    onNavigate,
   }: {
     onToggleTheme: () => void;
     isDarkMode: boolean;
-  }) {
+    currentView: string;
+    onNavigate: (view: string) => void;
+  }) => {
     return (
-      <div data-testid="navigation" data-dark-mode={isDarkMode}>
+      <div data-testid="navigation" data-dark-mode={isDarkMode} data-current-view={currentView}>
         <button onClick={onToggleTheme}>Toggle</button>
+        <button onClick={() => onNavigate("config")}>Config</button>
       </div>
     );
+  };
+  MockNavigation.displayName = "MockNavigation";
+  return {
+    __esModule: true,
+    default: MockNavigation,
   };
 });
 
@@ -44,11 +54,18 @@ describe("MainLayout", () => {
     jest.clearAllMocks();
   });
 
+  const defaultProps = {
+    onToggleTheme: jest.fn(),
+    isDarkMode: false,
+    currentView: 'chat' as const,
+    onNavigate: jest.fn(),
+  };
+
   it("renders the header with title and subtitle", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
 
     renderWithProvider(
-      <MainLayout onToggleTheme={jest.fn()} isDarkMode={false}>
+      <MainLayout {...defaultProps}>
         <div>Child Content</div>
       </MainLayout>
     );
@@ -68,7 +85,7 @@ describe("MainLayout", () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
 
     renderWithProvider(
-      <MainLayout onToggleTheme={jest.fn()} isDarkMode={false}>
+      <MainLayout {...defaultProps}>
         <div data-testid="child-content">Child Content</div>
       </MainLayout>
     );
@@ -84,7 +101,7 @@ describe("MainLayout", () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
 
     renderWithProvider(
-      <MainLayout onToggleTheme={jest.fn()} isDarkMode={false}>
+      <MainLayout {...defaultProps}>
         <div>Content</div>
       </MainLayout>
     );
@@ -105,7 +122,7 @@ describe("MainLayout", () => {
     });
 
     renderWithProvider(
-      <MainLayout onToggleTheme={jest.fn()} isDarkMode={false}>
+      <MainLayout {...defaultProps}>
         <div>Content</div>
       </MainLayout>
     );
@@ -119,7 +136,7 @@ describe("MainLayout", () => {
     mockedVersionApi.getVersion.mockRejectedValue(new Error("API Error"));
 
     renderWithProvider(
-      <MainLayout onToggleTheme={jest.fn()} isDarkMode={false}>
+      <MainLayout {...defaultProps}>
         <div>Content</div>
       </MainLayout>
     );
@@ -133,7 +150,7 @@ describe("MainLayout", () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
 
     renderWithProvider(
-      <MainLayout onToggleTheme={jest.fn()} isDarkMode={true}>
+      <MainLayout {...defaultProps} isDarkMode={true}>
         <div>Content</div>
       </MainLayout>
     );

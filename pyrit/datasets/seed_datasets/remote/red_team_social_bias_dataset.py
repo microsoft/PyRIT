@@ -21,7 +21,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
     designed to identify stereotypes, discrimination, hate speech, and other
     representation harms in text-based Large Language Models (LLMs).
 
-    Reference: https://svannie678.github.io/svannie678-red_team_repo_social_bias
+    Reference: [@vantaylor2024socialbias]
     """
 
     def __init__(

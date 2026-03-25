@@ -18,6 +18,7 @@ from pyrit.executor.attack.single_turn import (
 )
 from pyrit.executor.core import Strategy, StrategyContext
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -196,7 +197,9 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 conversation_id=str(uuid.UUID(int=0)),
                 objective=context.generated_objective,
                 outcome=AttackOutcome.FAILURE,
-                attack_identifier=ComponentIdentifier.of(self),
+                atomic_attack_identifier=build_atomic_attack_identifier(
+                    attack_identifier=ComponentIdentifier.of(self),
+                ),
             )
 
         return last_attack_result

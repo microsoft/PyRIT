@@ -54,9 +54,6 @@ class MockPromptChatTarget(PromptChatTarget):
     def _validate_request(self, *, message: Message) -> None:
         pass
 
-    def is_json_response_supported(self) -> bool:
-        return False
-
 
 class TestTargetRegistrySingleton:
     """Tests for the singleton pattern in TargetRegistry."""

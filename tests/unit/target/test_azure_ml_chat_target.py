@@ -197,10 +197,6 @@ async def test_send_prompt_async_empty_response_retries(aml_online_chat: AzureML
         assert mock_complete_chat_async.call_count == 2
 
 
-def test_is_json_response_supported(aml_online_chat: AzureMLChatTarget):
-    assert aml_online_chat.is_json_response_supported() is False
-
-
 def test_invalid_temperature_too_low_raises(patch_central_database):
     with pytest.raises(Exception, match="temperature must be between 0 and 2"):
         AzureMLChatTarget(

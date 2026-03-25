@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
@@ -464,7 +465,9 @@ def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
         attack_result = AttackResult(
             conversation_id=f"conv_{i}",
             objective=f"Test objective {i}",
-            attack_identifier=ComponentIdentifier(class_name=f"TestAttack{i}", class_module="test.module"),
+            atomic_attack_identifier=build_atomic_attack_identifier(
+                attack_identifier=ComponentIdentifier(class_name=f"TestAttack{i}", class_module="test.module"),
+            ),
             executed_turns=i + 1,
             execution_time_ms=(i + 1) * 100,
             outcome=outcome,
@@ -926,7 +929,7 @@ def test_get_attack_results_labels_query_on_empty_labels(sqlite_instance: Memory
 
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
-    results = sqlite_instance.get_attack_results(labels={"op_name": "test"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "test"})
     assert len(results) == 0
 
     results = sqlite_instance.get_attack_results(labels={"researcher": "roakey"})
@@ -940,8 +943,8 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
     """Test querying for labels where the key exists but the value doesn't match."""
 
     # Create attack results with specific label values
-    message_piece1 = create_message_piece("conv_1", 1, labels={"op_name": "op_exists", "researcher": "roakey"})
-    message_piece2 = create_message_piece("conv_2", 1, labels={"op_name": "another_op", "researcher": "roakey"})
+    message_piece1 = create_message_piece("conv_1", 1, labels={"operation": "op_exists", "researcher": "roakey"})
+    message_piece2 = create_message_piece("conv_2", 1, labels={"operation": "another_op", "researcher": "roakey"})
     message_piece3 = create_message_piece("conv_3", 1, labels={"operation": "test_op"})
 
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece1, message_piece2, message_piece3])
@@ -954,11 +957,11 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
     sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
 
     # Query for key that exists but with wrong value
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_doesnotexist"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_doesnotexist"})
     assert len(results) == 0
 
     # Query for existing key with correct value
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_exists"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
@@ -983,11 +986,11 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
     assert results[0].conversation_id == "conv_3"
 
     # Test multiple keys where one matches and one doesn't
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_exists", "researcher": "not_roakey"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists", "researcher": "not_roakey"})
     assert len(results) == 0
 
     # Test multiple keys where both match
-    results = sqlite_instance.get_attack_results(labels={"op_name": "op_exists", "researcher": "roakey"})
+    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists", "researcher": "roakey"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
@@ -1128,23 +1131,25 @@ def _make_attack_result_with_identifier(
     converter_class_names: Optional[list[str]] = None,
 ) -> AttackResult:
     """Helper to create an AttackResult with a ComponentIdentifier containing converters."""
-    params = {}
+    children: dict = {}
     if converter_class_names is not None:
-        params["request_converter_identifiers"] = [
+        children["request_converters"] = [
             ComponentIdentifier(
                 class_name=name,
-                class_module="pyrit.converters",
-            ).to_dict()
+                class_module="pyrit.prompt_converter",
+            )
             for name in converter_class_names
         ]
 
     return AttackResult(
         conversation_id=conversation_id,
         objective=f"Objective for {conversation_id}",
-        attack_identifier=ComponentIdentifier(
-            class_name=class_name,
-            class_module="pyrit.attacks",
-            params=params,
+        atomic_attack_identifier=build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(
+                class_name=class_name,
+                class_module="pyrit.attacks",
+                children=children,
+            ),
         ),
     )
 
@@ -1221,7 +1226,7 @@ def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite
 
 
 def test_get_attack_results_converter_classes_single_match(sqlite_instance: MemoryInterface):
-    """Test that converter_classes with one class returns attacks using that converter."""
+    """Test that converter_types with one type returns attacks using that converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
@@ -1233,7 +1238,7 @@ def test_get_attack_results_converter_classes_single_match(sqlite_instance: Memo
 
 
 def test_get_attack_results_converter_classes_and_logic(sqlite_instance: MemoryInterface):
-    """Test that multiple converter_classes use AND logic — all must be present."""
+    """Test that multiple converter_types use AND logic — all must be present."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
@@ -1257,7 +1262,7 @@ def test_get_attack_results_converter_classes_case_insensitive(sqlite_instance: 
 
 
 def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryInterface):
-    """Test that converter_classes filter returns empty when no attack has the converter."""
+    """Test that converter_types filter returns empty when no attack has the converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
 
@@ -1266,7 +1271,7 @@ def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryIn
 
 
 def test_get_attack_results_attack_class_and_converter_classes_combined(sqlite_instance: MemoryInterface):
-    """Test combining attack_class and converter_classes filters."""
+    """Test combining attack_type and converter_types filters."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack", ["Base64Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack", ["ROT13Converter"])
@@ -1279,7 +1284,7 @@ def test_get_attack_results_attack_class_and_converter_classes_combined(sqlite_i
 
 
 def test_get_attack_results_attack_class_with_no_converters(sqlite_instance: MemoryInterface):
-    """Test combining attack_class with converter_classes=[] (no converters)."""
+    """Test combining attack_type with converter_types=[] (no converters)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
     ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # No converters

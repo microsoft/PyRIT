@@ -10,8 +10,14 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTargetResult
 
+# Env vars that may leak from .env files loaded by other tests in parallel workers.
+_CLEAN_UNDERLYING_MODEL_ENV = {
+    "OPENAI_REALTIME_UNDERLYING_MODEL": "",
+}
+
 
 @pytest.fixture
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
 def target(sqlite_instance):
     return RealtimeTarget(api_key="test_key", endpoint="wss://test_url", model_name="test")
 
@@ -181,7 +187,8 @@ async def test_send_prompt_async_invalid_request(target):
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=message)
 
-    assert str(excinfo.value) == "This target only supports text and audio_path prompt input. Received: image_path."
+    assert "This target supports only the following data types" in str(excinfo.value)
+    assert "image_path" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

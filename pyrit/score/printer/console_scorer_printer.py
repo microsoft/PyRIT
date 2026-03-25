@@ -100,7 +100,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
         """
-        from pyrit.score.scorer_evaluation.scorer_evaluation_identity import ScorerEvaluationIdentity
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
@@ -111,7 +111,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
         self._print_scorer_info(scorer_identifier, indent_level=3)
 
         # Look up metrics by eval hash
-        eval_hash = ScorerEvaluationIdentity(scorer_identifier).eval_hash
+        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
         metrics = find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
         self._print_objective_metrics(metrics)
 
@@ -128,7 +128,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
             scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
             harm_category (str): The harm category for looking up metrics (e.g., "hate_speech", "violence").
         """
-        from pyrit.score.scorer_evaluation.scorer_evaluation_identity import ScorerEvaluationIdentity
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_harm_metrics_by_eval_hash,
         )
@@ -139,7 +139,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
         self._print_scorer_info(scorer_identifier, indent_level=3)
 
         # Look up metrics by eval hash and harm category
-        eval_hash = ScorerEvaluationIdentity(scorer_identifier).eval_hash
+        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
         metrics = find_harm_metrics_by_eval_hash(eval_hash=eval_hash, harm_category=harm_category)
         self._print_harm_metrics(metrics)
 

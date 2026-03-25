@@ -59,6 +59,10 @@ def test_remove_end_md_json(input_str, expected_output):
         ("No JSON here", "No JSON here"),
         ('jsn\n{"key": "value"}\n```', '{"key": "value"}'),
         ('Some text before JSON {"a": [1,2,3], "b": {"c": 4}} some text after JSON', '{"a": [1,2,3], "b": {"c": 4}}'),
+        (
+            'Some text before JSON {\n  "key": "value",\n  "nested": {"enabled": true}\n} some text after JSON',
+            '{\n  "key": "value",\n  "nested": {"enabled": true}\n}',
+        ),
     ],
 )
 def test_extract_json_from_string(input_str, expected_output):

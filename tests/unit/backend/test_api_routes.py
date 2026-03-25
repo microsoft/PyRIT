@@ -19,8 +19,8 @@ from pyrit.backend.main import app
 from pyrit.backend.models.attacks import (
     AddMessageResponse,
     AttackListResponse,
-    AttackMessagesResponse,
     AttackSummary,
+    ConversationMessagesResponse,
     CreateAttackResponse,
     Message,
     MessagePiece,
@@ -109,6 +109,7 @@ class TestAttackRoutes:
             mock_service = MagicMock()
             mock_service.create_attack_async = AsyncMock(
                 return_value=CreateAttackResponse(
+                    attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
                     created_at=now,
                 )
@@ -117,7 +118,7 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks",
-                json={"target_unique_name": "target-1", "name": "Test Attack"},
+                json={"target_registry_name": "target-1", "name": "Test Attack"},
             )
 
             assert response.status_code == status.HTTP_201_CREATED
@@ -133,7 +134,7 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks",
-                json={"target_unique_name": "nonexistent"},
+                json={"target_registry_name": "nonexistent"},
             )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -146,6 +147,7 @@ class TestAttackRoutes:
             mock_service = MagicMock()
             mock_service.get_attack_async = AsyncMock(
                 return_value=AttackSummary(
+                    attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
                     attack_type="TestAttack",
                     outcome=None,
@@ -182,6 +184,7 @@ class TestAttackRoutes:
             mock_service = MagicMock()
             mock_service.update_attack_async = AsyncMock(
                 return_value=AttackSummary(
+                    attack_result_id="ar-attack-1",
                     conversation_id="attack-1",
                     attack_type="TestAttack",
                     outcome="success",
@@ -207,6 +210,7 @@ class TestAttackRoutes:
         now = datetime.now(timezone.utc)
 
         attack_summary = AttackSummary(
+            attack_result_id="ar-attack-1",
             conversation_id="attack-1",
             attack_type="TestAttack",
             outcome=None,
@@ -216,7 +220,7 @@ class TestAttackRoutes:
             updated_at=now,
         )
 
-        attack_messages = AttackMessagesResponse(
+        attack_messages = ConversationMessagesResponse(
             conversation_id="attack-1",
             messages=[
                 Message(
@@ -256,7 +260,7 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/attack-1/messages",
-                json={"pieces": [{"original_value": "Hello"}]},
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
             )
 
             assert response.status_code == status.HTTP_200_OK
@@ -286,7 +290,7 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/nonexistent/messages",
-                json={"pieces": [{"original_value": "Hello"}]},
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "nonexistent"},
             )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -300,7 +304,7 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/attack-1/messages",
-                json={"pieces": [{"original_value": "Hello"}]},
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
             )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -314,7 +318,7 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/attack-1/messages",
-                json={"pieces": [{"original_value": "Hello"}]},
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -328,19 +332,19 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/attack-1/messages",
-                json={"pieces": [{"original_value": "Hello"}]},
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
             )
 
             assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    def test_get_attack_messages_success(self, client: TestClient) -> None:
+    def test_get_conversation_messages_success(self, client: TestClient) -> None:
         """Test getting attack messages."""
         now = datetime.now(timezone.utc)
 
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.get_attack_messages_async = AsyncMock(
-                return_value=AttackMessagesResponse(
+            mock_service.get_conversation_messages_async = AsyncMock(
+                return_value=ConversationMessagesResponse(
                     conversation_id="attack-1",
                     messages=[
                         Message(
@@ -354,23 +358,36 @@ class TestAttackRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/attacks/attack-1/messages")
+            response = client.get("/api/attacks/attack-1/messages", params={"conversation_id": "attack-1"})
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["conversation_id"] == "attack-1"
             assert len(data["messages"]) == 1
 
-    def test_get_attack_messages_not_found(self, client: TestClient) -> None:
+    def test_get_conversation_messages_not_found(self, client: TestClient) -> None:
         """Test getting messages for non-existent attack returns 404."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.get_attack_messages_async = AsyncMock(return_value=None)
+            mock_service.get_conversation_messages_async = AsyncMock(return_value=None)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/attacks/nonexistent/messages")
+            response = client.get("/api/attacks/nonexistent/messages", params={"conversation_id": "nonexistent"})
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_conversation_messages_invalid_conversation_returns_400(self, client: TestClient) -> None:
+        """Test getting messages for invalid conversation_id returns 400."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_conversation_messages_async = AsyncMock(
+                side_effect=ValueError("conversation does not belong to this attack")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks/attack-1/messages", params={"conversation_id": "wrong-conv"})
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_list_attacks_with_labels(self, client: TestClient) -> None:
         """Test listing attacks with label filters."""
@@ -382,6 +399,7 @@ class TestAttackRoutes:
                 return_value=AttackListResponse(
                     items=[
                         AttackSummary(
+                            attack_result_id="ar-attack-1",
                             conversation_id="attack-1",
                             attack_type="TestAttack",
                             outcome=None,
@@ -486,6 +504,24 @@ class TestAttackRoutes:
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             assert call_kwargs["labels"] == {"url": "http://example.com:8080"}
 
+    def test_parse_labels_passes_keys_through_without_normalization(self, client: TestClient) -> None:
+        """Test that label keys are passed through as-is (DB stores canonical keys after migration)."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?label=operator:alice&label=operation:redteam")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args[1]
+            assert call_kwargs["labels"] == {"operator": "alice", "operation": "redteam"}
+
     def test_list_attacks_forwards_converter_types_param(self, client: TestClient) -> None:
         """Test that converter_types query params are forwarded to service."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
@@ -503,6 +539,141 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             assert call_kwargs["converter_types"] == ["Base64", "ROT13"]
+
+    def test_list_attacks_normalizes_empty_converter_types(self, client: TestClient) -> None:
+        """Test that empty converter_types strings are stripped so [] means no-converter attacks."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?converter_types=")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args[1]
+            assert call_kwargs["converter_types"] == []
+
+    def test_get_conversations_success(self, client: TestClient) -> None:
+        """Test getting attack conversations returns service response."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_conversations_async = AsyncMock(
+                return_value={
+                    "attack_result_id": "ar-attack-1",
+                    "main_conversation_id": "attack-1",
+                    "conversations": [
+                        {
+                            "conversation_id": "attack-1",
+                            "message_count": 2,
+                            "last_message_preview": "hello",
+                            "created_at": "2026-01-01T00:00:00Z",
+                        }
+                    ],
+                }
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks/ar-attack-1/conversations")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["attack_result_id"] == "ar-attack-1"
+            assert data["main_conversation_id"] == "attack-1"
+
+    def test_get_conversations_not_found(self, client: TestClient) -> None:
+        """Test getting conversations for missing attack returns 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_conversations_async = AsyncMock(return_value=None)
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks/missing/conversations")
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_create_related_conversation_success(self, client: TestClient) -> None:
+        """Test creating related conversation returns 201 response."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_related_conversation_async = AsyncMock(
+                return_value={
+                    "conversation_id": "branch-1",
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/attacks/ar-attack-1/conversations", json={})
+
+            assert response.status_code == status.HTTP_201_CREATED
+            data = response.json()
+            assert data["conversation_id"] == "branch-1"
+
+    def test_create_related_conversation_not_found(self, client: TestClient) -> None:
+        """Test creating related conversation for missing attack returns 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_related_conversation_async = AsyncMock(return_value=None)
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/attacks/missing/conversations", json={})
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_update_main_conversation_success(self, client: TestClient) -> None:
+        """Test changing main conversation returns service response."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.update_main_conversation_async = AsyncMock(
+                return_value={
+                    "attack_result_id": "ar-attack-1",
+                    "conversation_id": "branch-1",
+                    "updated_at": "2026-03-06T00:00:00+00:00",
+                }
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks/ar-attack-1/update-main-conversation",
+                json={"conversation_id": "branch-1"},
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["conversation_id"] == "branch-1"
+
+    def test_update_main_conversation_bad_request(self, client: TestClient) -> None:
+        """Test changing main conversation with invalid conversation returns 400."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.update_main_conversation_async = AsyncMock(side_effect=ValueError("invalid conversation"))
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks/ar-attack-1/update-main-conversation",
+                json={"conversation_id": "missing-conv"},
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_update_main_conversation_not_found(self, client: TestClient) -> None:
+        """Test changing main conversation for missing attack returns 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.update_main_conversation_async = AsyncMock(return_value=None)
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks/missing/update-main-conversation",
+                json={"conversation_id": "branch-1"},
+            )
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 # ============================================================================
@@ -538,7 +709,7 @@ class TestTargetRoutes:
             mock_service = MagicMock()
             mock_service.create_target_async = AsyncMock(
                 return_value=TargetInstance(
-                    target_unique_name="target-1",
+                    target_registry_name="target-1",
                     target_type="TextTarget",
                 )
             )
@@ -551,7 +722,7 @@ class TestTargetRoutes:
 
             assert response.status_code == status.HTTP_201_CREATED
             data = response.json()
-            assert data["target_unique_name"] == "target-1"
+            assert data["target_registry_name"] == "target-1"
 
     def test_create_target_invalid_type(self, client: TestClient) -> None:
         """Test target creation with invalid type."""
@@ -587,7 +758,7 @@ class TestTargetRoutes:
             mock_service = MagicMock()
             mock_service.get_target_async = AsyncMock(
                 return_value=TargetInstance(
-                    target_unique_name="target-1",
+                    target_registry_name="target-1",
                     target_type="TextTarget",
                 )
             )
@@ -597,7 +768,7 @@ class TestTargetRoutes:
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert data["target_unique_name"] == "target-1"
+            assert data["target_registry_name"] == "target-1"
 
     def test_get_target_not_found(self, client: TestClient) -> None:
         """Test getting a non-existent target."""
@@ -609,6 +780,68 @@ class TestTargetRoutes:
             response = client.get("/api/targets/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_list_targets_includes_target_specific_params(self, client: TestClient) -> None:
+        """Test that target_specific_params (e.g. reasoning_effort) are included in list response."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_targets_async = AsyncMock(
+                return_value=TargetListResponse(
+                    items=[
+                        TargetInstance(
+                            target_registry_name="azure_responses",
+                            target_type="OpenAIResponseTarget",
+                            endpoint="https://api.openai.com",
+                            model_name="o3",
+                            temperature=1.0,
+                            target_specific_params={
+                                "reasoning_effort": "high",
+                                "reasoning_summary": "auto",
+                                "max_output_tokens": 4096,
+                            },
+                        )
+                    ],
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            target = data["items"][0]
+            assert target["target_specific_params"]["reasoning_effort"] == "high"
+            assert target["target_specific_params"]["reasoning_summary"] == "auto"
+            assert target["target_specific_params"]["max_output_tokens"] == 4096
+
+    def test_get_target_includes_target_specific_params(self, client: TestClient) -> None:
+        """Test that target_specific_params are included in single-target response."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_target_async = AsyncMock(
+                return_value=TargetInstance(
+                    target_registry_name="azure_chat",
+                    target_type="OpenAIChatTarget",
+                    endpoint="https://api.openai.com",
+                    model_name="gpt-4",
+                    temperature=0.7,
+                    target_specific_params={
+                        "frequency_penalty": 0.5,
+                        "presence_penalty": 0.3,
+                        "seed": 42,
+                    },
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/azure_chat")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["target_specific_params"]["frequency_penalty"] == 0.5
+            assert data["target_specific_params"]["presence_penalty"] == 0.3
+            assert data["target_specific_params"]["seed"] == 42
 
 
 # ============================================================================
@@ -932,6 +1165,23 @@ class TestLabelsRoutes:
             data = response.json()
             assert set(data["labels"]["env"]) == {"prod", "staging"}
             assert data["labels"]["team"] == ["blue"]
+
+    def test_get_labels_returns_keys_without_normalization(self, client: TestClient) -> None:
+        """Test that label keys are returned as-is from the DB (canonical after migration)."""
+        with patch("pyrit.backend.routes.labels.CentralMemory") as mock_memory_class:
+            mock_memory = MagicMock()
+            mock_memory.get_unique_attack_labels.return_value = {
+                "operator": ["alice", "bob"],
+                "operation": ["hunt", "scan"],
+            }
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            response = client.get("/api/labels")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert set(data["labels"]["operator"]) == {"alice", "bob"}
+            assert set(data["labels"]["operation"]) == {"hunt", "scan"}
 
     @pytest.mark.asyncio
     async def test_get_label_options_unsupported_source_returns_empty_labels(self) -> None:

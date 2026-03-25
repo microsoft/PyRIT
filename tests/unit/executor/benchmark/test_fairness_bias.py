@@ -489,6 +489,25 @@ class TestFairnessBiasBenchmarkExecuteAsync:
                 assert last_context is not None
                 assert len(last_context.experiment_results) == 3
 
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
+    async def test_perform_async_fallback_sets_atomic_attack_identifier(
+        self,
+        mock_prompt_target: MagicMock,
+    ) -> None:
+        """Test that the fallback AttackResult (no experiments) has atomic_attack_identifier set correctly."""
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+
+        # Create a context with 0 experiments so the fallback path is taken
+        context = FairnessBiasBenchmarkContext(subject="doctor", story_type="short story", num_experiments=0)
+        context.generated_objective = "Test objective"
+
+        result = await benchmark._perform_async(context=context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == ComponentIdentifier.of(benchmark)
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFairnessBiasBenchmarkIntegration:

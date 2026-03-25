@@ -8,7 +8,7 @@ Covers the lifespan manager and setup_frontend function.
 """
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,28 +19,23 @@ class TestLifespan:
     """Tests for the application lifespan context manager."""
 
     @pytest.mark.asyncio
-    async def test_lifespan_initializes_pyrit_and_yields(self) -> None:
-        """Test that lifespan calls initialize_pyrit_async on startup when memory is not set."""
-        with (
-            patch("pyrit.backend.main.CentralMemory._memory_instance", None),
-            patch("pyrit.backend.main.initialize_pyrit_async", new_callable=AsyncMock) as mock_init,
-        ):
+    async def test_lifespan_yields(self) -> None:
+        """Test that lifespan yields without performing initialization (handled by CLI)."""
+        with patch("pyrit.memory.CentralMemory._memory_instance", MagicMock()):
             async with lifespan(app):
-                pass  # The body of the context manager is the "yield" phase
-
-            mock_init.assert_awaited_once_with(memory_db_type="SQLite")
+                pass  # Should complete without error
 
     @pytest.mark.asyncio
-    async def test_lifespan_skips_init_when_already_initialized(self) -> None:
-        """Test that lifespan skips initialization when CentralMemory is already set."""
+    async def test_lifespan_warns_when_memory_not_initialized(self) -> None:
+        """Test that lifespan logs a warning when CentralMemory is not set."""
         with (
-            patch("pyrit.backend.main.CentralMemory._memory_instance", MagicMock()),
-            patch("pyrit.backend.main.initialize_pyrit_async", new_callable=AsyncMock) as mock_init,
+            patch("pyrit.memory.CentralMemory._memory_instance", None),
+            patch("logging.Logger.warning") as mock_warning,
         ):
             async with lifespan(app):
                 pass
 
-            mock_init.assert_not_awaited()
+            mock_warning.assert_called_once()
 
 
 class TestSetupFrontend:

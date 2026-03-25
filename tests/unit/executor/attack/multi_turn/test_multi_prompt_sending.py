@@ -423,6 +423,21 @@ class TestAttackExecution:
         assert result.last_response is not None
 
     @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(
+        self, mock_target, mock_prompt_normalizer, basic_context, sample_response
+    ):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        attack = MultiPromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
+
+        result = await attack._perform_async(context=basic_context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
+    @pytest.mark.asyncio
     async def test_perform_async_stops_on_failed_prompt(self, mock_target, mock_prompt_normalizer, basic_context):
         # First prompt succeeds, second fails
         mock_prompt_normalizer.send_prompt_async.side_effect = [
@@ -532,7 +547,6 @@ class TestExecuteAsync:
             mock_perform.return_value = AttackResult(
                 conversation_id=str(uuid.uuid4()),
                 objective="test",
-                attack_identifier=attack.get_identifier(),
                 outcome=AttackOutcome.UNDETERMINED,
                 outcome_reason="test",
                 executed_turns=0,
@@ -581,7 +595,6 @@ class TestExecuteAsync:
             mock_perform.return_value = AttackResult(
                 conversation_id=str(uuid.uuid4()),
                 objective="test",
-                attack_identifier=attack.get_identifier(),
                 outcome=AttackOutcome.UNDETERMINED,
                 outcome_reason="test",
                 executed_turns=0,

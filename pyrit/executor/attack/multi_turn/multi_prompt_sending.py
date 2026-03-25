@@ -19,6 +19,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -207,7 +208,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         Raises:
             ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.supports_multi_turn:
+        if not self._objective_target.capabilities.supports_multi_turn:
             raise ValueError(
                 "MultiPromptSendingAttack requires a multi-turn target. "
                 "The objective target does not support multi-turn conversations."
@@ -287,7 +288,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         return AttackResult(
             conversation_id=context.session.conversation_id,
             objective=context.objective,
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
             last_score=score,
             related_conversations=context.related_conversations,

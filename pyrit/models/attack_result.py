@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import functools
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
@@ -11,9 +13,11 @@ from pyrit.models.strategy_result import StrategyResult
 
 if TYPE_CHECKING:
     from pyrit.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.conversation_reference import ConversationReference, ConversationType
+    from pyrit.models.conversation_reference import ConversationReference
     from pyrit.models.message_piece import MessagePiece
     from pyrit.models.score import Score
+
+from pyrit.models.conversation_reference import ConversationType
 
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
 
@@ -48,11 +52,13 @@ class AttackResult(StrategyResult):
     objective: str
 
     # Database-assigned unique ID for this AttackResult row.
-    # ``None`` for newly-constructed results that haven't been persisted yet.
-    attack_result_id: Optional[str] = None
+    # Auto-generated if not provided (e.g. when loading from DB, the persisted ID is passed in).
+    attack_result_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    # Identifier of the attack strategy that produced this result
-    attack_identifier: Optional[ComponentIdentifier] = None
+    # Composite identifier combining the attack strategy identity with
+    # seed identifiers from the dataset.
+    # Contains the attack strategy as children["attack"] plus optional seeds.
+    atomic_attack_identifier: Optional[ComponentIdentifier] = None
 
     # Evidence
     # Model response generated in the final turn of the attack
@@ -81,6 +87,43 @@ class AttackResult(StrategyResult):
     # Arbitrary metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def attack_identifier(self) -> Optional[ComponentIdentifier]:
+        """
+        Deprecated: use ``get_attack_strategy_identifier()`` or ``atomic_attack_identifier`` instead.
+
+        Returns the attack strategy ``ComponentIdentifier`` extracted from
+        ``atomic_attack_identifier``, emitting a deprecation warning.
+
+        Returns:
+            Optional[ComponentIdentifier]: The attack strategy identifier, or ``None``.
+
+        """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="AttackResult.attack_identifier",
+            new_item="AttackResult.atomic_attack_identifier or get_attack_strategy_identifier()",
+            removed_in="0.15.0",
+        )
+        return self.get_attack_strategy_identifier()
+
+    def get_attack_strategy_identifier(self) -> Optional[ComponentIdentifier]:
+        """
+        Return the attack strategy identifier from the composite atomic identifier.
+
+        This is the non-deprecated replacement for the ``attack_identifier`` property.
+        Extracts and returns the ``"attack"`` child from ``atomic_attack_identifier``.
+
+        Returns:
+            Optional[ComponentIdentifier]: The attack strategy identifier, or ``None`` if
+                ``atomic_attack_identifier`` is not set.
+
+        """
+        if self.atomic_attack_identifier is None:
+            return None
+        return self.atomic_attack_identifier.get_child("attack")
+
     def get_conversations_by_type(self, conversation_type: ConversationType) -> list[ConversationReference]:
         """
         Return all related conversations of the requested type.
@@ -94,6 +137,55 @@ class AttackResult(StrategyResult):
         """
         return [ref for ref in self.related_conversations if ref.conversation_type == conversation_type]
 
+    def get_all_conversation_ids(self) -> set[str]:
+        """
+        Return the main conversation ID plus all related conversation IDs.
+
+        Returns:
+            set[str]: All conversation IDs associated with this attack.
+        """
+        return {self.conversation_id} | {ref.conversation_id for ref in self.related_conversations}
+
+    def get_active_conversation_ids(self) -> set[str]:
+        """
+        Return the main conversation ID plus pruned (user-visible) related conversation IDs.
+
+        Excludes adversarial chat conversations which are internal implementation details.
+
+        Returns:
+            set[str]: Main + pruned conversation IDs.
+        """
+        return {self.conversation_id} | {
+            ref.conversation_id
+            for ref in self.related_conversations
+            if ref.conversation_type == ConversationType.PRUNED
+        }
+
+    def get_pruned_conversation_ids(self) -> list[str]:
+        """
+        Return IDs of pruned (branched) conversations only.
+
+        Returns:
+            list[str]: Pruned conversation IDs.
+        """
+        return [
+            ref.conversation_id
+            for ref in self.related_conversations
+            if ref.conversation_type == ConversationType.PRUNED
+        ]
+
+    def includes_conversation(self, conversation_id: str) -> bool:
+        """
+        Check whether a conversation belongs to this attack (main or any related).
+
+        Args:
+            conversation_id (str): The conversation ID to check.
+
+        Returns:
+            bool: True if the conversation is part of this attack.
+        """
+        return conversation_id in self.get_all_conversation_ids()
+
     def __str__(self) -> str:
         """
         Return a concise string representation of this attack result.
@@ -103,3 +195,46 @@ class AttackResult(StrategyResult):
 
         """
         return f"AttackResult: {self.conversation_id}: {self.outcome.value}: {self.objective[:50]}..."
+
+
+def _add_attack_identifier_compat(cls: type) -> type:
+    """
+    Wrap a dataclass ``__init__`` to accept the deprecated ``attack_identifier`` kwarg.
+
+    When ``attack_identifier`` is passed, it is automatically promoted to
+    ``atomic_attack_identifier`` via ``build_atomic_attack_identifier`` and a
+    deprecation warning is emitted.
+
+    Args:
+        cls: The dataclass to wrap.
+
+    Returns:
+        The same class with a wrapped ``__init__``.
+
+    """
+    original_init = cls.__init__  # type: ignore[misc]
+
+    @functools.wraps(original_init)
+    def wrapped_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        attack_identifier = kwargs.pop("attack_identifier", None)
+        if attack_identifier is not None:
+            from pyrit.common.deprecation import print_deprecation_message
+
+            print_deprecation_message(
+                old_item="AttackResult(attack_identifier=...)",
+                new_item="AttackResult(atomic_attack_identifier=...)",
+                removed_in="0.15.0",
+            )
+            if kwargs.get("atomic_attack_identifier") is None:
+                from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+
+                kwargs["atomic_attack_identifier"] = build_atomic_attack_identifier(
+                    attack_identifier=attack_identifier,
+                )
+        original_init(self, *args, **kwargs)
+
+    cls.__init__ = wrapped_init  # type: ignore[misc]
+    return cls
+
+
+_add_attack_identifier_compat(AttackResult)

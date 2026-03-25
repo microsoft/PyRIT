@@ -82,14 +82,14 @@ class TargetService:
             )
         return cls
 
-    def _build_instance_from_object(self, *, target_unique_name: str, target_obj: Any) -> TargetInstance:
+    def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
         """
         Build a TargetInstance from a registry object.
 
         Returns:
             TargetInstance with metadata derived from the object.
         """
-        return target_object_to_instance(target_unique_name, target_obj)
+        return target_object_to_instance(target_registry_name, target_obj)
 
     async def list_targets_async(
         self,
@@ -102,17 +102,17 @@ class TargetService:
 
         Args:
             limit: Maximum items to return.
-            cursor: Pagination cursor (target_unique_name to start after).
+            cursor: Pagination cursor (target_registry_name to start after).
 
         Returns:
             TargetListResponse containing paginated targets.
         """
         items = [
-            self._build_instance_from_object(target_unique_name=name, target_obj=obj)
-            for name, obj in self._registry.get_all_instances().items()
+            self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
+            for entry in self._registry.get_all_instances()
         ]
         page, has_more = self._paginate(items, cursor, limit)
-        next_cursor = page[-1].target_unique_name if has_more and page else None
+        next_cursor = page[-1].target_registry_name if has_more and page else None
         return TargetListResponse(
             items=page,
             pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
@@ -129,7 +129,7 @@ class TargetService:
         start_idx = 0
         if cursor:
             for i, item in enumerate(items):
-                if item.target_unique_name == cursor:
+                if item.target_registry_name == cursor:
                     start_idx = i + 1
                     break
 
@@ -137,33 +137,33 @@ class TargetService:
         has_more = len(items) > start_idx + limit
         return page, has_more
 
-    async def get_target_async(self, *, target_unique_name: str) -> Optional[TargetInstance]:
+    async def get_target_async(self, *, target_registry_name: str) -> Optional[TargetInstance]:
         """
-        Get a target instance by unique name.
+        Get a target instance by registry name.
 
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.get_instance_by_name(target_unique_name)
+        obj = self._registry.get_instance_by_name(target_registry_name)
         if obj is None:
             return None
-        return self._build_instance_from_object(target_unique_name=target_unique_name, target_obj=obj)
+        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
 
-    def get_target_object(self, *, target_unique_name: str) -> Optional[Any]:
+    def get_target_object(self, *, target_registry_name: str) -> Optional[Any]:
         """
         Get the actual target object for use in attacks.
 
         Returns:
             The PromptTarget object if found, None otherwise.
         """
-        return self._registry.get_instance_by_name(target_unique_name)
+        return self._registry.get_instance_by_name(target_registry_name)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """
         Create a new target instance from API request.
 
         Instantiates the target with the given type and params,
-        then registers it in the registry under its unique_name.
+        then registers it in the registry under its registry name.
 
         Args:
             request: The create target request with type and params.
@@ -180,8 +180,8 @@ class TargetService:
         self._registry.register_instance(target_obj)
 
         # Build response from the registered instance
-        target_unique_name = target_obj.get_identifier().unique_name
-        return self._build_instance_from_object(target_unique_name=target_unique_name, target_obj=target_obj)
+        target_registry_name = target_obj.get_identifier().unique_name
+        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
 
 
 @lru_cache(maxsize=1)

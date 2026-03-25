@@ -1,37 +1,69 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import re
 import sys
-from html.parser import HTMLParser
 from pathlib import Path
 
 from feedgen.feed import FeedGenerator
 
+BLOG_SOURCE_DIR = Path("doc/blog")
+RSS_OUTPUT_DIR = Path("doc/_build/site/blog")
 
-# HTML parser to extract title and description
-class BlogEntryParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.title = ""
-        self.description = ""
-        self.current_tag = ""
-        self.description_step = 0
 
-    def handle_starttag(self, tag, attrs):
-        if tag == "p":
-            self.description_step += 1
-        self.current_tag = tag
+def parse_blog_markdown(filepath: Path) -> tuple[str, str]:
+    """Extract title and first paragraph from a blog markdown file.
 
-    def handle_endtag(self, tag):
-        if tag == "p":
-            self.description_step += 1
-        self.current_tag = ""
+    Args:
+        filepath: Path to the markdown blog file.
 
-    def handle_data(self, data):
-        if self.current_tag == "title":
-            self.title = data
-        elif self.description_step == 3:
-            self.description = self.description + data
+    Returns:
+        tuple[str, str]: The title and description extracted from the file.
+    """
+    text = filepath.read_text(encoding="utf-8")
+    lines = text.strip().split("\n")
+
+    title = ""
+    description = ""
+
+    # Title is the first heading
+    for line in lines:
+        if line.startswith("# "):
+            title = line.lstrip("# ").strip()
+            break
+
+    # Description is the first non-empty paragraph after the date line
+    in_description = False
+    desc_lines = []
+    for line in lines[2:]:
+        stripped = line.strip()
+        if not stripped:
+            if in_description and desc_lines:
+                break
+            continue
+        if stripped.startswith(("<small>", "#")):
+            continue
+        in_description = True
+        desc_lines.append(stripped)
+
+    description = " ".join(desc_lines)
+    return title, description
+
+
+def extract_date_from_filename(filename: str) -> str:
+    """Extract publication date from blog filename (e.g. 2024_12_3.md -> 2024-12-03).
+
+    Args:
+        filename: The blog filename.
+
+    Returns:
+        str: ISO date string.
+    """
+    match = re.match(r"(\d{4})_(\d{1,2})_(\d{1,2})", filename)
+    if not match:
+        return ""
+    year, month, day = match.groups()
+    return f"{year}-{int(month):02d}-{int(day):02d}"
 
 
 # Generate the RSS feed structure
@@ -43,10 +75,13 @@ fg.description("PyRIT Blog")
 fg.logo("https://azure.github.io/PyRIT/_static/roakey.png")
 fg.language("en")
 
-# Iterate over the blog files and sort them
+# Iterate over the blog source markdown files
 print("Pulling blog files...")
-directory = Path("doc/_build/html/blog/")
-files = [file for file in directory.iterdir() if file.is_file() and file.name.startswith("20")]
+if not BLOG_SOURCE_DIR.exists():
+    print(f"Error: Blog source directory {BLOG_SOURCE_DIR} not found. Exiting.")
+    sys.exit(1)
+
+files = [f for f in BLOG_SOURCE_DIR.iterdir() if f.is_file() and f.name.startswith("20") and f.suffix == ".md"]
 if len(files) == 0:
     print("Error: No blog files found. Exiting.")
     sys.exit(1)
@@ -56,38 +91,36 @@ files.sort(key=lambda x: x.name)
 for file in files:
     print(f"Parsing {file.name}...")
     fe = fg.add_entry()
-    fe.link(href=f"https://azure.github.io/PyRIT/blog/{file.name}")
-    fe.guid(f"https://azure.github.io/PyRIT/blog/{file.name}")
+    # Blog pages are served at blog/<filename_without_ext>
+    page_name = file.stem
+    fe.link(href=f"https://azure.github.io/PyRIT/blog/{page_name}")
+    fe.guid(f"https://azure.github.io/PyRIT/blog/{page_name}")
 
-    # Extract title and description from HTML content
-    with open(file, encoding="utf-8") as f:
-        parser = BlogEntryParser()
-        parser.feed(f.read())
-        fe.title(parser.title)
-        fe.description(parser.description)
+    title, description = parse_blog_markdown(file)
+    fe.title(title)
+    fe.description(description)
 
-    # Extract publication date from file name
-    fe.pubDate(f"{file.name[:10].replace('_', '-')}T10:00:00Z")
+    pub_date = extract_date_from_filename(file.name)
+    if pub_date:
+        fe.pubDate(f"{pub_date}T10:00:00Z")
 
 # Validating the RSS feed
 print("Validating RSS feed...")
 first_entry = fg.entry()[-1]
-if first_entry.title() != "Multi-Turn orchestrators — PyRIT Documentation":
-    print("Error: Title parsing failed. Exiting.")
+if first_entry.title() != "Multi-Turn orchestrators":
+    print(f"Error: Title parsing failed. Got: {first_entry.title()!r}. Exiting.")
     sys.exit(1)
-if first_entry.description() != (
-    "In PyRIT, orchestrators are typically seen as the top-level component. "
-    "This is where your attack logic is implemented, while notebooks should "
-    "primarily be used to configure orchestrators."
-):
-    print("Error: Description parsing failed. Exiting.")
+expected_desc_start = "In PyRIT, orchestrators are typically seen as the top-level component."
+if not first_entry.description().startswith(expected_desc_start):
+    print(f"Error: Description parsing failed. Got: {first_entry.description()[:80]!r}. Exiting.")
     sys.exit(1)
 
 # Export the RSS feed
 print("Exporting RSS feed...")
-fg.rss_file("doc/_build/html/blog/rss.xml", pretty=True)
-file = Path("doc/_build/html/blog/rss.xml")
-if not file.exists() or file.stat().st_size == 0:
+RSS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+rss_path = RSS_OUTPUT_DIR / "rss.xml"
+fg.rss_file(str(rss_path), pretty=True)
+if not rss_path.exists() or rss_path.stat().st_size == 0:
     print("Error: RSS feed export failed. Exiting.")
     sys.exit(1)
 

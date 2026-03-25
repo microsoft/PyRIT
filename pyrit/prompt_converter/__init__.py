@@ -62,6 +62,7 @@ from pyrit.prompt_converter.random_capital_letters_converter import RandomCapita
 from pyrit.prompt_converter.random_translation_converter import RandomTranslationConverter
 from pyrit.prompt_converter.repeat_token_converter import RepeatTokenConverter
 from pyrit.prompt_converter.rot13_converter import ROT13Converter
+from pyrit.prompt_converter.scientific_translation_converter import ScientificTranslationConverter
 from pyrit.prompt_converter.search_replace_converter import SearchReplaceConverter
 from pyrit.prompt_converter.selective_text_converter import SelectiveTextConverter
 from pyrit.prompt_converter.string_join_converter import StringJoinConverter
@@ -166,6 +167,7 @@ __all__ = [
     "RangeSelectionStrategy",
     "RegexSelectionStrategy",
     "RepeatTokenConverter",
+    "ScientificTranslationConverter",
     "SearchReplaceConverter",
     "SelectiveTextConverter",
     "SneakyBitsSmugglerConverter",

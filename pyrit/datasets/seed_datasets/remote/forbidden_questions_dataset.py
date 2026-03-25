@@ -20,7 +20,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     Physical Harm, Economic Harm, Fraud, Pornography, Political Lobbying, Privacy Violence,
     Legal Opinion, Financial Advice, Health Consultation, and Government Decision.
 
-    Reference: https://arxiv.org/abs/2308.03825
+    Reference: [@shen2023donotanything]
     GitHub: https://github.com/verazuo/jailbreak_llms/
     Website: https://jailbreak-llms.xinyueshen.me/
     """

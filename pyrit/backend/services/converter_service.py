@@ -88,8 +88,8 @@ class ConverterService:
             ConverterInstanceListResponse containing all registered converters.
         """
         items = [
-            self._build_instance_from_object(converter_id=name, converter_obj=obj)
-            for name, obj in self._registry.get_all_instances().items()
+            self._build_instance_from_object(converter_id=entry.name, converter_obj=entry.instance)
+            for entry in self._registry.get_all_instances()
         ]
         return ConverterInstanceListResponse(items=items)
 

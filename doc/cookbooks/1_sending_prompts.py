@@ -76,7 +76,7 @@ from pyrit.score import (
 
 # Configure the labels you want to send
 # These should be unique to this test to make it easier to retrieve
-memory_labels = {"op_name": "new_op", "user_name": "roakey", "test_name": "cookbook_1"}
+memory_labels = {"operation": "op_trash_panda", "operator": "roakey", "test_name": "cookbook_1"}
 
 
 # Configure the target you are testing
@@ -238,12 +238,12 @@ all_message_pieces = memory.get_message_pieces(labels=memory_labels)
 # %%
 # Query attack results using the labels we assigned earlier
 # Get all attack results from our operation
-operation_results = memory.get_attack_results(labels={"op_name": "new_op"})
+operation_results = memory.get_attack_results(labels={"operation": "op_trash_panda"})
 
-print(f"Found {len(operation_results)} attack results from operation 'new_op'")
+print(f"Found {len(operation_results)} attack results from operation 'op_trash_panda'")
 
 # Get results from a specific user
-user_results = memory.get_attack_results(labels={"user_name": "roakey"})
+user_results = memory.get_attack_results(labels={"operator": "roakey"})
 
 print(f"Found {len(user_results)} attack results from user 'roakey'")
 
