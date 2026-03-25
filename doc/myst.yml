@@ -34,16 +34,22 @@ project:
             - file: getting_started/pyrit_conf.md
         - file: getting_started/troubleshooting.md
           children:
-            - file: getting_started/troubleshooting_docker.md
-            - file: getting_started/troubleshooting_devcontainers.md
-            - file: getting_started/troubleshooting_local_dev.md
-            - file: getting_started/jupyter_setup.md
-            - file: getting_started/use_azure_sql_db.md
-            - file: getting_started/deploy_hf_model_aml.ipynb
-            - file: getting_started/download_and_register_hf_model_aml.ipynb
-            - file: getting_started/hf_aml_model_endpoint_guide.md
-            - file: getting_started/score_aml_endpoint.ipynb
-            - file: getting_started/troubleshooting_guide_hf_azureml.md
+            - file: getting_started/troubleshooting_installation.md
+              children:
+                - file: getting_started/troubleshooting_docker.md
+                - file: getting_started/troubleshooting_devcontainers.md
+                - file: getting_started/troubleshooting_local_dev.md
+            - file: getting_started/troubleshooting_setup.md
+              children:
+                - file: getting_started/jupyter_setup.md
+                - file: getting_started/use_azure_sql_db.md
+            - file: getting_started/troubleshooting_deployment.md
+              children:
+                - file: getting_started/deploy_hf_model_aml.ipynb
+                - file: getting_started/download_and_register_hf_model_aml.ipynb
+                - file: getting_started/hf_aml_model_endpoint_guide.md
+                - file: getting_started/score_aml_endpoint.ipynb
+                - file: getting_started/troubleshooting_guide_hf_azureml.md
     - file: contributing/README.md
       children:
         - file: contributing/1_git.md

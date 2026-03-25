@@ -129,14 +129,12 @@ from pyrit.scenario import DatasetConfiguration, Scenario, ScenarioStrategy
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
 
-
 class MyCustomStrategy(ScenarioStrategy):
     """Strategies for my custom scenario."""
 
     ALL = ("all", {"all"})
     Strategy1 = ("strategy1", set[str]())
     Strategy2 = ("strategy2", set[str]())
-
 
 class MyCustomScenario(Scenario):
     """My custom scenario that does XYZ."""
@@ -171,10 +169,8 @@ class MyCustomScenario(Scenario):
         # Example: create attacks for each strategy composite
         return []
 
-
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore
 MyCustomScenario()
-
 
 # %% [markdown]
 # Then discover and run it:

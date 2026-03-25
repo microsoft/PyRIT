@@ -62,6 +62,8 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 
 :::::
 
+---
+
 ## Getting Started
 
 Getting PyRIT running takes two steps: **install** the package, then **configure** your AI endpoints. For the path that's right for you, see the [Getting Started](getting_started/README) guide.

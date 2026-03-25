@@ -56,7 +56,6 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 # the "Profile Path".
 #
 
-
 # %%
 async def connect_to_existing_browser(browser_debug_port, run_function):
     """Connect to an existing browser session with remote debugging enabled"""
@@ -87,7 +86,6 @@ async def connect_to_existing_browser(browser_debug_port, run_function):
         # Don't close browser since it was already running
         await context.close()
 
-
 # %% [markdown]
 # ## Using `PlaywrightCopilotTarget` for Text Interactions
 #
@@ -97,7 +95,6 @@ async def connect_to_existing_browser(browser_debug_port, run_function):
 # Set the event loop policy for Windows before any async operations
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
 
 # Using PlaywrightCopilotTarget for text interactions
 async def run_text(page: Page) -> None:
@@ -127,12 +124,10 @@ async def run_text(page: Page) -> None:
     result = await attack.execute_async(objective=objective)  # type: ignore
     await ConsoleAttackResultPrinter().print_conversation_async(result=result, include_scores=True)  # type: ignore
 
-
 asyncio.run(connect_to_existing_browser(browser_debug_port=9222, run_function=run_text))
 
 # %% [markdown]
 # ## Using PlaywrightCopilotTarget for multimodal interactions
-
 
 # %%
 async def run_multimodal(page: Page) -> None:
@@ -160,6 +155,5 @@ async def run_multimodal(page: Page) -> None:
 
     result = await attack.execute_with_context_async(context=attack_context)  # type: ignore
     await ConsoleAttackResultPrinter().print_conversation_async(result=result, include_scores=True)  # type: ignore
-
 
 asyncio.run(connect_to_existing_browser(browser_debug_port=9222, run_function=run_multimodal))

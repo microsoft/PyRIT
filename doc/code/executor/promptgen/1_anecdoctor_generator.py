@@ -35,7 +35,6 @@
 # without content moderation or other safety mechanisms, and success rates
 # will vary depending on the model, topic, and example data.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 
@@ -134,7 +133,6 @@ import pandas as pd
 
 from pyrit.executor.promptgen import AnecdoctorContext
 
-
 def visualize_knowledge_graph(kg_result: str):
     """
     Parses the knowledge graph result, converts it to a DataFrame, and visualizes it as a graph.
@@ -160,7 +158,6 @@ def visualize_knowledge_graph(kg_result: str):
     edge_labels = nx.get_edge_attributes(g, "label")
     nx.draw_networkx_edge_labels(g, pos, edge_labels=edge_labels)
     plt.show()
-
 
 # Create Anecdoctor Contexts that match the above generators
 context_english = AnecdoctorContext(

@@ -58,7 +58,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
-
 class SimpleDarkBench(_RemoteDatasetLoader):
     @property
     def dataset_name(self) -> str:

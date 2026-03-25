@@ -193,20 +193,3 @@ Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
 ## Troubleshooting
 
 Having issues? See the [Local Dev Troubleshooting](./troubleshooting_local_dev.md) guide for common problems and solutions.
-
-## Advantages over Other Methods
-
-| Feature | uv | conda/mamba | pip + venv | Docker/DevContainer |
-|---------|----|--------------|-----------|--------------------|
-| Setup time | ~2 min | ~10-15 min | ~15-20 min | ~20-30 min |
-| Disk space | ~1 GB | ~3-5 GB | ~1.5 GB | ~5-10 GB |
-| Windows native | ✅ | ✅ | ✅ | ❌ (needs WSL2) |
-| Speed | ⚡⚡⚡ | ⚡ | ⚡⚡ | ⚡ |
-| Lock file | ✅ | ✅ | ❌ | ✅ |
-| Isolation | ✅ | ✅ | ✅ | ✅✅ |
-
-## Additional Resources
-
-- [uv Documentation](https://github.com/astral-sh/uv)
-- [PyRIT Contributing Guide](README.md)
-- [Running Tests Guide](4_running_tests.md)

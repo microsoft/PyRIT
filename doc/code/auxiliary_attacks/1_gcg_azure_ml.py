@@ -65,7 +65,6 @@ env_docker_context = Environment(
 # Create or update the AML environment
 ml_client.environments.create_or_update(env_docker_context)
 
-
 # %% [markdown]
 # ## Submit Training Job to AML
 

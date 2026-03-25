@@ -14,7 +14,6 @@
 #
 # XPIAs occur when an attacker takes over a user's session with an AI system by embedding their own instructions in a piece of content that the AI system is processing. In this demo, the entire flow is handled by the `XPIAWorkflow`. It starts with the attacker uploading an HTML file to the Azure Blob Storage container, which contains the jailbreak prompt. Note that this can be interchanged with other attack setups, e.g., sending an email knowing that an LLM summarizes the contents, or uploading a resume to an applicant tracking system knowing that an LLM is analyzing it for suitability for the role (see [our other example](./2_xpia_ai_recruiter.ipynb)). An agent's website summarization prompt triggers the XPIA by making the LLM process the jailbreak. Notably, the LLM may still be able to prevent being compromised depending on its metaprompt or other defenses such as content filters.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 # %%
@@ -64,7 +63,6 @@ from pyrit.auth import get_azure_token_provider
 from pyrit.setup import SQLITE, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=SQLITE)  # type: ignore
-
 
 async def processing_callback() -> str:
     gpt4o_endpoint = os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
@@ -118,7 +116,6 @@ async def processing_callback() -> str:
     assert isinstance(output_item, ResponseOutputMessage)
     content_item = output_item.content[0]
     return content_item.text  # type: ignore[union-attr]
-
 
 import logging
 

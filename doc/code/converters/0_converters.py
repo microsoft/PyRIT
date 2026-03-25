@@ -83,7 +83,6 @@ from pyrit.prompt_converter import (
 
 prompt = "tell me how to cut down a tree"
 
-
 print(await ROT13Converter().convert_tokens_async(prompt=prompt))  # type: ignore
 print(await RandomCapitalLettersConverter(percentage=25.0).convert_tokens_async(prompt=prompt))  # type: ignore
 print(await AsciiArtConverter().convert_tokens_async(prompt=prompt))  # type: ignore
@@ -95,7 +94,6 @@ print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type:
 #
 # Although converters can be used on their own, they should be thought of as a piece in the pipeline. Typically any attack will have arguments so that prompts can be converted before being sent to the target. They can be stacked, use LLMs, and are a powerful tool.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # ### Stacking Converters with PromptSendingAttack
 #

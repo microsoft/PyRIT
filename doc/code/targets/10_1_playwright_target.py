@@ -20,8 +20,6 @@
 #
 # ## Example Setup
 #
-# Before you begin, ensure you have the correct version of PyRIT installed and any necessary secrets configured as
-# described [here](../../setup/populating_secrets.md).
 #
 # To run the Flask app, you also must [download](https://ollama.com/download) and run Ollama, making sure the flask is using a correct model. For example, `ollama run llama3.2:1b` runs the Llama 3.2 1B model.
 #
@@ -44,7 +42,6 @@ import sys
 import time
 from urllib.error import URLError
 from urllib.request import urlopen
-
 
 def start_flask_app() -> subprocess.Popen:
     # Get the notebook's directory
@@ -74,7 +71,6 @@ def start_flask_app() -> subprocess.Popen:
     print("Flask app is running and ready!")
     return flask_process
 
-
 # Start the Flask app
 flask_process = start_flask_app()
 
@@ -93,7 +89,6 @@ from pyrit.prompt_target import PlaywrightTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
-
 
 # Define the interaction function
 async def interact_with_my_app(page: Page, message: Message) -> str:
@@ -124,7 +119,6 @@ async def interact_with_my_app(page: Page, message: Message) -> str:
     bot_response = await bot_message_element.text_content()
     return bot_response.strip()
 
-
 # %% [markdown]
 # ### Using `PlaywrightTarget` with the Interaction Function and Scorer
 #
@@ -139,7 +133,6 @@ from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttac
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-
 # Using PlaywrightTarget with the interaction function and scorer
 async def main(page: Page) -> None:
     target = PlaywrightTarget(interaction_func=interact_with_my_app, page=page)
@@ -151,7 +144,6 @@ async def main(page: Page) -> None:
     result = await attack.execute_async(objective=objective)  # type: ignore
     await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
 
-
 async def run() -> None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
@@ -162,14 +154,12 @@ async def run() -> None:
         await context.close()
         await browser.close()
 
-
 # Note in Windows this doesn't run in jupyter notebooks due to playwright limitations
 # https://github.com/microsoft/playwright-python/issues/480
 await run()
 
 # if __name__ == "__main__":
 #     asyncio.run(run())
-
 
 # %% [markdown]
 # ## Terminate the Flask App
