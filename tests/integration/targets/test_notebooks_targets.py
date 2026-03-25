@@ -13,6 +13,7 @@ from pyrit.common import path
 nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "targets").resolve()
 
 skipped_files = [
+    "4_openai_video_target.ipynb",  # requires OpenAI video API key
     "10_1_playwright_target.ipynb",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.ipynb",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.ipynb",  # WebSocket Copilot target requires manual pasting tokens
