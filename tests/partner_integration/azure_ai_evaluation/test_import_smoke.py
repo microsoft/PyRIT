@@ -11,7 +11,7 @@ Tests are SKIPPED if azure-ai-evaluation[redteam] is not installed.
 
 import pytest
 
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -54,18 +54,20 @@ class TestRedTeamModuleImports:
 
 @requires_azure_ai_evaluation
 class TestCallbackChatTargetInheritance:
-    """Verify _CallbackChatTarget correctly extends PromptChatTarget.
+    """Verify _CallbackChatTarget correctly extends PromptTarget.
 
     NOTE: These tests intentionally import private (_-prefixed) modules from
     azure-ai-evaluation. This is correct for contract testing — we need to verify
     the actual subclass relationships that PyRIT API changes could break.
+    Explicit inheritance checks are needed because azure-ai-evaluation subclasses
+    are detected via issubclass() checks in PyRIT orchestrators and scenarios.
     """
 
-    def test_callback_chat_target_extends_prompt_chat_target(self):
-        """_CallbackChatTarget must be a subclass of pyrit.prompt_target.PromptChatTarget."""
+    def test_callback_chat_target_extends_prompt_target(self):
+        """_CallbackChatTarget must be a subclass of pyrit.prompt_target.PromptTarget."""
         from azure.ai.evaluation.red_team._callback_chat_target import _CallbackChatTarget
 
-        assert issubclass(_CallbackChatTarget, PromptChatTarget)
+        assert issubclass(_CallbackChatTarget, PromptTarget)
 
 
 @requires_azure_ai_evaluation

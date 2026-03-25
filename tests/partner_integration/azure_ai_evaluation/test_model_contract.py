@@ -115,13 +115,55 @@ class TestSeedModels:
         """DatasetConfigurationBuilder creates SeedPrompt instances."""
         assert SeedPrompt is not None
 
+    def test_seed_prompt_accepts_value(self):
+        """SeedPrompt requires a value field (the actual prompt text)."""
+        prompt = SeedPrompt(value="test prompt")
+        assert prompt.value == "test prompt"
+
+    def test_seed_prompt_has_data_type(self):
+        """SeedPrompt.data_type defaults to 'text' for string values."""
+        prompt = SeedPrompt(value="test")
+        assert prompt.data_type == "text"
+
+    def test_seed_prompt_has_harm_categories(self):
+        """DatasetConfigurationBuilder sets harm_categories on SeedPrompt."""
+        prompt = SeedPrompt(value="test", harm_categories=["violence"])
+        assert "violence" in prompt.harm_categories
+
+    def test_seed_prompt_has_role(self):
+        """SeedPrompt supports role field for conversation context."""
+        prompt = SeedPrompt(value="test", role="user")
+        assert prompt.role == "user"
+
+    def test_seed_prompt_has_metadata(self):
+        """DatasetConfigurationBuilder attaches metadata to SeedPrompt."""
+        prompt = SeedPrompt(value="test", metadata={"key": "val"})
+        assert prompt.metadata["key"] == "val"
+
     def test_seed_objective_class_exists(self):
         """DatasetConfigurationBuilder creates SeedObjective instances."""
         assert SeedObjective is not None
 
+    def test_seed_objective_accepts_value(self):
+        """SeedObjective requires a value field (the objective text)."""
+        obj = SeedObjective(value="test objective")
+        assert obj.value == "test objective"
+
+    def test_seed_objective_has_harm_categories(self):
+        """DatasetConfigurationBuilder sets harm_categories on SeedObjective."""
+        obj = SeedObjective(value="test", harm_categories=["hate"])
+        assert "hate" in obj.harm_categories
+
     def test_seed_group_class_exists(self):
         """DatasetConfigurationBuilder creates SeedGroup instances."""
         assert SeedGroup is not None
+
+    def test_seed_group_accepts_seeds(self):
+        """SeedGroup groups multiple seeds together."""
+        prompt = SeedPrompt(value="prompt text", role="user")
+        obj = SeedObjective(value="objective text")
+        group = SeedGroup(seeds=[prompt, obj])
+        assert len(group.seeds) == 2
 
 
 class TestMiscModels:

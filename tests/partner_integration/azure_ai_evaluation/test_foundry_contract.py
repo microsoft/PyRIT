@@ -14,7 +14,7 @@ The azure-ai-evaluation red team module uses the Foundry framework for modern at
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.models.scenario_result import ScenarioResult
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import DatasetConfiguration, ScenarioStrategy
 from pyrit.scenario.foundry import FoundryScenario, FoundryStrategy
 
 
@@ -27,8 +27,6 @@ class TestFoundryStrategyContract:
 
     def test_foundry_strategy_is_scenario_strategy(self):
         """FoundryStrategy should extend ScenarioStrategy."""
-        from pyrit.scenario import ScenarioStrategy
-
         assert issubclass(FoundryStrategy, ScenarioStrategy)
 
 
