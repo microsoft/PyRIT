@@ -157,7 +157,12 @@ def _load_initializers_from_scripts(
                 obj = getattr(module, name)
                 # Check if it's a class, is a subclass of PyRITInitializer,
                 # and is not the base class itself
-                if isinstance(obj, type) and issubclass(obj, PyRITInitializer) and obj is not PyRITInitializer:
+                if (
+                    isinstance(obj, type)
+                    and issubclass(obj, PyRITInitializer)
+                    and obj is not PyRITInitializer
+                    and obj.__module__ == module.__name__
+                ):
                     try:
                         # Instantiate the initializer class
                         initializer = obj()

@@ -586,13 +586,11 @@ def test_validate_request_unsupported_data_types(target: OpenAIResponseTarget):
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=message)
 
-    assert "Unsupported data type" in str(excinfo.value), "Error not raised for unsupported data types"
+    assert "This target supports only the following data types" in str(excinfo.value), (
+        "Error not raised for unsupported data types"
+    )
 
     os.remove(image_piece.original_value)
-
-
-def test_is_json_response_supported(target: OpenAIResponseTarget):
-    assert target.is_json_response_supported() is True
 
 
 def test_inheritance_from_prompt_chat_target(target: OpenAIResponseTarget):
@@ -670,11 +668,7 @@ def test_validate_request_raises_for_invalid_type(target: OpenAIResponseTarget):
     )
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=req)
-    assert "Unsupported data type" in str(excinfo.value)
-
-
-def test_is_json_response_supported_returns_true(target: OpenAIResponseTarget):
-    assert target.is_json_response_supported() is True
+    assert "This target supports only the following data types" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

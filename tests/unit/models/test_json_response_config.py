@@ -55,6 +55,18 @@ def test_with_json_schema_object():
     assert config.strict is True
 
 
+def test_with_empty_json_schema_object():
+    metadata = {
+        "response_format": "json",
+        "json_schema": {},
+    }
+    config = _JsonResponseConfig.from_metadata(metadata=metadata)
+    assert config.enabled is True
+    assert config.schema == {}
+    assert config.schema_name == "CustomSchema"
+    assert config.strict is True
+
+
 def test_with_invalid_json_schema_string():
     metadata = {
         "response_format": "json",

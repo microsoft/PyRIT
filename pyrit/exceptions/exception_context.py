@@ -124,6 +124,12 @@ class ExecutionContext:
 
         if self.component_identifier:
             lines.append(f"{self.component_role.value} identifier: {self.component_identifier}")
+            model_name = self.component_identifier.params.get("model_name")
+            endpoint = self.component_identifier.params.get("endpoint")
+            if model_name:
+                lines.append(f"Model: {model_name}")
+            if endpoint:
+                lines.append(f"Endpoint: {endpoint}")
 
         return "\n".join(lines)
 

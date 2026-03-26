@@ -51,7 +51,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     jailbreaks, and other LLM exploitation techniques annotated with threat categories,
     severity levels, NOVA detection rules, and impact descriptions.
 
-    Reference: https://promptintel.novahunting.ai
+    Reference: [@roccia2024promptintel]
     API Docs: https://promptintel.novahunting.ai/api
 
     Each prompt is mapped to a SeedPrompt with the attack text and metadata.

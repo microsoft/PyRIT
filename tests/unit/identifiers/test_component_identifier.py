@@ -544,6 +544,100 @@ class TestComponentIdentifierRoundtrip:
         assert isinstance(recon_converters, list)
         assert len(recon_converters) == 2
 
+    def test_roundtrip_preserves_eval_hash(self):
+        """Test that eval_hash is preserved through to_dict -> from_dict round-trip."""
+        expected_eval_hash = "abc123" * 10 + "abcd"  # 64 chars
+        original = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"system_prompt": "Score the response"},
+        ).with_eval_hash(expected_eval_hash)
+        d = original.to_dict()
+        assert d["eval_hash"] == expected_eval_hash
+
+        reconstructed = ComponentIdentifier.from_dict(d)
+        assert reconstructed.eval_hash == expected_eval_hash
+
+    def test_roundtrip_eval_hash_survives_truncation(self):
+        """Regression test: eval_hash computed before truncation is preserved after round-trip.
+
+        This is the core bug fix — long params get truncated in to_dict(), which would
+        cause eval_hash recomputation to produce a wrong hash. By storing eval_hash in
+        the dict, it survives truncation.
+        """
+        long_prompt = "You are a scorer that evaluates responses. " * 20  # >80 chars
+        eval_hash_before_truncation = "correct_eval_hash_" + "0" * 46  # 64 chars
+        original = ComponentIdentifier(
+            class_name="SelfAskTrueFalseScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": long_prompt},
+        ).with_eval_hash(eval_hash_before_truncation)
+
+        # Serialize with truncation (simulates DB storage)
+        truncated_dict = original.to_dict(max_value_length=80)
+        # Params are truncated
+        assert truncated_dict["system_prompt_template"].endswith("...")
+        # But eval_hash is preserved
+        assert truncated_dict["eval_hash"] == eval_hash_before_truncation
+
+        # Deserialize
+        reconstructed = ComponentIdentifier.from_dict(truncated_dict)
+        # eval_hash is available on the reconstructed identifier
+        assert reconstructed.eval_hash == eval_hash_before_truncation
+        # And it's NOT in params (from_dict pops it as a reserved key)
+        assert "eval_hash" not in reconstructed.params
+
+    def test_roundtrip_no_eval_hash_when_not_set(self):
+        """Test that eval_hash is None when not set on the identifier."""
+        original = ComponentIdentifier(
+            class_name="Test",
+            class_module="mod",
+            params={"key": "value"},
+        )
+        d = original.to_dict()
+        assert "eval_hash" not in d
+
+        reconstructed = ComponentIdentifier.from_dict(d)
+        assert reconstructed.eval_hash is None
+
+    def test_to_dict_includes_eval_hash_from_prior_roundtrip(self):
+        """Test that to_dict re-emits eval_hash from a prior round-trip."""
+        eval_hash = "deadbeef" * 8  # 64 chars
+        original = ComponentIdentifier(
+            class_name="Test",
+            class_module="mod",
+        ).with_eval_hash(eval_hash)
+        d1 = original.to_dict()
+        reconstructed = ComponentIdentifier.from_dict(d1)
+
+        # Re-serialize — eval_hash should be emitted
+        d2 = reconstructed.to_dict()
+        assert d2["eval_hash"] == eval_hash
+
+    def test_double_roundtrip_preserves_eval_hash_and_identity_hash(self):
+        """Test that both eval_hash and identity hash survive retrieve → re-store → retrieve."""
+        long_prompt = "Score the response carefully. " * 20
+        original = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"system_prompt": long_prompt},
+        )
+        original_hash = original.hash
+        eval_hash = "eval_" + "a1b2c3d4" * 7 + "a1b2c3"  # 64 chars
+        original = original.with_eval_hash(eval_hash)
+
+        # First round-trip: store with truncation
+        d1 = original.to_dict(max_value_length=80)
+        r1 = ComponentIdentifier.from_dict(d1)
+        assert r1.hash == original_hash
+        assert r1.eval_hash == eval_hash
+
+        # Second round-trip: re-store (simulating retrieve → use → re-store)
+        d2 = r1.to_dict(max_value_length=80)
+        r2 = ComponentIdentifier.from_dict(d2)
+        assert r2.hash == original_hash
+        assert r2.eval_hash == eval_hash
+
 
 class TestComponentIdentifierNormalize:
     """Tests for normalize class method."""

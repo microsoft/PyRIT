@@ -3,7 +3,7 @@
 
 """Tests for the scenarios.Scenario class."""
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -806,3 +806,38 @@ class TestScenarioBaselineOnlyExecution:
         baseline_attack = scenario._atomic_attacks[0]
         assert baseline_attack.atomic_attack_name == "baseline"
         assert baseline_attack.seed_groups == expected_seeds
+
+
+class TestGetDefaultObjectiveScorer:
+    """Tests for Scenario._get_default_objective_scorer method."""
+
+    @patch("pyrit.scenario.core.scenario.ScorerRegistry")
+    def test_returns_registry_scorer_when_tagged(self, mock_registry_cls) -> None:
+        """Test that a tagged scorer from the registry is returned."""
+        from pyrit.score import TrueFalseScorer
+
+        mock_scorer = MagicMock(spec=TrueFalseScorer)
+        mock_scorer.__class__ = TrueFalseScorer
+
+        mock_entry = MagicMock()
+        mock_entry.instance = mock_scorer
+
+        mock_registry = MagicMock()
+        mock_registry.get_by_tag.return_value = [mock_entry]
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
+
+        result = Scenario._get_default_objective_scorer(MagicMock())
+        assert result is mock_scorer
+
+    @patch("pyrit.scenario.core.scenario.OpenAIChatTarget")
+    @patch("pyrit.scenario.core.scenario.ScorerRegistry")
+    def test_returns_fallback_when_registry_empty(self, mock_registry_cls, mock_oai_target) -> None:
+        """Test fallback to TrueFalseInverterScorer when no tagged scorer exists."""
+        from pyrit.score import TrueFalseInverterScorer
+
+        mock_registry = MagicMock()
+        mock_registry.get_by_tag.return_value = []
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
+
+        result = Scenario._get_default_objective_scorer(MagicMock())
+        assert isinstance(result, TrueFalseInverterScorer)

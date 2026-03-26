@@ -170,12 +170,22 @@ class EvaluationIdentifier(ABC):
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]]
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
-        """Wrap a ComponentIdentifier and eagerly compute its eval hash."""
+        """
+        Wrap a ComponentIdentifier and resolve its eval hash.
+
+        If the identifier carries an ``eval_hash`` (preserved from a prior
+        DB round-trip or set by the scorer), that value is used directly.
+        Otherwise the eval hash is computed from the identifier's params
+        and children using the subclass's ``CHILD_EVAL_RULES``.
+        """
         self._identifier = identifier
-        self._eval_hash = compute_eval_hash(
-            identifier,
-            child_eval_rules=self.CHILD_EVAL_RULES,
-        )
+        if identifier.eval_hash is not None:
+            self._eval_hash = identifier.eval_hash
+        else:
+            self._eval_hash = compute_eval_hash(
+                identifier,
+                child_eval_rules=self.CHILD_EVAL_RULES,
+            )
 
     @property
     def identifier(self) -> ComponentIdentifier:

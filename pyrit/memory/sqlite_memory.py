@@ -528,7 +528,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Uses json_extract() on the atomic_attack_identifier JSON column.
 
         When converter_classes is empty, matches attacks with no converters
-        (request_converter_identifiers is absent or null in the JSON).
+        (children.attack.children.request_converters is absent or null in the JSON).
         When non-empty, uses json_each() to check all specified classes are present
         (AND logic, case-insensitive).
 
@@ -540,7 +540,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             # is absent, null, or empty in the stored JSON.
             converter_json = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier,
-                "$.children.attack.request_converter_identifiers",
+                "$.children.attack.children.request_converters",
             )
             return or_(
                 AttackResultEntry.atomic_attack_identifier.is_(None),
@@ -555,7 +555,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 text(
                     f"""EXISTS(SELECT 1 FROM json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.request_converter_identifiers'))
+                            '$.children.attack.children.request_converters'))
                         WHERE LOWER(json_extract(value, '$.class_name')) = :{param_name})"""
                 ).bindparams(**{param_name: cls.lower()})
             )
@@ -579,8 +579,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
-        from the request_converter_identifiers array in the atomic_attack_identifier
-        JSON column.
+        from the children.attack.children.request_converters array in the
+        atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -592,7 +592,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     FROM "AttackResultEntries",
                     json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.request_converter_identifiers')
+                            '$.children.attack.children.request_converters')
                     ) AS j
                     WHERE cls IS NOT NULL"""
                 )

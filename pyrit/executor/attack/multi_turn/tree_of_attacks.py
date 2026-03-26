@@ -780,7 +780,7 @@ class _TreeOfAttacksNode:
         # For single-turn targets, duplicate only the system messages (e.g., system prompt
         # from prepended conversation) so the target retains its configuration without
         # carrying over attack turn history that would cause validation errors.
-        if self._objective_target.supports_multi_turn:
+        if self._objective_target.capabilities.supports_multi_turn:
             duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
                 conversation_id=self.objective_target_conversation_id
             )
@@ -1231,7 +1231,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     References:
         Tree of Attacks: Jailbreaking Black-Box LLMs Automatically
-        https://arxiv.org/abs/2312.02119
+        [@mehrotra2023tap]
 
     Returns:
         AttackResult: The result of the TAP attack execution.

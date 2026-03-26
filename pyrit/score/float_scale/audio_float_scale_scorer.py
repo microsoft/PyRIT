@@ -25,6 +25,7 @@ class AudioFloatScaleScorer(FloatScaleScorer):
         *,
         text_capable_scorer: FloatScaleScorer,
         validator: Optional[ScorerPromptValidator] = None,
+        use_entra_auth: Optional[bool] = None,
     ) -> None:
         """
         Initialize the AudioFloatScaleScorer.
@@ -33,12 +34,17 @@ class AudioFloatScaleScorer(FloatScaleScorer):
             text_capable_scorer: A FloatScaleScorer capable of processing text.
                 This scorer will be used to evaluate the transcribed audio content.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
+            use_entra_auth: Whether to use Entra ID authentication for Azure Speech.
+                Defaults to True if None.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
         """
         super().__init__(validator=validator or self._default_validator)
-        self._audio_helper = AudioTranscriptHelper(text_capable_scorer=text_capable_scorer)
+        self._audio_helper = AudioTranscriptHelper(
+            text_capable_scorer=text_capable_scorer,
+            use_entra_auth=use_entra_auth,
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

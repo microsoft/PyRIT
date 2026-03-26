@@ -12,7 +12,7 @@ NOTE: This is a placeholder implementation. A full implementation will be added 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.instance_registries.base_instance_registry import (
@@ -49,6 +49,7 @@ class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentif
         converter: PromptConverter,
         *,
         name: Optional[str] = None,
+        tags: Optional[Union[dict[str, str], list[str]]] = None,
     ) -> None:
         """
         Register a converter instance.
@@ -57,11 +58,13 @@ class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentif
             converter: The pre-configured converter instance (not a class).
             name: Optional custom registry name. If not provided,
                 derived from the converter's unique identifier.
+            tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
+                or a ``list[str]`` (each string becomes a key with value ``""``).
         """
         if name is None:
             name = converter.get_identifier().unique_name
 
-        self.register(converter, name=name)
+        self.register(converter, name=name, tags=tags)
         logger.debug(f"Registered converter instance: {name} ({converter.__class__.__name__})")
 
     def get_instance_by_name(self, name: str) -> Optional[PromptConverter]:

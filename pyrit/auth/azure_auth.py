@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Union, cast
@@ -22,7 +23,7 @@ from azure.identity.aio import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     import azure.cognitiveservices.speech as speechsdk
 
@@ -64,6 +65,103 @@ class TokenProviderCredential:
         # Set expiration far in the future - the provider handles refresh
         expires_on = int(time.time()) + 3600
         return AccessToken(str(token), expires_on)
+
+
+class AsyncTokenProviderCredential:
+    """
+    Async wrapper to convert a token provider callable into an Azure AsyncTokenCredential.
+
+    This class bridges the gap between token provider functions (sync or async) and Azure SDK
+    async clients that require an AsyncTokenCredential object (with async def get_token).
+    """
+
+    def __init__(self, token_provider: Callable[[], Union[str, Awaitable[str]]]) -> None:
+        """
+        Initialize AsyncTokenProviderCredential.
+
+        Args:
+            token_provider: A callable that returns a token string (sync) or an awaitable that
+                returns a token string (async). Both are supported transparently.
+        """
+        self._token_provider = token_provider
+
+    async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+        """
+        Get an access token asynchronously.
+
+        Args:
+            scopes: Token scopes (ignored as the scope is already configured in the token provider).
+            kwargs: Additional arguments (ignored).
+
+        Returns:
+            AccessToken: The access token with expiration time.
+        """
+        result = self._token_provider()
+        if inspect.isawaitable(result):
+            token = await result
+        else:
+            token = result
+        expires_on = int(time.time()) + 3600
+        return AccessToken(str(token), expires_on)
+
+    async def close(self) -> None:
+        """No-op close for protocol compliance. The callable provider does not hold resources."""
+
+    async def __aenter__(self) -> AsyncTokenProviderCredential:
+        """
+        Enter the async context manager.
+
+        Returns:
+            AsyncTokenProviderCredential: This credential instance.
+        """
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        """Exit the async context manager."""
+        await self.close()
+
+
+def ensure_async_token_provider(
+    api_key: str | Callable[[], str | Awaitable[str]] | None,
+) -> str | Callable[[], Awaitable[str]] | None:
+    """
+    Ensure the api_key is either a string or an async callable.
+
+    If a synchronous callable token provider is provided, it's automatically wrapped
+    in an async function to make it compatible with async Azure SDK clients.
+
+    Args:
+        api_key: Either a string API key or a callable that returns a token (sync or async).
+
+    Returns:
+        Either a string API key or an async callable that returns a token.
+    """
+    if api_key is None or isinstance(api_key, str) or not callable(api_key):
+        return api_key
+
+    # Check if the callable is already async
+    if inspect.iscoroutinefunction(api_key):
+        return api_key
+
+    # Wrap synchronous token provider in async function
+    logger.debug(
+        "Detected synchronous token provider."
+        " Automatically wrapping in async function for compatibility with async client."
+    )
+
+    async def async_token_provider() -> str:
+        """
+        Async wrapper for synchronous token provider.
+
+        Returns:
+            str: The token string from the synchronous provider.
+        """
+        result = api_key()
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    return async_token_provider
 
 
 class AzureAuth(Authenticator):

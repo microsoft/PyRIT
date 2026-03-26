@@ -79,7 +79,23 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     # Supported data types
     SUPPORTED_DATA_TYPES = {"text", "image_path"}
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=True)
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["text", "image_path"]),
+            }
+        ),
+        output_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["image_path"]),
+                frozenset(["text", "image_path"]),
+            }
+        ),
+    )
 
     # Placeholder text constants
     PLACEHOLDER_GENERATING_RESPONSE: str = "generating response"
@@ -109,7 +125,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         *,
         page: "Page",
         copilot_type: CopilotType = CopilotType.CONSUMER,
-        capabilities: Optional[TargetCapabilities] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Playwright Copilot target.
@@ -118,14 +134,14 @@ class PlaywrightCopilotTarget(PromptTarget):
             page (Page): The Playwright page object for browser interaction.
             copilot_type (CopilotType): The type of Copilot to interact with.
                 Defaults to CopilotType.CONSUMER.
-            capabilities (TargetCapabilities, Optional): Override the default capabilities for
-                this target instance. If None, uses the class-level defaults. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
 
         Raises:
             RuntimeError: If the Playwright page is not initialized.
             ValueError: If the page URL doesn't match the specified copilot_type.
         """
-        super().__init__(capabilities=capabilities)
+        super().__init__(custom_capabilities=custom_capabilities)
         self._page = page
         self._type = copilot_type
 
@@ -862,26 +878,3 @@ class PlaywrightCopilotTarget(PromptTarget):
         sign_in_header_present = sign_in_header_count > 0
         if sign_in_header_present:
             raise RuntimeError("Login required to access advanced features in Consumer Copilot.")
-
-    def _validate_request(self, *, message: Message) -> None:
-        """
-        Validate that the message is compatible with Copilot.
-
-        Args:
-            message: The message to validate.
-
-        Raises:
-            ValueError: If the message has no pieces.
-            ValueError: If any piece has an unsupported data type.
-        """
-        if not message.message_pieces:
-            raise ValueError("This target requires at least one message piece.")
-
-        # Validate that all pieces are supported types
-        for i, piece in enumerate(message.message_pieces):
-            piece_type = piece.converted_value_data_type
-            if piece_type not in self.SUPPORTED_DATA_TYPES:
-                supported_types = ", ".join(self.SUPPORTED_DATA_TYPES)
-                raise ValueError(
-                    f"This target only supports {supported_types} prompt input. Piece {i} has type: {piece_type}."
-                )

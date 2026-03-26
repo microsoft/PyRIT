@@ -1,0 +1,3 @@
+# Minimal PyRIT config for end-to-end tests.
+# Uses in-memory SQLite to avoid polluting persistent databases.
+memory_db_type: in_memory

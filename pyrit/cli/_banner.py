@@ -296,7 +296,7 @@ def _build_static_banner() -> StaticBannerData:
     quick_start = [
         "Quick Start:",
         "  pyrit> list-scenarios",
-        "  pyrit> run foundry --initializers openai_objective_target load_default_datasets",
+        "  pyrit> run foundry --target my_target --initializers targets load_default_datasets",
     ]
     for qs in quick_start:
         full_line = _box_line("  " + qs)

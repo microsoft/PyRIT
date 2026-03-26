@@ -20,7 +20,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     multiple harm categories.
 
     Reference: https://huggingface.co/datasets/PKU-Alignment/PKU-SafeRLHF
-    Paper: https://arxiv.org/pdf/2406.15513
+    Paper: [@ji2024pkusaferlhf]
     """
 
     def __init__(

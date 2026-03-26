@@ -29,6 +29,7 @@ dependencies = [
     "aiofiles>=24,<25",
     "appdirs>=1.4.0",
     "art>=6.5.0",
+    "av>=14.0.0",
     "azure-core>=1.38.0",
     "azure-identity>=1.19.0",
     "azure-ai-contentsafety>=1.0.0",
@@ -135,6 +136,7 @@ speech = [
 # all includes all functional dependencies excluding the ones from the "dev" extra
 all = [
     "accelerate>=1.7.0",
+    "av>=14.0.0",
     "azure-ai-ml>=1.27.1",
     "azure-cognitiveservices-speech>=1.44.0",
     "azureml-mlflow>=1.60.0",

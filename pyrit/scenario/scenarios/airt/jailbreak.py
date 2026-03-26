@@ -25,8 +25,6 @@ from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.score import (
-    SelfAskRefusalScorer,
-    TrueFalseInverterScorer,
     TrueFalseScorer,
 )
 
@@ -156,9 +154,9 @@ class Jailbreak(Scenario):
                 " or `jailbreak_names` (specific selection)."
             )
 
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
 
         self._num_templates = num_templates
         self._num_attempts = num_attempts
@@ -183,35 +181,13 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=JailbreakStrategy,
-            objective_scorer=objective_scorer,
+            objective_scorer=self._objective_scorer,
             include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
-
-    def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        """
-        Retrieve the default objective scorer.
-
-        The scoring mechanism detects non-refusal: if the target model refuses to
-        comply with the jailbreak attempt, we want that to register as a negative score.
-        A successful jailbreak (non-refusal) scores as True.
-
-        Returns:
-            TrueFalseScorer: A scorer that returns True when the model does NOT refuse.
-        """
-        endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return TrueFalseInverterScorer(
-            scorer=SelfAskRefusalScorer(
-                chat_target=OpenAIChatTarget(
-                    endpoint=endpoint,
-                    api_key=get_azure_openai_auth(endpoint),
-                    model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                )
-            )
-        )
 
     def _create_adversarial_target(self) -> OpenAIChatTarget:
         """
@@ -292,7 +268,7 @@ class Jailbreak(Scenario):
         attack: Optional[Union[ManyShotJailbreakAttack, PromptSendingAttack, RolePlayAttack, SkeletonKeyAttack]] = None
         args = {
             "objective_target": self._objective_target,
-            "attack_scoring_config": self._scorer_config,
+            "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
             "attack_converter_config": converter_config,
         }
         match strategy:

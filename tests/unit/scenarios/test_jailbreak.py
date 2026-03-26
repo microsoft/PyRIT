@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.role_play import RolePlayAttack
@@ -159,7 +158,7 @@ class TestJailbreakInitialization:
         """Test initialization with custom scorer."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
-            assert isinstance(scenario._scorer_config, AttackScoringConfig)
+            assert scenario._objective_scorer == mock_objective_scorer
 
     def test_init_with_num_templates(self, mock_random_num_templates):
         """Test initialization with num_templates provided."""
@@ -438,7 +437,7 @@ class TestJailbreakProperties:
             await scenario.initialize_async(objective_target=mock_objective_target)
 
             objective_target = scenario._objective_target
-            scorer_target = scenario._scorer_config.objective_scorer  # type: ignore[arg-type]
+            scorer_target = scenario._objective_scorer
 
             assert objective_target != scorer_target
 

@@ -122,11 +122,9 @@ with open(script_path, "w") as f:
 
 print(f"Created: {script_path}")
 
-
 await initialize_pyrit_async(  # type: ignore
     memory_db_type="InMemory", initialization_scripts=[temp_dir + "/custom_init.py"]
 )
-
 
 if os.path.exists(temp_dir):
     shutil.rmtree(temp_dir)

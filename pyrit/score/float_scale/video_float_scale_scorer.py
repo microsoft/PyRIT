@@ -11,7 +11,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import (
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.video_scorer import _BaseVideoScorer
+from pyrit.score.video_scorer import VideoHelper
 
 if TYPE_CHECKING:
     from pyrit.score.score_aggregator_result import ScoreAggregatorResult
@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 
 class VideoFloatScaleScorer(
     FloatScaleScorer,
-    _BaseVideoScorer,
 ):
     """
     A scorer that processes videos by extracting frames and scoring them using a float scale image scorer.
@@ -48,7 +47,7 @@ class VideoFloatScaleScorer(
         num_sampled_frames: Optional[int] = None,
         validator: Optional[ScorerPromptValidator] = None,
         score_aggregator: FloatScaleAggregatorFunc = FloatScaleScorerByCategory.MAX,
-        image_objective_template: Optional[str] = _BaseVideoScorer._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
+        image_objective_template: Optional[str] = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
         audio_objective_template: Optional[str] = None,
     ) -> None:
         """
@@ -82,8 +81,7 @@ class VideoFloatScaleScorer(
         """
         FloatScaleScorer.__init__(self, validator=validator or self._DEFAULT_VALIDATOR)
 
-        _BaseVideoScorer.__init__(
-            self,
+        self._video_helper = VideoHelper(
             image_capable_scorer=image_capable_scorer,
             num_sampled_frames=num_sampled_frames,
             image_objective_template=image_objective_template,
@@ -92,7 +90,7 @@ class VideoFloatScaleScorer(
         self._score_aggregator = score_aggregator
 
         if audio_scorer is not None:
-            self._validate_audio_scorer(audio_scorer)
+            VideoHelper._validate_audio_scorer(audio_scorer)
         self.audio_scorer = audio_scorer
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -102,17 +100,17 @@ class VideoFloatScaleScorer(
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
-        sub_scorer_ids = [self.image_scorer.get_identifier()]
+        sub_scorer_ids = [self._video_helper.image_scorer.get_identifier()]
         if self.audio_scorer:
             sub_scorer_ids.append(self.audio_scorer.get_identifier())
 
         return self._create_identifier(
             params={
                 "score_aggregator": self._score_aggregator.__name__,
-                "num_sampled_frames": self.num_sampled_frames,
+                "num_sampled_frames": self._video_helper.num_sampled_frames,
                 "has_audio_scorer": self.audio_scorer is not None,
-                "image_objective_template": self.image_objective_template,
-                "audio_objective_template": self.audio_objective_template,
+                "image_objective_template": self._video_helper.image_objective_template,
+                "audio_objective_template": self._video_helper.audio_objective_template,
             },
             children={
                 "sub_scorers": sub_scorer_ids,
@@ -131,14 +129,14 @@ class VideoFloatScaleScorer(
             List of aggregated scores for the video. Returns one score if using FloatScaleScoreAggregator,
             or multiple scores (one per category) if using FloatScaleScorerByCategory.
         """
-        frame_scores = await self._score_frames_async(message_piece=message_piece, objective=objective)
+        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
 
         all_scores = list(frame_scores)
         audio_scored = False
 
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
-            audio_scores = await self._score_video_audio_async(
+            audio_scores = await self._video_helper._score_video_audio_async(
                 message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
             )
             if audio_scores:

@@ -113,6 +113,7 @@ class ComponentIdentifier:
     KEY_CLASS_NAME: ClassVar[str] = "class_name"
     KEY_CLASS_MODULE: ClassVar[str] = "class_module"
     KEY_HASH: ClassVar[str] = "hash"
+    KEY_EVAL_HASH: ClassVar[str] = "eval_hash"
     KEY_PYRIT_VERSION: ClassVar[str] = "pyrit_version"
     KEY_CHILDREN: ClassVar[str] = "children"
     LEGACY_KEY_TYPE: ClassVar[str] = "__type__"
@@ -127,19 +128,52 @@ class ComponentIdentifier:
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
     children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = field(default_factory=dict)
     #: Content-addressed SHA256 hash computed from class, params, and children.
-    hash: str = field(init=False, compare=False)
+    #: When ``None`` (the default), it is computed automatically in ``__post_init__``.
+    #: Pass an explicit value to preserve a pre-computed hash (e.g. from DB storage
+    #: where params may have been truncated).
+    hash: Optional[str] = field(default=None, compare=False)
     #: Version tag for storage. Not included in hash.
     pyrit_version: str = field(default_factory=lambda: pyrit.__version__, compare=False)
+    #: Evaluation hash. Computed by EvaluationIdentifier subclasses (e.g. ScorerEvaluationIdentifier)
+    #: and attached to the identifier so it is always available via ``to_dict()``.
+    #: Survives DB round-trips even when param values are truncated.
+    eval_hash: Optional[str] = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
-        """Compute the content-addressed hash at creation time."""
-        hash_dict = _build_hash_dict(
+        """Compute the content-addressed hash at creation time if not already provided."""
+        if self.hash is None:
+            hash_dict = _build_hash_dict(
+                class_name=self.class_name,
+                class_module=self.class_module,
+                params=self.params,
+                children=self.children,
+            )
+            object.__setattr__(self, "hash", config_hash(hash_dict))
+
+    def with_eval_hash(self, eval_hash: str) -> ComponentIdentifier:
+        """
+        Return a new frozen ComponentIdentifier with ``eval_hash`` set.
+
+        The original ``hash`` is preserved (important for identifiers
+        reconstructed from truncated DB data where recomputation would
+        produce a wrong hash).
+
+        Args:
+            eval_hash: The evaluation hash to attach.
+
+        Returns:
+            A new ComponentIdentifier identical to this one but with
+            ``eval_hash`` set to the given value.
+        """
+        return ComponentIdentifier(
             class_name=self.class_name,
             class_module=self.class_module,
             params=self.params,
             children=self.children,
+            hash=self.hash,
+            pyrit_version=self.pyrit_version,
+            eval_hash=eval_hash,
         )
-        object.__setattr__(self, "hash", config_hash(hash_dict))
 
     @property
     def short_hash(self) -> str:
@@ -258,6 +292,9 @@ class ComponentIdentifier:
             self.KEY_PYRIT_VERSION: self.pyrit_version,
         }
 
+        if self.eval_hash is not None:
+            result[self.KEY_EVAL_HASH] = self.eval_hash
+
         for key, value in self.params.items():
             result[key] = self._truncate_value(value=value, max_length=max_value_length)
 
@@ -324,6 +361,7 @@ class ComponentIdentifier:
         class_module = data.pop(cls.KEY_CLASS_MODULE, None) or data.pop(cls.LEGACY_KEY_MODULE, None) or "unknown"
 
         stored_hash = data.pop(cls.KEY_HASH, None)
+        stored_eval_hash = data.pop(cls.KEY_EVAL_HASH, None)
         pyrit_version = data.pop(cls.KEY_PYRIT_VERSION, pyrit.__version__)
 
         # Reconstruct children
@@ -332,21 +370,15 @@ class ComponentIdentifier:
         # Everything remaining is a param
         params = data
 
-        identifier = cls(
+        return cls(
             class_name=class_name,
             class_module=class_module,
             params=params,
             children=children,
+            hash=stored_hash,
             pyrit_version=pyrit_version,
+            eval_hash=stored_eval_hash,
         )
-
-        # Preserve stored hash if available — the stored hash was computed from
-        # untruncated data and is the correct identity. Recomputing from
-        # potentially truncated DB values would produce a wrong hash.
-        if stored_hash:
-            object.__setattr__(identifier, "hash", stored_hash)
-
-        return identifier
 
     def get_child(self, key: str) -> Optional[ComponentIdentifier]:
         """
