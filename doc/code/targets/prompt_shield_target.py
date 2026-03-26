@@ -76,7 +76,6 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-
 pst = PromptShieldTarget(
     os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"),
     get_azure_token_provider("https://cognitiveservices.azure.com/.default"),

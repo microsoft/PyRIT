@@ -1,4 +1,4 @@
-# 2. Contribute with Git
+# 1. Contribute with Git
 
 In this guide, there are two ways to set up your fork for PyRIT: one using [Approach 1: Using GitHub CLI](#approach-1-using-github-cli), and one with [Approach 2: Without GitHub CLI](#approach-2-without-github-cli).
 

@@ -58,8 +58,6 @@
 #
 # Note that for this to succeed, the `AttackAdversarialConfig` requires an LLM endpoint without serious content moderation or other kinds of safety filtering mechanisms. Success depends on the model and may not be achieved every time.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
-# %%
 import logging
 
 from pyrit.executor.attack import (
@@ -136,7 +134,6 @@ prepended_conversation = [
         ]
     ),
 ]
-
 
 # Testing against an AzureOpenAI deployed GPT 4 instance
 oai_endpoint = os.getenv("AZURE_OPENAI_GPT4_CHAT_ENDPOINT")

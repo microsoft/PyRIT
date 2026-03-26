@@ -31,7 +31,6 @@ from pyrit.models import MessagePiece
 
 memory = CentralMemory.get_memory_instance()
 
-
 # This cell can be run multiple times to simulate multiple scoring requests.
 prompt = MessagePiece(
     role="assistant",

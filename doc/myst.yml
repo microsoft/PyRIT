@@ -20,29 +20,46 @@ project:
         - file: cookbooks/3_copyright_violations.ipynb
         - file: cookbooks/4_testing_bias.ipynb
         - file: cookbooks/5_psychosocial_harms.ipynb
-    - file: setup/1a_install_uv.md
+    - file: getting_started/README.md
       children:
-        - file: setup/1b_install_docker.md
-        - file: setup/1c_install_conda.md
-        - file: setup/jupyter_setup.md
-        - file: setup/populating_secrets.md
-        - file: setup/pyrit_conf.md
-        - file: setup/use_azure_sql_db.md
+        - file: getting_started/install.md
+          children:
+            - file: getting_started/install_docker.md
+            - file: getting_started/install_local.md
+            - file: getting_started/install_devcontainers.md
+            - file: getting_started/install_local_dev.md
+        - file: getting_started/configuration.md
+          children:
+            - file: getting_started/populating_secrets.md
+            - file: getting_started/pyrit_conf.md
+        - file: getting_started/troubleshooting/README.md
+          children:
+            - file: getting_started/troubleshooting/installation.md
+              children:
+                - file: getting_started/troubleshooting/docker.md
+                - file: getting_started/troubleshooting/devcontainers.md
+                - file: getting_started/troubleshooting/local_dev.md
+                - file: getting_started/troubleshooting/jupyter_setup.md
+                - file: getting_started/troubleshooting/azure_sql_db.md
+            - file: getting_started/troubleshooting/deployment.md
+              children:
+                - file: getting_started/troubleshooting/deploy_hf_model_aml.ipynb
+                - file: getting_started/troubleshooting/download_and_register_hf_model_aml.ipynb
+                - file: getting_started/troubleshooting/hf_aml_model_endpoint_guide.md
+                - file: getting_started/troubleshooting/score_aml_endpoint.ipynb
+                - file: getting_started/troubleshooting/guide_hf_azureml.md
     - file: contributing/README.md
       children:
-        - file: contributing/1a_install_uv.md
-        - file: contributing/1b_install_devcontainers.md
-        - file: contributing/1c_install_conda.md
-        - file: contributing/2_git.md
-        - file: contributing/3_incorporating_research.md
-        - file: contributing/4_style_guide.md
-        - file: contributing/5_running_tests.md
-        - file: contributing/6_unit_tests.md
-        - file: contributing/7_integration_tests.md
-        - file: contributing/8_notebooks.md
-        - file: contributing/9_pre_commit.md
-        - file: contributing/10_exception.md
-        - file: contributing/11_release_process.md
+        - file: contributing/1_git.md
+        - file: contributing/2_incorporating_research.md
+        - file: contributing/3_style_guide.md
+        - file: contributing/4_running_tests.md
+        - file: contributing/5_unit_tests.md
+        - file: contributing/6_integration_tests.md
+        - file: contributing/7_notebooks.md
+        - file: contributing/8_pre_commit.md
+        - file: contributing/9_exception.md
+        - file: contributing/10_release_process.md
     - file: code/architecture.md
     - file: code/user_guide.md
       children:
@@ -156,13 +173,6 @@ project:
           children:
             - file: code/front_end/1_pyrit_scan.ipynb
             - file: code/front_end/2_pyrit_shell.md
-    - file: deployment/README.md
-      children:
-        - file: deployment/deploy_hf_model_aml.ipynb
-        - file: deployment/download_and_register_hf_model_aml.ipynb
-        - file: deployment/hf_aml_model_endpoint_guide.md
-        - file: deployment/score_aml_endpoint.ipynb
-        - file: deployment/troubleshooting_guide_hf_azureml.md
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
@@ -208,11 +218,12 @@ site:
   nav:
     - title: Cookbooks
       url: /cookbooks/readme
-    - title: Setup
-      url: /setup/a-install-uv
+    - title: Getting Started
+      url: /getting-started/readme
     - title: Contributing
       url: /contributing/readme
     - title: User Guide
+      url: /code/user-guide
       children:
         - title: Architecture
           url: /code/architecture

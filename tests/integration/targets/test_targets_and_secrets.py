@@ -90,6 +90,7 @@ async def _assert_can_send_video_prompt(target):
     assert video_path.is_file(), f"Path exists but is not a file: {video_path}"
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name", "supports_seed"),
@@ -156,6 +157,7 @@ async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, a
     await _assert_can_send_prompt(target)
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
@@ -194,6 +196,7 @@ async def test_connect_required_openai_response_targets(sqlite_instance, endpoin
     await _assert_can_send_prompt(target, check_if_llm_interpreted_request=False)
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
@@ -216,6 +219,7 @@ async def test_connect_required_realtime_targets(sqlite_instance, endpoint, api_
     await _assert_can_send_prompt(target)
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
@@ -290,6 +294,7 @@ async def test_connect_openai_completion(sqlite_instance):
     await _assert_can_send_prompt(target, check_if_llm_interpreted_request=False)
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
@@ -331,6 +336,7 @@ async def test_connect_image(sqlite_instance, endpoint, api_key, model_name):
 SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_image_editing_single_image_api_key(sqlite_instance):
     """
@@ -379,6 +385,7 @@ async def test_image_editing_single_image_api_key(sqlite_instance):
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_image_editing_multiple_images_api_key(sqlite_instance):
     """
@@ -432,6 +439,7 @@ async def test_image_editing_multiple_images_api_key(sqlite_instance):
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
@@ -454,6 +462,7 @@ async def test_connect_tts(sqlite_instance, endpoint, api_key, model_name):
     await _assert_can_send_prompt(target, check_if_llm_interpreted_request=False)
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
@@ -481,6 +490,7 @@ async def test_connect_video(sqlite_instance, endpoint, api_key, model_name):
     await _assert_can_send_video_prompt(target)
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     """
@@ -550,6 +560,7 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     )
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_video_remix_chain(sqlite_instance):
     """Test text-to-video followed by remix using the returned video_id."""
@@ -596,6 +607,7 @@ async def test_video_remix_chain(sqlite_instance):
     assert remix_path.is_file()
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_video_image_to_video(sqlite_instance):
     """Test image-to-video mode using an image as the first frame."""

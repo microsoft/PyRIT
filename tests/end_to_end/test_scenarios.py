@@ -8,10 +8,14 @@ These tests dynamically discover all available scenarios and run each one
 using the pyrit_scan command with standard initializers.
 """
 
+from pathlib import Path
+
 import pytest
 
 from pyrit.cli.pyrit_scan import main as pyrit_scan_main
 from pyrit.registry import ScenarioRegistry
+
+CONFIG_FILE = Path(__file__).parent / "test_config.yaml"
 
 
 def get_all_scenarios():
@@ -39,10 +43,14 @@ def test_scenario_with_pyrit_scan(scenario_name):
             [
                 scenario_name,
                 "--initializers",
-                "openai_objective_target",
+                "targets",
                 "load_default_datasets",
-                "--database",
-                "InMemory",
+                "--target",
+                "openai_chat",
+                "--config-file",
+                str(CONFIG_FILE),
+                "--max-dataset-size",
+                "1",
                 "--log-level",
                 "WARNING",
             ]

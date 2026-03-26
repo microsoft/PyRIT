@@ -1,4 +1,4 @@
-# 11. Releasing PyRIT
+# 10. Releasing PyRIT
 
 This section is for maintainers only.
 If you don't know who the maintainers are but you need to reach them
@@ -141,7 +141,7 @@ Create a new environment with the equivalent of `uv venv --python 3.11`. You do 
 
 Once the package is successfully installed in the new environment, run `uv pip show pyrit`. Ensure that the version matches the release `vx.y.z` and that the package is found under the site-packages directory of the environment, like `..\venv\Lib\site-packages`.
 
-Make sure to set up the Jupyter kernel as described in our [Jupyter setup](../setup/jupyter_setup.md) guide.
+Make sure to set up the Jupyter kernel as described in our [Jupyter setup](../getting_started/troubleshooting/jupyter_setup.md) guide.
 
 To test the demos outside the PyRIT repository, copy the `doc`, `assets`, and `.env` files to a new folder created outside the PyRIT directory. For better organization, you could create a main folder called `releases` and a subfolder named `releasevx.y.z`, and then place the copied folders within this structure.
 

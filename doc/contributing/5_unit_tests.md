@@ -1,4 +1,4 @@
-# 6. Unit Tests
+# 5. Unit Tests
 
 All new functionality should have unit test coverage. These are found in the `tests/unit` directory.
 

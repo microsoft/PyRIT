@@ -1,4 +1,4 @@
-# 3. Incorporating Research
+# 2. Incorporating Research
 
 PyRIT is a fantastic place to both do new research or to add existing research. Here is some guidance around this.
 

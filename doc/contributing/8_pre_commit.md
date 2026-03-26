@@ -1,4 +1,4 @@
-# 9. Pre-Commit Hooks
+# 8. Pre-Commit Hooks
 
 There are a number of pre-commit hooks available to run on files within the repo. Run these once you have code that you'd like to submit in a pull request to make sure they pass. These are meant to enforce style within the code base.
 

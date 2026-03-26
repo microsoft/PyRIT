@@ -145,13 +145,17 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        # initialize custom capabilities with the _DEFAULT_CAPABILITIES and the is_json_supported flag
-        # If custom_capabilities is provided, use it as-is (it takes precedence over the deprecated is_json_supported).
-        # Otherwise, apply is_json_supported to the default capabilities for backwards compatibility.
+        # Resolve capabilities:
+        # 1. Explicit custom_capabilities always wins.
+        # 2. If is_json_supported was explicitly set to False (deprecated), apply that override.
+        # 3. Otherwise, pass None so the parent can resolve via get_default_capabilities(underlying_model),
+        #    which checks _KNOWN_CAPABILITIES (e.g., gpt-4o gets image input support).
         if custom_capabilities is not None:
-            effective_capabilities = custom_capabilities
+            effective_capabilities: TargetCapabilities | None = custom_capabilities
+        elif not is_json_supported:
+            effective_capabilities = replace(type(self)._DEFAULT_CAPABILITIES, supports_json_output=False)
         else:
-            effective_capabilities = replace(type(self)._DEFAULT_CAPABILITIES, supports_json_output=is_json_supported)
+            effective_capabilities = None
         super().__init__(custom_capabilities=effective_capabilities, **kwargs)
 
         # Validate temperature and top_p

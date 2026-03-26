@@ -42,7 +42,7 @@
 #      pip install azure-ai-ml
 #      pip install azure-identity
 #   ```
-# - Execute the `az login` command to sign in to your Azure subscription. For detailed instructions, refer to the "Authenticate with Azure Subscription" section [here](../setup/populating_secrets.md)
+# - Execute the `az login` command to sign in to your Azure subscription. For detailed instructions, refer to the "Authenticate with Azure Subscription" section [here](../populating_secrets.md)
 
 # %% [markdown]
 # ## 1. Connect to Azure Machine Learning Workspace
@@ -108,7 +108,7 @@ from dotenv import load_dotenv
 #
 # 9. **AZURE_ML_COMPUTE_NAME**
 #    - If you already have an Azure ML compute cluster, provide its name. If not, the script will create one based on the instance size and the specified minimum and maximum instances.
-#    <br> <img src="./../../assets/aml_compute_cluster.png" alt="AML compute cluster" height="400"/> <br>
+#    <br> <img src="./../../../assets/aml_compute_cluster.png" alt="AML compute cluster" height="400"/> <br>
 #
 # 10. **IDLE_TIME_BEFORE_SCALE_DOWN**
 #     - Set the duration for the Azure ML cluster to remain active before scaling down due to inactivity, ensuring efficient resource use. Typically, 3-4 hours is ideal for large size models.

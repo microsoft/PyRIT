@@ -43,6 +43,7 @@ class TargetInitializerTags(str, Enum):
     DEFAULT = "default"
     SCORER = "scorer"
     ALL = "all"
+    DEFAULT_OBJECTIVE_TARGET = "default_objective_target"
 
 
 @dataclass
@@ -59,6 +60,7 @@ class TargetConfig:
         underlying_model_var: The environment variable name for the underlying model.
         temperature: Optional temperature override for the target.
         tags: Tags for filtering which targets to register.
+        default_objective_target: If True, tags this target as DEFAULT_OBJECTIVE_TARGET in the registry.
     """
 
     registry_name: str
@@ -70,12 +72,25 @@ class TargetConfig:
     temperature: Optional[float] = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
+    default_objective_target: bool = False
 
 
 # Define all supported target configurations.
 # Only PRIMARY configurations are included here - alias configurations that use ${...}
 # syntax in .env_example are excluded since they reference other primary configurations.
 ENV_TARGET_CONFIGS: list[TargetConfig] = [
+    # ============================================
+    # Default Objective Target (generic OPENAI_CHAT_* env vars)
+    # ============================================
+    TargetConfig(
+        registry_name="openai_chat",
+        target_class=OpenAIChatTarget,
+        endpoint_var="OPENAI_CHAT_ENDPOINT",
+        key_var="OPENAI_CHAT_KEY",
+        model_var="OPENAI_CHAT_MODEL",
+        underlying_model_var="OPENAI_CHAT_UNDERLYING_MODEL",
+        default_objective_target=True,
+    ),
     # ============================================
     # OpenAI Chat Targets (OpenAIChatTarget)
     # ============================================
@@ -550,4 +565,6 @@ class TargetInitializer(PyRITInitializer):
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=config.registry_name)
+        if config.default_objective_target:
+            registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
         logger.info(f"Registered target: {config.registry_name}")
