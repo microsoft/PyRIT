@@ -16,7 +16,7 @@ import inspect
 import re
 import uuid
 from functools import lru_cache
-from typing import Any, Literal, Optional, Union, cast, get_args, get_origin
+from typing import Any, Literal, Optional, Union, get_args, get_origin
 
 from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -96,7 +96,7 @@ def _serialize_type(annotation: Any) -> str:
             inner = _serialize_type(non_none[0])
             return f"Optional[{inner}]" if len(args) > len(non_none) else inner
     if hasattr(annotation, "__name__"):
-        return annotation.__name__
+        return str(annotation.__name__)
     return str(annotation)
 
 
@@ -107,7 +107,7 @@ def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
     Returns:
         dict[str, str]: Mapping of parameter names to their descriptions.
     """
-    doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()
+    doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()  # type: ignore[misc]
     match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
     if not match:
         return {}
@@ -130,7 +130,7 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
         list[ConverterParameterSchema]: List of parameter schemas.
     """
     try:
-        sig = inspect.signature(converter_class.__init__)
+        sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
     except (ValueError, TypeError):
         return []
 
@@ -174,7 +174,7 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
 def _is_llm_based(converter_class: type) -> bool:
     """Return True if the converter requires an LLM target parameter."""
     try:
-        sig = inspect.signature(converter_class.__init__)
+        sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
     except (ValueError, TypeError):
         return False
     return any("target" in name.lower() for name in sig.parameters if name != "self")
@@ -340,7 +340,7 @@ class ConverterService:
 
             serializer = data_serializer_factory(
                 category="prompt-memory-entries",
-                data_type=cast("PromptDataType", data_type),
+                data_type=data_type,
                 extension=ext,
             )
             await serializer.save_b64_image(data=value)
@@ -433,7 +433,7 @@ class ConverterService:
             Params dict with values coerced to the expected types.
         """
         try:
-            sig = inspect.signature(converter_class.__init__)
+            sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
         except (ValueError, TypeError):
             return params
 
