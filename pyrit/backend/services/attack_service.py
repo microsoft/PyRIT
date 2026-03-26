@@ -858,8 +858,13 @@ class AttackService:
                         piece.converted_value = file_path
                 continue
 
-            # Already an existing file on disk — keep as-is
-            if Path(piece.original_value).is_file():
+            # Already an existing file on disk — keep as-is.
+            # Guard against base64 strings that would exceed OS path length limits.
+            try:
+                is_existing_file = len(piece.original_value) < 4096 and Path(piece.original_value).is_file()
+            except OSError:
+                is_existing_file = False
+            if is_existing_file:
                 if piece.converted_value is None:
                     piece.converted_value = piece.original_value
                 continue
