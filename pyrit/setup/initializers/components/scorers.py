@@ -96,7 +96,7 @@ class ScorerInitializer(PyRITInitializer):
         initializer = ScorerInitializer()
         await initializer.initialize_async()
         registry = ScorerRegistry.get_registry_singleton()
-        refusal = registry.get_instance_by_name(REFUSAL_GPT4O)
+        refusal = registry.get_instance_by_name(REFUSAL_GPT4O_OBJECTIVE_ALLOW_SAFE)
     """
 
     @property

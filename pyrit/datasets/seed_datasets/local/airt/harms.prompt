@@ -1,7 +1,6 @@
 dataset_name: airt_harms
 harm_categories: multi-harm
 data_type: text
-seed_type: objective
 description: |
   This dataset contains harmful requests across multiple categories.
   It is designed to be used as input for jailbreak testing.
