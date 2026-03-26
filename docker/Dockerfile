@@ -10,9 +10,7 @@
 #   python docker/build_pyrit_docker.py --source pypi --version 0.10.0
 # ============================================================================
 
-# Use the devcontainer as base (built by build_pyrit_docker.py).
-# No default value — callers must pass --build-arg BASE_IMAGE=... explicitly.
-# This avoids CSSC scanner warnings about unqualified image references.
+# No default — callers must pass --build-arg BASE_IMAGE=... (see infra/README.md).
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS production
 
@@ -48,9 +46,7 @@ COPY --chown=vscode:vscode frontend/ /app/frontend/
 COPY --chown=vscode:vscode build_scripts/ /app/build_scripts/
 COPY --chown=vscode:vscode doc/ /app/doc/
 
-# Override .npmrc registry for Docker builds — the repo-level .npmrc points
-# to Azure Artifacts (required by CSSC policy), but Docker builds use
-# npmjs.org directly since there's no ADO auth context inside containers.
+# Override .npmrc for Docker builds (no ADO auth context). See infra/README.md.
 ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 
 # Install PyRIT and create build info (combined to ensure dependencies are available)

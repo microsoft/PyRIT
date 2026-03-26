@@ -124,7 +124,18 @@ graph TB
 - **Data**: Azure SQL with managed identity authentication (no passwords)
 - **Secrets**: Key Vault with RBAC (existing vault, secrets referenced via ACA secretRef)
 - **Images**: Unique tags or digests required — `:latest` triggers a warning output
-- **Supply chain**: ACR pull via managed identity RBAC (AcrPull role assigned in IaC)
+- **Container registry**: ACR pull via managed identity RBAC (AcrPull role assigned in IaC)
+- **npm packages**: `frontend/.npmrc` points to an Azure Artifacts feed (`copyrit-npm`
+  in the AI Red Team ADO project) that proxies npmjs.org. This satisfies Microsoft
+  Secure Supply Chain (CSSC) policies CFS0001 and CFS0003, which require every
+  `package.json` to have a sibling `.npmrc` pointing to an Azure Artifacts feed.
+  The feed is a read-through cache — same packages, same source, but routed through
+  Microsoft-controlled infrastructure for audit trail and caching. Docker builds
+  override the registry via `NPM_CONFIG_REGISTRY` env var (see Technical Notes).
+- **Docker base image**: `docker/Dockerfile` declares `ARG BASE_IMAGE` with no default
+  value. All callers (pipeline, `build_pyrit_docker.py`, `docker-compose.yaml`) pass
+  `--build-arg BASE_IMAGE=pyrit-devcontainer` explicitly. This avoids CSSC warnings
+  about unqualified image references and ensures builds fail fast if the arg is omitted.
 
 ### Governance
 
@@ -524,6 +535,12 @@ keys in the `.env`.
   VNet (`infrastructureSubnetId`), and ACR (`acrResourceId`) can optionally be
   provided as existing resources to skip creation.
 - **Azure CLI**: Version 2.84+ required (2.77 has a known bug).
+- **npm registry in Docker builds**: The repo-level `frontend/.npmrc` points to an
+  Azure Artifacts feed (required by CSSC policy), but Docker containers lack ADO auth
+  context. The Dockerfile sets `ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/`
+  to override the `.npmrc` during `npm install`. This is safe — the Artifacts feed
+  itself is just a proxy to the same npmjs.org registry; the env var override simply
+  skips the proxy when auth is unavailable. No security posture change.
 
 ## Production Hardening
 
