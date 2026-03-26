@@ -125,13 +125,9 @@ graph TB
 - **Secrets**: Key Vault with RBAC (existing vault, secrets referenced via ACA secretRef)
 - **Images**: Unique tags or digests required — `:latest` triggers a warning output
 - **Container registry**: ACR pull via managed identity RBAC (AcrPull role assigned in IaC)
-- **npm packages**: `frontend/.npmrc` points to an Azure Artifacts feed (`copyrit-npm`
-  in the AI Red Team ADO project) that proxies npmjs.org. This satisfies Microsoft
-  Secure Supply Chain (CSSC) policies CFS0001 and CFS0003, which require every
-  `package.json` to have a sibling `.npmrc` pointing to an Azure Artifacts feed.
-  The feed is a read-through cache — same packages, same source, but routed through
-  Microsoft-controlled infrastructure for audit trail and caching. Docker builds
-  override the registry via `NPM_CONFIG_REGISTRY` env var (see Technical Notes).
+- **npm packages**: `frontend/.npmrc` pins the npm registry to `registry.npmjs.org`.
+  Required by Microsoft Secure Supply Chain policy CFS0001 (every `package.json`
+  must have a sibling `.npmrc`).
 - **Docker base image**: `docker/Dockerfile` declares `ARG BASE_IMAGE` with no default
   value. All callers (pipeline, `build_pyrit_docker.py`, `docker-compose.yaml`) pass
   `--build-arg BASE_IMAGE=pyrit-devcontainer` explicitly. This avoids CSSC warnings
@@ -535,12 +531,6 @@ keys in the `.env`.
   VNet (`infrastructureSubnetId`), and ACR (`acrResourceId`) can optionally be
   provided as existing resources to skip creation.
 - **Azure CLI**: Version 2.84+ required (2.77 has a known bug).
-- **npm registry in Docker builds**: The repo-level `frontend/.npmrc` points to an
-  Azure Artifacts feed (required by CSSC policy), but Docker containers lack ADO auth
-  context. The Dockerfile sets `ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/`
-  to override the `.npmrc` during `npm install`. This is safe — the Artifacts feed
-  itself is just a proxy to the same npmjs.org registry; the env var override simply
-  skips the proxy when auth is unavailable. No security posture change.
 
 ## Production Hardening
 
@@ -559,19 +549,6 @@ These are enabled by default — no additional configuration needed:
 - **CORS tightened** — Methods restricted to `GET`, `POST`, `PUT`, `DELETE`,
   `OPTIONS`; headers to `Authorization`, `Content-Type`, `X-Request-ID`.
   Origins configurable via `PYRIT_CORS_ORIGINS` env var.
-
-### Remaining for production
-
-| # | Item | Effort | Detail |
-|---|------|--------|--------|
-| 1 | **Private Endpoint + VNet peering** | Medium | Set `enablePrivateEndpoint=true` with an `infrastructureSubnetId` on a VNet peered with clients (Cloud PC, VPN gateway). Disables public access entirely. |
-| 2 | **`appRoleAssignmentRequired=true`** | Small | Set on the service principal (covered in Prerequisites §3). Rejects tokens for unassigned users at the IdP level. |
-| 3 | **Entra Conditional Access Policies** | Small | Require compliant devices, MFA, or named locations. Configured in Entra ID → Security → Conditional Access (not in Bicep). |
-| 4 | **IP restrictions as fallback** | Small | If using public access, set `allowedCidr` to restrict ingress. Note the CGNAT caveat for Cloud PCs (see Technical Notes). |
-| 5 | **WAF / Front Door** | Medium | Azure Front Door with WAF policies for DDoS protection, bot filtering, and geo-restrictions. |
-| 6 | **Audit logging** | Small | Enable `enableOtel=true` for App Insights telemetry. Ensure Log Analytics retention meets compliance. |
-| 7 | **Container image scanning** | Medium | Add Trivy or Defender for Containers to CI to scan for CVEs before pushing to ACR. |
-| 8 | **Slim production image** | Medium | Current Dockerfile builds on devcontainer (includes dev tools, passwordless sudo). Use multi-stage build to strip these. |
 
 ## Troubleshooting
 
