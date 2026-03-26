@@ -80,7 +80,6 @@ original_user_prompts = [prompt.original_value for prompt in prompts if prompt.r
 converters = PromptConverterConfiguration.from_converters(converters=[Base64Converter()])
 converter_config = AttackConverterConfig(request_converters=converters)
 
-
 text_target = TextTarget()
 attack = PromptSendingAttack(
     objective_target=text_target,

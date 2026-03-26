@@ -1,6 +1,16 @@
 # Configuration File (.pyrit_conf)
 
-PyRIT supports an optional YAML configuration file that declares initialization settings — database type, initializers, environment files, and more. When present, these settings are loaded automatically so you don't have to pass them every time you start PyRIT. It (`.pyrit_conf`) is basically just a YAML file specifying how to call `initialize_pyrit`. You can try it yourself in the [PyRIT Configuration Notebook](../code/setup/1_configuration.ipynb)
+The recommended way to configure PyRIT. A `.pyrit_conf` file declares your database, initializers, and environment files in one place. PyRIT loads it automatically on startup, so you don't have to pass options every time.
+
+## Quick Setup
+
+```bash
+mkdir -p ~/.pyrit
+cp .pyrit_conf_example ~/.pyrit/.pyrit_conf
+cp .env_example ~/.pyrit/.env
+```
+
+Then edit both files for your environment. The `.pyrit_conf` tells PyRIT _how_ to initialize; the `.env` tells it _where_ your AI targets are.
 
 ## File Location
 
@@ -12,14 +22,46 @@ The default configuration file path is:
 
 PyRIT looks for this file automatically on startup (via the CLI, shell, or `ConfigurationLoader`). If the file does not exist, PyRIT falls back to built-in defaults.
 
-To get started, copy the example file from the repository root into your home directory:
+## Setting Up Secrets (.env files)
 
-```bash
-mkdir -p ~/.pyrit
-cp .pyrit_conf_example ~/.pyrit/.pyrit_conf
+The `.pyrit_conf` file works hand-in-hand with `.env` files for your API credentials. See [Populating Secrets](./populating_secrets.md) for provider-specific examples of what to put in your `.env` file.
+
+### Environment Variable Precedence
+
+When PyRIT initializes, environment variables are loaded in a specific order. **Later sources override earlier ones:**
+
+```{mermaid}
+flowchart LR
+    A["1. System Environment"] --> B{"env_files in .pyrit_conf?"}
+    B -->|No| C["2. ~/.pyrit/.env"]
+    C --> D["3. ~/.pyrit/.env.local"]
+    B -->|Yes| E["2. Your specified files (in order)"]
 ```
 
-Then edit `~/.pyrit/.pyrit_conf` to match your environment.
+**Default behavior** (no `env_files` field in `.pyrit_conf`):
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| Lowest | System environment variables | Always loaded as the baseline |
+| Medium | `~/.pyrit/.env` | Default config file (loaded if it exists) |
+| Highest | `~/.pyrit/.env.local` | Local overrides (loaded if it exists) |
+
+**Custom behavior** (with `env_files` field): Only your specified files are loaded, in order. Default paths are completely ignored.
+
+### Using .env.local for Overrides
+
+You can use `~/.pyrit/.env.local` to override values in `~/.pyrit/.env` without modifying the base file. This is useful for:
+- Testing different targets
+- Using personal credentials instead of shared ones
+- Switching between configurations quickly
+
+Simply create `.env.local` in your `~/.pyrit/` directory and add any variables you want to override.
+
+### Authentication Options
+
+**API Keys (Default):** The simplest approach — set `OPENAI_CHAT_KEY` and similar variables in your `.env` file. Most targets support this method.
+
+**Azure Entra Authentication (Optional):** For Azure resources, you can use Entra auth instead of API keys. This requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) and `az login`. When using Entra auth, you don't need to set API keys for Azure resources.
 
 ## Configuration Fields
 
@@ -59,6 +101,35 @@ initializers:
 ```
 
 Use `pyrit list initializers` in the CLI to see all registered initializers. See the [initializer documentation notebook](../code/setup/pyrit_initializer.ipynb) for reference.
+
+#### Recommended Defaults
+
+Most users should enable the following initializers. These are what the `.pyrit_conf_example` ships with and are required for features like `pyrit_scan` and automated scenarios.
+
+| Initializer | What It Registers | When You Need It |
+|---|---|---|
+| `simple` | Baseline defaults for converters, scorers, and attack configs using your `OPENAI_CHAT_*` env vars | Always — provides the foundation for most PyRIT operations |
+| `targets` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
+| `scorers` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
+| `load_default_datasets` | Seed datasets for all registered scenarios into memory | **Required for `pyrit_scan` scenarios** — they need data to run |
+
+```{note}
+**Execution order is automatic.** Initializers are sorted by their built-in `execution_order` regardless of how you list them in the config: `simple`/`targets` run first (order 1), then `scorers` (order 2), then `load_default_datasets` (order 10). This ensures dependencies are satisfied — for example, `scorers` needs targets to be registered first.
+```
+
+The recommended config:
+
+```yaml
+initializers:
+  - name: simple
+  - name: load_default_datasets
+  - name: scorers
+  - name: targets
+    args:
+      tags:
+        - default
+        - scorer
+```
 
 ### `initialization_scripts`
 
@@ -198,9 +269,6 @@ initializers:
 silent: false
 ```
 
-## Next Steps
+## What's Next?
 
-- [Populating Secrets](./populating_secrets.md) — Setting up environment variables and `.env` files
-- [Configuration Guide](../code/setup/1_configuration.ipynb) — Interactive examples of `initialize_pyrit_async` options
-- [PyRIT Initializers](../code/setup/pyrit_initializer.ipynb) — Creating and using built-in and custom initializers
-- [Default Values](../code/setup/default_values.md) — How initializer defaults work under the hood
+Once you're configured, head to the [User Guide](../code/user_guide.md) to start using PyRIT.

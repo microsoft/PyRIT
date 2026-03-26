@@ -25,7 +25,7 @@ This error typically occurs when the container initialization takes longer than 
 
    For reference, see the example log message in the image below.
 
-   ![Azure ML Deployment ResourceNotReady Error](../../assets/aml_deployment_resource_not_ready_error.png)
+   ![Azure ML Deployment ResourceNotReady Error](../../../assets/aml_deployment_resource_not_ready_error.png)
 
 
 #### Step 2: Adjust Environment Variable

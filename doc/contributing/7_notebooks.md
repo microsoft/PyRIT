@@ -1,4 +1,4 @@
-# 8. Notebooks
+# 7. Notebooks
 
 Notebooks are the primary way many of our operators interact with PyRIT. As such, it's very important for us to keep them up to date.
 

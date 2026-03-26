@@ -29,23 +29,23 @@ def parse_args(args: Optional[list[str]] = None) -> Namespace:
         description="""PyRIT Scanner - Run security scenarios against AI systems
 
 Examples:
-  # List available scenarios and initializers
+  # List available scenarios, initializers, and targets
   pyrit_scan --list-scenarios
   pyrit_scan --list-initializers
+  pyrit_scan --list-targets --initializers targets
 
-  # Run a scenario with built-in initializers
-  pyrit_scan red_team_agent --initializers openai_objective_target load_default_datasets
+  # Run a scenario with a target and initializers
+  pyrit_scan red_team_agent --target my_target --initializers targets load_default_datasets
 
   # Run with a configuration file (recommended for complex setups)
-  pyrit_scan red_team_agent --config-file ./my_config.yaml
+  pyrit_scan red_team_agent --target my_target --config-file ./my_config.yaml
 
   # Run with custom initialization scripts
-  pyrit_scan encoding --initialization-scripts ./my_config.py
+  pyrit_scan encoding --target my_target --initialization-scripts ./my_config.py
 
   # Run specific strategies or options
-  pyrit_scan red_team_agent --strategies base64 rot13 --initializers openai_objective_target
-  pyrit_scan red_team_agent --initializers openai_objective_target --max-concurrency 10 --max-retries 3
-  pyrit_scan encoding --initializers openai_objective_target --memory-labels '{"run_id":"test123"}'
+  pyrit_scan red_team_agent --target my_target --strategies base64 rot13 --initializers targets
+  pyrit_scan red_team_agent --target my_target --initializers targets --max-concurrency 10 --max-retries 3
 """,
         formatter_class=RawDescriptionHelpFormatter,
     )
@@ -76,21 +76,17 @@ Examples:
     )
 
     parser.add_argument(
+        "--list-targets",
+        action="store_true",
+        help="List all available targets from the TargetRegistry and exit. "
+        "Requires initializers that register targets (e.g., --initializers targets)",
+    )
+
+    parser.add_argument(
         "scenario_name",
         type=str,
         nargs="?",
         help="Name of the scenario to run",
-    )
-
-    parser.add_argument(
-        "--database",
-        type=frontend_core.validate_database_argparse,
-        default=None,
-        help=(
-            f"Database type to use for memory storage ({frontend_core.IN_MEMORY}, "
-            f"{frontend_core.SQLITE}, {frontend_core.AZURE_SQL}). "
-            f"Defaults to value from config file, or {frontend_core.SQLITE} if not specified."
-        ),
     )
 
     parser.add_argument(
@@ -105,13 +101,6 @@ Examples:
         type=str,
         nargs="+",
         help=frontend_core.ARG_HELP["initialization_scripts"],
-    )
-
-    parser.add_argument(
-        "--env-files",
-        type=str,
-        nargs="+",
-        help=frontend_core.ARG_HELP["env_files"],
     )
 
     parser.add_argument(
@@ -154,6 +143,12 @@ Examples:
         help=frontend_core.ARG_HELP["max_dataset_size"],
     )
 
+    parser.add_argument(
+        "--target",
+        type=str,
+        help=frontend_core.ARG_HELP["target"],
+    )
+
     return parser.parse_args(args)
 
 
@@ -185,19 +180,9 @@ def main(args: Optional[list[str]] = None) -> int:
                 print(f"Error: {e}")
                 return 1
 
-        env_files = None
-        if parsed_args.env_files:
-            try:
-                env_files = frontend_core.resolve_env_files(env_file_paths=parsed_args.env_files)
-            except ValueError as e:
-                print(f"Error: {e}")
-                return 1
-
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
-            database=parsed_args.database,
             initialization_scripts=initialization_scripts,
-            env_files=env_files,
             log_level=parsed_args.log_level,
         )
 
@@ -209,6 +194,24 @@ def main(args: Optional[list[str]] = None) -> int:
             log_level=parsed_args.log_level,
         )
         return asyncio.run(frontend_core.print_initializers_list_async(context=context))
+
+    if parsed_args.list_targets:
+        # Need initializers to populate target registry
+        context = frontend_core.FrontendCore(
+            config_file=parsed_args.config_file,
+            initializer_names=parsed_args.initializers,
+            log_level=parsed_args.log_level,
+        )
+        return asyncio.run(frontend_core.print_targets_list_async(context=context))
+
+    if parsed_args.list_targets:
+        # Need initializers to populate target registry
+        context = frontend_core.FrontendCore(
+            config_file=parsed_args.config_file,
+            initializer_names=parsed_args.initializers,
+            log_level=parsed_args.log_level,
+        )
+        return asyncio.run(frontend_core.print_targets_list_async(context=context))
 
     # Verify scenario was provided
     if not parsed_args.scenario_name:
@@ -224,18 +227,11 @@ def main(args: Optional[list[str]] = None) -> int:
                 script_paths=parsed_args.initialization_scripts
             )
 
-        # Collect environment files
-        env_files = None
-        if parsed_args.env_files:
-            env_files = frontend_core.resolve_env_files(env_file_paths=parsed_args.env_files)
-
         # Create context with initializers
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
-            database=parsed_args.database,
             initialization_scripts=initialization_scripts,
             initializer_names=parsed_args.initializers,
-            env_files=env_files,
             log_level=parsed_args.log_level,
         )
 
@@ -249,6 +245,7 @@ def main(args: Optional[list[str]] = None) -> int:
             frontend_core.run_scenario_async(
                 scenario_name=parsed_args.scenario_name,
                 context=context,
+                target_name=parsed_args.target,
                 scenario_strategies=parsed_args.scenario_strategies,
                 max_concurrency=parsed_args.max_concurrency,
                 max_retries=parsed_args.max_retries,

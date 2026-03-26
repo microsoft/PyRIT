@@ -25,7 +25,6 @@
 
 # %%
 
-
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ConsoleAttackResultPrinter,

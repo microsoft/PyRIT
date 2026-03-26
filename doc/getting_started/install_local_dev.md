@@ -1,34 +1,23 @@
-# Setting up PyRIT Development Environment with uv (Windows)
+# Contributor Local Installation
 
-This guide covers setting up a PyRIT development environment using [uv](https://github.com/astral-sh/uv), a fast Python package installer and resolver, on Windows.
-
-
-## Choose Your Setup Approach
-
-You can set up PyRIT for development in one of two ways:
-
-1. **Local Installation with UV/Python** (this page) - Install PyRIT in editable mode on your machine
-2. **[DevContainers in VS Code](./1b_install_devcontainers.md)** - Use a pre-configured Docker container with VS Code
+Set up a PyRIT development environment on your local machine.
 
 ```{note}
-**Development Version:** Contributor installations use the **latest development code** from the `main` branch, not a stable release. The notebooks in your cloned repository will match your code version. This documentation website also shows the main branch version.
+**Development Version:** Contributor installations use the **latest development code** from the `main` branch, not a stable release. The notebooks in your cloned repository will match your code version.
 ```
 
-## Overview
+## Option 1: uv (Recommended)
 
-To install PyRIT as a library, the simplest way to do it is just `pip install pyrit`. This is documented [here](../setup/1a_install_uv.md).
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. We recommend it for PyRIT development.
 
-However, there are many reasons to install as a contributor. Yes, of course, if you want to contribute. But also because of the nature of the tool, it is often the case that targets, attacks, converters, core, etc. code needs to be modified. This section walks through how to install PyRIT as a contributor.
-
-## Why uv?
-
+**Why uv?**
 - **Much faster** than pip (10-100x faster dependency resolution)
 - **Simpler** than conda/mamba for pure Python projects
-- **Native Windows support** - no WSL required, although if using a devcontainer, WSL is recommended
+- **Native Windows support** — no WSL required, although if using a devcontainer, WSL is recommended
 - **Automatic virtual environment management**
 - **Compatible with existing pyproject.toml**
 
-## Prerequisite software
+### Prerequisites
 
 1. **Install uv**: Download from [https://github.com/astral-sh/uv](https://github.com/astral-sh/uv) or use:
    for windows:
@@ -53,9 +42,7 @@ However, there are many reasons to install as a contributor. Yes, of course, if 
 
 4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 18 or higher is recommended.
 
-## Installation with uv
-
-This is a guide for how to install PyRIT using uv
+### Installation
 
 1. Navigate to the directory where you cloned the PyRIT repo.
 
@@ -84,7 +71,7 @@ uv pip show pyrit
 
 You should see output showing the most recent PyRIT version and your Python dependencies.
 
-## VS Code Integration
+### VS Code Integration
 
 VS Code should automatically detect the `.venv` virtual environment. If not:
 
@@ -92,7 +79,7 @@ VS Code should automatically detect the `.venv` virtual environment. If not:
 2. Type "Python: Select Interpreter"
 3. Choose `.venv\Scripts\python.exe`
 
-### Running Jupyter Notebooks
+#### Running Jupyter Notebooks
 You can create a Jupyter kernel by first installing ipykernel:
 ```bash
 uv add --dev ipykernel
@@ -110,7 +97,7 @@ or using VS Code, open a Jupyter Notebook (.ipynb file) window, in the top searc
 This will be the kernel that runs all code examples in Python Notebooks.
 
 
-### Running Python Scripts
+#### Running Python Scripts
 
 Use `uv run` to execute Python with the virtual environment:
 
@@ -118,32 +105,32 @@ Use `uv run` to execute Python with the virtual environment:
 uv run python your_script.py
 ```
 
-### Running Tests
+#### Running Tests
 
 ```bash
 uv run pytest tests/
 ```
 
-### Running Specific Test Files
+#### Running Specific Test Files
 
 ```bash
 uv run pytest tests/unit/test_something.py
 ```
 
-### Using PyRIT CLI Tools
+#### Using PyRIT CLI Tools
 
 ```bash
 uv run pyrit_scan --help
 uv run pyrit_shell
 ```
 
-### Running Jupyter Notebooks
+#### Running Jupyter Notebooks
 
 ```bash
 uv run jupyter lab
 ```
 
-### Installing Additional Extras
+#### Installing Additional Extras
 
 PyRIT has several optional dependency groups. Install them as needed:
 
@@ -158,9 +145,9 @@ uv sync --extra all
 uv sync --extra dev --extra playwright --extra gcg
 ```
 
-## Development Workflow
+### Development Workflow
 
-### Adding New Dependencies
+#### Adding New Dependencies
 
 Edit `pyproject.toml` to add dependencies, then run:
 
@@ -168,82 +155,93 @@ Edit `pyproject.toml` to add dependencies, then run:
 uv sync
 ```
 
-### Updating Dependencies
+#### Updating Dependencies
 
 ```bash
 uv lock --upgrade
 uv sync
 ```
 
-### Running Code Formatters
+#### Running Code Formatters
 
 ```bash
 uv run black .
 uv run ruff check --fix .
 ```
 
-### Running Type Checker
+#### Running Type Checker
 
 ```bash
 uv run mypy pyrit/
 ```
 
-### Pre-commit Hooks
+#### Pre-commit Hooks
 
 ```bash
 uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-## Populating Secrets
+## Option 2: Conda
 
-See [this](../setup/populating_secrets.md) for more details on populating secrets.
+If you prefer conda for environment management, you can use it to create a Python environment and install PyRIT for development.
+
+### Prerequisites
+
+1. **Conda or Miniconda**: Download from [https://docs.conda.io/en/latest/miniconda.html](https://docs.conda.io/en/latest/miniconda.html)
+
+2. **Git**: Clone the repository:
+    ```bash
+    git clone https://github.com/Azure/PyRIT
+    ```
+
+3. **Node.js and npm**: Required for building the frontend. Download [Node.js](https://nodejs.org/) (version 18+).
+
+### Installation
+
+1. Create a conda environment with the correct Python version:
+
+```bash
+conda create -y -n pyrit-dev python=3.12
+conda activate pyrit-dev
+```
+
+2. Navigate to the cloned PyRIT directory and install in editable mode with dev dependencies:
+
+```bash
+pip install -e .[dev]
+```
+
+3. Verify installation:
+
+```bash
+pip show pyrit
+```
+
+### Jupyter Kernel Setup
+
+Create a Jupyter kernel for the conda environment:
+
+```bash
+pip install ipykernel
+python -m ipykernel install --user --name=pyrit-dev --display-name "PyRIT Dev"
+```
+
+Then start Jupyter:
+
+```bash
+jupyter lab
+```
+
+## Next Step: Configure PyRIT
+
+After installing, configure your AI endpoint credentials.
+
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
 
 
 ## Troubleshooting
 
-### uv command not found
-
-Make sure uv is in your PATH. Restart PowerShell after installation.
-
-### Import errors
-
-Ensure you're using `uv run python` or have activated the virtual environment:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-### Dependency conflicts
-
-Try regenerating the lock file:
-
-```powershell
-Remove-Item uv.lock
-uv sync --extra dev
-```
-
-### Module not found errors
-
-PyRIT is installed in editable mode, so changes to the source code are immediately reflected. If you see import errors:
-
-```bash
-uv sync --reinstall-package pyrit
-```
-
-## Advantages over Other Methods
-
-| Feature | uv | conda/mamba | pip + venv | Docker/DevContainer |
-|---------|----|--------------|-----------|--------------------|
-| Setup time | ~2 min | ~10-15 min | ~15-20 min | ~20-30 min |
-| Disk space | ~1 GB | ~3-5 GB | ~1.5 GB | ~5-10 GB |
-| Windows native | ✅ | ✅ | ✅ | ❌ (needs WSL2) |
-| Speed | ⚡⚡⚡ | ⚡ | ⚡⚡ | ⚡ |
-| Lock file | ✅ | ✅ | ❌ | ✅ |
-| Isolation | ✅ | ✅ | ✅ | ✅✅ |
-
-## Additional Resources
-
-- [uv Documentation](https://github.com/astral-sh/uv)
-- [PyRIT Contributing Guide](README.md)
-- [Running Tests Guide](5_running_tests.md)
+Having issues? See the [Local Dev Troubleshooting](./troubleshooting/local_dev.md) guide for common problems and solutions.

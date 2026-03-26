@@ -1,24 +1,10 @@
-# DevContainers Setup in Visual Studio Code
+# Contributor Docker Installation
 
-DevContainers provide a pre-configured development environment for PyRIT that ensures consistency across all contributors. This is the recommended setup for contributors using Visual Studio Code.
+DevContainers provide a pre-configured development environment for PyRIT using Docker and VS Code, ensuring consistency across all contributors.
 
 ```{note}
 **Development Version:** This setup uses the **latest development code** from the main branch, not a stable release. The notebooks in your cloned repository will match your code version.
 ```
-
-## Who Should Use DevContainers?
-
-✅ **Use DevContainers if you:**
-- Use Visual Studio Code as your editor. (Note that DevContainers can be used independently but our installation guide leverages VS Code since it's seamless.)
-- Want a pre-configured development environment
-- Want consistency with other contributors
-- Prefer not to manage Python environments manually
-- Need all development tools and extensions pre-installed
-
-❌ **Consider [local installation](./1a_install_uv.md) if you:**
-- Use a different IDE or editor
-- Prefer full control over your development environment
-- Need to customize your setup beyond what DevContainers offer
 
 ## Prerequisites
 
@@ -62,7 +48,7 @@ Press `Ctrl + Shift + P` (or `Cmd + Shift + P` on macOS) to open the VS Code Com
 Dev Containers: Reopen in Container
 ```
 
-![DevContainer in VS Code Commands Menu](images/DevContainer-vscode.png)
+![DevContainer in VS Code Commands Menu](../contributing/images/DevContainer-vscode.png)
 
 VS Code will:
 1. Build the development container (this may take several minutes the first time)
@@ -100,14 +86,8 @@ To view variables populated by code examples:
 2. Select **Jupyter** from the dropdown menu
 
 ```{important}
-**Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](8_notebooks.md) for more details.
+**Note for Contributors:** When constructing a pull request, notebooks should not be edited directly. Instead, edit the corresponding `.py` file. See [Working with Notebooks](../contributing/7_notebooks.md) for more details.
 ```
-
-## Populating Secrets
-
-After setting up your DevContainer, configure your API keys and secrets:
-
-See [Populating Secrets](../setup/populating_secrets.md) for detailed instructions.
 
 ## Common DevContainer Operations
 
@@ -125,28 +105,14 @@ To exit the container and return to your local environment:
 1. Press `Ctrl + Shift + P` (or `Cmd + Shift + P` on macOS)
 2. Type and select: `Dev Containers: Reopen Folder Locally`
 
+## Next Step: Configure PyRIT
+
+After setting up your DevContainer, configure your AI endpoint credentials.
+
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
+
 ## Troubleshooting
 
-### Container Build Fails
-
-**Problem**: DevContainer fails to build
-
-**Solutions**:
-1. Ensure Docker is running
-2. Check that you have sufficient disk space
-3. Try rebuilding: `Dev Containers: Rebuild Container Without Cache`
-
-### Extension Not Loading
-
-**Problem**: VS Code extensions don't load in the container
-
-**Solution**: Check the `.devcontainer/devcontainer.json` file to ensure extensions are listed. Rebuild the container if needed.
-
-### Performance Issues
-
-**Problem**: Container runs slowly
-
-**Solutions**:
-1. Allocate more resources to Docker in Docker Desktop settings
-2. On Windows, ensure you're using WSL 2 backend for better performance
-3. Close unnecessary applications to free up system resources
+Having issues? See the [DevContainers Troubleshooting](./troubleshooting/devcontainers.md) guide for common problems and solutions.

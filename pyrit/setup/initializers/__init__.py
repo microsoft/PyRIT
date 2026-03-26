@@ -9,7 +9,6 @@ from pyrit.setup.initializers.components.targets import TargetInitializer
 from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 from pyrit.setup.initializers.scenarios.objective_list import ScenarioObjectiveListInitializer
-from pyrit.setup.initializers.scenarios.openai_objective_target import ScenarioObjectiveTargetInitializer
 from pyrit.setup.initializers.simple import SimpleInitializer
 
 __all__ = [
@@ -21,5 +20,4 @@ __all__ = [
     "SimpleInitializer",
     "LoadDefaultDatasets",
     "ScenarioObjectiveListInitializer",
-    "ScenarioObjectiveTargetInitializer",
 ]

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -228,3 +228,118 @@ class TestScorerInitializerGetInfo:
         """Test that get_info reports execution_order of 2."""
         info = await ScorerInitializer.get_info_async()
         assert info["execution_order"] == 2
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerInitializerBestObjectiveF1:
+    """Tests for _register_best_objective_f1 tagging behavior."""
+
+    def setup_method(self) -> None:
+        """Reset registries before each test."""
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def _register_mock_target(self, *, name: str) -> OpenAIChatTarget:
+        """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        target = MagicMock(spec=OpenAIChatTarget)
+        target._temperature = None
+        target._endpoint = f"https://test-{name}.openai.azure.com"
+        target._api_key = "test_key"
+        target._model_name = "test-model"
+        target._underlying_model = "gpt-4o"
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_instance(target, name=name)
+        return target
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_objective_f1_tags_best_scorer(self, mock_find_metrics) -> None:
+        """Test that _register_best_objective_f1 tags the scorer with highest F1."""
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        mock_metrics = MagicMock()
+        mock_metrics.f1_score = 0.85
+        mock_find_metrics.return_value = mock_metrics
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        results = registry.get_by_tag(tag="best_objective_f1")
+        assert len(results) >= 1
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_objective_f1_no_metrics_skips_tagging(self, mock_find_metrics) -> None:
+        """Test that no scorer is tagged when no metrics are available."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        mock_find_metrics.return_value = None
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        results = registry.get_by_tag(tag="best_objective_f1")
+        assert len(results) == 0
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_objective_f1_picks_highest_f1(self, mock_find_metrics) -> None:
+        """Test that the scorer with the highest F1 score gets tagged."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        self._register_mock_target(name=GPT4O_TEMP9_TARGET)
+
+        def mock_metrics_by_hash(*, eval_hash: str) -> MagicMock | None:
+            metrics = MagicMock()
+            if "refusal" in eval_hash.lower() if eval_hash else False:
+                metrics.f1_score = 0.5
+                return metrics
+            # Default: return higher F1 for all scorers that have a hash
+            metrics.f1_score = 0.9
+            return metrics
+
+        mock_find_metrics.side_effect = mock_metrics_by_hash
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        results = registry.get_by_tag(tag="best_objective_f1")
+        assert len(results) == 1
+        # Should also have the default_objective_scorer tag
+        assert "default_objective_scorer" in results[0].tags
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_objective_f1_does_not_add_extra_entry(self, mock_find_metrics) -> None:
+        """Test that tagging best_objective_f1 doesn't increase registry count."""
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        mock_metrics = MagicMock()
+        mock_metrics.f1_score = 0.85
+        mock_find_metrics.return_value = mock_metrics
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        count_with_tag = len(registry)
+
+        # Reset and run without metrics to get baseline count
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+        self._register_mock_target(name=GPT4O_TARGET)
+        mock_find_metrics.return_value = None
+
+        init2 = ScorerInitializer()
+        await init2.initialize_async()
+
+        registry2 = ScorerRegistry.get_registry_singleton()
+        count_without_tag = len(registry2)
+
+        assert count_with_tag == count_without_tag

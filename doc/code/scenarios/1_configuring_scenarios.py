@@ -178,7 +178,6 @@ await baseline_only_scenario.initialize_async(  # type: ignore
 baseline_result = await baseline_only_scenario.run_async()  # type: ignore
 await printer.print_summary_async(baseline_result)  # type: ignore
 
-
 # %% [markdown]
 # The baseline attack sends each objective directly to the target without any converters or
 # multi-turn strategies. This gives you the "unmodified" success/failure rate.

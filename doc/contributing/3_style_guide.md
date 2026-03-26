@@ -1,4 +1,4 @@
-# 4. Style Guide
+# 3. Style Guide
 
 Currently the code in PyRIT should try to have a consistent style. A consistent coding style aids in efficient development of capabilities.
 

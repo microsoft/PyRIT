@@ -7,6 +7,18 @@ import pytest
 
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
+# Env vars that may leak from .env files loaded by other tests in parallel workers.
+# Clear them so that targets use _DEFAULT_CAPABILITIES instead of _KNOWN_CAPABILITIES.
+_CLEAN_UNDERLYING_MODEL_ENV = {
+    "OPENAI_VIDEO_UNDERLYING_MODEL": "",
+    "OPENAI_REALTIME_UNDERLYING_MODEL": "",
+    "OPENAI_CHAT_UNDERLYING_MODEL": "",
+    "OPENAI_IMAGE_UNDERLYING_MODEL": "",
+    "OPENAI_TTS_UNDERLYING_MODEL": "",
+    "OPENAI_COMPLETION_UNDERLYING_MODEL": "",
+    "OPENAI_RESPONSES_UNDERLYING_MODEL": "",
+}
+
 
 class TestDefaultCapabilitiesDefined:
     """Verify that every concrete PromptTarget subclass defines _DEFAULT_CAPABILITIES."""
@@ -79,6 +91,7 @@ class TestTargetCapabilitiesModalities:
         assert caps.input_modalities == frozenset({frozenset(["text"])})
         assert caps.output_modalities == frozenset({frozenset(["text"])})
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_chat_target_modalities(self):
         from pyrit.prompt_target import OpenAIChatTarget
 
@@ -92,6 +105,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.supports_json_output is True
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_image_target_modalities(self):
         from pyrit.prompt_target import OpenAIImageTarget
 
@@ -104,6 +118,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.output_modalities == frozenset({frozenset(["image_path"])})
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_tts_target_modalities(self):
         from pyrit.prompt_target import OpenAITTSTarget
 
@@ -115,6 +130,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.input_modalities == frozenset({frozenset(["text"])})
         assert target.capabilities.output_modalities == frozenset({frozenset(["audio_path"])})
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_video_target_modalities(self):
         from pyrit.prompt_target import OpenAIVideoTarget
 
@@ -128,6 +144,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.output_modalities == frozenset({frozenset(["video_path"])})
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_realtime_target_modalities(self):
         from pyrit.prompt_target import RealtimeTarget
 
@@ -141,6 +158,7 @@ class TestTargetCapabilitiesModalities:
         assert any("text" in combo for combo in target.capabilities.output_modalities)
         assert any("audio_path" in combo for combo in target.capabilities.output_modalities)
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_response_target_modalities(self):
         from pyrit.prompt_target import OpenAIResponseTarget
 
@@ -155,6 +173,7 @@ class TestTargetCapabilitiesModalities:
         assert target.capabilities.supports_json_output is True
         assert target.capabilities.supports_multi_message_pieces is True
 
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_completion_target_modalities(self):
         from pyrit.prompt_target import OpenAICompletionTarget
 
@@ -378,8 +397,8 @@ class TestGetDefaultCapabilities:
         cls = self._make_target_class(default_caps=custom_caps)
         with patch("pyrit.prompt_target.common.prompt_target.logger") as mock_logger:
             result = cls.get_default_capabilities("totally-unknown-model")
-            mock_logger.warning.assert_called_once()
-            warning_args = mock_logger.warning.call_args[0]
+            mock_logger.info.assert_called_once()
+            warning_args = mock_logger.info.call_args[0]
             assert "totally-unknown-model" in warning_args[1]
         assert result is custom_caps
 

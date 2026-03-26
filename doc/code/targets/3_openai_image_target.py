@@ -69,7 +69,6 @@ image_scorer = SelfAskTrueFalseScorer(
     true_false_question=TrueFalseQuestion(true_description="The response matches the objective {{objective}}"),
 )
 
-
 scoring_config = AttackScoringConfig(objective_scorer=image_scorer)
 
 attack = PromptSendingAttack(

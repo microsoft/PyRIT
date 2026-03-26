@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import pytest
+
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.instance_registries.base_instance_registry import BaseInstanceRegistry, RegistryEntry
 
@@ -453,3 +455,67 @@ class TestBaseInstanceRegistryDunderMethods:
         """Test that the registry can be used in a for loop."""
         collected = list(self.registry)
         assert collected == ["name1", "name2"]
+
+
+class TestBaseInstanceRegistryAddTags:
+    """Tests for add_tags functionality in BaseInstanceRegistry."""
+
+    def setup_method(self):
+        """Reset and get a fresh registry for each test."""
+        ConcreteTestRegistry.reset_instance()
+        self.registry = ConcreteTestRegistry.get_registry_singleton()
+
+    def teardown_method(self):
+        """Reset the singleton after each test."""
+        ConcreteTestRegistry.reset_instance()
+
+    def test_add_tags_with_list(self):
+        """Test adding list-style tags to an existing entry."""
+        self.registry.register("value", name="entry1")
+        self.registry.add_tags(name="entry1", tags=["fast", "default"])
+
+        entry = self.registry.get_entry("entry1")
+        assert entry is not None
+        assert entry.tags == {"fast": "", "default": ""}
+
+    def test_add_tags_with_dict(self):
+        """Test adding dict-style tags to an existing entry."""
+        self.registry.register("value", name="entry1")
+        self.registry.add_tags(name="entry1", tags={"role": "scorer"})
+
+        entry = self.registry.get_entry("entry1")
+        assert entry is not None
+        assert entry.tags == {"role": "scorer"}
+
+    def test_add_tags_merges_with_existing(self):
+        """Test that add_tags merges new tags with existing ones."""
+        self.registry.register("value", name="entry1", tags={"existing": "yes"})
+        self.registry.add_tags(name="entry1", tags=["new_tag"])
+
+        entry = self.registry.get_entry("entry1")
+        assert entry is not None
+        assert entry.tags == {"existing": "yes", "new_tag": ""}
+
+    def test_add_tags_raises_for_missing_entry(self):
+        """Test that add_tags raises KeyError for a non-existent entry."""
+        with pytest.raises(KeyError, match="No entry named 'missing'"):
+            self.registry.add_tags(name="missing", tags=["tag"])
+
+    def test_add_tags_invalidates_metadata_cache(self):
+        """Test that add_tags invalidates the metadata cache."""
+        self.registry.register("value", name="entry1")
+        self.registry.list_metadata()  # Build cache
+
+        self.registry.add_tags(name="entry1", tags=["new"])
+
+        # Cache should be invalidated (None), next call rebuilds
+        assert self.registry._metadata_cache is None
+
+    def test_add_tags_entries_findable_by_get_by_tag(self):
+        """Test that entries are findable via get_by_tag after add_tags."""
+        self.registry.register("value", name="entry1")
+        self.registry.add_tags(name="entry1", tags=["best_scorer"])
+
+        results = self.registry.get_by_tag(tag="best_scorer")
+        assert len(results) == 1
+        assert results[0].name == "entry1"

@@ -1,23 +1,9 @@
-# Install PyRIT with Docker
+# User Docker Installation
 
-Docker provides the fastest way to get started with PyRIT. This method uses a pre-configured container with JupyterLab, eliminating the need for local Python environment setup.
-
-## Who Should Use Docker?
-
-✅ **Use Docker if you:**
-- Want to get started immediately without Python setup
-- Prefer a consistent, isolated environment
-- Are new to PyRIT and want to try it quickly
-- Want JupyterLab pre-configured and ready to go
-- Work on Windows, macOS, or Linux
-
-❌ **Consider [local installation](./1a_install_uv.md) if you:**
-- Need to integrate PyRIT into existing Python workflows
-- Prefer lighter-weight installations
-- Want direct access to PyRIT from your system Python
+Docker provides the fastest way to get started with PyRIT — a pre-configured container with JupyterLab, no local Python environment setup needed.
 
 ```{important}
-**Version Compatibility:** This Docker setup installs the **latest stable release** of PyRIT from PyPI. The notebooks and documentation must match your PyRIT version. If you're using PyRIT from a release (like `v0.9.0`), download notebooks from the corresponding release branch, not from the `main` branch or this website (which shows the latest development version).
+**Version Compatibility:** This Docker setup installs the **latest stable release** of PyRIT from PyPI. If you're using a specific release (like `v0.9.0`), download notebooks from the corresponding release branch.
 ```
 
 ## Prerequisites
@@ -45,7 +31,10 @@ cd PyRIT/docker
 Create the required environment configuration files:
 
 ```bash
-# Create main environment files in the parent directory
+# Create the PyRIT config directory on your host
+mkdir -p ~/.pyrit
+
+# Create main environment files
 cp ../.env_example ~/.pyrit/.env
 cp ../.env_local_example ~/.pyrit/.env.local
 
@@ -104,8 +93,6 @@ print(pyrit.__version__)
 ```python
 # Your PyRIT code here
 ```
-
-Check out the [cookbooks](../cookbooks/README.md) for example workflows and tutorials.
 
 ## Directory Structure
 
@@ -199,70 +186,14 @@ To use NVIDIA GPUs with PyRIT:
    print(f"GPU count: {torch.cuda.device_count()}")
    ```
 
+## Next Step: Configure PyRIT
+
+After installing, configure your AI endpoint credentials.
+
+```{tip}
+Jump to [Configure PyRIT](./configuration.md) to set up your credentials.
+```
+
 ## Troubleshooting
 
-### JupyterLab Not Accessible
-
-**Problem**: Cannot access `http://localhost:8888`
-
-**Solutions**:
-1. Check if the container is running:
-   ```bash
-   docker ps
-   ```
-
-2. View container logs:
-   ```bash
-   docker-compose logs pyrit
-   ```
-
-3. Ensure port 8888 is not already in use:
-   ```bash
-   # On Linux/macOS
-   lsof -i :8888
-
-   # On Windows (PowerShell)
-   netstat -ano | findstr :8888
-   ```
-
-### Permission Errors
-
-**Problem**: Permission denied errors when accessing notebooks or data
-
-**Solution**: Set appropriate permissions:
-
-```bash
-chmod -R 777 notebooks/ data/ ../assets/
-```
-
-### Missing Environment Files
-
-**Problem**: Container fails with missing environment file errors
-
-**Solution**: Ensure all environment files are created:
-
-```bash
-ls -la ../.env ../.env.local .env.container.settings
-```
-
-If any are missing, create them from the examples as shown in step 2 of Quick Start.
-
-### Container Build Fails
-
-**Problem**: Docker build fails with dependency errors
-
-**Solutions**:
-1. Clear Docker cache and rebuild:
-   ```bash
-   docker-compose build --no-cache
-   ```
-
-2. Ensure you have sufficient disk space:
-   ```bash
-   docker system df
-   ```
-
-3. Prune old images if needed:
-   ```bash
-   docker system prune -a
-   ```
+Having issues? See the [Docker Troubleshooting](./troubleshooting/docker.md) guide for common problems and solutions.

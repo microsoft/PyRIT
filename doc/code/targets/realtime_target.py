@@ -103,7 +103,6 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 for result in results:
     await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
 
-
 # %% [markdown]
 # ## MULTITURN:
 

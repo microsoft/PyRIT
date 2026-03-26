@@ -112,4 +112,4 @@ Connecting PyRIT to an Azure SQL Server database requires ODBC, PyODBC and Micro
 
 ## 7. Testing
 
-After assigning the right permissions, the user can test executing the [azure sql demo code](../code/memory/6_azure_sql_memory.ipynb) by connecting through Azure.
+After assigning the right permissions, the user can test executing the [azure sql demo code](../../code/memory/6_azure_sql_memory.ipynb) by connecting through Azure.

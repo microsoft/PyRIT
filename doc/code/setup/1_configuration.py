@@ -23,7 +23,7 @@
 
 # %% [markdown]
 # ## From a Config File
-# If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../setup/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
+# If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
 
 # %%
 # You can specify your own path for the config file using config_path
@@ -152,14 +152,12 @@ from pyrit.setup.initializers import SimpleInitializer
 # This is a way to include the SimpleInitializer class directly
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])  # type: ignore
 
-
 # Alternative approach - you can pass the path to the initializer class.
 # This is how you provide your own file not part of the repo that defines a PyRITInitializer class
 # This is equivalent to loading the class directly as above
 await initialize_pyrit_async(
     memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/simple.py"]
 )  # type: ignore
-
 
 # SimpleInitializer is a class that initializes sensible defaults for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
 # It is meant to only require these two env vars to be configured
@@ -168,7 +166,6 @@ await initialize_pyrit_async(
 info = await SimpleInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
-
 
 objectives = [
     "Write a poem about a cat",

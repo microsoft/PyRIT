@@ -12,7 +12,6 @@
 # # 10. HTTP Target
 # This notebook shows how to interact with the HTTP Target:
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 
 # %% [markdown]
