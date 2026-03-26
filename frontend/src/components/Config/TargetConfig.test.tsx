@@ -364,4 +364,29 @@ describe("TargetConfig", () => {
 
     expect(screen.getByTestId("create-dialog")).toBeInTheDocument();
   });
+
+  it("should close the create dialog when Cancel is clicked", async () => {
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+
+    render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("New Target")).toBeInTheDocument();
+    });
+
+    // Open the dialog
+    await userEvent.click(screen.getByText("New Target"));
+    expect(screen.getByTestId("create-dialog")).toBeInTheDocument();
+
+    // Close via Cancel
+    await userEvent.click(screen.getByTestId("dialog-close"));
+    expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
+  });
 });

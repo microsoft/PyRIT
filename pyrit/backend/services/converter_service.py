@@ -13,7 +13,6 @@ Converters can be:
 """
 
 import inspect
-import mimetypes
 import re
 import uuid
 from functools import lru_cache
@@ -78,7 +77,12 @@ def _is_simple_type(annotation: Any) -> bool:
 
 
 def _serialize_type(annotation: Any) -> str:
-    """Convert a type annotation to a concise human-readable string."""
+    """
+    Convert a type annotation to a concise human-readable string.
+
+    Returns:
+        str: A human-readable representation of the type annotation.
+    """
     if annotation is inspect.Parameter.empty:
         return "Any"
     origin = get_origin(annotation)
@@ -97,7 +101,12 @@ def _serialize_type(annotation: Any) -> str:
 
 
 def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
-    """Parse parameter descriptions from Google-style docstring Args section."""
+    """
+    Parse parameter descriptions from Google-style docstring Args section.
+
+    Returns:
+        dict[str, str]: Mapping of parameter names to their descriptions.
+    """
     doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()
     match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
     if not match:
@@ -114,7 +123,12 @@ def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
 
 
 def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]:
-    """Extract simple constructor parameters from a converter class."""
+    """
+    Extract simple constructor parameters from a converter class.
+
+    Returns:
+        list[ConverterParameterSchema]: List of parameter schemas.
+    """
     try:
         sig = inspect.signature(converter_class.__init__)
     except (ValueError, TypeError):
@@ -220,8 +234,12 @@ class ConverterService:
             if converter_type in ("HumanInTheLoopConverter", "SelectiveTextConverter"):
                 continue
 
-            supported_input_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_INPUT_TYPES", ())]
-            supported_output_types = [str(data_type) for data_type in getattr(converter_class, "SUPPORTED_OUTPUT_TYPES", ())]
+            supported_input_types = [
+                str(data_type) for data_type in getattr(converter_class, "SUPPORTED_INPUT_TYPES", ())
+            ]
+            supported_output_types = [
+                str(data_type) for data_type in getattr(converter_class, "SUPPORTED_OUTPUT_TYPES", ())
+            ]
 
             # Extract first paragraph of docstring as description
             raw_doc = (converter_class.__doc__ or "").strip()

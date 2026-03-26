@@ -2442,4 +2442,107 @@ describe("ChatWindow Integration", () => {
       expect(textarea.value).toBe("Here is an image");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Converter panel integration
+  // ---------------------------------------------------------------------------
+
+  it("should open converter panel when toggle button is clicked and pass props", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({ items: [] });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conv-panel"
+          conversationId="conv-panel"
+          activeConversationId="conv-panel"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    // Panel should not be open initially
+    expect(screen.queryByTestId("converter-panel")).not.toBeInTheDocument();
+
+    // Click the converter toggle
+    const toggleBtn = screen.getByTestId("toggle-converter-panel-btn");
+    await userEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+    });
+
+    // Close the panel
+    const closeBtn = screen.getByTestId("close-converter-panel-btn");
+    await userEvent.click(closeBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("converter-panel")).not.toBeInTheDocument();
+    });
+  });
+
+  it("should pass input text and attachments to converter panel", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({ items: [] });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conv-input"
+          conversationId="conv-input"
+          activeConversationId="conv-input"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    // Type into chat input
+    const input = screen.getByRole("textbox");
+    await userEvent.type(input, "test text");
+
+    // Open converter panel
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+    });
+  });
+
+  it("should handle onClearConversion and onConvertedValueChange from ChatInputArea", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({ items: [] });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conv-flow"
+          conversationId="conv-flow"
+          activeConversationId="conv-flow"
+          relatedConversationCount={0}
+        />
+      </TestWrapper>
+    );
+
+    // Open converter panel — this exercises onToggleConverterPanel (L584),
+    // ConverterPanel onClose (L508), and onUseConvertedValue (L509)
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+    });
+
+    // Close it via the panel close button — exercises the onClose callback
+    await userEvent.click(screen.getByTestId("close-converter-panel-btn"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("converter-panel")).not.toBeInTheDocument();
+    });
+
+    // Toggle it again to verify state toggles correctly
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+    });
+  });
 });

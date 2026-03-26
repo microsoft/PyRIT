@@ -308,6 +308,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                             className={styles.dismissBtn}
                             icon={<DismissRegular />}
                             onClick={() => removeAttachment(index)}
+                            data-testid={`remove-attachment-${index}`}
                           />
                         </div>
                         {conversion && (
@@ -322,6 +323,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                               className={styles.dismissBtn}
                               icon={<DismissRegular />}
                               onClick={() => onClearMediaConversion?.(att.type)}
+                              data-testid={`clear-media-conversion-${att.type}`}
                             />
                           </div>
                         )}
