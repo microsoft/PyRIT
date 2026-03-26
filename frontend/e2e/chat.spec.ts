@@ -35,6 +35,9 @@ async function mockBackendAPIs(page: Page) {
 
   // Mock add-message – MUST be registered BEFORE the create-attack route
   // so the more specific pattern matches first.
+  // FIX: Track whether a POST has been seen so GET doesn't return empty
+  // and overwrite the optimistic UI during the React render race.
+  let postSeen = false;
   await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
     if (route.request().method() === "POST") {
       let userText = "your message";
@@ -82,6 +85,7 @@ async function mockBackendAPIs(page: Page) {
       };
 
       accumulatedMessages.push(userMsg, assistantMsg);
+      postSeen = true;
 
       await route.fulfill({
         status: 200,
@@ -96,7 +100,7 @@ async function mockBackendAPIs(page: Page) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ messages: [...accumulatedMessages] }),
+        body: JSON.stringify({ messages: postSeen ? [...accumulatedMessages] : [] }),
       });
     } else {
       await route.continue();
@@ -108,7 +112,7 @@ async function mockBackendAPIs(page: Page) {
   await page.route(/\/api\/attacks$/, async (route) => {
     if (route.request().method() === "POST") {
       accumulatedMessages = [];
-      await route.fulfill({
+      postSeen = false;      await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
@@ -335,7 +339,10 @@ function buildModalityMock(
 
     // Add message – returns user turn + assistant with given pieces.
     // Also handles GET requests for loadConversation.
+    // FIX: Return empty on GET until POST has been seen so a racing
+    // loadConversation doesn't overwrite the optimistic UI with [].
     let lastMessages: Record<string, unknown>[] = [];
+    let postSeen = false;
     await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
       if (route.request().method() === "POST") {
         let userText = "user-input";
@@ -372,6 +379,7 @@ function buildModalityMock(
             pieces: assistantPieces,
           },
         ];
+        postSeen = true;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -382,11 +390,13 @@ function buildModalityMock(
           }),
         });
       } else if (route.request().method() === "GET") {
-        // Return accumulated messages so loadConversation doesn't hang
+        // Return empty before any POST so loadConversation doesn't hang,
+        // but don't overwrite optimistic UI with stale empty data.
+        // After POST, return full messages for subsequent loads.
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ messages: [...lastMessages] }),
+          body: JSON.stringify({ messages: postSeen ? [...lastMessages] : [] }),
         });
       } else {
         await route.continue();
@@ -498,9 +508,12 @@ test.describe("Multi-modal: Video response", () => {
 
     await expect(page.getByText("Create a video clip", { exact: true })).toBeVisible();
 
-    // Video element should appear
-    const video = page.locator("video");
-    await expect(video).toBeVisible({ timeout: 10000 });
+    // Video element should appear. Use poll to survive React re-renders
+    // that temporarily remove the element (loadConversation race).
+    await expect.poll(
+      async () => (await page.locator("video").count()) > 0,
+      { timeout: 15000 },
+    ).toBeTruthy();
   });
 });
 
