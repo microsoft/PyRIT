@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.cli._cli_args import ARG_HELP as ARG_HELP
@@ -63,6 +62,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from pyrit.models.scenario_result import ScenarioResult
     from pyrit.registry import (
@@ -232,22 +232,18 @@ async def list_scenarios_async(*, context: FrontendCore) -> list[ScenarioMetadat
 
 
 async def list_initializers_async(
-    *, context: FrontendCore, discovery_path: Optional[Path] = None
+    *,
+    context: FrontendCore,
 ) -> Sequence[InitializerMetadata]:
     """
     List metadata for all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
-        discovery_path: Optional path to discover initializers from.
 
     Returns:
         Sequence of initializer metadata dictionaries describing each initializer class.
     """
-    if discovery_path:
-        registry = InitializerRegistry(discovery_path=discovery_path)
-        return registry.list_metadata()
-
     if not context._initialized:
         await context.initialize_async()
     return context.initializer_registry.list_metadata()
@@ -438,7 +434,7 @@ def format_scenario_metadata(*, scenario_metadata: ScenarioMetadata) -> None:
     Args:
         scenario_metadata: Dataclass containing scenario metadata.
     """
-    _print_header(text=scenario_metadata.snake_class_name)
+    _print_header(text=scenario_metadata.registry_name)
     print(f"    Class: {scenario_metadata.class_name}")
 
     description = scenario_metadata.class_description
@@ -480,7 +476,7 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
     Args:
         initializer_metadata: Dataclass containing initializer metadata.
     """
-    _print_header(text=initializer_metadata.snake_class_name)
+    _print_header(text=initializer_metadata.registry_name)
     print(f"    Class: {initializer_metadata.class_name}")
     print(f"    Name: {initializer_metadata.display_name}")
     print(f"    Execution Order: {initializer_metadata.execution_order}")
@@ -520,17 +516,6 @@ def resolve_initialization_scripts(script_paths: list[str]) -> list[Path]:
     return InitializerRegistry.resolve_script_paths(script_paths=script_paths)
 
 
-def get_default_initializer_discovery_path() -> Path:
-    """
-    Get the default path for discovering initializers.
-
-    Returns:
-        Path to the scenarios initializers directory.
-    """
-    pyrit_path = Path(__file__).parent.parent.resolve()
-    return pyrit_path / "setup" / "initializers" / "scenarios"
-
-
 async def print_scenarios_list_async(*, context: FrontendCore) -> int:
     """
     Print a formatted list of all available scenarios.
@@ -556,18 +541,17 @@ async def print_scenarios_list_async(*, context: FrontendCore) -> int:
     return 0
 
 
-async def print_initializers_list_async(*, context: FrontendCore, discovery_path: Optional[Path] = None) -> int:
+async def print_initializers_list_async(*, context: FrontendCore) -> int:
     """
     Print a formatted list of all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
-        discovery_path: Optional path to discover initializers from.
 
     Returns:
         Exit code (0 for success).
     """
-    initializers = await list_initializers_async(context=context, discovery_path=discovery_path)
+    initializers = await list_initializers_async(context=context)
 
     if not initializers:
         print("No initializers found.")

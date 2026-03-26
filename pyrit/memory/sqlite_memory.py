@@ -15,6 +15,7 @@ from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
 from pyrit.common.path import DB_DATA_PATH
@@ -84,6 +85,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Creates an engine bound to the specified database file. The `has_echo` parameter
         controls the verbosity of SQL execution logging.
 
+        For in-memory databases (``db_path=":memory:"``), a ``StaticPool`` is used so
+        that a single shared connection backs all threads.  SQLAlchemy's default pool
+        for ``:memory:`` is ``SingletonThreadPool``, which gives each thread its own
+        connection — and therefore its own *separate* in-memory database.  That causes
+        tables created on one thread (e.g. a background initialisation thread) to be
+        invisible from another thread (e.g. the main thread), resulting in
+        "no such table" errors.
+
         Args:
             has_echo (bool): Flag to enable detailed SQL execution logging.
 
@@ -94,8 +103,17 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             SQLAlchemyError: If there's an issue creating the engine.
         """
         try:
-            # Create the SQLAlchemy engine.
-            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo)
+            extra_kwargs: dict[str, Any] = {}
+
+            if self.db_path == ":memory:":
+                # Use StaticPool so every checkout returns the same underlying
+                # DBAPI connection, keeping all threads on a single in-memory
+                # database.  ``check_same_thread=False`` is required because
+                # the connection will be shared across threads.
+                extra_kwargs["poolclass"] = StaticPool
+                extra_kwargs["connect_args"] = {"check_same_thread": False}
+
+            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo, **extra_kwargs)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:
@@ -201,7 +219,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             list[Base]: A list of SQLAlchemy model classes.
         """
         # The '__subclasses__()' method returns a list of all subclasses of Base, which includes table models
-        return Base.__subclasses__()
+        return Base.__subclasses__()  # type: ignore[no-any-return]
 
     def _query_entries(
         self,
@@ -230,16 +248,16 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                    query = query.options(joinedload(PromptMemoryEntry.scores))  # type: ignore[no-untyped-call]
                 elif model_class == AttackResultEntry:
-                    query = query.options(
+                    query = query.options(  # type: ignore[no-untyped-call]
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
                         joinedload(AttackResultEntry.last_score),
                     )
                 if conditions is not None:
                     query = query.filter(conditions)
                 if distinct:
-                    return query.distinct().all()
+                    return query.distinct().all()  # type: ignore[no-any-return, no-untyped-call]
                 return query.all()
             except SQLAlchemyError as e:
                 logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[attr-defined]
@@ -331,7 +349,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Session: A SQLAlchemy session bound to the engine.
         """
-        return self.SessionFactory()
+        return self.SessionFactory()  # type: ignore[no-any-return]
 
     def reset_database(self) -> None:
         """
@@ -454,7 +472,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             file_extension = f".{export_type}"
             file_path = DB_DATA_PATH / f"{table_name}{file_extension}"
             # Convert to list for exporter compatibility
-            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore[arg-type]
+            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """
@@ -573,7 +591,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             class_name_expr = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier, "$.children.attack.class_name"
             )
-            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
+            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()  # type: ignore[no-untyped-call]
         return sorted(row[0] for row in rows)
 
     def get_unique_converter_class_names(self) -> list[str]:

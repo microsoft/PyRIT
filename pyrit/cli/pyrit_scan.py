@@ -34,18 +34,18 @@ Examples:
   pyrit_scan --list-initializers
 
   # Run a scenario with built-in initializers
-  pyrit_scan foundry --initializers openai_objective_target load_default_datasets
+  pyrit_scan red_team_agent --initializers openai_objective_target load_default_datasets
 
   # Run with a configuration file (recommended for complex setups)
-  pyrit_scan foundry --config-file ./my_config.yaml
+  pyrit_scan red_team_agent --config-file ./my_config.yaml
 
   # Run with custom initialization scripts
-  pyrit_scan garak.encoding --initialization-scripts ./my_config.py
+  pyrit_scan encoding --initialization-scripts ./my_config.py
 
   # Run specific strategies or options
-  pyrit_scan foundry --strategies base64 rot13 --initializers openai_objective_target
-  pyrit_scan foundry --initializers openai_objective_target --max-concurrency 10 --max-retries 3
-  pyrit_scan garak.encoding --initializers openai_objective_target --memory-labels '{"run_id":"test123"}'
+  pyrit_scan red_team_agent --strategies base64 rot13 --initializers openai_objective_target
+  pyrit_scan red_team_agent --initializers openai_objective_target --max-concurrency 10 --max-retries 3
+  pyrit_scan encoding --initializers openai_objective_target --memory-labels '{"run_id":"test123"}'
 """,
         formatter_class=RawDescriptionHelpFormatter,
     )
@@ -204,14 +204,11 @@ def main(args: Optional[list[str]] = None) -> int:
         return asyncio.run(frontend_core.print_scenarios_list_async(context=context))
 
     if parsed_args.list_initializers:
-        # Discover from scenarios directory
-        scenarios_path = frontend_core.get_default_initializer_discovery_path()
-
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
             log_level=parsed_args.log_level,
         )
-        return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
+        return asyncio.run(frontend_core.print_initializers_list_async(context=context))
 
     # Verify scenario was provided
     if not parsed_args.scenario_name:

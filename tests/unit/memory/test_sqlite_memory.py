@@ -668,3 +668,10 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[0]].message_count == 1
     assert result[conv_ids[1]].message_count == 2
     assert result[conv_ids[2]].message_count == 3
+
+
+def test_create_engine_uses_static_pool_for_in_memory(sqlite_instance):
+    """In-memory databases must use StaticPool so all threads share one database."""
+    from sqlalchemy.pool import StaticPool
+
+    assert isinstance(sqlite_instance.engine.pool, StaticPool)

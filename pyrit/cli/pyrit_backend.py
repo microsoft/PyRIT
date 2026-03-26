@@ -232,8 +232,7 @@ def main(*, args: Optional[list[str]] = None) -> int:
     # Handle list-initializers command
     if parsed_args.list_initializers:
         context = frontend_core.FrontendCore(config_file=parsed_args.config_file, log_level=parsed_args.log_level)
-        scenarios_path = frontend_core.get_default_initializer_discovery_path()
-        return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
+        return asyncio.run(frontend_core.print_initializers_list_async(context=context))
 
     # Run the server
     try:
