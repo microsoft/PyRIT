@@ -49,6 +49,8 @@ def test_scenario_with_pyrit_scan(scenario_name):
                 "openai_chat",
                 "--config-file",
                 str(CONFIG_FILE),
+                "--max-dataset-size",
+                "1",
                 "--log-level",
                 "WARNING",
             ]

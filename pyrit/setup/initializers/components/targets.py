@@ -88,6 +88,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         endpoint_var="OPENAI_CHAT_ENDPOINT",
         key_var="OPENAI_CHAT_KEY",
         model_var="OPENAI_CHAT_MODEL",
+        underlying_model_var="OPENAI_CHAT_UNDERLYING_MODEL",
         default_objective_target=True,
     ),
     # ============================================
