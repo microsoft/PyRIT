@@ -175,7 +175,6 @@ class MyCustomScenario(Scenario):
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore
 MyCustomScenario()
 
-
 # %% [markdown]
 # Then discover and run it:
 #

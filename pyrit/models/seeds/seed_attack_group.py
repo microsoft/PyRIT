@@ -72,7 +72,14 @@ class SeedAttackGroup(SeedGroup):
         """
         objective_count = len([s for s in self.seeds if isinstance(s, SeedObjective)])
         if objective_count != 1:
-            raise ValueError(f"SeedAttackGroup must have exactly one objective. Found {objective_count}.")
+            seed_summary = ", ".join(
+                f"{type(s).__name__}(value={repr(s.value[:80])})" if hasattr(s, "value") else repr(s)
+                for s in self.seeds
+            )
+            raise ValueError(
+                f"SeedAttackGroup must have exactly one objective. Found {objective_count}. "
+                f"Seeds ({len(self.seeds)}): [{seed_summary}]"
+            )
 
     @property
     def objective(self) -> SeedObjective:

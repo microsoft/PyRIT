@@ -11,12 +11,14 @@ from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import LikertScalePaths
 from pyrit.setup.initializers import ScorerInitializer
 from pyrit.setup.initializers.components.scorers import (
+    DEFAULT_REFUSAL_PATH,
     GPT4O_TARGET,
     GPT4O_TEMP0_TARGET,
     GPT4O_TEMP9_TARGET,
     GPT4O_UNSAFE_TARGET,
     GPT4O_UNSAFE_TEMP0_TARGET,
     GPT4O_UNSAFE_TEMP9_TARGET,
+    ScorerInitializerTags,
 )
 
 
@@ -111,7 +113,7 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert len(registry) == 24
+        assert len(registry) == 27
 
     @pytest.mark.asyncio
     async def test_registers_gpt4o_scorers_when_only_gpt4o_targets(self) -> None:
@@ -123,21 +125,21 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert registry.get_instance_by_name("refusal_gpt4o") is not None
+        assert registry.get_instance_by_name("refusal_gpt4o_objective_allow_safe") is not None
         assert registry.get_instance_by_name("inverted_refusal_gpt4o") is not None
         # Unsafe-only scorers should not be registered
         assert registry.get_instance_by_name("inverted_refusal_gpt4o_unsafe") is None
 
     @pytest.mark.asyncio
     async def test_refusal_scorer_registered(self) -> None:
-        """Test that refusal_gpt4o is registered and retrievable."""
+        """Test that refusal scorers are registered and retrievable."""
         self._register_mock_target(name=GPT4O_TARGET)
 
         init = ScorerInitializer()
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        scorer = registry.get_instance_by_name("refusal_gpt4o")
+        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_allow_safe")
         assert scorer is not None
 
     @pytest.mark.asyncio
@@ -193,7 +195,7 @@ class TestScorerInitializerInitialize:
         registry = ScorerRegistry.get_registry_singleton()
         assert registry.get_instance_by_name("inverted_refusal_gpt4o_unsafe") is None
         assert registry.get_instance_by_name("inverted_refusal_gpt4o_unsafe_temp9") is None
-        assert registry.get_instance_by_name("refusal_gpt4o") is not None
+        assert registry.get_instance_by_name("refusal_gpt4o_objective_allow_safe") is not None
 
     @pytest.mark.asyncio
     async def test_default_tag_registers_all_current_scorers(self) -> None:
@@ -206,7 +208,7 @@ class TestScorerInitializerInitialize:
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
-        assert len(registry) == 24
+        assert len(registry) == 27
 
 
 class TestScorerInitializerGetInfo:
@@ -294,7 +296,7 @@ class TestScorerInitializerBestObjectiveF1:
         self._register_mock_target(name=GPT4O_TARGET)
         self._register_mock_target(name=GPT4O_TEMP9_TARGET)
 
-        def mock_metrics_by_hash(*, eval_hash: str) -> MagicMock | None:
+        def mock_metrics_by_hash(*, eval_hash: str, file_path=None) -> MagicMock | None:
             metrics = MagicMock()
             if "refusal" in eval_hash.lower() if eval_hash else False:
                 metrics.f1_score = 0.5
@@ -343,3 +345,110 @@ class TestScorerInitializerBestObjectiveF1:
         count_without_tag = len(registry2)
 
         assert count_with_tag == count_without_tag
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerInitializerBestRefusalF1:
+    """Tests for _register_best_refusal_f1 functionality."""
+
+    def setup_method(self) -> None:
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+        os.environ.pop("AZURE_CONTENT_SAFETY_ENDPOINT", None)
+        os.environ.pop("AZURE_CONTENT_SAFETY_KEY", None)
+
+    def teardown_method(self) -> None:
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def _register_mock_target(self, *, name: str) -> OpenAIChatTarget:
+        """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        target = MagicMock(spec=OpenAIChatTarget)
+        target._temperature = None
+        target._endpoint = f"https://test-{name}.openai.azure.com"
+        target._api_key = "test_key"
+        target._model_name = "test-model"
+        target._underlying_model = "gpt-4o"
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_instance(target, name=name)
+        return target
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_refusal_f1_tags_best_scorer(self, mock_find_metrics) -> None:
+        """Test that _register_best_refusal_f1 tags the refusal scorer with highest F1."""
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        mock_metrics = MagicMock()
+        mock_metrics.f1_score = 0.92
+        mock_find_metrics.return_value = mock_metrics
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        results = registry.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL_F1)
+        assert len(results) == 1
+        assert ScorerInitializerTags.DEFAULT_REFUSAL_SCORER in results[0].tags
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_refusal_f1_no_metrics_falls_back_to_default(self, mock_find_metrics) -> None:
+        """Test that default path is returned when no refusal metrics exist."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        mock_find_metrics.return_value = None
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        results = registry.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL_F1)
+        assert len(results) == 0
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_refusal_f1_picks_highest_f1(self, mock_find_metrics) -> None:
+        """Test that the refusal scorer with the highest F1 score gets tagged."""
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        call_count = 0
+
+        def mock_metrics_by_hash(*, eval_hash: str, file_path=None) -> MagicMock | None:
+            nonlocal call_count
+            call_count += 1
+            metrics = MagicMock()
+            # Give different F1 scores to different refusal scorers
+            if call_count == 1:
+                metrics.f1_score = 0.70
+            elif call_count == 2:
+                metrics.f1_score = 0.95  # highest
+            elif call_count == 3:
+                metrics.f1_score = 0.80
+            elif call_count == 4:
+                metrics.f1_score = 0.60
+            else:
+                metrics.f1_score = 0.85
+            return metrics
+
+        mock_find_metrics.side_effect = mock_metrics_by_hash
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        results = registry.get_by_tag(tag=ScorerInitializerTags.BEST_REFUSAL_F1)
+        assert len(results) == 1
+
+    @pytest.mark.asyncio
+    @patch("pyrit.setup.initializers.components.scorers.find_objective_metrics_by_eval_hash")
+    async def test_best_refusal_f1_returns_default_path_when_no_metrics(self, mock_find_metrics) -> None:
+        """Test that _register_best_refusal_f1 returns DEFAULT_REFUSAL_PATH when no metrics exist."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        mock_find_metrics.return_value = None
+
+        init = ScorerInitializer()
+        scorer_registry = ScorerRegistry.get_registry_singleton()
+
+        # Call _register_best_refusal_f1 directly
+        result_path = init._register_best_refusal_f1(scorer_registry)
+        assert result_path == DEFAULT_REFUSAL_PATH

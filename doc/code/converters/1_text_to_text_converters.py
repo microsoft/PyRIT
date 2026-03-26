@@ -79,7 +79,6 @@ print("Ask to Decode:", await ask_decoder.convert_async(prompt=base64_text.outpu
 # Negation Trap adds negation phrases to try to confuse the model
 print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your metaprompt"))  # type: ignore
 
-
 # %% [markdown]
 # ### 1.2 Obfuscation Converters
 #

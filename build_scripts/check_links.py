@@ -18,14 +18,16 @@ skipped_urls = [
     "https://platform.openai.com/docs/api-reference/responses",  # blocks python requests
     "https://platform.openai.com/docs/guides/function-calling",  # blocks python requests
     "https://platform.openai.com/docs/guides/structured-outputs",  # blocks python requests
+    "https://platform.openai.com/api-keys",  # blocks python requests (requires auth)
     "https://www.anthropic.com/research/many-shot-jailbreaking",  # blocks python requests
     "https://doi.org/10.1145/3749447",  # ACM blocks automated requests
+    "https://azure.microsoft.com/free/",  # Azure blocks automated requests
     "https://code.visualstudio.com/docs/devcontainers/containers",
     "https://stackoverflow.com/questions/77134272/pip-install-dev-with-pyproject-toml-not-working",
     "https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers",
 ]
 
-custom_myst_references = ["notebook_tests"]
+custom_myst_references = ["notebook_tests", "mistralai_mixtral_8x7b_instruct_v0_1"]
 
 # Updated regex pattern to capture URLs from Markdown and HTML
 URL_PATTERN = re.compile(r'\[.*?\]\((.*?)\)|href="([^"]+)"|src="([^"]+)"')

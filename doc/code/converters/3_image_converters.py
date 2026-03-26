@@ -187,7 +187,6 @@ llm_target = OpenAIChatTarget(
     )
 )
 
-
 try:
     print("Sending the blended image with transparency to the LLM...")
 

@@ -9,8 +9,11 @@ scorer performance. Results are saved to the scorer_evals directory and checked 
 
 Usage:
     python build_scripts/evaluate_scorers.py
+    python build_scripts/evaluate_scorers.py --tags refusal
+    python build_scripts/evaluate_scorers.py --tags refusal,default
 """
 
+import argparse
 import asyncio
 import sys
 import time
@@ -23,16 +26,21 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 
 
-async def evaluate_scorers() -> None:
+async def evaluate_scorers(tags: list[str] | None = None) -> None:
     """
     Evaluate multiple scorers against their configured datasets.
 
     This will:
     1. Initialize PyRIT with in-memory database
     2. Register all scorers from ScorerInitializer into the ScorerRegistry
-    3. Iterate through all registered scorers
+    3. Iterate through registered scorers (optionally filtered by tags)
     4. Run evaluate_async() on each scorer
     5. Save results to scorer_evals directory
+
+    Args:
+        tags: Optional list of tags to filter which scorers to evaluate.
+            When provided, only scorers matching any of the tags are evaluated.
+            When None, all scorers are evaluated.
     """
     print("Initializing PyRIT...")
     target_init = TargetInitializer()
@@ -43,10 +51,22 @@ async def evaluate_scorers() -> None:
     )
 
     registry = ScorerRegistry.get_registry_singleton()
-    scorer_names = registry.get_names()
+
+    # Filter scorers by tags if specified
+    if tags:
+        scorer_names: list[str] = []
+        for tag in tags:
+            entries = registry.get_by_tag(tag=tag)
+            scorer_names.extend(entry.name for entry in entries if entry.name not in scorer_names)
+        scorer_names.sort()
+        print(f"\nFiltering by tags: {tags}")
+    else:
+        scorer_names = registry.get_names()
 
     if not scorer_names:
         print("No scorers registered. Check environment variable configuration.")
+        if tags:
+            print(f"  (filtered by tags: {tags})")
         return
 
     print(f"\nEvaluating {len(scorer_names)} scorer(s)...\n")
@@ -95,7 +115,24 @@ async def evaluate_scorers() -> None:
     print("=" * 60)
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Evaluate PyRIT scorers against human-labeled datasets.",
+    )
+    parser.add_argument(
+        "--tags",
+        type=str,
+        default=None,
+        help="Comma-separated list of tags to filter which scorers to evaluate (e.g., --tags refusal,default)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    tag_list = [t.strip() for t in args.tags.split(",")] if args.tags else None
+
     print("=" * 60)
     print("PyRIT Scorer Evaluation Script")
     print("=" * 60)
@@ -103,13 +140,15 @@ if __name__ == "__main__":
     print("datasets. This is a long-running process that may take several")
     print("minutes to hours depending on the number of scorers and datasets.")
     print()
+    if tag_list:
+        print(f"Filtering by tags: {tag_list}")
     print("Results will be saved to the registry files in:")
     print(f"  {SCORER_EVALS_PATH}")
     print("=" * 60)
     print()
 
     try:
-        asyncio.run(evaluate_scorers())
+        asyncio.run(evaluate_scorers(tags=tag_list))
     except KeyboardInterrupt:
         print("\n\nEvaluation interrupted by user.")
         sys.exit(1)

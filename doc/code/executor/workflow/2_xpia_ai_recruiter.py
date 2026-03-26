@@ -44,7 +44,6 @@
 # Before running this demonstration, ensure the AI Recruiter service is up and running locally. For detailed setup instructions, please refer to the official Docker setup guide in the repository:
 # [AI Recruiter – Docker Setup](https://github.com/KutalVolkan/ai_recruiter/blob/3e5b99b4c1a2d728904c86bc7243099649d0d918/docker_setup/readme.md)
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 
@@ -119,7 +118,6 @@ upload_target = HTTPXAPITarget(http_url=f"http://localhost:8000/upload/", method
 http_api_processing_target = HTTPXAPITarget(
     http_url=f"http://localhost:8000/search_candidates/", method="POST", timeout=180
 )
-
 
 # "processing_prompt" is unused by the server because it only expects 'file' in /upload
 # and does not parse additional fields. The PDF is manipulated via existing_pdf + injection_items.

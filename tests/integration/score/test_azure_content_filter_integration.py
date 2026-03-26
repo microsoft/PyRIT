@@ -81,6 +81,7 @@ async def test_azure_content_filter_scorer_long_text_chunking_integration(memory
         assert max_score > 0, "text should have > 0 score"
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
     """
@@ -109,6 +110,7 @@ async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
         assert max_score < 0.5, "Architecture diagram should have low harm scores"
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.asyncio
 async def test_azure_content_filter_scorer_text_with_api_key(memory) -> None:
     """

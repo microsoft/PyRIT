@@ -358,3 +358,65 @@ class TestTargetInitializerTags:
         del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
         del os.environ["AZURE_OPENAI_GPT4O_KEY"]
         del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerDefaultObjectiveTarget:
+    """Tests for DEFAULT_OBJECTIVE_TARGET tagging in TargetInitializer."""
+
+    def setup_method(self) -> None:
+        """Reset registry before each test."""
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        TargetRegistry.reset_instance()
+        for var in ["OPENAI_CHAT_ENDPOINT", "OPENAI_CHAT_KEY", "OPENAI_CHAT_MODEL"]:
+            os.environ.pop(var, None)
+
+    @pytest.mark.asyncio
+    async def test_openai_chat_registered_with_default_tag(self) -> None:
+        """Test that openai_chat target is tagged as DEFAULT_OBJECTIVE_TARGET."""
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        os.environ["OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
+        os.environ["OPENAI_CHAT_KEY"] = "test_key"
+        os.environ["OPENAI_CHAT_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert "openai_chat" in registry
+
+        entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET)
+        assert len(entries) == 1
+        assert entries[0].name == "openai_chat"
+
+    @pytest.mark.asyncio
+    async def test_no_default_tag_when_env_vars_missing(self) -> None:
+        """Test that no DEFAULT_OBJECTIVE_TARGET is tagged when openai_chat env vars missing."""
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET)
+        assert len(entries) == 0
+
+    @pytest.mark.asyncio
+    async def test_openai_chat_config_has_default_objective_target_flag(self) -> None:
+        """Test that the openai_chat TargetConfig has default_objective_target=True."""
+        openai_chat_configs = [c for c in TARGET_CONFIGS if c.registry_name == "openai_chat"]
+        assert len(openai_chat_configs) == 1
+        assert openai_chat_configs[0].default_objective_target is True
+
+    @pytest.mark.asyncio
+    async def test_other_targets_not_tagged_as_default(self) -> None:
+        """Test that non-default targets are not tagged as DEFAULT_OBJECTIVE_TARGET."""
+        other_configs = [c for c in TARGET_CONFIGS if c.registry_name != "openai_chat"]
+        for config in other_configs:
+            assert config.default_objective_target is False, (
+                f"Target {config.registry_name} should not have default_objective_target=True"
+            )
