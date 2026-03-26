@@ -16,7 +16,7 @@
 # how you can modify the prompts, and how you can view results. Before starting, import the necessary libraries.
 #
 # ## Prerequisites
-#  - In addition, ensure that you have proper access to the Azure SQL resource by running this [6_azure_sql_memory.ipynb](./6_azure_sql_memory.ipynb).
+#  - Ensure that you have proper access to the Azure SQL resource by running this [6_azure_sql_memory.ipynb](./6_azure_sql_memory.ipynb).
 #
 # The first example is as simple as it gets.
 
