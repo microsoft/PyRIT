@@ -354,3 +354,73 @@ else:
 #   - For objective scorers: 0 or 1 (converted to bool)
 #   - For harm scorers: 0.0-1.0 float values
 # - `data_type`: Type of content (defaults to "text")
+
+# %% [markdown]
+# ## Batch Evaluation with `evaluate_scorers.py`
+#
+# While `evaluate_async()` runs evaluations for a single scorer, the `evaluate_scorers.py` script
+# evaluates **all registered scorers** in bulk. This is useful for benchmarking after changing scorer
+# prompts, adding new variants, or updating human-labeled datasets.
+#
+# The script initializes PyRIT with `ScorerInitializer` (which registers all configured scorers),
+# then runs `evaluate_async()` on each one. Results are saved to the JSONL registry files in
+# `pyrit/datasets/scorer_evals/`.
+#
+# ### Basic Usage
+#
+# ```bash
+# # Evaluate all registered scorers (long-running — can take hours)
+# python build_scripts/evaluate_scorers.py
+#
+# # Evaluate only scorers with specific tags
+# python build_scripts/evaluate_scorers.py --tags refusal
+# python build_scripts/evaluate_scorers.py --tags refusal,default
+# ```
+#
+# ### Tags
+#
+# `ScorerInitializer` applies tags to scorers during registration. These tags let you target
+# specific subsets for evaluation:
+#
+# - `refusal` — The 4 standalone refusal scorer variants
+# - `default` — All scorers registered by default
+# - `best_refusal_f1` — The refusal variant with the highest F1 (set dynamically from metrics)
+# - `best_objective_f1` — The objective scorer with the highest F1
+#
+# ### Recommended Workflow: Refusal → Dependent Scorers
+#
+# When refusal scorer prompts or datasets change, the recommended workflow is:
+#
+# **Step 1: Evaluate refusal scorers first**
+#
+# ```bash
+# python build_scripts/evaluate_scorers.py --tags refusal
+# ```
+#
+# This evaluates only the 4 refusal variants and writes results to
+# `refusal_scorer/refusal_metrics.jsonl`. After this step, `ScorerInitializer` can determine which
+# refusal variant has the best F1 and tag it as `best_refusal_f1`.
+#
+# **Step 2: Re-evaluate all scorers**
+#
+# ```bash
+# python build_scripts/evaluate_scorers.py
+# ```
+#
+# On the next full run, `ScorerInitializer` reads the refusal metrics from Step 1, picks the best
+# refusal variant, and uses it to build dependent scorers (e.g., `TrueFalseInverterScorer` wrapping
+# the best refusal scorer). This ensures objective scorers that depend on refusal detection use the
+# best-performing refusal prompt.
+#
+# Scorers whose metrics are already up-to-date (same dataset version, sufficient trials) are
+# automatically skipped, so re-running the full script is efficient.
+#
+# **Step 3: Commit updated metrics**
+#
+# ```bash
+# git add pyrit/datasets/scorer_evals/
+# git commit -m "chore: update scorer metrics"
+# ```
+#
+# The updated JSONL files should be checked in so that `ScorerInitializer` can read them at runtime
+# to select the best scorers.
