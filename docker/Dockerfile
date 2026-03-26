@@ -48,6 +48,11 @@ COPY --chown=vscode:vscode frontend/ /app/frontend/
 COPY --chown=vscode:vscode build_scripts/ /app/build_scripts/
 COPY --chown=vscode:vscode doc/ /app/doc/
 
+# Override .npmrc registry for Docker builds — the repo-level .npmrc points
+# to Azure Artifacts (required by CSSC policy), but Docker builds use
+# npmjs.org directly since there's no ADO auth context inside containers.
+ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+
 # Install PyRIT and create build info (combined to ensure dependencies are available)
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
 RUN if [ "$PYRIT_SOURCE" = "pypi" ]; then \
