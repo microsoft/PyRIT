@@ -78,14 +78,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
           }
         })
 
-        // Set active account if one exists from a previous session
-        const accounts = instance.getAllAccounts()
-        if (accounts.length > 0) {
-          instance.setActiveAccount(accounts[0])
+        // Await the redirect promise FIRST — on the initial redirect back
+        // from Entra, this caches the token and returns the auth result.
+        // On normal page loads (no redirect hash) it resolves to null.
+        const redirectResult = await instance.handleRedirectPromise()
+        if (redirectResult?.account) {
+          instance.setActiveAccount(redirectResult.account)
         }
 
-        // Handle the redirect promise (resolves after redirect callback)
-        await instance.handleRedirectPromise()
+        // Fall back to any cached account from a previous session
+        if (!instance.getActiveAccount()) {
+          const accounts = instance.getAllAccounts()
+          if (accounts.length > 0) {
+            instance.setActiveAccount(accounts[0])
+          }
+        }
 
         if (!cancelled) {
           // Wire MSAL into the API client BEFORE React re-render,
