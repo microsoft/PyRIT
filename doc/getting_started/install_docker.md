@@ -31,7 +31,10 @@ cd PyRIT/docker
 Create the required environment configuration files:
 
 ```bash
-# Create main environment files in the parent directory
+# Create the PyRIT config directory on your host
+mkdir -p ~/.pyrit
+
+# Create main environment files
 cp ../.env_example ~/.pyrit/.env
 cp ../.env_local_example ~/.pyrit/.env.local
 

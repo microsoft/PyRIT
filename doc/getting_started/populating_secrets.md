@@ -8,6 +8,10 @@ For the full configuration story — including `.env.local` overrides, custom en
 
 ## Creating Your .env File
 
+```{tip}
+**Using Docker?** Create and edit `~/.pyrit/.env` on your **host** machine — the Docker Compose setup automatically mounts it into the container. You don't need to run these commands inside the container.
+```
+
 1. Create the PyRIT config directory and copy the example file:
 
 ```bash

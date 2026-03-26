@@ -4,7 +4,11 @@ After installing, you need to tell PyRIT where your AI endpoints are and how to 
 
 ## Quickest Start
 
-Set three environment variables and run three lines of Python — no files needed:
+Set three environment variables and run three lines of Python — no files needed.
+
+```{tip}
+**Using Docker?** Set these environment variables inside the container (e.g., in a JupyterLab terminal or notebook cell with `%env`), not on your host machine. In the container, `~` refers to `/home/vscode`. Alternatively, skip ahead to [Persistent Setup](#for-persistent-setup) — the Docker install already mounts your host `~/.pyrit/.env` into the container.
+```
 
 ::::{tab-set}
 
