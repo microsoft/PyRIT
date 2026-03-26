@@ -32,7 +32,7 @@ from pyrit.scenario.core.scenario_strategy import (
     ScenarioCompositeStrategy,
     ScenarioStrategy,
 )
-from pyrit.score import RefusalScorerPaths, Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
+from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -183,7 +183,7 @@ class Scenario(ABC):
             return scorer
         scorer = TrueFalseInverterScorer(
             scorer=SelfAskRefusalScorer(
-                chat_target=OpenAIChatTarget(), refusal_system_prompt_path=RefusalScorerPaths.STRICT
+                chat_target=OpenAIChatTarget()
             )
         )
         logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
