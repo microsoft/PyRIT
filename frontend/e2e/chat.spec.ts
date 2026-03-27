@@ -384,7 +384,7 @@ function buildModalityMock(
         });
       } else if (route.request().method() === "GET") {
         // Return empty before any POST so loadConversation doesn't hang,
-        // but don't overwrite optimistic UI with stale empty data.
+        // but don't overwrite UI with stale empty data.
         // After POST, return full messages for subsequent loads.
         await route.fulfill({
           status: 200,
@@ -502,12 +502,9 @@ test.describe("Multi-modal: Video response", () => {
 
     await expect(page.getByText("Create a video clip", { exact: true })).toBeVisible();
 
-    // Video element should appear. Use poll to survive React re-renders
-    // that temporarily remove the element (loadConversation race).
-    await expect.poll(
-      async () => (await page.locator("video").count()) > 0,
-      { timeout: 15000 },
-    ).toBeTruthy();
+    // Video element should appear
+    const video = page.locator("video");
+    await expect(video).toBeVisible({ timeout: 10000 });
   });
 });
 
