@@ -42,10 +42,10 @@
         "description": "Entra ID app registration client ID (no secrets needed)"
       }
     },
-    "allowedGroupObjectId": {
+    "allowedGroupObjectIds": {
       "type": "string",
       "metadata": {
-        "description": "Object ID of the Entra security group allowed to access the GUI"
+        "description": "Comma-separated Entra security group IDs allowed to access the GUI"
       }
     },
     "sqlServerFqdn": {
@@ -491,8 +491,8 @@
                   "value": "[parameters('entraTenantId')]"
                 },
                 {
-                  "name": "ENTRA_ALLOWED_GROUP_ID",
-                  "value": "[parameters('allowedGroupObjectId')]"
+                  "name": "ENTRA_ALLOWED_GROUP_IDS",
+                  "value": "[parameters('allowedGroupObjectIds')]"
                 },
                 {
                   "name": "OTEL_EXPORTER_OTLP_ENDPOINT",

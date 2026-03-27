@@ -14,8 +14,8 @@
     "entraClientId": {
       "value": "YOUR_APP_REGISTRATION_CLIENT_ID"
     },
-    "allowedGroupObjectId": {
-      "value": "YOUR_ENTRA_GROUP_OBJECT_ID"
+    "allowedGroupObjectIds": {
+      "value": "YOUR_ENTRA_GROUP_OBJECT_IDS"
     },
     "allowedCidr": {
       "value": ""

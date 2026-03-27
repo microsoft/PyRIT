@@ -23,7 +23,7 @@
 //                  containerImage=<acr>.azurecr.io/pyrit:<commit-sha> \
 //                  entraClientId=<app-registration-client-id> \
 //                  entraTenantId=<tenant-id> \
-//                  allowedGroupObjectId=<entra-group-object-id> \
+//                  allowedGroupObjectIds=<comma-separated-entra-group-ids> \
 //                  allowedCidr='131.107.0.0/16' \
 //                  sqlServerFqdn=<your-server>.database.windows.net \
 //                  sqlDatabaseName=<your-database> \
@@ -50,10 +50,7 @@ param entraClientId string
 
 @description('Object ID of the Entra security group allowed to access the GUI')
 @metadata({ description: 'Find this in Azure Portal → Entra ID → Groups → your group → Object ID' })
-param allowedGroupObjectId string
-
-@description('Comma-separated Entra user OIDs allowed to access the GUI (fallback when groups claim is unavailable)')
-param allowedOids string = ''
+param allowedGroupObjectIds string
 
 @description('CIDR range allowed to reach the app (e.g., 131.107.0.0/16 for corp VPN). Empty = no IP restriction, all traffic allowed.')
 param allowedCidr string = ''
@@ -461,12 +458,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: entraTenantId
             }
             {
-              name: 'ENTRA_ALLOWED_GROUP_ID'
-              value: allowedGroupObjectId
-            }
-            {
-              name: 'ENTRA_ALLOWED_OIDS'
-              value: allowedOids
+              name: 'ENTRA_ALLOWED_GROUP_IDS'
+              value: allowedGroupObjectIds
             }
             // OTel: point the SDK at the ACA managed agent (localhost sidecar)
             {

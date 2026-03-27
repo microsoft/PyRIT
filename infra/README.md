@@ -87,16 +87,15 @@ graph TB
   middleware on the backend. The backend validates Bearer tokens against Entra ID JWKS.
   No Easy Auth — the tenant blocks client secrets/certs on app registrations, so PKCE
   (public client) is used instead.
-- **Authorization** (three layers, any combination):
+- **Authorization** (two layers):
   1. **IP restriction** (ingress-level) — `allowedCidr` param restricts to a CIDR range
      (e.g., corp VPN `131.107.0.0/16`). Blocked before auth runs. Empty = all traffic allowed.
-  2. **Entra group check** — `allowedGroupObjectId` param. Requires `groupMembershipClaims:
-     "ApplicationGroup"` + optional claims + the security group assigned to the enterprise app
-     (see Prerequisites §3). Using `ApplicationGroup` instead of `SecurityGroup` avoids groups
-     overage (>200 groups) by only emitting app-assigned groups in the token.
-  3. **OID allowlist** — `allowedOids` param. Comma-separated user OIDs. Fallback when the
-     groups claim is unavailable. The `oid` claim is always present in tokens.
-  - If neither group nor OID restriction is set, all authenticated users pass.
+  2. **Entra group check** — `allowedGroupObjectIds` param. Comma-separated security group IDs.
+     Requires `groupMembershipClaims: "ApplicationGroup"` + optional claims + each security group
+     assigned to the enterprise app (see Prerequisites §3). Using `ApplicationGroup` instead of
+     `SecurityGroup` avoids groups overage (>200 groups) by only emitting app-assigned groups
+     in the token.
+  - If no group restriction is set, all authenticated users pass.
   - The frontend (static SPA) loads without auth. Authorization is enforced at the `/api/*`
     layer — unauthorized users see the GUI shell but all API calls return 403.
 - **Identity**: User-assigned managed identity — created before the container app so
@@ -155,7 +154,7 @@ separately (Microsoft Graph, not ARM). Key Vault must be an existing vault
 |---|------|-----|------------|
 | 1 | Resource group | `az group create` | `<rg>` name |
 | 2 | Entra app registration | Portal or CLI (Graph API) | `entraClientId`, `entraTenantId` |
-| 3 | Security group + SP assignment | Portal or CLI | `allowedGroupObjectId` |
+| 3 | Security group + SP assignment | Portal or CLI | `allowedGroupObjectIds` |
 | 4 | SQL server with Entra admin | Existing server | `sqlServerFqdn`, `sqlDatabaseName` |
 | 5 | Container image in ACR | Docker build + push | `containerImage` |
 | 6 | Key Vault | Existing vault | `keyVaultResourceId` |
@@ -236,9 +235,9 @@ claim → Token type: Access → check `groups` → Save. Repeat for ID token.
 # in Azure Portal → Entra ID → Groups → New group (Security type).
 az ad group create --display-name "PyRIT GUI Users" --mail-nickname pyrit-gui-users
 
-# Get the group Object ID (use this as allowedGroupObjectId)
+# Get the group Object ID (use this as allowedGroupObjectIds)
 GROUP_ID=$(az ad group show --group "PyRIT GUI Users" --query id -o tsv)
-echo "allowedGroupObjectId: $GROUP_ID"
+echo "allowedGroupObjectIds: $GROUP_ID"
 
 # Add users to the group
 az ad group member add --group "PyRIT GUI Users" --member-id <user-object-id>
@@ -358,8 +357,7 @@ cat > infra/parameters.json <<'EOF'
     "containerImage":         { "value": "<acr>.azurecr.io/pyrit:<commit-sha>" },
     "entraTenantId":          { "value": "<tenant-id>" },
     "entraClientId":          { "value": "<app-registration-client-id>" },
-    "allowedGroupObjectId":   { "value": "<entra-group-object-id>" },
-    "allowedOids":            { "value": "" },
+    "allowedGroupObjectIds":  { "value": "<comma-separated-entra-group-ids>" },
     "allowedCidr":            { "value": "" },
     "enablePrivateEndpoint":  { "value": false },
     "sqlServerFqdn":          { "value": "<server>.database.windows.net" },
@@ -431,8 +429,8 @@ az deployment group create \
    ALTER ROLE db_datawriter ADD MEMBER [<appName>-identity];
    ```
 
-4. **Manage access** — Add or remove users via Entra security group (if using
-   `allowedGroupObjectId`) or update `allowedOids` in parameters.
+4. **Manage access** — Add or remove users via Entra security groups
+   (`allowedGroupObjectIds`). Each group must also be assigned to the enterprise app.
 
 5. **Configure OTel agent** (if `enableOtel=true`):
    ```bash

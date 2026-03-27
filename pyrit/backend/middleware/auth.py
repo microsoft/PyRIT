@@ -56,11 +56,8 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._tenant_id = os.getenv("ENTRA_TENANT_ID", "")
         self._client_id = os.getenv("ENTRA_CLIENT_ID", "")
-        self._allowed_group_id = os.getenv("ENTRA_ALLOWED_GROUP_ID", "")
-        # OID-based allowlist: comma-separated user object IDs.
-        # Used as fallback when the groups claim is unavailable.
-        oids_raw = os.getenv("ENTRA_ALLOWED_OIDS", "")
-        self._allowed_oids: set[str] = {o.strip() for o in oids_raw.split(",") if o.strip()}
+        groups_raw = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "")
+        self._allowed_group_ids: set[str] = {g.strip() for g in groups_raw.split(",") if g.strip()}
         self._enabled = bool(self._tenant_id and self._client_id)
 
         if self._enabled:
@@ -68,8 +65,6 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             self._jwks_client = PyJWKClient(jwks_url, cache_keys=True)
             self._issuer = f"https://login.microsoftonline.com/{self._tenant_id}/v2.0"
             logger.info("Entra ID auth middleware enabled (tenant=%s)", self._tenant_id)
-            if self._allowed_oids:
-                logger.info("OID allowlist active (%d entries)", len(self._allowed_oids))
         else:
             self._jwks_client = None
             self._issuer = ""
@@ -114,18 +109,17 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
 
         # Handle groups overage: when user is in >200 groups, Entra replaces the
         # groups array with _claim_sources containing a Graph API URL.
-        if not user.groups and self._allowed_group_id and "_claim_sources" in claims:
+        if not user.groups and self._allowed_group_ids and "_claim_sources" in claims:
             user.groups = await self._resolve_groups_overage_async(claims, token)
 
-        # Authorization: check group membership or OID allowlist
+        # Authorization: check group membership
         if not self._is_authorized(user):
             logger.warning(
-                "User %s (%s) denied — groups=%s, allowed_group=%s, oid_allowlist=%s",
+                "User %s (%s) denied — groups=%s, allowed_groups=%s",
                 user.email,
                 user.oid,
                 user.groups,
-                self._allowed_group_id,
-                bool(self._allowed_oids),
+                self._allowed_group_ids,
             )
             return JSONResponse(
                 status_code=403,
@@ -138,32 +132,15 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
 
     def _is_authorized(self, user: AuthenticatedUser) -> bool:
         """
-        Check if the user is authorized via group membership or OID allowlist.
+        Check if the user is authorized via group membership.
 
-        Authorization passes if ANY of the following are true:
-        - No group or OID restrictions are configured (open to all authenticated users)
-        - The user's groups contain the allowed group ID
-        - The user's OID is in the OID allowlist
-
-        Args:
-            user: The authenticated user extracted from the JWT.
-
-        Returns:
-            True if the user is authorized.
+        Authorization passes if:
+        - No group restrictions are configured (open to all authenticated users)
+        - The user's groups intersect with the allowed group IDs
         """
-        has_group_restriction = bool(self._allowed_group_id)
-        has_oid_restriction = bool(self._allowed_oids)
-
-        # No restrictions configured — allow all authenticated users
-        if not has_group_restriction and not has_oid_restriction:
+        if not self._allowed_group_ids:
             return True
-
-        # Check group membership
-        if has_group_restriction and self._allowed_group_id in user.groups:
-            return True
-
-        # Fallback: check OID allowlist
-        return has_oid_restriction and user.oid in self._allowed_oids
+        return bool(self._allowed_group_ids & set(user.groups))
 
     async def _resolve_groups_overage_async(self, claims: dict[str, Any], token: str) -> list[str]:
         """
