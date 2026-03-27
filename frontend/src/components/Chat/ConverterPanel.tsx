@@ -136,6 +136,21 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
 
   const hasRequiredParamErrors = missingRequiredParams.length > 0
 
+  // Cache converter instance ID to avoid creating duplicate instances in the
+  // backend registry on every preview. Only create a new instance when the
+  // converter type or parameters change.
+  const cachedInstanceRef = useRef<{ type: string; params: string; id: string } | null>(null)
+
+  const getOrCreateConverterInstance = async (type: string, params: Record<string, string>): Promise<string> => {
+    const paramsKey = JSON.stringify(params)
+    if (cachedInstanceRef.current?.type === type && cachedInstanceRef.current?.params === paramsKey) {
+      return cachedInstanceRef.current.id
+    }
+    const response = await convertersApi.createConverter({ type, params: { ...params } })
+    cachedInstanceRef.current = { type, params: paramsKey, id: response.converter_id }
+    return response.converter_id
+  }
+
   const handlePreview = async () => {
     // For text tab, use chat input text; for other tabs, use attachment data
     const previewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
@@ -152,19 +167,16 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     setPreviewOutput('')
 
     try {
-      const createResponse = await convertersApi.createConverter({
-        type: selectedConverterType,
-        params: { ...paramValues },
-      })
+      const converterId = await getOrCreateConverterInstance(selectedConverterType, paramValues)
 
       const previewResponse = await convertersApi.previewConversion({
         original_value: previewValue,
-        converter_ids: [createResponse.converter_id],
+        converter_ids: [converterId],
         original_value_data_type: activeDataType,
       })
 
       setPreviewOutput(previewResponse.converted_value)
-      setPreviewConverterInstanceId(createResponse.converter_id)
+      setPreviewConverterInstanceId(converterId)
     } catch (err) {
       setPreviewError(toApiError(err).detail)
     } finally {
@@ -270,6 +282,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
             setPreviewConverterInstanceId(null)
             setPreviewError(null)
             setShowValidation(false)
+            cachedInstanceRef.current = null
           }}
           size="small"
           className={styles.tabBar}
