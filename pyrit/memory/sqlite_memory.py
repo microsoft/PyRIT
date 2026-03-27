@@ -472,7 +472,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             file_extension = f".{export_type}"
             file_path = DB_DATA_PATH / f"{table_name}{file_extension}"
             # Convert to list for exporter compatibility
-            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)
+            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore[arg-type]
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """
@@ -591,7 +591,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             class_name_expr = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier, "$.children.attack.class_name"
             )
-            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()  # type: ignore[arg-type]
+            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
         return sorted(row[0] for row in rows)
 
     def get_unique_converter_class_names(self) -> list[str]:
