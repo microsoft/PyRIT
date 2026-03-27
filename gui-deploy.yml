@@ -131,7 +131,8 @@ stages:
                         --parameters keyVaultResourceId=$(keyVaultResourceId) \
                         --parameters acrResourceId=$(acrResourceId) \
                         --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
-                        --parameters enableOtel=$(enableOtel)
+                        --parameters enableOtel=$(enableOtel) \
+                        --parameters envSecretName=$(envSecretName)
 
                 - task: AzureCLI@2
                   displayName: 'Health check'
@@ -201,7 +202,8 @@ stages:
                           --parameters keyVaultResourceId=$(keyVaultResourceId) \
                           --parameters acrResourceId=$(acrResourceId) \
                           --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
-                          --parameters enableOtel=$(enableOtel)
+                          --parameters enableOtel=$(enableOtel) \
+                          --parameters envSecretName=$(envSecretName)
 
                   - task: AzureCLI@2
                     displayName: 'Health check'
