@@ -11,7 +11,7 @@ source of truth for target configuration and authentication.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -296,9 +296,7 @@ class ScorerInitializer(PyRITInitializer):
                         threshold=0.9,
                     ),
                     TrueFalseInverterScorer(
-                        scorer=SelfAskRefusalScorer(
-                            chat_target=gpt4o, refusal_system_prompt_path=best_refusal_path
-                        )
+                        scorer=SelfAskRefusalScorer(chat_target=gpt4o, refusal_system_prompt_path=best_refusal_path)
                     ),
                 ],
             ),
@@ -451,7 +449,7 @@ class ScorerInitializer(PyRITInitializer):
         name: str,
         factory: Callable[[], Scorer],
         *required_targets: object,
-        tags: Optional[list[str]] = None,
+        tags: Optional[Sequence[str]] = None,
     ) -> None:
         """
         Attempt to register a scorer, skipping with a warning on failure.
@@ -470,7 +468,7 @@ class ScorerInitializer(PyRITInitializer):
 
         try:
             scorer = factory()
-            scorer_registry.register_instance(scorer, name=name, tags=tags)
+            scorer_registry.register_instance(scorer, name=name, tags=list(tags) if tags else None)
             logger.info(f"Registered scorer: {name}")
         except (ValueError, TypeError, KeyError) as e:
             logger.warning(f"Skipping scorer {name}: {e}")
