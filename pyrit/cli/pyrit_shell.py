@@ -229,20 +229,20 @@ class PyRITShell(cmd.Cmd):
             --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
         Examples:
-            run encoding --target my_target --initializers targets \
+            run encoding --target my_target --initializers target \
                 load_default_datasets
-            run encoding --target my_target --initializers targets \
+            run encoding --target my_target --initializers target \
                 load_default_datasets --strategies base64 rot13
-            run red_team_agent --target my_target --initializers targets:tags=default,scorer \
+            run red_team_agent --target my_target --initializers target:tags=default,scorer \
                 dataset:mode=strict --strategies base64
-            run red_team_agent --target my_target --initializers targets \
+            run red_team_agent --target my_target --initializers target \
                 load_default_datasets --max-concurrency 10 --max-retries 3
-            run encoding --target my_target --initializers targets \
+            run encoding --target my_target --initializers target \
                 load_default_datasets \
                 --memory-labels '{"run_id":"test123","env":"dev"}'
-            run red_team_agent --target my_target --initializers targets \
+            run red_team_agent --target my_target --initializers target \
                 load_default_datasets -s jailbreak crescendo
-            run encoding --target my_target --initializers targets \
+            run encoding --target my_target --initializers target \
                 load_default_datasets --log-level DEBUG
             run red_team_agent --target my_target --initialization-scripts ./my_custom_init.py -s all
 
@@ -272,7 +272,7 @@ class PyRITShell(cmd.Cmd):
                 "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
             )
             print("\nExample:")
-            print("  run red_team_agent --target my_target --initializers targets load_default_datasets")
+            print("  run red_team_agent --target my_target --initializers target load_default_datasets")
             print("\nType 'help run' for more details and examples")
             return
 
@@ -429,15 +429,15 @@ class PyRITShell(cmd.Cmd):
             print("=" * 70)
             print("  --target <name>  (REQUIRED)")
             print(f"      {ARG_HELP['target']}")
-            print("      Example: run foundry --target my_target --initializers targets load_default_datasets")
+            print("      Example: run foundry --target my_target --initializers target load_default_datasets")
             print()
             print("  --initializers <name> [<name> ...]")
             print(f"      {ARG_HELP['initializers']}")
-            print("      Example: run red_team_agent --target my_target --initializers targets load_default_datasets")
-            print("      With params: run red_team_agent --target my_target --initializers targets:tags=default,scorer")
+            print("      Example: run red_team_agent --target my_target --initializers target load_default_datasets")
+            print("      With params: run red_team_agent --target my_target --initializers target:tags=default,scorer")
             print(
                 "      Multiple with params: run red_team_agent --target my_target"
-                " --initializers targets:tags=default,scorer"
+                " --initializers target:tags=default,scorer"
                 " dataset:mode=strict"
             )
             print()

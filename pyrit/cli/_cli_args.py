@@ -287,7 +287,7 @@ ARG_HELP = {
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
-    "Targets are registered by initializers (e.g., 'targets' initializer). "
+    "Targets are registered by initializers (e.g., 'target' initializer). "
     "Use --list-targets to see available target names after initializers have run",
 }
 

@@ -32,10 +32,10 @@ Examples:
   # List available scenarios, initializers, and targets
   pyrit_scan --list-scenarios
   pyrit_scan --list-initializers
-  pyrit_scan --list-targets --initializers targets
+  pyrit_scan --list-targets --initializers target
 
   # Run a scenario with a target and initializers
-  pyrit_scan red_team_agent --target my_target --initializers targets load_default_datasets
+  pyrit_scan red_team_agent --target my_target --initializers target load_default_datasets
 
   # Run with a configuration file (recommended for complex setups)
   pyrit_scan red_team_agent --target my_target --config-file ./my_config.yaml
@@ -44,8 +44,8 @@ Examples:
   pyrit_scan encoding --target my_target --initialization-scripts ./my_config.py
 
   # Run specific strategies or options
-  pyrit_scan red_team_agent --target my_target --strategies base64 rot13 --initializers targets
-  pyrit_scan red_team_agent --target my_target --initializers targets --max-concurrency 10 --max-retries 3
+  pyrit_scan red_team_agent --target my_target --strategies base64 rot13 --initializers target
+  pyrit_scan red_team_agent --target my_target --initializers target --max-concurrency 10 --max-retries 3
 """,
         formatter_class=RawDescriptionHelpFormatter,
     )
@@ -79,7 +79,7 @@ Examples:
         "--list-targets",
         action="store_true",
         help="List all available targets from the TargetRegistry and exit. "
-        "Requires initializers that register targets (e.g., --initializers targets)",
+        "Requires initializers that register targets (e.g., --initializers target)",
     )
 
     parser.add_argument(

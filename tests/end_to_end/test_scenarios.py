@@ -43,7 +43,7 @@ def test_scenario_with_pyrit_scan(scenario_name):
             [
                 scenario_name,
                 "--initializers",
-                "targets",
+                "target",
                 "load_default_datasets",
                 "--target",
                 "openai_chat",

@@ -359,6 +359,7 @@ class TestPyRITShell:
             "log_level": None,
             "dataset_names": None,
             "max_dataset_size": None,
+            "target": None,
         }
 
         mock_asyncio_run.side_effect = KeyboardInterrupt()

@@ -317,7 +317,7 @@ async def run_scenario_async(
         scenario_name: Name of the scenario to run.
         context: PyRIT context with loaded registries.
         target_name: Name of a registered target from the TargetRegistry to use as the
-            objective target. Targets are registered by initializers (e.g., the 'targets'
+            objective target. Targets are registered by initializers (e.g., the 'target'
             initializer). Use --list-targets to see available names after initializers run.
         scenario_strategies: Optional list of strategy names.
         max_concurrency: Max concurrent operations.
@@ -380,7 +380,7 @@ async def run_scenario_async(
                 raise ValueError(
                     f"Target '{target_name}' not found. The target registry is empty.\n"
                     "Targets are registered by initializers. Make sure to include an initializer "
-                    "that registers targets (e.g., --initializers targets)."
+                    "that registers targets (e.g., --initializers target)."
                 )
             raise ValueError(
                 f"Target '{target_name}' not found in registry.\nAvailable targets: {', '.join(available_names)}"
@@ -645,7 +645,7 @@ async def print_targets_list_async(*, context: FrontendCore) -> int:
     Print a formatted list of all available targets from the TargetRegistry.
 
     Targets are registered by initializers, so this requires initializers to run first.
-    If no targets are found, prints a hint about using the 'targets' initializer.
+    If no targets are found, prints a hint about using the 'target' initializer.
 
     Args:
         context: PyRIT context with loaded registries.
@@ -659,7 +659,7 @@ async def print_targets_list_async(*, context: FrontendCore) -> int:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that registers "
-            "targets, for example:\n  --initializers targets\n"
+            "targets, for example:\n  --initializers target\n"
         )
         return 0
 

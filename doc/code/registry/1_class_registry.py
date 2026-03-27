@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit (3.13.5)
-#     language: python
-#     name: python3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -40,7 +36,7 @@ for item in metadata[:2]:  # Show first 2
 # %%
 # Get a scenario class
 
-scenario_class = registry.get_class("garak.encoding")
+scenario_class = registry.get_class("encoding")
 
 print(f"Got class: {scenario_class}")
 print(f"Class name: {scenario_class.__name__}")
@@ -59,7 +55,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefault
 target = OpenAIChatTarget()
 
 # Option 1: Get class then instantiate
-encoding_class = registry.get_class("garak.encoding")
+encoding_class = registry.get_class("encoding")
 scenario = encoding_class()  # type: ignore
 
 # Pass dataset configuration to initialize_async
@@ -77,7 +73,7 @@ print("Scenarios can be instantiated with your target and parameters")
 
 # %%
 # Check if a name is registered
-print(f"'garak.encoding' registered: {'garak.encoding' in registry}")
+print(f"'encoding' registered: {'encoding' in registry}")
 print(f"'nonexistent' registered: {'nonexistent' in registry}")
 
 # Get count of registered classes

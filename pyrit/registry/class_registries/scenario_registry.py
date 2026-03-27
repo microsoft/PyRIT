@@ -126,7 +126,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
 
                 # Check for registry key collision
                 if registry_name in self._class_entries:
-                    logger.error(
+                    logger.warning(
                         f"Scenario registry name collision: '{registry_name}' "
                         f"conflicts with an already-registered scenario. Original "
                         f"scenario is kept: {self._class_entries[registry_name].registered_class.__name__}"

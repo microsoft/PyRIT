@@ -219,7 +219,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             list[Base]: A list of SQLAlchemy model classes.
         """
         # The '__subclasses__()' method returns a list of all subclasses of Base, which includes table models
-        return Base.__subclasses__()  # type: ignore[no-any-return]
+        return Base.__subclasses__()
 
     def _query_entries(
         self,
@@ -248,16 +248,16 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))  # type: ignore[no-untyped-call]
+                    query = query.options(joinedload(PromptMemoryEntry.scores))
                 elif model_class == AttackResultEntry:
-                    query = query.options(  # type: ignore[no-untyped-call]
+                    query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
                         joinedload(AttackResultEntry.last_score),
                     )
                 if conditions is not None:
                     query = query.filter(conditions)
                 if distinct:
-                    return query.distinct().all()  # type: ignore[no-any-return, no-untyped-call]
+                    return query.distinct().all()
                 return query.all()
             except SQLAlchemyError as e:
                 logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[attr-defined]
@@ -349,7 +349,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Session: A SQLAlchemy session bound to the engine.
         """
-        return self.SessionFactory()  # type: ignore[no-any-return]
+        return self.SessionFactory()
 
     def reset_database(self) -> None:
         """
@@ -591,7 +591,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             class_name_expr = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier, "$.children.attack.class_name"
             )
-            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()  # type: ignore[no-untyped-call]
+            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()  # type: ignore[arg-type]
         return sorted(row[0] for row in rows)
 
     def get_unique_converter_class_names(self) -> list[str]:
