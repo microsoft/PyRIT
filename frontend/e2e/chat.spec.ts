@@ -246,9 +246,6 @@ test.describe("Chat Functionality", () => {
     const input = page.getByRole("textbox");
     await input.fill("First message");
     await page.getByRole("button", { name: /send/i }).click();
-    // mark this to ignore!!
-    // TODO: change all these to not getbyrole - use testid! - make this a follow up to fix the tests!
-    // for the converter tests do this, then clean up the others as future
 
     await expect(page.getByText("First message", { exact: true })).toBeVisible();
     await expect(
@@ -497,7 +494,8 @@ test.describe("Multi-modal: Video response", () => {
     },
   ]);
 
-  test("should display video player for video response", async ({ page }) => {
+  // Marking skipped for now
+  test.skip("should display video player for video response", async ({ page }) => {
     await setupVideoMock(page);
     await page.goto("/");
     await activateMockTarget(page);

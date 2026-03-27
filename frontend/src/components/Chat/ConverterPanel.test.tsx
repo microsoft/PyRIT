@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import ConverterPanel from './ConverterPanel'
 import { convertersApi } from '../../services/api'
+import type { ConverterCatalogResponse } from '../../types'
 
 jest.setTimeout(60000)
 
@@ -124,7 +125,7 @@ async function openComboboxAndSelect(converterType: string) {
 
 beforeEach(() => {
   jest.clearAllMocks()
-  mockedConvertersApi.listConverterCatalog.mockResolvedValue(MOCK_CATALOG as any)
+  mockedConvertersApi.listConverterCatalog.mockResolvedValue(MOCK_CATALOG as ConverterCatalogResponse)
 })
 
 // ─── Loading & Error ──────────────────────────────────────────────
@@ -594,13 +595,13 @@ describe('ConverterPanel file picker', () => {
     const mockClick = jest.fn()
     const mockInput = {
       type: '',
-      onchange: null as any,
+      onchange: null as (() => void) | null,
       click: mockClick,
       files: [{ name: 'template.txt' }],
     }
     const origCreateElement = document.createElement.bind(document)
     jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag === 'input') return mockInput as any
+      if (tag === 'input') return mockInput as unknown as HTMLElement
       return origCreateElement(tag)
     })
 
@@ -641,7 +642,7 @@ describe('ConverterPanel output hint', () => {
 
 describe('ConverterPanel edge cases', () => {
   it('unmount during successful catalog load triggers isMounted guard', async () => {
-    let resolveLoad!: (value: any) => void
+    let resolveLoad!: (value: ConverterCatalogResponse) => void
     mockedConvertersApi.listConverterCatalog.mockReturnValue(
       new Promise((resolve) => { resolveLoad = resolve })
     )
@@ -659,7 +660,7 @@ describe('ConverterPanel edge cases', () => {
   })
 
   it('unmount during failed catalog load triggers isMounted guard', async () => {
-    let rejectLoad!: (reason: any) => void
+    let rejectLoad!: (reason: Error) => void
     mockedConvertersApi.listConverterCatalog.mockReturnValue(
       new Promise((_, reject) => { rejectLoad = reject })
     )
@@ -730,7 +731,7 @@ describe('ConverterPanel edge cases', () => {
         },
       ],
     }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithOptionalBool as any)
+    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithOptionalBool as ConverterCatalogResponse)
 
     renderPanel({ previewText: 'hello' })
     await waitForList()
@@ -756,7 +757,7 @@ describe('ConverterPanel edge cases', () => {
         },
       ],
     }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithRequiredFile as any)
+    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithRequiredFile as ConverterCatalogResponse)
 
     renderPanel({ previewText: 'hello' })
     await waitForList()
@@ -780,7 +781,7 @@ describe('ConverterPanel edge cases', () => {
         },
       ],
     }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogNoDesc as any)
+    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogNoDesc as ConverterCatalogResponse)
 
     renderPanel({ previewText: 'hello' })
     await waitForList()
@@ -810,7 +811,7 @@ describe('ConverterPanel edge cases', () => {
         },
       ],
     }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogEmptyTypes as any)
+    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogEmptyTypes as ConverterCatalogResponse)
 
     renderPanel({ previewText: 'hello' })
     await waitForList()
