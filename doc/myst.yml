@@ -4,7 +4,7 @@ project:
   authors:
     - name: Microsoft AI Red Team
   copyright: Copyright 2024, Microsoft AI Red Team
-  github: Azure/PyRIT
+  github: microsoft/PyRIT
   bibliography:
     - references.bib
   exports:

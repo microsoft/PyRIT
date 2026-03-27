@@ -69,10 +69,10 @@ def extract_date_from_filename(filename: str) -> str:
 # Generate the RSS feed structure
 print("Generating RSS feed structure...")
 fg = FeedGenerator()
-fg.link(href="https://azure.github.io/PyRIT/blog/rss.xml", rel="self")
+fg.link(href="https://microsoft.github.io/PyRIT/blog/rss.xml", rel="self")
 fg.title("PyRIT Blog")
 fg.description("PyRIT Blog")
-fg.logo("https://azure.github.io/PyRIT/_static/roakey.png")
+fg.logo("https://microsoft.github.io/PyRIT/_static/roakey.png")
 fg.language("en")
 
 # Iterate over the blog source markdown files
@@ -93,8 +93,8 @@ for file in files:
     fe = fg.add_entry()
     # Blog pages are served at blog/<filename_without_ext>
     page_name = file.stem
-    fe.link(href=f"https://azure.github.io/PyRIT/blog/{page_name}")
-    fe.guid(f"https://azure.github.io/PyRIT/blog/{page_name}")
+    fe.link(href=f"https://microsoft.github.io/PyRIT/blog/{page_name}")
+    fe.guid(f"https://microsoft.github.io/PyRIT/blog/{page_name}")
 
     title, description = parse_blog_markdown(file)
     fe.title(title)
