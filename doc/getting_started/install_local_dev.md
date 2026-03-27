@@ -37,7 +37,7 @@ Set up a PyRIT development environment on your local machine.
 
 3. **Git**. Git is required to clone the repo locally. It is available to download [here](https://git-scm.com/downloads).
     ```bash
-    git clone https://github.com/Azure/PyRIT
+    git clone https://github.com/microsoft/PyRIT
     ```
 
 4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 18 or higher is recommended.

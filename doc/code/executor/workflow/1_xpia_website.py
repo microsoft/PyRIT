@@ -44,7 +44,7 @@ xpia_prompt_group = Message(message_pieces=[xpia_prompt])
 # %% [markdown]
 #
 # _Note:_ to run this section of the demo you need to setup your `.env` file to properly authenticate to an Azure Storage Blob Container and an Azure OpenAI target.
-# See the section within [.env_example](https://github.com/Azure/PyRIT/blob/main/.env_example) if not sure where to find values for each of these variables.
+# See the section within [.env_example](https://github.com/microsoft/PyRIT/blob/main/.env_example) if not sure where to find values for each of these variables.
 #
 # Below, we define a simple agent using OpenAI's responses API to retrieve content from websites.
 # This is to simulate a processing target similar to what one might expect in an XPIA-oriented AI red teaming operation.

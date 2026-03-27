@@ -485,9 +485,7 @@ async def test_filename_extension_existing_pdf(sqlite_instance):
 
     import requests
 
-    url = (
-        "https://raw.githubusercontent.com/Azure/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
-    )
+    url = "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
     with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp_file:
         response = requests.get(url)
         tmp_file.write(response.content)

@@ -147,7 +147,9 @@ from pathlib import Path
 import requests
 
 # Download a sample PDF
-url = "https://raw.githubusercontent.com/Azure/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
+url = (
+    "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
+)
 
 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
     response = requests.get(url)
