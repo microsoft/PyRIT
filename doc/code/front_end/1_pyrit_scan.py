@@ -6,10 +6,6 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
 # ---
 
 # %% [markdown]
@@ -78,29 +74,29 @@
 # Or concretely:
 #
 # ```shell
-# !pyrit_scan red_team_agent --target openai_chat --initializers load_default_datasets target --scenario-strategies base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --scenario-strategies base64
 # ```
 #
 # Example with a basic configuration that runs the Foundry scenario against the objective target defined in the `target` initializer.
 
 # %%
-# !pyrit_scan red_team_agent --target openai_chat --initializers load_default_datasets target --strategies base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --strategies base64
 
 # %% [markdown]
 # Or with all options and multiple initializers and multiple strategies:
 #
 # ```shell
-# pyrit_scan red_team_agent --target openai_chat --initializers load_default_datasets target --strategies easy crescendo
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --strategies easy crescendo
 # ```
 #
 # You can also override scenario execution parameters:
 #
 # ```shell
 # # Override concurrency and retry settings
-# pyrit_scan red_team_agent --target openai_chat --initializers load_default_datasets target --max-concurrency 10 --max-retries 3
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --max-concurrency 10 --max-retries 3
 #
 # # Add custom memory labels for tracking (must be valid JSON)
-# pyrit_scan red_team_agent --target openai_chat --initializers load_default_datasets target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
 # ```
 #
 # Available CLI parameter overrides:
@@ -111,7 +107,7 @@
 # You can also use custom initialization scripts by passing file paths. It is relative to your current working directory, but to avoid confusion, full paths are always better:
 #
 # ```shell
-# pyrit_scan encoding --initialization-scripts ./my_custom_config.py
+# pyrit_scan garak.encoding --initialization-scripts ./my_custom_config.py
 # ```
 
 # %% [markdown]

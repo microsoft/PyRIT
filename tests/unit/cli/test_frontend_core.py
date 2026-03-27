@@ -265,8 +265,8 @@ class TestResolveInitializationScripts:
 class TestListFunctions:
     """Tests for list_scenarios_async and list_initializers_async functions."""
 
-    def test_discover_builtin_scenarios_uses_snake_case_names(self):
-        """Built-in scenario names should be short snake_case, not dotted module paths."""
+    def test_discover_builtin_scenarios_uses_dotted_names(self):
+        """Built-in scenario names should be dotted (package.module) lowercase names."""
         from pyrit.registry.class_registries.scenario_registry import ScenarioRegistry
 
         registry = ScenarioRegistry()
@@ -275,7 +275,7 @@ class TestListFunctions:
         names = list(registry._class_entries.keys())
         assert len(names) > 0, "Should discover at least one built-in scenario"
         for name in names:
-            assert "." not in name, f"Scenario name '{name}' should not contain dots"
+            assert "." in name, f"Scenario name '{name}' should be a dotted name (package.module)"
             assert name == name.lower(), f"Scenario name '{name}' should be lowercase"
 
     async def test_list_scenarios(self):

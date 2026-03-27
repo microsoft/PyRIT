@@ -64,7 +64,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
     1. Built-in scenarios in pyrit.scenario.scenarios module
     2. User-defined scenarios from initialization scripts (set via globals)
 
-    Scenarios are identified by their simple snake_case name (e.g., "encoding", "foundry").
+    Scenarios are identified by their dotted name (e.g., "garak.encoding", "foundry.red_team_agent").
     """
 
     @classmethod
@@ -115,14 +115,18 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 package_path = Path(package_file).parent
 
             # Discover scenarios using the shared discovery utility
-            for _, scenario_class in discover_in_package(
+            # Use ``package_name.module_name`` as the registry name
+            for registry_name, scenario_class in discover_in_package(
                 package_path=package_path,
                 package_name="pyrit.scenario.scenarios",
                 base_class=Scenario,  # type: ignore[type-abstract]
                 recursive=True,
             ):
-                # Convert class name to snake_case for registry name
-                registry_name = class_name_to_snake_case(scenario_class.__name__, suffix="Scenario")
+                # Skip deprecated alias classes
+                doc = (scenario_class.__doc__ or "").strip()
+                if doc.startswith("Deprecated alias"):
+                    logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
+                    continue
 
                 # Check for registry key collision
                 if registry_name in self._class_entries:
