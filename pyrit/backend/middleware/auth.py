@@ -144,12 +144,12 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
 
     async def _resolve_groups_overage_async(self, claims: dict[str, Any], token: str) -> list[str]:
         """
-        Resolve group membership via Graph API when groups overage occurs.
+        Resolve group membership via Microsoft Graph when groups overage occurs.
 
         When a user is in >200 groups, Entra ID replaces the `groups` claim with
         `_claim_sources` containing a Graph API endpoint. This method calls the
-        Microsoft Graph checkMemberObjects endpoint to verify the user is in
-        the allowed group, without needing a separate Graph token.
+        Microsoft Graph `getMemberObjects` endpoint to retrieve transitive group
+        memberships, using the user's access token.
 
         Args:
             claims: The decoded JWT claims containing _claim_sources.
@@ -159,9 +159,6 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             List of group IDs the user belongs to, or empty list on failure.
         """
         try:
-            # Use the overage endpoint from _claim_sources directly — it accepts
-            # the original access token since the app has the user's delegated
-            # permissions via the PKCE flow.
             claim_sources = claims.get("_claim_sources", {})
             src = claim_sources.get("src1", {})
             endpoint = src.get("endpoint", "")
@@ -170,14 +167,18 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 logger.debug("No overage endpoint found in _claim_sources")
                 return []
 
-            # The endpoint is a legacy graph.windows.net URL that requires an
-            # api-version parameter. Call it with securityEnabledOnly=true to
-            # get security group memberships.
-            url_with_version = f"{endpoint}?api-version=1.6"
+            # The _claim_sources endpoint may be a legacy graph.windows.net URL.
+            # Rewrite to Microsoft Graph (graph.microsoft.com) which is the
+            # supported API. The legacy Azure AD Graph was retired in 2023.
+            if "graph.windows.net" in endpoint:
+                # Legacy format: https://graph.windows.net/{tenant}/users/{oid}/getMemberObjects
+                # Graph format:  https://graph.microsoft.com/v1.0/me/getMemberObjects
+                endpoint = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
 
+            all_group_ids: list[str] = []
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    url_with_version,
+                    endpoint,
                     headers={
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
@@ -186,17 +187,34 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                     timeout=10.0,
                 )
 
-                if response.status_code == 200:
+                if response.status_code != 200:
+                    logger.warning(
+                        "Groups overage endpoint returned %d: %s",
+                        response.status_code,
+                        response.text[:200],
+                    )
+                    return []
+
+                data = response.json()
+                all_group_ids.extend(data.get("value", []))
+
+                # Handle pagination — Graph may return @odata.nextLink for large results
+                next_link = data.get("@odata.nextLink")
+                while next_link:
+                    response = await client.get(
+                        next_link,
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=10.0,
+                    )
+                    if response.status_code != 200:
+                        logger.warning("Overage pagination failed at %s: %d", next_link, response.status_code)
+                        break
                     data = response.json()
-                    group_ids: list[str] = data.get("value", [])
-                    logger.debug("Overage resolution returned %d group memberships", len(group_ids))
-                    return group_ids
-                logger.warning(
-                    "Groups overage endpoint returned %d: %s",
-                    response.status_code,
-                    response.text[:200],
-                )
-                return []
+                    all_group_ids.extend(data.get("value", []))
+                    next_link = data.get("@odata.nextLink")
+
+            logger.debug("Overage resolution returned %d group memberships", len(all_group_ids))
+            return all_group_ids
 
         except Exception as e:
             logger.warning("Failed to resolve groups overage: %s", e)
