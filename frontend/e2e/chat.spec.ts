@@ -35,9 +35,7 @@ async function mockBackendAPIs(page: Page) {
 
   // Mock add-message – MUST be registered BEFORE the create-attack route
   // so the more specific pattern matches first.
-  // FIX: Track whether a POST has been seen so GET doesn't return empty
-  // and overwrite the optimistic UI during the React render race.
-  let postSeen = false;
+  let postSeen = false; // track POST so GET doesn't return empty during render race
   await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
     if (route.request().method() === "POST") {
       let userText = "your message";
@@ -336,10 +334,8 @@ function buildModalityMock(
 
     // Add message – returns user turn + assistant with given pieces.
     // Also handles GET requests for loadConversation.
-    // FIX: Return empty on GET until POST has been seen so a racing
-    // loadConversation doesn't overwrite the optimistic UI with [].
     let lastMessages: Record<string, unknown>[] = [];
-    let postSeen = false;
+    let postSeen = false; // track POST so GET doesn't return empty during render race
     await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
       if (route.request().method() === "POST") {
         let userText = "user-input";
