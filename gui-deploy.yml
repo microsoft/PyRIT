@@ -125,7 +125,7 @@ stages:
                         --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
                         --parameters entraTenantId=$(entraTenantId) \
                         --parameters entraClientId=$(entraClientId) \
-                        --parameters allowedGroupObjectIds=$(allowedGroupObjectId) \
+                        --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
                         --parameters sqlServerFqdn=$(sqlServerFqdn) \
                         --parameters sqlDatabaseName=$(sqlDatabaseName) \
                         --parameters keyVaultResourceId=$(keyVaultResourceId) \
@@ -195,7 +195,7 @@ stages:
                           --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
                           --parameters entraTenantId=$(entraTenantId) \
                           --parameters entraClientId=$(entraClientId) \
-                          --parameters allowedGroupObjectIds=$(allowedGroupObjectId) \
+                          --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
                           --parameters sqlServerFqdn=$(sqlServerFqdn) \
                           --parameters sqlDatabaseName=$(sqlDatabaseName) \
                           --parameters keyVaultResourceId=$(keyVaultResourceId) \

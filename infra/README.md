@@ -7,6 +7,7 @@ IP-based network restriction, and no embedded secrets.
 ## Contents
 
 - [Architecture](#architecture)
+- [Development Workflow](#development-workflow)
 - [Security](#security)
 - [Prerequisites](#prerequisites)
 - [Deploy](#deploy)
@@ -79,6 +80,44 @@ graph TB
 > **Diagram key**: Solid lines (→) = runtime request/data flow.
 > Dashed lines (⇢) = startup or optional flows (image pull, OTel when enabled).
 
+## Development Workflow
+
+### Local development
+
+Start the backend and frontend dev server:
+```bash
+PYRIT_DEV_MODE=true pyrit_backend    # backend on port 8000
+cd frontend && npm run dev            # Vite dev server with hot-reload, proxies /api/* to :8000
+```
+When `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are not set, the auth middleware is
+disabled — all requests are allowed without authentication. Swagger UI is available
+at `http://localhost:8000/docs`.
+
+**With auth** (for E2E testing against the test app registration):
+```bash
+PYRIT_DEV_MODE=true \
+ENTRA_TENANT_ID=<tenant-id> \
+ENTRA_CLIENT_ID=<test-app-client-id> \
+ENTRA_ALLOWED_GROUP_IDS=<comma-separated-group-ids> \
+pyrit_backend
+```
+The test app registration must have `http://localhost:8000` as a redirect URI.
+Your user must be a direct member of one of the allowed groups.
+
+### Promotion flow
+
+```
+Local dev → Push to branch → Pipeline auto-deploys to test ACA → Manual deploy to prod
+```
+
+1. **Local**: Develop and test with auth disabled or against the test app registration.
+2. **Push**: Push your branch to the fork. The CI/CD pipeline (`gui-deploy.yml`)
+   triggers automatically on pushes that touch GUI paths.
+3. **Test**: The pipeline builds the Docker image, pushes to ACR, and deploys to the
+   test Container App (`copyrit-gui-test1`). Verify in the test environment.
+4. **Prod**: Production deployment is a manual trigger with the production variable
+   group (`copyrit-gui-prod`). Same pipeline, different parameters.
+
 ## Security
 
 ### Authentication & Authorization
@@ -111,7 +150,8 @@ graph TB
   X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy,
   and HSTS (production only). API routes get a strict `default-src 'none'` CSP;
   frontend routes allow `script-src 'self'` and `style-src 'self' 'unsafe-inline'`
-  (required for Fluent UI Griffel CSS-in-JS).
+  (required for Fluent UI Griffel CSS-in-JS). `img-src` and `media-src` allow
+  `https://*.blob.core.windows.net` for Azure Blob-hosted images and media.
 - **Swagger/OpenAPI**: Disabled in production (`PYRIT_DEV_MODE=false`). The `/docs`,
   `/redoc`, and `/openapi.json` endpoints are only available when `PYRIT_DEV_MODE=true`.
 - **CORS**: Restricted to explicit method and header lists (`GET`, `POST`, `PUT`,
@@ -227,27 +267,30 @@ Then add `groups` as an optional claim for both ID tokens and access tokens:
 Azure Portal → App registrations → your app → Token configuration → Add optional
 claim → Token type: Access → check `groups` → Save. Repeat for ID token.
 
-### 3. Entra security group (required for group-based authorization)
+### 3. Entra security groups (required for group-based authorization)
+
+Create one or more security groups for authorized users. Multiple groups can be
+specified as comma-separated IDs in `allowedGroupObjectIds`.
 
 ```bash
 # Create security group for authorized users
 # NOTE: This may require elevated permissions. If it fails, create the group
 # in Azure Portal → Entra ID → Groups → New group (Security type).
-az ad group create --display-name "PyRIT GUI Users" --mail-nickname pyrit-gui-users
+az ad group create --display-name "CoPyRIT-Dev" --mail-nickname copyrit-dev
 
 # Get the group Object ID (use this as allowedGroupObjectIds)
-GROUP_ID=$(az ad group show --group "PyRIT GUI Users" --query id -o tsv)
+GROUP_ID=$(az ad group show --group "CoPyRIT-Dev" --query id -o tsv)
 echo "allowedGroupObjectIds: $GROUP_ID"
 
 # Add users to the group
-az ad group member add --group "PyRIT GUI Users" --member-id <user-object-id>
+az ad group member add --group "CoPyRIT-Dev" --member-id <user-object-id>
 
 # List current members
-az ad group member list --group "PyRIT GUI Users" --query '[].displayName' -o tsv
+az ad group member list --group "CoPyRIT-Dev" --query '[].displayName' -o tsv
 ```
 
-**IMPORTANT: Assign the group to the enterprise application.** This is required for
-`ApplicationGroup` to emit the group ID in tokens:
+**IMPORTANT: Assign each group to the enterprise application.** This is required for
+`ApplicationGroup` to emit group IDs in tokens:
 
 ```bash
 # Get the service principal (enterprise app) object ID
@@ -263,6 +306,17 @@ az rest --method POST \
 # the backend group check, but defense-in-depth says reject at the IdP level.
 az ad sp update --id $SP_ID --set appRoleAssignmentRequired=true
 ```
+
+**Nested groups**: Entra enterprise app assignment does **not** cascade to nested
+groups. If group A contains group B as a member, only direct members of A are
+considered assigned. To grant access to members of B, assign B to the enterprise
+app separately and include both group IDs in `allowedGroupObjectIds`.
+
+**App roles** (optional): You can define custom app roles on the app registration
+(e.g., `CoPyRIT.Dev.All`) and assign groups to specific roles instead of the
+default access role. The backend currently authorizes via the `groups` token claim,
+not `roles`, so app roles serve as organizational metadata and for
+`appRoleAssignmentRequired` gating at the IdP level.
 
 ### 4. Azure SQL server with Entra admin (existing)
 
@@ -505,7 +559,7 @@ keys in the `.env`.
 
 - **IP restriction**: When `allowedCidr` is set, only traffic from that CIDR range
   can reach the app at the ingress level (blocked before auth runs). When empty, all
-  traffic is allowed and authorization relies solely on MSAL + group/OID checks.
+  traffic is allowed and authorization relies solely on MSAL + group checks.
   **Caveat**: Azure Cloud PCs route traffic to Azure services through CGNAT IPs
   (`100.64.0.0/10`), not the public NAT IPs shown by `ifconfig.me`. IP restrictions
   based on `ifconfig.me` will not work for Cloud PC → ACA traffic.
@@ -547,6 +601,10 @@ These are enabled by default — no additional configuration needed:
 - **CORS tightened** — Methods restricted to `GET`, `POST`, `PUT`, `DELETE`,
   `OPTIONS`; headers to `Authorization`, `Content-Type`, `X-Request-ID`.
   Origins configurable via `PYRIT_CORS_ORIGINS` env var.
+- **`appRoleAssignmentRequired`** — Set to `true` on the service principal so
+  Entra rejects login for users not assigned to the enterprise app. Without this,
+  any tenant user can obtain a token (the backend still blocks via group check,
+  but defense-in-depth rejects at the IdP level).
 
 ## Troubleshooting
 
@@ -568,6 +626,15 @@ configured and the Private DNS zone resolves the app FQDN to the PE's private IP
 - Verify `groups` is added as an optional claim for both ID and access tokens
 - If the user is in >200 groups and using `SecurityGroup`, the token replaces
   `groups` with `_claim_sources` (overage). Switch to `ApplicationGroup` to avoid this.
+
+**`AADSTS50105` — user blocked from login**
+This means `appRoleAssignmentRequired=true` is set and the user is not a direct
+member of any group assigned to the enterprise app. Common causes:
+- The user is only in a **nested** group (e.g., member of group B which is a member
+  of group A, but only A is assigned to the enterprise app). Entra does not cascade
+  assignments to nested groups — assign group B directly as well.
+- The group was added to the enterprise app after the user last logged in. Have the
+  user clear cookies for `login.microsoftonline.com` and retry.
 
 **IP restriction not working for Cloud PCs**
 Azure Cloud PCs route traffic to Azure services through CGNAT IPs (`100.64.0.0/10`),
