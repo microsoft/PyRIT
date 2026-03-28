@@ -556,9 +556,7 @@ class TestFindDependentsOfTag:
 
     def test_tagged_entry_not_returned_as_dependent(self) -> None:
         """Test that an entry tagged with the tag is not returned as a dependent of itself."""
-        stub = _IdentifiableStub(
-            ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1")
-        )
+        stub = _IdentifiableStub(ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1"))
         self.registry.register(stub, name="refusal_scorer", tags=["refusal"])
         assert self.registry.find_dependents_of_tag(tag="refusal") == []
 
@@ -566,14 +564,14 @@ class TestFindDependentsOfTag:
         """Test that an entry whose child matches a tagged entry's eval_hash is found."""
         # Base scorer (tagged)
         base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r_hash")
-        self.registry.register(
-            _IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"]
-        )
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
 
         # Wrapper scorer (child references the base scorer)
         child_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r_hash")
         wrapper_id = ComponentIdentifier(
-            class_name="Inverter", class_module="mod", eval_hash="w_hash",
+            class_name="Inverter",
+            class_module="mod",
+            eval_hash="w_hash",
             children={"sub_scorers": [child_id]},
         )
         self.registry.register(_IdentifiableStub(wrapper_id), name="inverter")
@@ -585,14 +583,10 @@ class TestFindDependentsOfTag:
     def test_non_dependent_not_returned(self) -> None:
         """Test that entries without matching child eval_hash are not returned."""
         base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r_hash")
-        self.registry.register(
-            _IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"]
-        )
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
 
         # Unrelated scorer (no children matching r_hash)
-        unrelated_id = ComponentIdentifier(
-            class_name="Likert", class_module="mod", eval_hash="l_hash"
-        )
+        unrelated_id = ComponentIdentifier(class_name="Likert", class_module="mod", eval_hash="l_hash")
         self.registry.register(_IdentifiableStub(unrelated_id), name="likert")
 
         assert self.registry.find_dependents_of_tag(tag="refusal") == []
@@ -600,18 +594,18 @@ class TestFindDependentsOfTag:
     def test_deeply_nested_dependency_found(self) -> None:
         """Test that a deeply nested child eval_hash still triggers a match."""
         base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="deep_r")
-        self.registry.register(
-            _IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"]
-        )
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
 
         # Composite with nested child
         inner_child = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="deep_r")
         inverter = ComponentIdentifier(
-            class_name="Inverter", class_module="mod",
+            class_name="Inverter",
+            class_module="mod",
             children={"sub_scorers": [inner_child]},
         )
         composite_id = ComponentIdentifier(
-            class_name="Composite", class_module="mod",
+            class_name="Composite",
+            class_module="mod",
             children={"sub_scorers": [inverter]},
         )
         self.registry.register(_IdentifiableStub(composite_id), name="composite")
@@ -623,14 +617,13 @@ class TestFindDependentsOfTag:
     def test_multiple_dependents_returned_sorted(self) -> None:
         """Test that multiple dependents are returned sorted by name."""
         base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1")
-        self.registry.register(
-            _IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"]
-        )
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
 
         child = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1")
         for wrapper_name in ["z_wrapper", "a_wrapper", "m_wrapper"]:
             wrapper_id = ComponentIdentifier(
-                class_name="Wrapper", class_module="mod",
+                class_name="Wrapper",
+                class_module="mod",
                 children={"sub_scorers": [child]},
             )
             self.registry.register(_IdentifiableStub(wrapper_id), name=wrapper_name)
@@ -641,13 +634,12 @@ class TestFindDependentsOfTag:
     def test_tagged_entries_without_eval_hash_returns_empty(self) -> None:
         """Test that tagged entries without eval_hash yield no dependents."""
         base_id = ComponentIdentifier(class_name="Refusal", class_module="mod")
-        self.registry.register(
-            _IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"]
-        )
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
 
         child = ComponentIdentifier(class_name="Refusal", class_module="mod")
         wrapper_id = ComponentIdentifier(
-            class_name="Wrapper", class_module="mod",
+            class_name="Wrapper",
+            class_module="mod",
             children={"sub_scorers": [child]},
         )
         self.registry.register(_IdentifiableStub(wrapper_id), name="wrapper")
