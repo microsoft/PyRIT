@@ -32,7 +32,7 @@ ESCAPED_PAYLOADS = [
     r"\u001b]",
     r"\x9b",
     r"\x9d",
-    r"\x1b]8;;https://azure.github.io/PyRIT/\x07PyRIT\x1b]8;;\x07",  # OSC8 hyperlink (escaped)
+    r"\x1b]8;;https://microsoft.github.io/PyRIT/\x07PyRIT\x1b]8;;\x07",  # OSC8 hyperlink (escaped)
     r"Hello \x1b[32mTHIS IS GREEN\x1b[0m\x07",
     r"Hello \033[32mTHIS IS GREEN\033[0m\007",
     r"Hello \u001b[32mTHIS IS GREEN\u001b[0m\u0007",

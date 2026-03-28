@@ -40,7 +40,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-prompt = "https://github.com/Azure/PyRIT"
+prompt = "https://github.com/microsoft/PyRIT"
 
 qr_converter = QRCodeConverter()
 qr_result = await qr_converter.convert_async(prompt=prompt)  # type: ignore

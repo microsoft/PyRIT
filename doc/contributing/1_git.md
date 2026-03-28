@@ -6,13 +6,13 @@ In this guide, there are two ways to set up your fork for PyRIT: one using [Appr
 ### Approach 1: Using GitHub CLI
 You will need to install [GitHub CLI](https://cli.github.com/)
 ```bash
-gh repo fork Azure/PyRIT --clone=true
+gh repo fork microsoft/PyRIT --clone=true
 ```
 This command forks, clones, and sets the new repo as `origin`, while the original repo is automatically set as `upstream`.
 
-**(OPTIONAL)** - to pull in the changes from **Azure/PyRIT** into your forked repo:
+**(OPTIONAL)** - to pull in the changes from **microsoft/PyRIT** into your forked repo:
 ```bash
-# Fetches changes from Azure/PyRIT
+# Fetches changes from microsoft/PyRIT
 git fetch upstream
 
 # Merge changes into your main
@@ -24,7 +24,7 @@ git push origin main
 ```
 
 ### Approach 2: Without GitHub CLI
-[Fork](https://github.com/Azure/PyRIT/fork) the repo from the main branch. By default, forks are named the same as their upstream repository. This will create a new repo called `GITHUB_USERNAME/PyRIT` (where `GITHUB_USERNAME` is a variable for your GitHub username).
+[Fork](https://github.com/microsoft/PyRIT/fork) the repo from the main branch. By default, forks are named the same as their upstream repository. This will create a new repo called `GITHUB_USERNAME/PyRIT` (where `GITHUB_USERNAME` is a variable for your GitHub username).
 
 Add this new repo locally wherever you cloned PyRIT
 ```bash
