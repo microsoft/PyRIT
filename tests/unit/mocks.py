@@ -167,9 +167,6 @@ class MockPromptTarget(PromptChatTarget):
         Validates the provided message
         """
 
-    def is_json_response_supported(self) -> bool:
-        return False
-
 
 def get_azure_sql_memory() -> Generator[AzureSQLMemory, None, None]:
     # Create a test Azure SQL Server DB using in-memory SQLite

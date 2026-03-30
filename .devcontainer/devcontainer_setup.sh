@@ -8,7 +8,7 @@ if [ ! -d "$MYPY_CACHE" ]; then
     echo "Creating mypy cache directory..."
     sudo mkdir -p $MYPY_CACHE
     sudo chown vscode:vscode $MYPY_CACHE
-    sudo chmod 777 $MYPY_CACHE
+    sudo chmod 755 $MYPY_CACHE
 else
     # Check ownership
     OWNER=$(stat -c '%U:%G' $MYPY_CACHE)
@@ -21,9 +21,9 @@ else
     # Check permissions
     PERMS=$(stat -c '%a' $MYPY_CACHE)
 
-    if [ "$PERMS" != "777" ]; then
+    if [ "$PERMS" != "755" ]; then
         echo "Fixing mypy cache directory permissions..."
-        sudo chmod -R 777 $MYPY_CACHE
+        sudo chmod -R 755 $MYPY_CACHE
     fi
 fi
 

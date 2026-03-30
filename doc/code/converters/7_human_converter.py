@@ -28,7 +28,6 @@
 # them; however, you can if you wish to alter the feedback for generating the next prompt.
 #
 #
-# Before you begin, ensure you are setup with the correct version of [PyRIT installed](../../index.md#installation-guide) and have [secrets configured](../../setup/populating_secrets.md).
 #
 
 # %%

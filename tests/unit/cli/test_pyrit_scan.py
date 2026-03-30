@@ -36,14 +36,7 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["test_scenario"])
 
         assert args.scenario_name == "test_scenario"
-        assert args.database is None
         assert args.log_level == logging.WARNING
-
-    def test_parse_args_with_database(self):
-        """Test parsing with database option."""
-        args = pyrit_scan.parse_args(["test_scenario", "--database", "InMemory"])
-
-        assert args.database == "InMemory"
 
     def test_parse_args_with_log_level(self):
         """Test parsing with log-level option."""
@@ -98,8 +91,6 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(
             [
                 "encoding_scenario",
-                "--database",
-                "InMemory",
                 "--log-level",
                 "INFO",
                 "--initializers",
@@ -117,18 +108,12 @@ class TestParseArgs:
         )
 
         assert args.scenario_name == "encoding_scenario"
-        assert args.database == "InMemory"
         assert args.log_level == logging.INFO
         assert args.initializers == ["openai_target"]
         assert args.scenario_strategies == ["base64", "rot13"]
         assert args.max_concurrency == 10
         assert args.max_retries == 5
         assert args.memory_labels == '{"env":"test"}'
-
-    def test_parse_args_invalid_database(self):
-        """Test parsing with invalid database raises error."""
-        with pytest.raises(SystemExit):
-            pyrit_scan.parse_args(["test_scenario", "--database", "InvalidDB"])
 
     def test_parse_args_invalid_log_level(self):
         """Test parsing with invalid log level raises error."""
@@ -152,6 +137,24 @@ class TestParseArgs:
 
         assert exc_info.value.code == 0
 
+    def test_parse_args_with_target(self):
+        """Test parsing with --target option."""
+        args = pyrit_scan.parse_args(["test_scenario", "--target", "my_target"])
+
+        assert args.target == "my_target"
+
+    def test_parse_args_target_default_is_none(self):
+        """Test --target defaults to None when not provided."""
+        args = pyrit_scan.parse_args(["test_scenario"])
+
+        assert args.target is None
+
+    def test_parse_args_with_list_targets(self):
+        """Test parsing --list-targets flag."""
+        args = pyrit_scan.parse_args(["--list-targets"])
+
+        assert args.list_targets is True
+
 
 class TestMain:
     """Tests for main function."""
@@ -170,22 +173,18 @@ class TestMain:
 
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
     @patch("pyrit.cli.frontend_core.FrontendCore")
-    @patch("pyrit.cli.frontend_core.get_default_initializer_discovery_path")
     def test_main_list_initializers(
         self,
-        mock_get_path: MagicMock,
         mock_frontend_core: MagicMock,
         mock_print_initializers: AsyncMock,
     ):
         """Test main with --list-initializers flag."""
         mock_print_initializers.return_value = 0
-        mock_get_path.return_value = Path("/test/path")
 
         result = pyrit_scan.main(["--list-initializers"])
 
         assert result == 0
         mock_print_initializers.assert_called_once()
-        mock_get_path.assert_called_once()
 
     @patch("pyrit.cli.frontend_core.print_scenarios_list_async", new_callable=AsyncMock)
     @patch("pyrit.cli.frontend_core.resolve_initialization_scripts")
@@ -280,8 +279,6 @@ class TestMain:
         result = pyrit_scan.main(
             [
                 "test_scenario",
-                "--database",
-                "InMemory",
                 "--log-level",
                 "DEBUG",
                 "--initializers",
@@ -304,7 +301,6 @@ class TestMain:
 
         # Verify FrontendCore was called with correct args
         call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["database"] == "InMemory"
         assert call_kwargs["log_level"] == logging.DEBUG
         assert call_kwargs["initializer_names"] == ["init1", "init2"]
 
@@ -340,14 +336,6 @@ class TestMain:
         result = pyrit_scan.main(["test_scenario", "--initializers", "test_init"])
 
         assert result == 1
-
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_database_defaults_to_none(self, mock_frontend_core: MagicMock):
-        """Test main passes None for database when not specified (config file determines default)."""
-        pyrit_scan.main(["--list-scenarios"])
-
-        call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["database"] is None
 
     @patch("pyrit.cli.frontend_core.FrontendCore")
     def test_main_log_level_defaults_to_warning(self, mock_frontend_core: MagicMock):
@@ -407,14 +395,11 @@ class TestMainIntegration:
         assert result == 0
 
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
-    @patch("pyrit.cli.frontend_core.get_default_initializer_discovery_path")
     def test_main_list_initializers_integration(
         self,
-        mock_get_path: MagicMock,
         mock_print_initializers: AsyncMock,
     ):
         """Test main --list-initializers with minimal mocking."""
-        mock_get_path.return_value = Path("/test/path")
         mock_print_initializers.return_value = 0
 
         result = pyrit_scan.main(["--list-initializers"])

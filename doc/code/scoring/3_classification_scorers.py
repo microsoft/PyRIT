@@ -14,7 +14,6 @@
 #
 # In this example, we set up a `SelfAskCategoryScorer` and use it to determine whether there is harmful content in a response. This is a special type of true/false scorer that returns a score that matches the classification (or a false result is it doesn't fit in any classification). It does this by asking an LLM whether a response matches a criteria.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget

@@ -137,6 +137,9 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         Authorization passes if:
         - No group restrictions are configured (open to all authenticated users)
         - The user's groups intersect with the allowed group IDs
+
+        Returns:
+            True if the user is authorized, False otherwise.
         """
         if not self._allowed_group_ids:
             return True

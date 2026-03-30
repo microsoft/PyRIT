@@ -108,8 +108,8 @@ class TargetService:
             TargetListResponse containing paginated targets.
         """
         items = [
-            self._build_instance_from_object(target_registry_name=name, target_obj=obj)
-            for name, obj in self._registry.get_all_instances().items()
+            self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
+            for entry in self._registry.get_all_instances()
         ]
         page, has_more = self._paginate(items, cursor, limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None

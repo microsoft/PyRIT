@@ -28,7 +28,7 @@ from pyrit.scenario.core.scenario_strategy import (
     ScenarioCompositeStrategy,
     ScenarioStrategy,
 )
-from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
+from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -185,8 +185,9 @@ class ContentHarms(Scenario):
                 removed_in="0.13.0",
             )
 
-        self._objective_scorer: TrueFalseScorer = objective_scorer if objective_scorer else self._get_default_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
         self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
 
         super().__init__(
@@ -204,19 +205,6 @@ class ContentHarms(Scenario):
             api_key=get_azure_openai_auth(endpoint),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
-        )
-
-    def _get_default_scorer(self) -> TrueFalseInverterScorer:
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return TrueFalseInverterScorer(
-            scorer=SelfAskRefusalScorer(
-                chat_target=OpenAIChatTarget(
-                    endpoint=endpoint,
-                    api_key=get_azure_openai_auth(endpoint),
-                    model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                    temperature=0.9,
-                )
-            ),
         )
 
     def _resolve_seed_groups_by_harm(self) -> dict[str, list[SeedAttackGroup]]:
@@ -310,7 +298,7 @@ class ContentHarms(Scenario):
         """
         prompt_sending_attack = PromptSendingAttack(
             objective_target=self._objective_target,
-            attack_scoring_config=self._scorer_config,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
         )
 
         role_play_attack = RolePlayAttack(
@@ -356,7 +344,7 @@ class ContentHarms(Scenario):
         """
         many_shot_jailbreak_attack = ManyShotJailbreakAttack(
             objective_target=self._objective_target,
-            attack_scoring_config=self._scorer_config,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
         )
 
         tap_attack = TreeOfAttacksWithPruningAttack(

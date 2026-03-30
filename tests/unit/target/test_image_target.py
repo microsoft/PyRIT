@@ -15,6 +15,7 @@ from pyrit.exceptions.exception_classes import (
 )
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIImageTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 
 @pytest.fixture
@@ -23,6 +24,17 @@ def image_target(patch_central_database) -> OpenAIImageTarget:
         model_name="dall-e-3",
         endpoint="test",
         api_key="test",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=False,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+            output_modalities=frozenset({frozenset(["image_path"])}),
+        ),
     )
 
 
@@ -408,15 +420,6 @@ async def test_send_prompt_async_url_response_downloads_image(
             os.remove(path)
 
 
-def test_is_json_response_supported(patch_central_database):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
-
-    mock_image_target = OpenAIImageTarget(model_name="test", endpoint="test", api_key="test")
-    assert mock_image_target.is_json_response_supported() is False
-
-
 @pytest.mark.asyncio
 async def test_validate_no_text_piece(image_target: OpenAIImageTarget):
     image_piece = get_image_message_piece()
@@ -498,7 +501,7 @@ async def test_validate_piece_type(image_target: OpenAIImageTarget):
         request = Message(message_pieces=[audio_piece, text_piece])
         with pytest.raises(
             ValueError,
-            match=f"The message contains unsupported piece types.",
+            match="This target supports only the following data types",
         ):
             await image_target.send_prompt_async(message=request)
     finally:
@@ -513,12 +516,16 @@ async def test_validate_previous_conversations(
     message_piece = sample_conversations[0]
 
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = sample_conversations
+    mock_memory.get_message_pieces.return_value = sample_conversations
     mock_memory.add_message_to_memory = AsyncMock()
 
     image_target._memory = mock_memory
 
     request = Message(message_pieces=[message_piece])
 
-    with pytest.raises(ValueError, match="This target only supports a single turn conversation."):
+    with pytest.raises(
+        ValueError,
+        match="This target only supports a single turn conversation.*If your target does support this, set the"
+        " custom_capabilities parameter accordingly",
+    ):
         await image_target.send_prompt_async(message=request)

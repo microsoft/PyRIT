@@ -32,12 +32,20 @@ async def test_gandalf_validate_request_length(gandalf_target: GandalfTarget):
             MessagePiece(role="user", conversation_id="123", original_value="test2"),
         ]
     )
-    with pytest.raises(ValueError, match="This target only supports a single message piece."):
+    with pytest.raises(
+        ValueError,
+        match="This target only supports a single message piece.*If your target does support this, set the"
+        " custom_capabilities parameter accordingly",
+    ):
         await gandalf_target.send_prompt_async(message=request)
 
 
 @pytest.mark.asyncio
 async def test_gandalf_validate_prompt_type(gandalf_target: GandalfTarget):
     request = Message(message_pieces=[get_image_message_piece()])
-    with pytest.raises(ValueError, match="This target only supports text prompt input."):
+    with pytest.raises(
+        ValueError,
+        match="This target supports only the following data types.*If your target does support this, set the"
+        " custom_capabilities parameter accordingly",
+    ):
         await gandalf_target.send_prompt_async(message=request)

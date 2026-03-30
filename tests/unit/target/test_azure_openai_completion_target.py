@@ -53,14 +53,22 @@ async def test_azure_completion_validate_request_length(azure_completion_target:
             MessagePiece(role="user", conversation_id="123", original_value="test2"),
         ]
     )
-    with pytest.raises(ValueError, match="This target only supports a single message piece."):
+    with pytest.raises(
+        ValueError,
+        match="This target only supports a single message piece.*If your target does support this, set the"
+        " custom_capabilities parameter accordingly",
+    ):
         await azure_completion_target.send_prompt_async(message=request)
 
 
 @pytest.mark.asyncio
 async def test_azure_completion_validate_prompt_type(azure_completion_target: OpenAICompletionTarget):
     request = Message(message_pieces=[get_image_message_piece()])
-    with pytest.raises(ValueError, match="This target only supports text prompt input."):
+    with pytest.raises(
+        ValueError,
+        match="This target supports only the following data types.*If your target does support this, set the"
+        " custom_capabilities parameter accordingly",
+    ):
         await azure_completion_target.send_prompt_async(message=request)
 
 

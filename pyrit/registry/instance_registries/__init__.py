@@ -13,6 +13,7 @@ For registries that store classes (Type[T]), see class_registries/.
 
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
+    RegistryEntry,
 )
 from pyrit.registry.instance_registries.converter_registry import (
     ConverterRegistry,
@@ -27,6 +28,7 @@ from pyrit.registry.instance_registries.target_registry import (
 __all__ = [
     # Base class
     "BaseInstanceRegistry",
+    "RegistryEntry",
     # Concrete registries
     "ConverterRegistry",
     "ScorerRegistry",

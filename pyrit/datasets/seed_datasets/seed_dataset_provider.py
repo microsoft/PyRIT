@@ -5,10 +5,12 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import fields as dc_fields
 from typing import Any, Optional
 
 from tqdm import tqdm
 
+from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetFilter, SeedDatasetLoadTime, SeedDatasetMetadata
 from pyrit.models.seeds import SeedDataset
 
 logger = logging.getLogger(__name__)
@@ -25,9 +27,14 @@ class SeedDatasetProvider(ABC):
     Subclasses must implement:
     - fetch_dataset(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
+
+    All subclasses also have a _metadata property that is optional to make
+    dataset addition easier, but failing to complete it makes downstream
+    analysis more difficult.
     """
 
     _registry: dict[str, type["SeedDatasetProvider"]] = {}
+    load_time: SeedDatasetLoadTime = SeedDatasetLoadTime.UNINITIALIZED
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -67,6 +74,19 @@ class SeedDatasetProvider(ABC):
             Exception: If the dataset cannot be fetched or processed.
         """
 
+    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+        """
+        Parse provider-specific metadata into the shared schema.
+
+        Subclasses can override this to source metadata from class attributes,
+        prompt files, or any other backing format. The default implementation
+        returns None, which means metadata is not available for this provider.
+
+        Returns:
+            Optional[SeedDatasetMetadata]: Parsed metadata for this provider, or None.
+        """
+        return None
+
     @classmethod
     def get_all_providers(cls) -> dict[str, type["SeedDatasetProvider"]]:
         """
@@ -78,9 +98,12 @@ class SeedDatasetProvider(ABC):
         return cls._registry.copy()
 
     @classmethod
-    def get_all_dataset_names(cls) -> list[str]:
+    async def get_all_dataset_names_async(cls, filters: Optional[SeedDatasetFilter] = None) -> list[str]:
         """
         Get the names of all registered datasets.
+
+        Args:
+            filters (Optional[SeedDatasetFilter]): List of filters to apply.
 
         Returns:
             List[str]: List of dataset names from all registered providers.
@@ -89,7 +112,7 @@ class SeedDatasetProvider(ABC):
             ValueError: If no providers are registered or if providers cannot be instantiated.
 
         Example:
-            >>> names = SeedDatasetProvider.get_all_dataset_names()
+            >>> names = await SeedDatasetProvider.get_all_dataset_names_async()
             >>> print(f"Available datasets: {', '.join(names)}")
         """
         dataset_names = set()
@@ -97,10 +120,108 @@ class SeedDatasetProvider(ABC):
             try:
                 # Instantiate to get dataset name
                 provider = provider_class()
+
+                # Parser ensures a standard metadata format
+                metadata = await provider._parse_metadata()
+
+                if filters:
+                    # "all" bypasses metadata filtering and returns every dataset
+                    if filters.has_all_tag:
+                        dataset_names.add(provider.dataset_name)
+                        continue
+
+                    # Datasets without metadata are skipped for all other filters
+                    if not metadata:
+                        continue
+
+                    # Filters detected but no match -> don't add this dataset
+                    if not cls._match_filter_to_metadata(metadata=metadata, dataset_filter=filters):
+                        continue
+
                 dataset_names.add(provider.dataset_name)
             except Exception as e:
                 raise ValueError(f"Could not get dataset name from {provider_class.__name__}: {e}") from e
         return sorted(dataset_names)
+
+    @classmethod
+    def _match_filter_to_metadata(cls, metadata: SeedDatasetMetadata, dataset_filter: SeedDatasetFilter) -> bool:
+        """
+        Match a dataset's metadata against filter criteria.
+
+        A dataset matches if ANY criterion in filters.criteria matches (OR across
+        criteria). Within each criterion, ALL specified fields must match (AND
+        across fields). Within each field:
+        - strict_match=False: any overlap suffices (set intersection)
+        - strict_match=True: all filter values must be present (filter is subset)
+
+        Special tags:
+        - "all": bypasses all filtering, returns True immediately.
+        - "default": without strict_match, matches if the dataset has "default" tag.
+
+        Args:
+            metadata: The dataset's metadata.
+            dataset_filter: The user-provided filter.
+
+        Returns:
+            Whether the metadata matches any criterion.
+        """
+        # "all" always bypasses
+        if dataset_filter.has_all_tag:
+            return True
+
+        return any(
+            cls._match_single_criterion(metadata=metadata, criterion=c, strict_match=dataset_filter.strict_match)
+            for c in dataset_filter.criteria
+        )
+
+    @classmethod
+    def _match_single_criterion(
+        cls,
+        *,
+        metadata: SeedDatasetMetadata,
+        criterion: SeedDatasetMetadata,
+        strict_match: bool,
+    ) -> bool:
+        """
+        Match a single SeedDatasetMetadata criterion against dataset metadata.
+
+        Args:
+            metadata: The dataset's real metadata.
+            criterion: A single filter criterion.
+            strict_match: Whether to require all filter values (AND) vs any overlap (OR).
+
+        Returns:
+            Whether the metadata satisfies this criterion.
+        """
+        # "default" shortcut (only without strict_match):
+        # When the filter asks for "default" and the dataset has "default" in its
+        # tags, match immediately. This lets "default" act as a curated-set marker
+        # that bypasses other filter axes. With strict_match, "default" is treated
+        # as a normal tag and must satisfy the full subset check.
+        if (
+            not strict_match
+            and criterion.tags
+            and "default" in criterion.tags
+            and metadata.tags
+            and "default" in metadata.tags
+        ):
+            return True
+
+        for field in dc_fields(SeedDatasetMetadata):
+            filter_vals = getattr(criterion, field.name)
+            meta_vals = getattr(metadata, field.name)
+
+            if filter_vals is None or meta_vals is None:
+                continue
+
+            if strict_match:
+                if filter_vals - meta_vals:
+                    return False
+            else:
+                if not (filter_vals & meta_vals):
+                    return False
+
+        return True
 
     @classmethod
     async def fetch_datasets_async(
@@ -141,7 +262,7 @@ class SeedDatasetProvider(ABC):
         """
         # Validate dataset names if specified
         if dataset_names is not None:
-            available_names = cls.get_all_dataset_names()
+            available_names = await cls.get_all_dataset_names_async()
             invalid_names = [name for name in dataset_names if name not in available_names]
             if invalid_names:
                 raise ValueError(f"Dataset(s) not found: {invalid_names}. Available datasets: {available_names}")

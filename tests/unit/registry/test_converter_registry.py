@@ -339,11 +339,12 @@ class TestConverterRegistryInheritedMethods:
         assert names == ["alpha_converter", "test_converter", "zeta_converter"]
 
     def test_get_all_instances_returns_all(self):
-        """Test get_all_instances returns dict of all registered instances."""
+        """Test get_all_instances returns list of all registered entries."""
         image_converter = MockImageConverter()
         self.registry.register_instance(image_converter, name="image_converter")
 
-        all_instances = self.registry.get_all_instances()
-        assert len(all_instances) == 2
-        assert all_instances["test_converter"] is self.converter
-        assert all_instances["image_converter"] is image_converter
+        all_entries = self.registry.get_all_instances()
+        assert len(all_entries) == 2
+        entry_map = {e.name: e for e in all_entries}
+        assert entry_map["test_converter"].instance is self.converter
+        assert entry_map["image_converter"].instance is image_converter

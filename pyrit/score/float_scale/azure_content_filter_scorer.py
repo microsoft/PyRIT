@@ -1,13 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import base64
-import inspect
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Optional
 
-from azure.ai.contentsafety import ContentSafetyClient
+from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
     AnalyzeImageOptions,
     AnalyzeImageResult,
@@ -18,7 +17,7 @@ from azure.ai.contentsafety.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from pyrit.auth import TokenProviderCredential, get_azure_token_provider
+from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
@@ -37,6 +36,8 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
+
+logger = logging.getLogger(__name__)
 
 
 class AzureContentFilterScorer(FloatScaleScorer):
@@ -94,7 +95,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         self,
         *,
         endpoint: Optional[str | None] = None,
-        api_key: Optional[str | Callable[[], str] | None] = None,
+        api_key: Optional[str | Callable[[], str | Awaitable[str]] | None] = None,
         harm_categories: Optional[list[TextCategory]] = None,
         validator: Optional[ScorerPromptValidator] = None,
     ) -> None:
@@ -104,13 +105,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
         Args:
             endpoint (Optional[str | None]): The endpoint URL for the Azure Content Safety service.
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
-            api_key (Optional[str | Callable[[], str] | None]):
+            api_key (Optional[str | Callable[[], str | Awaitable[str]] | None]):
                 The API key for accessing the Azure Content Safety service,
-                or a synchronous callable that returns an access token. Async token providers
-                are not supported. If not provided (via parameter
-                or environment variable), Entra ID authentication is used automatically.
-                You can also explicitly pass a token provider from pyrit.auth
-                (e.g., get_azure_token_provider('https://cognitiveservices.azure.com/.default')).
+                or a callable that returns an access token. Both synchronous and asynchronous
+                token providers are supported. Sync providers are automatically wrapped for
+                async compatibility. If not provided (via parameter or environment variable),
+                Entra ID authentication is used automatically.
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
             harm_categories (Optional[list[TextCategory]]): The harm categories you want to query for as
                 defined in azure.ai.contentsafety.models.TextCategory. If not provided, defaults to all categories.
@@ -129,36 +129,25 @@ class AzureContentFilterScorer(FloatScaleScorer):
         )
 
         # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
-        resolved_api_key: str | Callable[[], str]
+        resolved_api_key: str | Callable[[], str | Awaitable[str]]
         if api_key is not None and callable(api_key):
-            if asyncio.iscoroutinefunction(api_key):
-                raise ValueError(
-                    "Async token providers are not supported by AzureContentFilterScorer. "
-                    "Use a synchronous token provider (e.g., get_azure_token_provider) instead."
-                )
-            # Guard against sync callables that return coroutines/awaitables (e.g., lambda: async_fn())
-            test_result = api_key()
-            if inspect.isawaitable(test_result):
-                if hasattr(test_result, "close"):
-                    test_result.close()  # prevent "coroutine was never awaited" warning
-                raise ValueError(
-                    "The provided token provider returns a coroutine/awaitable, which is not supported "
-                    "by AzureContentFilterScorer. Use a synchronous token provider instead."
-                )
             resolved_api_key = api_key
         else:
             api_key_value = default_values.get_non_required_value(
                 env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
             )
-            resolved_api_key = api_key_value or get_azure_token_provider("https://cognitiveservices.azure.com/.default")
+            resolved_api_key = api_key_value or get_azure_async_token_provider(
+                "https://cognitiveservices.azure.com/.default"
+            )
 
-        self._api_key = resolved_api_key
+        # Ensure api_key is async-compatible (wrap sync token providers if needed)
+        self._api_key = ensure_async_token_provider(resolved_api_key)
 
         # Create ContentSafetyClient with appropriate credential
         if self._endpoint is not None:
             if callable(self._api_key):
-                # Token provider - create a TokenCredential wrapper
-                credential = TokenProviderCredential(self._api_key)
+                # Token provider - create an AsyncTokenCredential wrapper
+                credential = AsyncTokenProviderCredential(self._api_key)
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
             else:
                 # String API key
@@ -291,7 +280,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     categories=self._category_values,
                     output_type="EightSeverityLevels",
                 )
-                text_result = self._azure_cf_client.analyze_text(text_request_options)
+                text_result = await self._azure_cf_client.analyze_text(text_request_options)
                 filter_results.append(text_result)
 
         elif message_piece.converted_value_data_type == "image_path":
@@ -301,7 +290,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             image_request_options = AnalyzeImageOptions(
                 image=image_data, categories=self._category_values, output_type="FourSeverityLevels"
             )
-            image_result = self._azure_cf_client.analyze_image(image_request_options)
+            image_result = await self._azure_cf_client.analyze_image(image_request_options)
             filter_results.append(image_result)
 
         # Collect all scores from all chunks/images

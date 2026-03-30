@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.identifiers import build_atomic_attack_identifier
+from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
 from pyrit.models import AttackResult, SeedAttackGroup
@@ -251,13 +252,19 @@ class AtomicAttack:
                     seed_group=self._seed_groups[idx],
                 )
 
-                # Persist the enriched identifier back to the database
+                # Persist the enriched identifier back to the database.
+                # Set eval_hash before truncation so it survives the DB round-trip.
+                if result.atomic_attack_identifier.eval_hash is None:
+                    result.atomic_attack_identifier = result.atomic_attack_identifier.with_eval_hash(
+                        AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
+                    )
+
                 if result.attack_result_id:
                     memory.update_attack_result_by_id(
                         attack_result_id=result.attack_result_id,
                         update_fields={
                             "atomic_attack_identifier": result.atomic_attack_identifier.to_dict(
-                                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
+                                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
                             ),
                         },
                     )

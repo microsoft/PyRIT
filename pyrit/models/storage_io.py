@@ -192,6 +192,7 @@ class AzureBlobStorageIO(StorageIO):
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
         for authentication. Otherwise, a delegation SAS token will be created using Entra ID authentication.
         """
+        sas_token = self._sas_token
         if not self._sas_token:
             logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
             sas_token = await AzureStorageAuth.get_sas_token(self._container_url)

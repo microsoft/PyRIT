@@ -10,7 +10,7 @@ Targets are registered explicitly via initializers as pre-configured instances.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.instance_registries.base_instance_registry import (
@@ -50,6 +50,7 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
         target: PromptTarget,
         *,
         name: Optional[str] = None,
+        tags: Optional[Union[dict[str, str], list[str]]] = None,
     ) -> None:
         """
         Register a target instance.
@@ -62,11 +63,13 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
             name: Optional custom registry name. If not provided,
                 derived from class name with identifier hash appended
                 (e.g., OpenAIChatTarget -> openai_chat_abc123).
+            tags: Optional tags for categorization. Accepts a ``dict[str, str]``
+                or a ``list[str]`` (each string becomes a key with value ``""``).
         """
         if name is None:
             name = target.get_identifier().unique_name
 
-        self.register(target, name=name)
+        self.register(target, name=name, tags=tags)
         logger.debug(f"Registered target instance: {name} ({target.__class__.__name__})")
 
     def get_instance_by_name(self, name: str) -> Optional[PromptTarget]:

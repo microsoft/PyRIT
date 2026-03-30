@@ -34,6 +34,7 @@ from pyrit.prompt_target import (
     OpenAIResponseTarget,
     PromptChatTarget,
 )
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 
 def fake_construct_response_from_request(request, response_text_pieces):
@@ -103,35 +104,6 @@ def test_init_with_no_endpoint_uri_var_raises():
 def test_init_with_no_additional_request_headers_var_raises():
     with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
         OpenAIChatTarget(model_name="gpt-4", endpoint="", api_key="xxxxx", headers="")
-
-
-def test_init_is_json_supported_defaults_to_true(patch_central_database):
-    target = OpenAIChatTarget(
-        model_name="gpt-4",
-        endpoint="https://mock.azure.com/",
-        api_key="mock-api-key",
-    )
-    assert target.is_json_response_supported() is True
-
-
-def test_init_is_json_supported_can_be_set_to_false(patch_central_database):
-    target = OpenAIChatTarget(
-        model_name="gpt-4",
-        endpoint="https://mock.azure.com/",
-        api_key="mock-api-key",
-        is_json_supported=False,
-    )
-    assert target.is_json_response_supported() is False
-
-
-def test_init_is_json_supported_can_be_set_to_true(patch_central_database):
-    target = OpenAIChatTarget(
-        model_name="gpt-4",
-        endpoint="https://mock.azure.com/",
-        api_key="mock-api-key",
-        is_json_supported=True,
-    )
-    assert target.is_json_response_supported() is True
 
 
 @pytest.mark.asyncio()
@@ -284,7 +256,23 @@ async def test_construct_request_body_serializes_complex_message(
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_json: dict, target: OpenAIChatTarget):
+async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_json: dict, patch_central_database):
+    target = OpenAIChatTarget(
+        model_name="gpt-o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        ),
+    )
     mock_memory = MagicMock()
     mock_memory.get_conversation.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
@@ -384,7 +372,23 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async(openai_response_json: dict, target: OpenAIChatTarget):
+async def test_send_prompt_async(openai_response_json: dict, patch_central_database):
+    target = OpenAIChatTarget(
+        model_name="gpt-o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        ),
+    )
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
     assert os.path.exists(tmp_file_name)
@@ -432,7 +436,23 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIChatT
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_empty_response_retries(openai_response_json: dict, target: OpenAIChatTarget):
+async def test_send_prompt_async_empty_response_retries(openai_response_json: dict, patch_central_database):
+    target = OpenAIChatTarget(
+        model_name="gpt-o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        ),
+    )
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
     assert os.path.exists(tmp_file_name)
@@ -556,15 +576,11 @@ def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=message)
 
-    assert "This target only supports text, image_path, and audio_path." in str(excinfo.value), (
+    assert "This target supports only the following data types" in str(excinfo.value), (
         "Error not raised for unsupported data types"
     )
 
     os.remove(image_piece.original_value)
-
-
-def test_is_json_response_supported(target: OpenAIChatTarget):
-    assert target.is_json_response_supported() is True
 
 
 def test_inheritance_from_prompt_chat_target(target: OpenAIChatTarget):
@@ -1928,3 +1944,71 @@ def test_construct_request_body_with_tools(patch_central_database):
 
     assert target._extra_body_parameters.get("tools") == tools
     assert target._extra_body_parameters.get("tool_choice") == "auto"
+
+
+# ============================================================================
+# Token Usage Metadata Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_captures_token_usage(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that token usage from the API response is stored in prompt_metadata."""
+    mock_response = create_mock_completion(content="Hello")
+    mock_response.model = "gpt-4o-2024-05-13"
+    mock_response.usage = MagicMock()
+    mock_response.usage.prompt_tokens = 10
+    mock_response.usage.completion_tokens = 20
+    mock_response.usage.total_tokens = 30
+    mock_response.usage.cached_tokens = 5
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.prompt_metadata["token_usage_model_name"] == "gpt-4o-2024-05-13"
+    assert piece.prompt_metadata["token_usage_prompt_tokens"] == 10
+    assert piece.prompt_metadata["token_usage_completion_tokens"] == 20
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 30
+    assert piece.prompt_metadata["token_usage_cached_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_no_usage_no_metadata(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that no token usage metadata is written when response.usage is None."""
+    mock_response = create_mock_completion(content="Hello")
+    mock_response.usage = None
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert "token_usage_model_name" not in piece.prompt_metadata
+    assert "token_usage_prompt_tokens" not in piece.prompt_metadata
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_token_usage_defaults_on_missing_attrs(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that missing usage attributes default to 0 and missing model defaults to 'unknown'."""
+    mock_response = create_mock_completion(content="Hello")
+    # Create a usage object without cached_tokens
+    mock_usage = MagicMock(spec=[])
+    mock_usage.prompt_tokens = 5
+    mock_usage.completion_tokens = 10
+    mock_usage.total_tokens = 15
+    mock_response.usage = mock_usage
+    # Remove model attribute to test default
+    del mock_response.model
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.prompt_metadata["token_usage_model_name"] == "unknown"
+    assert piece.prompt_metadata["token_usage_prompt_tokens"] == 5
+    assert piece.prompt_metadata["token_usage_completion_tokens"] == 10
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 15
+    assert piece.prompt_metadata["token_usage_cached_tokens"] == 0

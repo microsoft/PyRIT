@@ -1,6 +1,6 @@
 {
   "name": "pyrit-frontend",
-  "version": "0.11.1-dev.0",
+  "version": "0.12.1-dev.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -59,6 +59,7 @@
     "vite": "^7.3.1"
   },
   "overrides": {
-    "rollup": ">=4.59.0"
+    "rollup": ">=4.59.0",
+    "@tootallnate/once": ">=3.0.1"
   }
 }

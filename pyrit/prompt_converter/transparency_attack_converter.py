@@ -21,7 +21,7 @@ class _AdamOptimizer:
     Implementation of the Adam Optimizer using NumPy. Adam optimization is a stochastic gradient
     descent method that is based on adaptive estimation of first-order and second-order moments.
     For further details, see the original paper: `"Adam: A Method for Stochastic Optimization"`
-    by D. P. Kingma and J. Ba, 2014: https://arxiv.org/abs/1412.6980.
+    by D. P. Kingma and J. Ba [@kingma2014adam].
 
     Note:
         The code is inspired by the implementation found at:
@@ -94,7 +94,7 @@ class TransparencyAttackConverter(PromptConverter):
     Note:
         This converter implements the transparency attack as described in:
         `"Transparency Attacks: How Imperceptible Image Layers Can Fool AI Perception"` by
-        McKee, F. and Noever, D., 2024: https://arxiv.org/abs/2401.15817
+        McKee, F. and Noever, D. [@mckee2024transparency]
 
         As stated in the paper: `"The major limitation of the transparency attack is the low success rate when the
         human viewer’s background theme is not light by default or at least a close match to the transparent
@@ -289,7 +289,7 @@ class TransparencyAttackConverter(PromptConverter):
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
         Convert the given prompt by blending an attack image (potentially harmful) with a benign image.
-        Uses the Novel Image Blending Algorithm from: https://arxiv.org/abs/2401.15817.
+        Uses the Novel Image Blending Algorithm from [@mckee2024transparency].
 
         Args:
             prompt (str): The image file path to the attack image.

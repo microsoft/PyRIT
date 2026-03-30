@@ -187,7 +187,7 @@ class TestLoadDefaultDatasets:
         exists in the SeedDatasetProvider registry.
         """
         # Get all available dataset names from SeedDatasetProvider
-        available_datasets = set(SeedDatasetProvider.get_all_dataset_names())
+        available_datasets = set(await SeedDatasetProvider.get_all_dataset_names_async())
 
         # Get ScenarioRegistry to discover all scenarios
         registry = ScenarioRegistry.get_registry_singleton()

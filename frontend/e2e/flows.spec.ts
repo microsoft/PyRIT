@@ -712,12 +712,8 @@ for (const variant of TARGET_VARIANTS) {
       const starBtn = page.getByTestId(`star-btn-${newConversationId}`);
       await expect(starBtn).toBeVisible({ timeout: 5_000 });
 
-      // Promote via backend API directly (UI handler targets a mismatched path)
-      const promoteResp = await request.post(
-        `/api/attacks/${encodeURIComponent(attackResultId)}/update-main-conversation`,
-        { data: { conversation_id: newConversationId } },
-      );
-      expect(promoteResp.ok()).toBeTruthy();
+      // Promote via the UI star button (tests the full click → API → refresh flow)
+      await starBtn.click();
 
       await expect
         .poll(
@@ -889,17 +885,10 @@ for (const variant of TARGET_VARIANTS) {
         timeout: 5_000,
       });
 
-      // Verify star button is visible but promote via API directly
-      // (UI handler targets a mismatched endpoint path)
-      await expect(
-        page.getByTestId(`star-btn-${branchConversationId}`),
-      ).toBeVisible({ timeout: 5_000 });
-
-      const promoteResp = await request.post(
-        `/api/attacks/${encodeURIComponent(attackResultId)}/update-main-conversation`,
-        { data: { conversation_id: branchConversationId } },
-      );
-      expect(promoteResp.ok()).toBeTruthy();
+      // Promote via the UI star button (tests the full click → API → refresh flow)
+      const starBtn = page.getByTestId(`star-btn-${branchConversationId}`);
+      await expect(starBtn).toBeVisible({ timeout: 5_000 });
+      await starBtn.click();
 
       await expect
         .poll(

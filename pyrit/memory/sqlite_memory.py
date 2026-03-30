@@ -15,6 +15,7 @@ from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
 from pyrit.common.path import DB_DATA_PATH
@@ -84,6 +85,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Creates an engine bound to the specified database file. The `has_echo` parameter
         controls the verbosity of SQL execution logging.
 
+        For in-memory databases (``db_path=":memory:"``), a ``StaticPool`` is used so
+        that a single shared connection backs all threads.  SQLAlchemy's default pool
+        for ``:memory:`` is ``SingletonThreadPool``, which gives each thread its own
+        connection — and therefore its own *separate* in-memory database.  That causes
+        tables created on one thread (e.g. a background initialisation thread) to be
+        invisible from another thread (e.g. the main thread), resulting in
+        "no such table" errors.
+
         Args:
             has_echo (bool): Flag to enable detailed SQL execution logging.
 
@@ -94,8 +103,17 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             SQLAlchemyError: If there's an issue creating the engine.
         """
         try:
-            # Create the SQLAlchemy engine.
-            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo)
+            extra_kwargs: dict[str, Any] = {}
+
+            if self.db_path == ":memory:":
+                # Use StaticPool so every checkout returns the same underlying
+                # DBAPI connection, keeping all threads on a single in-memory
+                # database.  ``check_same_thread=False`` is required because
+                # the connection will be shared across threads.
+                extra_kwargs["poolclass"] = StaticPool
+                extra_kwargs["connect_args"] = {"check_same_thread": False}
+
+            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo, **extra_kwargs)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:
@@ -528,7 +546,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Uses json_extract() on the atomic_attack_identifier JSON column.
 
         When converter_classes is empty, matches attacks with no converters
-        (request_converter_identifiers is absent or null in the JSON).
+        (children.attack.children.request_converters is absent or null in the JSON).
         When non-empty, uses json_each() to check all specified classes are present
         (AND logic, case-insensitive).
 
@@ -540,7 +558,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             # is absent, null, or empty in the stored JSON.
             converter_json = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier,
-                "$.children.attack.request_converter_identifiers",
+                "$.children.attack.children.request_converters",
             )
             return or_(
                 AttackResultEntry.atomic_attack_identifier.is_(None),
@@ -555,7 +573,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 text(
                     f"""EXISTS(SELECT 1 FROM json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.request_converter_identifiers'))
+                            '$.children.attack.children.request_converters'))
                         WHERE LOWER(json_extract(value, '$.class_name')) = :{param_name})"""
                 ).bindparams(**{param_name: cls.lower()})
             )
@@ -579,8 +597,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
-        from the request_converter_identifiers array in the atomic_attack_identifier
-        JSON column.
+        from the children.attack.children.request_converters array in the
+        atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -592,7 +610,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     FROM "AttackResultEntries",
                     json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.request_converter_identifiers')
+                            '$.children.attack.children.request_converters')
                     ) AS j
                     WHERE cls IS NOT NULL"""
                 )

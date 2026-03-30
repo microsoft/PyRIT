@@ -283,7 +283,7 @@ for objective in conversation_objectives:
 
     scoring_config = AttackScoringConfig(objective_scorer=objective_threshold_scorer)
 
-    # Now use the standard CrescendoAttack - no custom class needed!
+    # Now use the standard Crescendo [@russinovich2024crescendo] attack - no custom class needed!
     attack = CrescendoAttack(
         objective_target=target_llm,
         attack_adversarial_config=adversarial_config,

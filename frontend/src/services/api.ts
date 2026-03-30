@@ -215,7 +215,7 @@ export const attacksApi = {
     conversationId: string
   ): Promise<ChangeMainConversationResponse> => {
     const response = await apiClient.post(
-      `/attacks/${encodeURIComponent(attackResultId)}/change-main-conversation`,
+      `/attacks/${encodeURIComponent(attackResultId)}/update-main-conversation`,
       { conversation_id: conversationId }
     )
     return response.data

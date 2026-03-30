@@ -8,6 +8,7 @@ from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class HuggingFaceEndpointTarget(PromptTarget):
         top_p: float = 1.0,
         max_requests_per_minute: Optional[int] = None,
         verbose: bool = False,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the HuggingFaceEndpointTarget with API credentials and model parameters.
@@ -44,12 +46,14 @@ class HuggingFaceEndpointTarget(PromptTarget):
             top_p (float, Optional): The cumulative probability for nucleus sampling. Defaults to 1.0.
             max_requests_per_minute (Optional[int]): The maximum number of requests per minute. Defaults to None.
             verbose (bool, Optional): Flag to enable verbose logging. Defaults to False.
+            custom_capabilities (Optional[TargetCapabilities]): Custom capabilities for this target instance.
         """
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             verbose=verbose,
             endpoint=endpoint,
             model_name=model_id,
+            custom_capabilities=custom_capabilities,
         )
 
         validate_temperature(temperature)
@@ -150,16 +154,3 @@ class HuggingFaceEndpointTarget(PromptTarget):
         n_pieces = len(message.message_pieces)
         if n_pieces != 1:
             raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

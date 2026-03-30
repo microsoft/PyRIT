@@ -379,8 +379,7 @@ az deployment group create \
 ## Access the GUI
 
 ```bash
-az deployment group show -g <rg> -n main \
-  --query properties.outputs.appFqdn.value -o tsv
+az deployment group show -g <rg> -n main --query properties.outputs.appFqdn.value -o tsv
 ```
 
 Open `https://<FQDN>` in a browser. If `allowedCidr` is set, only traffic from
