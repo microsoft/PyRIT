@@ -37,7 +37,7 @@ def run_container(mode, tag="latest"):
         print("❌ ERROR: .env file not found!")
         print(f"   Expected location: {env_file}")
         print("   Please create a .env file with your API keys.")
-        print("   See: https://github.com/Azure/PyRIT/blob/main/doc/setup/setup.md")
+        print("   See: https://github.com/microsoft/PyRIT/blob/main/doc/setup/setup.md")
         sys.exit(1)
 
     # Check if image exists

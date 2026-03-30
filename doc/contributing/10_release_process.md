@@ -74,15 +74,15 @@ links work properly. Note: There may not be any links to update, but it is
 good practice to check in case our README changes.
 
 Replace all "main" links like
-"https://github.com/Azure/PyRIT/blob/main/doc/index.md" with "raw" links that have
+"https://github.com/microsoft/PyRIT/blob/main/doc/index.md" with "raw" links that have
 the correct version number, i.e.,
-"https://raw.githubusercontent.com/Azure/PyRIT/releases/vx.y.z/doc/index.md".
+"https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/doc/index.md".
 
 For images, update using the "raw" link, e.g.,
-"https://raw.githubusercontent.com/Azure/PyRIT/releases/vx.y.z/assets/pyrit_architecture.png".
+"https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/assets/pyrit_architecture.png".
 
 For directories, update using the "tree" link, e.g.,
-"https://github.com/Azure/PyRIT/tree/releases/vx.y.z/doc/code"
+"https://github.com/microsoft/PyRIT/tree/releases/vx.y.z/doc/code"
 
 This is required for the release branch because PyPI does not pick up
 other files besides the README, which results in local links breaking.
@@ -206,7 +206,7 @@ This should be something like `x.y.z+1.dev0`.
 
 ## 10. Create GitHub Release
 
-Finally, go to the [releases page](https://github.com/Azure/PyRIT/releases), select "Draft a new release" and the "tag"
+Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select "Draft a new release" and the "tag"
 for which you want to create the release notes. It should match the version that you just released
 to PyPI. Hit "Generate release notes". This will pre-populate the text field with all changes.
 Make sure that it starts where the last release left off.

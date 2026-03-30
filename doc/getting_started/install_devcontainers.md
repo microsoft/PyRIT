@@ -26,7 +26,7 @@ You can also follow the **Installation** section on [Developing inside a Contain
 ### 1. Clone the PyRIT Repository
 
 ```bash
-git clone https://github.com/Azure/PyRIT
+git clone https://github.com/microsoft/PyRIT
 cd PyRIT
 ```
 

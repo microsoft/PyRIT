@@ -64,7 +64,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
     1. Built-in scenarios in pyrit.scenario.scenarios module
     2. User-defined scenarios from initialization scripts (set via globals)
 
-    Scenarios are identified by their simple name (e.g., "encoding", "foundry").
+    Scenarios are identified by their dotted name (e.g., "garak.encoding", "foundry.red_team_agent").
     """
 
     @classmethod
@@ -115,15 +115,31 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 package_path = Path(package_file).parent
 
             # Discover scenarios using the shared discovery utility
-            for module_name, scenario_class in discover_in_package(
+            # Use ``package_name.module_name`` as the registry name
+            for registry_name, scenario_class in discover_in_package(
                 package_path=package_path,
                 package_name="pyrit.scenario.scenarios",
                 base_class=Scenario,  # type: ignore[type-abstract]
                 recursive=True,
             ):
+                # Skip deprecated alias classes
+                doc = (scenario_class.__doc__ or "").strip()
+                if doc.startswith("Deprecated alias"):
+                    logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
+                    continue
+
+                # Check for registry key collision
+                if registry_name in self._class_entries:
+                    logger.warning(
+                        f"Scenario registry name collision: '{registry_name}' "
+                        f"conflicts with an already-registered scenario. Original "
+                        f"scenario is kept: {self._class_entries[registry_name].registered_class.__name__}"
+                    )
+                    continue
+
                 entry = ClassEntry(registered_class=scenario_class)
-                self._class_entries[module_name] = entry
-                logger.debug(f"Registered built-in scenario: {module_name} ({scenario_class.__name__})")
+                self._class_entries[registry_name] = entry
+                logger.debug(f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})")
 
         except Exception as e:
             logger.error(f"Failed to discover built-in scenarios: {e}")
@@ -182,6 +198,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
             class_name=scenario_class.__name__,
             class_module=scenario_class.__module__,
             class_description=description,
+            registry_name=name,
             default_strategy=scenario_class.get_default_strategy().value,
             all_strategies=tuple(s.value for s in strategy_class.get_all_strategies()),
             aggregate_strategies=tuple(s.value for s in strategy_class.get_aggregate_strategies()),

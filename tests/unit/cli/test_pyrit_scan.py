@@ -173,22 +173,18 @@ class TestMain:
 
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
     @patch("pyrit.cli.frontend_core.FrontendCore")
-    @patch("pyrit.cli.frontend_core.get_default_initializer_discovery_path")
     def test_main_list_initializers(
         self,
-        mock_get_path: MagicMock,
         mock_frontend_core: MagicMock,
         mock_print_initializers: AsyncMock,
     ):
         """Test main with --list-initializers flag."""
         mock_print_initializers.return_value = 0
-        mock_get_path.return_value = Path("/test/path")
 
         result = pyrit_scan.main(["--list-initializers"])
 
         assert result == 0
         mock_print_initializers.assert_called_once()
-        mock_get_path.assert_called_once()
 
     @patch("pyrit.cli.frontend_core.print_scenarios_list_async", new_callable=AsyncMock)
     @patch("pyrit.cli.frontend_core.resolve_initialization_scripts")
@@ -399,14 +395,11 @@ class TestMainIntegration:
         assert result == 0
 
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
-    @patch("pyrit.cli.frontend_core.get_default_initializer_discovery_path")
     def test_main_list_initializers_integration(
         self,
-        mock_get_path: MagicMock,
         mock_print_initializers: AsyncMock,
     ):
         """Test main --list-initializers with minimal mocking."""
-        mock_get_path.return_value = Path("/test/path")
         mock_print_initializers.return_value = 0
 
         result = pyrit_scan.main(["--list-initializers"])
