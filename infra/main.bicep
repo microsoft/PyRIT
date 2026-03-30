@@ -1,5 +1,5 @@
 // ============================================================================
-// PyRIT GUI — Azure Container Apps Deployment (SFI-Hardened)
+// PyRIT GUI — Azure Container Apps Deployment (Security-Hardened)
 //
 // Deploys the CoPyRIT GUI as an Azure Container App with:
 // - Workload profiles environment with public ingress + optional IP restriction
@@ -24,7 +24,7 @@
 //                  entraClientId=<app-registration-client-id> \
 //                  entraTenantId=<tenant-id> \
 //                  allowedGroupObjectIds=<comma-separated-entra-group-ids> \
-//                  allowedCidr='131.107.0.0/16' \
+//                  allowedCidr='<your-corp-vpn-cidr>' \
 //                  sqlServerFqdn=<your-server>.database.windows.net \
 //                  sqlDatabaseName=<your-database> \
 //                  keyVaultResourceId=<key-vault-resource-id>
@@ -52,7 +52,7 @@ param entraClientId string
 @metadata({ description: 'Find this in Azure Portal → Entra ID → Groups → your group → Object ID' })
 param allowedGroupObjectIds string
 
-@description('CIDR range allowed to reach the app (e.g., 131.107.0.0/16 for corp VPN). Empty = no IP restriction, all traffic allowed.')
+@description('CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed.')
 param allowedCidr string = ''
 
 @description('Human-readable description for the IP restriction rule')
@@ -124,11 +124,11 @@ param acrResourceId string = ''
 @description('Resource tags applied to all resources (ownership + data classification)')
 param tags object = {
   Service: 'pyrit-gui'
-  Owner: 'AIRT'
-  DataClass: 'Internal'
+  Owner: '<your-team>'
+  DataClass: '<your-data-classification>'
 }
 
-@description('Enable OpenTelemetry managed agent for audit logging (SFI-SM 2.3.1). Creates Application Insights and wires the ACA managed OTel collector.')
+@description('Enable OpenTelemetry managed agent for audit logging. Creates Application Insights and wires the ACA managed OTel collector.')
 param enableOtel bool = false
 
 // Soft guardrail: detect :latest usage (enforced via output warning)
@@ -262,7 +262,7 @@ var keyVaultName = last(split(keyVaultResourceId, '/'))
 // - A Private Endpoint provides corp-reachable connectivity via Private Link
 // - Private DNS zone resolves the FQDN to the private endpoint IP
 //
-// OTel (SFI-SM 2.3.1): When enableOtel=true, configure the managed OTel agent
+// OTel: When enableOtel=true, configure the managed OTel agent
 // as a post-deploy CLI step (2024-03-01 schema does not support it natively).
 // ============================================================================
 resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-10-02-preview' = {
@@ -516,7 +516,7 @@ output managedIdentityPrincipalId string = managedIdentity.properties.principalI
 output managedIdentityResourceId string = managedIdentity.id
 
 @description('IMPORTANT: Create an Azure AD contained user in the target database for this managed identity. See README post-deployment steps.')
-output sqlAadSetupRequired string = 'Run CREATE USER [${appName}] FROM EXTERNAL PROVIDER on database ${sqlDatabaseName}'
+output sqlAadSetupRequired string = 'Run CREATE USER [${appName}-identity] FROM EXTERNAL PROVIDER on database ${sqlDatabaseName}'
 
 @description('Key Vault name (existing)')
 output keyVaultName string = keyVaultName

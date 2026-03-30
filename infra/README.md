@@ -1,188 +1,111 @@
-# PyRIT Azure Deployment
+# CoPyRIT GUI — Azure Deployment
 
-Deploy the CoPyRIT GUI as an Azure Container App with MSAL PKCE authentication,
-managed identity, security response headers (CSP, HSTS, X-Frame-Options),
-IP-based network restriction, and no embedded secrets.
-
-## Contents
-
-- [Architecture](#architecture)
-- [Development Workflow](#development-workflow)
-- [Security](#security)
-- [Prerequisites](#prerequisites)
-- [Deploy](#deploy)
-- [Post-Deployment](#post-deployment)
-- [Configuration](#configuration-pyrit_conf-env-and-dev_mode)
-- [Technical Notes](#technical-notes)
-- [Production Hardening](#production-hardening)
-- [Troubleshooting](#troubleshooting)
-- [Teardown and Redeployment](#teardown-and-redeployment)
+Deploy the CoPyRIT GUI as an Azure Container App with
+[MSAL](https://learn.microsoft.com/en-us/entra/msal/) PKCE authentication,
+managed identity, security response headers, and no embedded secrets.
 
 ## Architecture
 
-**Auth flow** — browser-driven PKCE, backend validates tokens:
-```mermaid
-sequenceDiagram
-    participant User
-    participant SPA as SPA (React)
-    participant Entra as Entra ID
-    participant API as FastAPI Backend
-
-    User->>SPA: Open app (loads without auth)
-    SPA->>Entra: MSAL PKCE login
-    Entra-->>SPA: Access token (groups claim)
-    SPA->>API: API call + Bearer token
-    API->>API: Validate JWT signature (cached JWKS)
-    API->>API: Check group / OID
-    API-->>SPA: Response (200 / 403)
+```
+Users ──→ MSAL PKCE auth ──→ Container App
+                                                       ↓
+                                                 MSAL PKCE auth
+                                                       ↓
+                                              FastAPI JWT middleware
+                                                       ↓
+                                              User-Assigned MI
+                                        ↙     ↙     ↓      ↘      ↘
+                                 Azure SQL  ACR  Azure OpenAI  Key Vault  Storage
+                                (MI auth) (AcrPull) (RBAC)   (secret refs) (Blob)
 ```
 
-**Infrastructure overview** — all components and connections in a single view:
-```mermaid
-graph TB
-    subgraph "Clients"
-        Browser[Browser + React SPA]
-    end
-
-    subgraph "Identity"
-        MSAL[Entra ID<br/>MSAL PKCE + JWKS]
-    end
-
-    subgraph "Azure Container Apps"
-        Ingress[ACA Ingress<br/>TLS · IP Restriction] --> App[FastAPI Backend<br/>+ Static SPA]
-    end
-
-    subgraph "Data & AI Services"
-        SQL[Azure SQL<br/>MI Auth]
-        AOAI[Azure OpenAI<br/>RBAC]
-        KV[Key Vault<br/>Secret Refs]
-        Blob[Storage<br/>Blob]
-    end
-
-    subgraph "Operations"
-        ACR[ACR<br/>AcrPull via MI]
-        LA[Log Analytics]
-        AI[App Insights]
-    end
-
-    Browser -->|PKCE login| MSAL
-    Browser -->|API calls + Bearer token| Ingress
-    App -->|validate JWT| MSAL
-    App --> SQL
-    App --> AOAI
-    App --> KV
-    App --> Blob
-    ACR -.->|image pull at startup| App
-    App -->|app logs| LA
-    App -.->|OTel traces| AI
+Logging & monitoring:
 ```
-
-> **Diagram key**: Solid lines (→) = runtime request/data flow.
-> Dashed lines (⇢) = startup or optional flows (image pull, OTel when enabled).
+ACA Environment → Log Analytics (app logs)
+Container App   → Application Insights (OTel traces, when enabled)
+```
 
 ## Development Workflow
 
 ### Local development
 
-Start the backend and frontend dev server:
 ```bash
-PYRIT_DEV_MODE=true pyrit_backend    # backend on port 8000
-cd frontend && npm run dev            # Vite dev server with hot-reload, proxies /api/* to :8000
+cd frontend
+npm install   # one-time: install frontend dependencies
+npm start     # starts both backend (port 8000) and frontend (port 3000)
 ```
-When `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are not set, the auth middleware is
-disabled — all requests are allowed without authentication. Swagger UI is available
-at `http://localhost:8000/docs`.
 
-**With auth** (for E2E testing against the test app registration):
-```bash
-PYRIT_DEV_MODE=true \
-ENTRA_TENANT_ID=<tenant-id> \
-ENTRA_CLIENT_ID=<test-app-client-id> \
-ENTRA_ALLOWED_GROUP_IDS=<comma-separated-group-ids> \
-pyrit_backend
-```
-The test app registration must have `http://localhost:8000` as a redirect URI.
-Your user must be a direct member of one of the allowed groups.
+`npm start` runs `dev.py`, which launches the FastAPI backend and Vite dev server
+together, waits for the health check, and prints URLs when ready. Press Ctrl+C to
+stop both.
+
+When `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` are not set, auth is disabled —
+all requests are allowed. Swagger UI is available at `http://localhost:8000/docs`.
+
+> ⚠️ Auth-disabled mode is for **local development only**. Never deploy to a
+> network-accessible environment without both env vars set.
 
 ### Promotion flow
 
 ```
-Local dev → Push to branch → Pipeline auto-deploys to test ACA → Manual deploy to prod
+Local dev → Push to branch → Trigger pipeline in ADO → Deploys to test → Opt-in prod deploy
 ```
 
-1. **Local**: Develop and test with auth disabled or against the test app registration.
-2. **Push**: Push your branch to the fork. The CI/CD pipeline (`gui-deploy.yml`)
-   triggers automatically on pushes that touch GUI paths.
-3. **Test**: The pipeline builds the Docker image, pushes to ACR, and deploys to the
-   test Container App (`copyrit-gui-test1`). Verify in the test environment.
-4. **Prod**: Production deployment is a manual trigger with the production variable
-   group (`copyrit-gui-prod`). Same pipeline, different parameters.
+The CI/CD pipeline (`gui-deploy.yml`) automates build → push → deploy.
+Production is opt-in via `deployToProd: true`.
 
 ## Security
 
-### Authentication & Authorization
-
-- **Authentication**: MSAL PKCE on the frontend (`@azure/msal-browser`) + FastAPI JWT
-  middleware on the backend. The backend validates Bearer tokens against Entra ID JWKS.
-  No Easy Auth — the tenant blocks client secrets/certs on app registrations, so PKCE
-  (public client) is used instead.
-- **Authorization** (two layers):
-  1. **IP restriction** (ingress-level) — `allowedCidr` param restricts to a CIDR range
-     (e.g., corp VPN `131.107.0.0/16`). Blocked before auth runs. Empty = all traffic allowed.
-  2. **Entra group check** — `allowedGroupObjectIds` param. Comma-separated security group IDs.
-     Requires `groupMembershipClaims: "ApplicationGroup"` + optional claims + each security group
-     assigned to the enterprise app (see Prerequisites §3). Using `ApplicationGroup` instead of
-     `SecurityGroup` avoids groups overage (>200 groups) by only emitting app-assigned groups
-     in the token.
-  - If no group restriction is set, all authenticated users pass.
-  - The frontend (static SPA) loads without auth. Authorization is enforced at the `/api/*`
-    layer — unauthorized users see the GUI shell but all API calls return 403.
-- **Identity**: User-assigned managed identity — created before the container app so
-  RBAC roles (AcrPull, KV Secrets User) are active before the first revision starts.
-  Set `AZURE_CLIENT_ID` to the UAMI's client ID so `DefaultAzureCredential` uses
-  the correct identity.
-
-### Network & Transport
-
-- **Network**: Public ingress with optional IP restriction via `allowedCidr`. Private
-  Endpoint can be enabled via `enablePrivateEndpoint` (see Technical Notes).
-- **Response headers**: `SecurityHeadersMiddleware` adds Content-Security-Policy,
-  X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy,
-  and HSTS (production only). API routes get a strict `default-src 'none'` CSP;
-  frontend routes allow `script-src 'self'` and `style-src 'self' 'unsafe-inline'`
-  (required for Fluent UI Griffel CSS-in-JS). `img-src` and `media-src` allow
-  `https://*.blob.core.windows.net` for Azure Blob-hosted images and media.
-- **Swagger/OpenAPI**: Disabled in production (`PYRIT_DEV_MODE=false`). The `/docs`,
-  `/redoc`, and `/openapi.json` endpoints are only available when `PYRIT_DEV_MODE=true`.
-- **CORS**: Restricted to explicit method and header lists (`GET`, `POST`, `PUT`,
-  `DELETE`, `OPTIONS`; `Authorization`, `Content-Type`, `X-Request-ID`). Origins
-  configurable via `PYRIT_CORS_ORIGINS` env var.
-
-### Data & Supply Chain
-
+- **Authentication**: [MSAL](https://learn.microsoft.com/en-us/entra/msal/)
+  [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) +
+  FastAPI JWT middleware on the backend. Validates Bearer tokens against Entra ID
+  JWKS. PKCE (public client) — no client secrets or certificates needed.
+- **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires
+  `groupMembershipClaims: "ApplicationGroup"` + optional claims + each security group
+  assigned to the enterprise app (see Prerequisites §3). If no group restriction is
+  set, all authenticated users pass.
+- **Identity**: User-assigned managed identity (UAMI) — created before the container
+  app so [RBAC](https://learn.microsoft.com/en-us/azure/role-based-access-control/)
+  roles are active before the first revision starts. `AZURE_CLIENT_ID` is set to the
+  UAMI's client ID so `DefaultAzureCredential` uses the correct identity.
+- **Network** (opt-in hardening):
+  - **Private Endpoint** (`enablePrivateEndpoint=true`): disables public access
+    entirely — the app is only reachable via the PE's private network. Requires VNet
+    peering or VPN to reach. When PE is enabled, `allowedCidr` is ignored.
+  - **IP restriction** (`allowedCidr`): restricts ingress to a
+    [CIDR](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing) range.
+    Only applies when PE is disabled. Empty = no IP-level restriction (auth still
+    required).
+  - Neither is required — MSAL auth + group checks are the primary access controls.
+- **Response headers**: `SecurityHeadersMiddleware` adds
+  [CSP](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP),
+  HSTS (production only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+  Permissions-Policy, and Cache-Control (`no-store` on API routes). Swagger/OpenAPI
+  disabled in production.
 - **Data**: Azure SQL with managed identity authentication (no passwords)
-- **Secrets**: Key Vault with RBAC (existing vault, secrets referenced via ACA secretRef)
-- **Images**: Unique tags or digests required — `:latest` triggers a warning output
-- **Container registry**: ACR pull via managed identity RBAC (AcrPull role assigned in IaC)
-- **npm packages**: `frontend/.npmrc` pins the npm registry to `registry.npmjs.org`.
-  Required by Microsoft Secure Supply Chain policy CFS0001 (every `package.json`
-  must have a sibling `.npmrc`).
-- **Docker base image**: `docker/Dockerfile` declares `ARG BASE_IMAGE` with no default
-  value. All callers (pipeline, `build_pyrit_docker.py`, `docker-compose.yaml`) pass
-  `--build-arg BASE_IMAGE=pyrit-devcontainer` explicitly. This avoids CSSC warnings
-  about unqualified image references and ensures builds fail fast if the arg is omitted.
-
-### Governance
-
-- **Logging**: Log Analytics (app logs) + optional OTel via Application Insights
+- **Secrets**: Key Vault with RBAC (existing vault, secrets referenced via
+  [ACA](https://learn.microsoft.com/en-us/azure/container-apps/) secretRef)
+- **Images**: Unique tags or digests required — `:latest` is detected by a soft guardrail
+- **Supply chain**: [ACR](https://learn.microsoft.com/en-us/azure/container-registry/)
+  pull via managed identity RBAC (must be granted manually; see Post-Deployment §2).
+  `frontend/.npmrc` pins the npm registry. `docker/Dockerfile` declares
+  `ARG BASE_IMAGE` with no default — all callers pass it explicitly to avoid container
+  supply chain security scanner warnings.
 - **Tags**: All resources tagged with Service/Owner/DataClass for governance
+- **Logging**: Log Analytics (app logs) + optional
+  [OTel](https://opentelemetry.io/) via Application Insights
 
 ## Prerequisites
 
+> **Before you begin**: Run `az login` and confirm your subscription with
+> `az account show`. You need permissions to create Entra app registrations,
+> security groups, and Azure resource deployments.
+
 The Bicep template creates most infrastructure automatically (ACR, Log Analytics,
-managed identity, RBAC role assignments). Entra ID resources must be created
+managed identity). Entra ID resources must be created
 separately (Microsoft Graph, not ARM). Key Vault must be an existing vault
-(avoids purge-protection issues on redeployment).
+(avoids purge-protection issues on redeployment). RBAC role assignments must
+be created manually — see [Post-Deployment §2](#post-deployment).
 
 **Requirements:**
 - Azure CLI **2.84+** (version 2.77 has a known `content-already-consumed` bug)
@@ -276,17 +199,17 @@ specified as comma-separated IDs in `allowedGroupObjectIds`.
 # Create security group for authorized users
 # NOTE: This may require elevated permissions. If it fails, create the group
 # in Azure Portal → Entra ID → Groups → New group (Security type).
-az ad group create --display-name "CoPyRIT-Dev" --mail-nickname copyrit-dev
+az ad group create --display-name "MyApp-Users" --mail-nickname myapp-users
 
 # Get the group Object ID (use this as allowedGroupObjectIds)
-GROUP_ID=$(az ad group show --group "CoPyRIT-Dev" --query id -o tsv)
+GROUP_ID=$(az ad group show --group "MyApp-Users" --query id -o tsv)
 echo "allowedGroupObjectIds: $GROUP_ID"
 
 # Add users to the group
-az ad group member add --group "CoPyRIT-Dev" --member-id <user-object-id>
+az ad group member add --group "MyApp-Users" --member-id <user-object-id>
 
 # List current members
-az ad group member list --group "CoPyRIT-Dev" --query '[].displayName' -o tsv
+az ad group member list --group "MyApp-Users" --query '[].displayName' -o tsv
 ```
 
 **IMPORTANT: Assign each group to the enterprise application.** This is required for
@@ -313,7 +236,7 @@ considered assigned. To grant access to members of B, assign B to the enterprise
 app separately and include both group IDs in `allowedGroupObjectIds`.
 
 **App roles** (optional): You can define custom app roles on the app registration
-(e.g., `CoPyRIT.Dev.All`) and assign groups to specific roles instead of the
+(e.g., `MyApp.User.All`) and assign groups to specific roles instead of the
 default access role. The backend currently authorizes via the `groups` token claim,
 not `roles`, so app roles serve as organizational metadata and for
 `appRoleAssignmentRequired` gating at the IdP level.
@@ -342,6 +265,8 @@ az sql server show \
 
 ### 5. Container image (**must be pushed to ACR before deployment**)
 
+A shared ACR is used by both test and prod environments.
+
 ```bash
 # Build image locally
 cd <repo-root>
@@ -349,12 +274,7 @@ python docker/build_pyrit_docker.py --source local
 
 # Tag with commit SHA (never use :latest)
 COMMIT_SHA=$(git rev-parse --short HEAD)
-
-# If using a template-created ACR, get its name after first deploy:
-# ACR_NAME=$(az deployment group show -g <rg> -n main \
-#   --query properties.outputs.acrLoginServer.value -o tsv | cut -d. -f1)
-# Or if using an existing ACR:
-ACR_NAME=<your-acr-name>
+ACR_NAME=<acr-name>
 
 docker tag pyrit:latest $ACR_NAME.azurecr.io/pyrit:$COMMIT_SHA
 az acr login --name $ACR_NAME
@@ -362,10 +282,14 @@ docker push $ACR_NAME.azurecr.io/pyrit:$COMMIT_SHA
 echo "containerImage: $ACR_NAME.azurecr.io/pyrit:$COMMIT_SHA"
 ```
 
+> **Note**: The CI/CD pipeline handles build + push automatically. Manual push is
+> only needed for the initial bootstrap or if deploying outside the pipeline.
+
 ### 6. Key Vault (existing — required)
 
 Use an existing Key Vault to avoid soft-delete/purge-protection naming conflicts
-on redeployment. The template grants the container app's MI `Key Vault Secrets User`.
+on redeployment. The managed identity must be granted `Key Vault Secrets User` on
+the vault manually (the Bicep template does **not** create RBAC role assignments).
 
 ```bash
 # Create a vault (if your org doesn't provide one)
@@ -379,49 +303,15 @@ az keyvault create \
 az keyvault show --name <vault-name> --query id -o tsv
 ```
 
-> **Note**: The vault should have `enableRbacAuthorization: true` so the template
-> can grant the MI access. Diagnostic settings (AuditEvent logs) should be
+> **Note**: The vault should have `enableRbacAuthorization: true` so the managed
+> identity can be granted access. Diagnostic settings (AuditEvent logs) should be
 > configured on the vault separately by the vault owner.
 
 ## Deploy
 
-### Automated (CI/CD pipeline)
-
-An Azure DevOps pipeline (`gui-deploy.yml` in this repo) automates
-build → push → deploy. It triggers on pushes to `main` that change GUI-relevant
-paths (`pyrit/backend/`, `frontend/`, `docker/`, `infra/`). Environment-specific
-parameters (Entra IDs, SQL connection, etc.) are stored in ADO variable groups —
-nothing sensitive appears in the pipeline YAML. Production deployment is opt-in
-via a `deployToProd` parameter toggle.
-
-### Manual
-
-> **Note**: The heredoc syntax below (`cat > ... <<'EOF'`) works on Linux/macOS.
-> On Windows (PowerShell), create `infra/parameters.json` manually or use
-> `Set-Content` instead.
-
 ```bash
-# Create a parameters file with your values
-cat > infra/parameters.json <<'EOF'
-{
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "appName":                { "value": "<app-name>" },
-    "containerImage":         { "value": "<acr>.azurecr.io/pyrit:<commit-sha>" },
-    "entraTenantId":          { "value": "<tenant-id>" },
-    "entraClientId":          { "value": "<app-registration-client-id>" },
-    "allowedGroupObjectIds":  { "value": "<comma-separated-entra-group-ids>" },
-    "allowedCidr":            { "value": "" },
-    "enablePrivateEndpoint":  { "value": false },
-    "sqlServerFqdn":          { "value": "<server>.database.windows.net" },
-    "sqlDatabaseName":        { "value": "<database>" },
-    "keyVaultResourceId":     { "value": "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.KeyVault/vaults/<vault>" },
-    "enableOtel":             { "value": false },
-    "acrResourceId":          { "value": "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ContainerRegistry/registries/<acr>" }
-  }
-}
-EOF
+# Copy and fill in parameters
+cp infra/parameters.example.json infra/parameters.json
 # Edit parameters.json with your values
 
 # Deploy
@@ -441,43 +331,37 @@ az deployment group create \
      --spa-redirect-uris "https://$FQDN"
    ```
 
-2. **Grant managed identity RBAC on Azure resources**:
+2. **Grant managed identity RBAC** (required — the Bicep template does **not** create
+   role assignments; the app will fail to start without AcrPull and KV roles):
    ```bash
-   # Get the MI's principal ID from deployment output
    MI_ID=$(az deployment group show -g <rg> -n main \
      --query properties.outputs.managedIdentityPrincipalId.value -o tsv)
 
-   # Azure OpenAI — Cognitive Services OpenAI User on each AOAI instance (required)
-   az role assignment create \
-     --assignee-object-id $MI_ID \
-     --role "Cognitive Services OpenAI User" \
+   # Required — app won't start without these
+   # To find acrResourceId: az acr show --name <acr-name> --query id -o tsv
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "AcrPull" --scope <acrResourceId>
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope <keyVaultResourceId>
+
+   # Grant based on which services you use (scope as narrowly as possible)
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "Cognitive Services OpenAI User" \
      --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<aoai-name>
-
-   # Content Safety — Cognitive Services User (required if using content safety scorers)
-   az role assignment create \
-     --assignee-object-id $MI_ID \
-     --role "Cognitive Services User" \
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "Cognitive Services User" \
      --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<content-safety-name>
-
-   # Azure Storage — Storage Blob Data Contributor (required if using blob storage for results)
-   az role assignment create \
-     --assignee-object-id $MI_ID \
-     --role "Storage Blob Data Contributor" \
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "Storage Blob Data Contributor" \
      --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<storage-name>
-
-   # Azure ML — Azure ML Data Scientist (only if using serverless endpoints e.g. DeepSeek, Phi-4)
-   az role assignment create \
-     --assignee-object-id $MI_ID \
-     --role "Azure ML Data Scientist" \
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "Azure ML Data Scientist" \
      --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.MachineLearningServices/workspaces/<workspace-name>
    ```
 
 3. **Create Azure SQL contained user** for the managed identity:
    ```sql
-   -- Run on the target database as Entra admin
-   -- Use the UAMI name (appName + "-identity")
-   -- If recreating the MI, drop the old user first:
-   -- DROP USER IF EXISTS [<appName>-identity];
+   -- Connect as Entra admin (Azure Portal Query Editor, Azure Data Studio, or sqlcmd)
    CREATE USER [<appName>-identity] FROM EXTERNAL PROVIDER;
    ALTER ROLE db_datareader ADD MEMBER [<appName>-identity];
    ALTER ROLE db_datawriter ADD MEMBER [<appName>-identity];
@@ -486,53 +370,32 @@ az deployment group create \
 4. **Manage access** — Add or remove users via Entra security groups
    (`allowedGroupObjectIds`). Each group must also be assigned to the enterprise app.
 
-5. **Configure OTel agent** (if `enableOtel=true`):
+5. **Set CORS origins** for production (the Bicep template does not set this):
    ```bash
-   AI_CONN=$(az deployment group show -g <rg> -n main \
-     --query properties.outputs.appInsightsConnectionString.value -o tsv)
-   az containerapp env telemetry app-insights set \
-     --name <appName>-env -g <rg> --connection-string "$AI_CONN"
+   az containerapp update -n <appName> -g <rg> \
+     --set-env-vars "PYRIT_CORS_ORIGINS=https://$FQDN"
    ```
 
-6. **Verify deployment and access the GUI**:
-   ```bash
-   FQDN=$(az deployment group show -g <rg> -n main \
-     --query properties.outputs.appFqdn.value -o tsv)
+## Access the GUI
 
-   # Health check (should return {"status": "healthy", ...})
-   curl -sf "https://$FQDN/api/health" | python3 -m json.tool
+```bash
+az deployment group show -g <rg> -n main \
+  --query properties.outputs.appFqdn.value -o tsv
+```
 
-   # Auth config endpoint (should return clientId and tenantId)
-   curl -sf "https://$FQDN/api/auth/config" | python3 -m json.tool
-   ```
-   Then open `https://<FQDN>` in a browser. The SPA shell loads without
-   authentication. Click **Sign In** to authenticate via Entra ID MSAL PKCE.
-   After login, API calls include a Bearer token and the backend validates
-   group membership. If `allowedCidr` is set, only traffic from that CIDR
-   range (e.g., corp VPN) can reach the app.
+Open `https://<FQDN>` in a browser. If `allowedCidr` is set, only traffic from
+that CIDR range can reach the app.
 
-## Configuration: .pyrit_conf, .env, and DEV_MODE
+## Configuration: .pyrit_conf and .env
 
 The template replaces `.pyrit_conf` and `.env` with Bicep parameters — no files
 needed in the container.
-
-### PYRIT_DEV_MODE
-
-Set the `PYRIT_DEV_MODE` environment variable to control development vs production
-behavior:
-
-| `PYRIT_DEV_MODE` | Swagger/OpenAPI | HSTS header | CSP on docs paths |
-|---|---|---|---|
-| `true` | Enabled (`/docs`, `/redoc`, `/openapi.json`) | Skipped (avoids breaking local HTTP) | Skipped (Swagger loads CDN scripts) |
-| `false` (default) | Disabled (404) | Enabled (`max-age=63072000; includeSubDomains`) | N/A (routes don't exist) |
-
-In production deployments, leave this unset or set to `false`.
 
 ### .pyrit_conf fields → Bicep params
 
 | .pyrit_conf field | Bicep param | Env var | Notes |
 |-------------------|-------------|---------|-------|
-| `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `targets airt`: `targets` populates the TargetRegistry (read by the GUI), `airt` sets up converter/scorer/adversarial defaults |
+| `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `targets airt`: `targets` populates the TargetRegistry (read by the GUI); `airt` loads converter, scorer, and adversarial defaults |
 | `operator` | — | Set per-user in the GUI | |
 | `operation` | — | Set per-user in the GUI | |
 
@@ -548,112 +411,43 @@ To update the `.env` contents:
 az keyvault secret set --vault-name <vault> --name env-global --file ~/.pyrit/.env
 ```
 
+> ⚠️ `PYRIT_ENV_CONTENTS` may contain API keys. Ensure application logging does
+> **not** dump environment variables or process state.
+
 Azure services (OpenAI, Content Safety, Speech) support managed identity — when
 API key env vars are not set, PyRIT auto-falls back to `DefaultAzureCredential`,
-which picks up the container app's user-assigned MI. Set the `AZURE_CLIENT_ID`
-env var to the UAMI's client ID so `DefaultAzureCredential` selects the correct
-identity. Non-Azure providers (OpenAI Platform, Groq, Google Gemini) require API
-keys in the `.env`.
+which picks up the container app's user-assigned MI. Non-Azure providers (OpenAI
+Platform, Groq, Google Gemini) require API keys in the `.env`.
 
-## Technical Notes
+## Notes
 
-- **IP restriction**: When `allowedCidr` is set, only traffic from that CIDR range
-  can reach the app at the ingress level (blocked before auth runs). When empty, all
-  traffic is allowed and authorization relies solely on MSAL + group checks.
-  **Caveat**: Azure Cloud PCs route traffic to Azure services through CGNAT IPs
-  (`100.64.0.0/10`), not the public NAT IPs shown by `ifconfig.me`. IP restrictions
-  based on `ifconfig.me` will not work for Cloud PC → ACA traffic.
-- **Private Endpoint**: Set `enablePrivateEndpoint=true` to create a Private Endpoint,
-  Private DNS zone, and VNet link for the ACA environment. This disables public network
-  access — the app is only reachable via the PE's private network path. Requires that
-  clients (e.g., Cloud PCs, dev machines) are on the PE's VNet or a peered VNet.
-  When disabled (default for test deployments), the app uses public ingress.
-- **Log Analytics shared key**: The ACA environment uses `listKeys()` to connect to
-  Log Analytics. This is the standard pattern required by the ACA API. The key is used
-  only during deployment and is not exposed to the application.
-- **Workload profiles**: The environment uses workload profiles mode (Consumption tier).
-- **Scaling**: Defaults to 1 replica (no auto-scale). Adjust `minReplicas`/`maxReplicas`
-  in parameters if needed.
-- **Key Vault**: Must be an existing vault (passed via `keyVaultResourceId`).
-  The template grants `Key Vault Secrets User` to the user-assigned MI.
-- **OpenTelemetry (SFI-SM 2.3.1)**: When `enableOtel=true`, the template creates
-  Application Insights. The OTel agent must be configured as a post-deploy step
-  (see Post-Deployment §5).
-- **Existing resources**: Log Analytics (`logAnalyticsWorkspaceId` + credentials),
-  VNet (`infrastructureSubnetId`), and ACR (`acrResourceId`) can optionally be
-  provided as existing resources to skip creation.
+- **Network hardening** (opt-in): Both Private Endpoint and IP restriction are
+  optional. See the Security section for details. The CI/CD pipeline controls
+  `enablePrivateEndpoint` via the ADO variable group — check your pipeline variables
+  to confirm the current posture.
+- **Log Analytics shared key**: `listKeys()` is the standard ACA pattern. The key is
+  used during deployment only, not exposed to the application.
+- **Workload profiles**: Consumption tier. Defaults to 1 replica (no auto-scale).
+- **Key Vault**: Must be an existing vault. RBAC must be granted manually (see
+  Post-Deployment §2).
+- **OpenTelemetry**: When `enableOtel=true`, configure the agent post-deploy:
+  ```bash
+  AI_CONN=$(az deployment group show -g <rg> -n main \
+    --query properties.outputs.appInsightsConnectionString.value -o tsv)
+  az containerapp env telemetry app-insights set \
+    --name <appName>-env -g <rg> --connection-string "$AI_CONN"
+  ```
+- **Existing resources**: Log Analytics, VNet, and ACR can be provided as existing
+  resources to skip creation.
 - **Azure CLI**: Version 2.84+ required (2.77 has a known bug).
 
-## Production Hardening
-
-The default configuration (Entra MSAL PKCE + security group authorization) is
-sufficient for test deployments. For production, add defense-in-depth.
-
-### Already built-in
-
-These are enabled by default — no additional configuration needed:
-
-- **Security response headers** — `SecurityHeadersMiddleware` adds CSP, HSTS,
-  X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and Permissions-Policy.
-  HSTS is production-only (skipped when `PYRIT_DEV_MODE=true`).
-- **Swagger disabled in production** — `/docs`, `/openapi.json`, and `/redoc`
-  return 404 when `PYRIT_DEV_MODE=false` (the default).
-- **CORS tightened** — Methods restricted to `GET`, `POST`, `PUT`, `DELETE`,
-  `OPTIONS`; headers to `Authorization`, `Content-Type`, `X-Request-ID`.
-  Origins configurable via `PYRIT_CORS_ORIGINS` env var.
-- **`appRoleAssignmentRequired`** — Set to `true` on the service principal so
-  Entra rejects login for users not assigned to the enterprise app. Without this,
-  any tenant user can obtain a token (the backend still blocks via group check,
-  but defense-in-depth rejects at the IdP level).
-
-## Troubleshooting
-
-**Admin consent required error during login**
-The frontend requests the `{clientId}/access` scope. If the app registration uses
-`.default` instead, it resolves `requiredResourceAccess` which triggers mandatory
-admin consent in some tenants (e.g., Microsoft). Fix: ensure the frontend requests
-the explicit `/access` scope and that it's defined in "Expose an API".
-
-**`ERR_CONNECTION_CLOSED` or TLS handshake failure**
-If `enablePrivateEndpoint=true`, the ACA environment disables public network access.
-Clients must be on the PE's VNet or a peered VNet. Check that VNet peering is
-configured and the Private DNS zone resolves the app FQDN to the PE's private IP.
-
-**Groups claim missing from token (empty `groups` array)**
-- Verify `groupMembershipClaims` is set to `"ApplicationGroup"` (not `"SecurityGroup"`)
-- Verify the security group is **assigned to the enterprise application** (not just
-  created) — see Prerequisites §3
-- Verify `groups` is added as an optional claim for both ID and access tokens
-- If the user is in >200 groups and using `SecurityGroup`, the token replaces
-  `groups` with `_claim_sources` (overage). Switch to `ApplicationGroup` to avoid this.
-
-**`AADSTS50105` — user blocked from login**
-This means `appRoleAssignmentRequired=true` is set and the user is not a direct
-member of any group assigned to the enterprise app. Common causes:
-- The user is only in a **nested** group (e.g., member of group B which is a member
-  of group A, but only A is assigned to the enterprise app). Entra does not cascade
-  assignments to nested groups — assign group B directly as well.
-- The group was added to the enterprise app after the user last logged in. Have the
-  user clear cookies for `login.microsoftonline.com` and retry.
-
-**IP restriction not working for Cloud PCs**
-Azure Cloud PCs route traffic to Azure services through CGNAT IPs (`100.64.0.0/10`),
-not the public NAT IPs shown by `ifconfig.me`. IP restrictions based on public IP
-lookup tools will not match Cloud PC → ACA traffic. Use Private Endpoint instead.
-
-**`DefaultAzureCredential` fails / wrong identity used**
-Ensure `AZURE_CLIENT_ID` is set to the user-assigned managed identity's client ID.
-Without this, `DefaultAzureCredential` tries all credential types and may pick the
-wrong one or fail entirely. The Bicep template sets this automatically.
-
 ## Teardown and Redeployment
-
-You can safely delete the resource group and redeploy — Key Vault is external
-to the RG so there are no purge-protection naming conflicts:
 
 ```bash
 az group delete --name <rg> --yes
 ```
 
-All resources created by the template (ACR, ACA, Log Analytics, App Insights,
-VNet) are deleted cleanly with no naming conflicts.
+Key Vault is external to the RG — no purge-protection naming conflicts.
+
+> **Note**: Entra ID resources (app registration, security groups) are **not** deleted
+> by `az group delete`. Remove them manually if no longer needed.

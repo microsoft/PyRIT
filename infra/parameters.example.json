@@ -41,8 +41,8 @@
     "tags": {
       "value": {
         "Service": "pyrit-gui",
-        "Owner": "AIRT",
-        "DataClass": "Internal"
+        "Owner": "<your-team>",
+        "DataClass": "<your-data-classification>"
       }
     },
 

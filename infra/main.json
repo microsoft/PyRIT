@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "14064152161343139128"
+      "templateHash": "16381559389474872325"
     }
   },
   "parameters": {
@@ -45,7 +45,21 @@
     "allowedGroupObjectIds": {
       "type": "string",
       "metadata": {
-        "description": "Comma-separated Entra security group IDs allowed to access the GUI"
+        "description": "Object ID of the Entra security group allowed to access the GUI"
+      }
+    },
+    "allowedCidr": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed."
+      }
+    },
+    "allowedCidrDescription": {
+      "type": "string",
+      "defaultValue": "Allowed IP range",
+      "metadata": {
+        "description": "Human-readable description for the IP restriction rule"
       }
     },
     "sqlServerFqdn": {
@@ -62,9 +76,9 @@
     },
     "pyritInitializer": {
       "type": "string",
-      "defaultValue": "airt",
+      "defaultValue": "targets airt",
       "metadata": {
-        "description": "PyRIT initializer to run (e.g., airt, simple)"
+        "description": "PyRIT initializer to run. Default \"targets airt\" registers target configs + attack defaults."
       }
     },
     "envSecretName": {
@@ -107,6 +121,13 @@
       "defaultValue": "",
       "metadata": {
         "description": "Azure Container Registry name (for managed identity pull). Used if acrResourceId is not provided."
+      }
+    },
+    "enablePrivateEndpoint": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable Private Endpoint for the ACA environment. When false, uses public access with IP restrictions."
       }
     },
     "vnetAddressPrefix": {
@@ -176,8 +197,8 @@
       "type": "object",
       "defaultValue": {
         "Service": "pyrit-gui",
-        "Owner": "AIRT",
-        "DataClass": "Internal"
+        "Owner": "<your-team>",
+        "DataClass": "<your-data-classification>"
       },
       "metadata": {
         "description": "Resource tags applied to all resources (ownership + data classification)"
@@ -187,17 +208,18 @@
       "type": "bool",
       "defaultValue": false,
       "metadata": {
-        "description": "Enable OpenTelemetry managed agent for audit logging (SFI-SM 2.3.1). Creates Application Insights and wires the ACA managed OTel collector."
+        "description": "Enable OpenTelemetry managed agent for audit logging. Creates Application Insights and wires the ACA managed OTel collector."
       }
     }
   },
   "variables": {
     "imageUsesLatest": "[endsWith(parameters('containerImage'), ':latest')]",
     "createLogAnalytics": "[equals(parameters('logAnalyticsWorkspaceId'), '')]",
-    "createVnet": "[equals(parameters('infrastructureSubnetId'), '')]",
+    "createVnet": "[and(parameters('enablePrivateEndpoint'), equals(parameters('infrastructureSubnetId'), ''))]",
     "createAcr": "[and(equals(parameters('acrResourceId'), ''), equals(parameters('acrName'), ''))]",
     "effectiveAcrName": "[if(variables('createAcr'), format('{0}acr', replace(parameters('appName'), '-', '')), if(not(equals(parameters('acrName'), '')), parameters('acrName'), last(split(parameters('acrResourceId'), '/'))))]",
-    "effectiveAcrServer": "[format('{0}.azurecr.io', variables('effectiveAcrName'))]"
+    "effectiveAcrServer": "[format('{0}.azurecr.io', variables('effectiveAcrName'))]",
+    "keyVaultName": "[last(split(parameters('keyVaultResourceId'), '/'))]"
   },
   "resources": [
     {
@@ -276,51 +298,6 @@
       "tags": "[parameters('tags')]"
     },
     {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.KeyVault/vaults', last(split(parameters('keyVaultResourceId'), '/')))]",
-      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', last(split(parameters('keyVaultResourceId'), '/'))), format('{0}-identity', parameters('appName')), '4633458b-17de-408a-b874-0445c86b69e6')]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
-        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').principalId]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
-      ]
-    },
-    {
-      "condition": "[variables('createAcr')]",
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', '')))]",
-      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', ''))), format('{0}-identity', parameters('appName')), '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').principalId]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]",
-        "[resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', '')))]"
-      ]
-    },
-    {
-      "condition": "[and(not(variables('createAcr')), not(equals(parameters('acrResourceId'), '')))]",
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', last(split(parameters('acrResourceId'), '/')))]",
-      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', last(split(parameters('acrResourceId'), '/'))), format('{0}-identity', parameters('appName')), '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').principalId]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
-      ]
-    },
-    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-10-02-preview",
       "name": "[format('{0}-env', parameters('appName'))]",
@@ -334,7 +311,7 @@
             "sharedKey": "[if(variables('createLogAnalytics'), listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('appName'))), '2023-09-01').primarySharedKey, parameters('logAnalyticsSharedKey'))]"
           }
         },
-        "publicNetworkAccess": "Disabled",
+        "publicNetworkAccess": "[if(parameters('enablePrivateEndpoint'), 'Disabled', 'Enabled')]",
         "workloadProfiles": [
           {
             "name": "Consumption",
@@ -347,6 +324,7 @@
       ]
     },
     {
+      "condition": "[parameters('enablePrivateEndpoint')]",
       "type": "Microsoft.Network/privateEndpoints",
       "apiVersion": "2023-11-01",
       "name": "[format('{0}-pe', parameters('appName'))]",
@@ -374,6 +352,7 @@
       ]
     },
     {
+      "condition": "[parameters('enablePrivateEndpoint')]",
       "type": "Microsoft.Network/privateDnsZones",
       "apiVersion": "2024-06-01",
       "name": "[format('privatelink.{0}.azurecontainerapps.io', parameters('location'))]",
@@ -381,6 +360,7 @@
       "tags": "[parameters('tags')]"
     },
     {
+      "condition": "[parameters('enablePrivateEndpoint')]",
       "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
       "apiVersion": "2024-06-01",
       "name": "[format('{0}/{1}', format('privatelink.{0}.azurecontainerapps.io', parameters('location')), format('{0}-dns-link', parameters('appName')))]",
@@ -398,6 +378,7 @@
       ]
     },
     {
+      "condition": "[parameters('enablePrivateEndpoint')]",
       "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
       "apiVersion": "2023-11-01",
       "name": "[format('{0}/{1}', format('{0}-pe', parameters('appName')), 'default')]",
@@ -436,7 +417,8 @@
             "external": true,
             "targetPort": 8000,
             "transport": "http",
-            "allowInsecure": false
+            "allowInsecure": false,
+            "ipSecurityRestrictions": "[if(not(equals(parameters('allowedCidr'), '')), createArray(createObject('name', 'allowed-cidr', 'description', parameters('allowedCidrDescription'), 'ipAddressRange', parameters('allowedCidr'), 'action', 'Allow')), createArray())]"
           },
           "registries": [
             {
@@ -447,7 +429,7 @@
           "secrets": [
             {
               "name": "env-file",
-              "keyVaultUrl": "[format('https://{0}{1}/secrets/{2}', last(split(parameters('keyVaultResourceId'), '/')), environment().suffixes.keyvaultDns, parameters('envSecretName'))]",
+              "keyVaultUrl": "[format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('envSecretName'))]",
               "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
             }
           ]
@@ -501,6 +483,10 @@
                 {
                   "name": "OTEL_SERVICE_NAME",
                   "value": "[parameters('appName')]"
+                },
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').clientId]"
                 }
               ]
             }
@@ -513,9 +499,6 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName')))]",
-        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', last(split(parameters('acrResourceId'), '/'))), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', last(split(parameters('acrResourceId'), '/'))), format('{0}-identity', parameters('appName')), '7f951dda-4ed3-4680-a7ca-43fe172d538d'))]",
-        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', ''))), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', ''))), format('{0}-identity', parameters('appName')), '7f951dda-4ed3-4680-a7ca-43fe172d538d'))]",
-        "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults', last(split(parameters('keyVaultResourceId'), '/'))), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults', last(split(parameters('keyVaultResourceId'), '/'))), format('{0}-identity', parameters('appName')), '4633458b-17de-408a-b874-0445c86b69e6'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]",
         "[resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', '')))]"
       ]
@@ -539,9 +522,9 @@
     "privateEndpointId": {
       "type": "string",
       "metadata": {
-        "description": "Private Endpoint resource ID (check properties for IP after deployment)"
+        "description": "Private Endpoint resource ID (empty when PE is disabled)"
       },
-      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-pe', parameters('appName')))]"
+      "value": "[if(parameters('enablePrivateEndpoint'), resourceId('Microsoft.Network/privateEndpoints', format('{0}-pe', parameters('appName'))), '')]"
     },
     "managedIdentityPrincipalId": {
       "type": "string",
@@ -562,14 +545,14 @@
       "metadata": {
         "description": "IMPORTANT: Create an Azure AD contained user in the target database for this managed identity. See README post-deployment steps."
       },
-      "value": "[format('Run CREATE USER [{0}] FROM EXTERNAL PROVIDER on database {1}', parameters('appName'), parameters('sqlDatabaseName'))]"
+      "value": "[format('Run CREATE USER [{0}-identity] FROM EXTERNAL PROVIDER on database {1}', parameters('appName'), parameters('sqlDatabaseName'))]"
     },
     "keyVaultName": {
       "type": "string",
       "metadata": {
         "description": "Key Vault name (existing)"
       },
-      "value": "[last(split(parameters('keyVaultResourceId'), '/'))]"
+      "value": "[variables('keyVaultName')]"
     },
     "acrLoginServer": {
       "type": "string",
