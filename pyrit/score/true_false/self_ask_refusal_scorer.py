@@ -68,7 +68,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptChatTarget,
-        refusal_system_prompt_path: Union[RefusalScorerPaths, Path, str] = RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE,
+        refusal_system_prompt_path: Union[RefusalScorerPaths, Path, str] = RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE,
         prompt_format_string: Optional[str] = None,
         validator: Optional[ScorerPromptValidator] = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,

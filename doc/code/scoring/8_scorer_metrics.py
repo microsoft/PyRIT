@@ -375,6 +375,9 @@ else:
 # # Evaluate only scorers with specific tags
 # python build_scripts/evaluate_scorers.py --tags refusal
 # python build_scripts/evaluate_scorers.py --tags refusal,default
+#
+# # Control parallelism (default: 5, lower if hitting rate limits)
+# python build_scripts/evaluate_scorers.py --max-concurrency 3
 # ```
 #
 # ### Tags
