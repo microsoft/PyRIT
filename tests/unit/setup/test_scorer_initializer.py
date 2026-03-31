@@ -129,7 +129,7 @@ class TestScorerInitializerInitialize:
 
         registry = ScorerRegistry.get_registry_singleton()
         # Normal mode: falls back to gpt4o refusal
-        assert registry.get_instance_by_name("refusal_gpt4o_objective_block_safe") is not None
+        assert registry.get_instance_by_name("refusal_gpt4o_objective_strict") is not None
         # inverted_refusal uses the gpt4o refusal fallback
         assert registry.get_instance_by_name("inverted_refusal") is not None
 
@@ -205,7 +205,7 @@ class TestScorerInitializerInitialize:
         assert registry.get_instance_by_name("refusal_gpt5_1") is None
         assert registry.get_instance_by_name("refusal_gpt4o_unsafe") is None
         # But gpt4o-based ones should register
-        assert registry.get_instance_by_name("refusal_gpt4o_objective_allow_safe") is not None
+        assert registry.get_instance_by_name("refusal_gpt4o_objective_lenient") is not None
 
     @pytest.mark.asyncio
     async def test_default_tag_registers_all_current_scorers(self) -> None:

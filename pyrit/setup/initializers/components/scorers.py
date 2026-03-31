@@ -85,10 +85,10 @@ GPT5_4_TARGET: str = "azure_openai_gpt5_4"
 GPT5_1_TARGET: str = "azure_openai_gpt5_1"
 
 # Scorer registry names.
-REFUSAL_GPT4O_OBJECTIVE_BLOCK_SAFE: str = "refusal_gpt4o_objective_block_safe"
-REFUSAL_GPT4O_OBJECTIVE_ALLOW_SAFE: str = "refusal_gpt4o_objective_allow_safe"
-REFUSAL_GPT4O_NO_OBJECTIVE_BLOCK_SAFE: str = "refusal_gpt4o_no_objective_block_safe"
-REFUSAL_GPT4O_NO_OBJECTIVE_ALLOW_SAFE: str = "refusal_gpt4o_no_objective_allow_safe"
+REFUSAL_GPT4O_OBJECTIVE_STRICT: str = "refusal_gpt4o_objective_strict"
+REFUSAL_GPT4O_OBJECTIVE_LENIENT: str = "refusal_gpt4o_objective_lenient"
+REFUSAL_GPT4O_NO_OBJECTIVE_STRICT: str = "refusal_gpt4o_no_objective_strict"
+REFUSAL_GPT4O_NO_OBJECTIVE_LENIENT: str = "refusal_gpt4o_no_objective_lenient"
 REFUSAL_GPT5_4: str = "refusal_gpt5_4"
 REFUSAL_GPT5_1: str = "refusal_gpt5_1"
 REFUSAL_GPT4O_UNSAFE: str = "refusal_gpt4o_unsafe"
@@ -213,7 +213,7 @@ class ScorerInitializer(PyRITInitializer):
         """
         Register base refusal scorer variants and tag the best one.
 
-        Each variant uses the default refusal prompt (OBJECTIVE_BLOCK_SAFE) but
+        Each variant uses the default refusal prompt (OBJECTIVE_STRICT) but
         differs in model or prompt template. All are tagged ``REFUSAL``.
         """
         gpt4o = self._get_chat_target(GPT4O_TARGET)
@@ -224,37 +224,37 @@ class ScorerInitializer(PyRITInitializer):
 
         # Prompt template variants (all use gpt4o)
         self._try_register(
-            name=REFUSAL_GPT4O_OBJECTIVE_BLOCK_SAFE,
+            name=REFUSAL_GPT4O_OBJECTIVE_STRICT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_BLOCK_SAFE,
+                refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_STRICT,
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
         )
         self._try_register(
-            name=REFUSAL_GPT4O_OBJECTIVE_ALLOW_SAFE,
+            name=REFUSAL_GPT4O_OBJECTIVE_LENIENT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_ALLOW_SAFE,
+                refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_LENIENT,
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
         )
         self._try_register(
-            name=REFUSAL_GPT4O_NO_OBJECTIVE_BLOCK_SAFE,
+            name=REFUSAL_GPT4O_NO_OBJECTIVE_STRICT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_BLOCK_SAFE,
+                refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_STRICT,
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
         )
         self._try_register(
-            name=REFUSAL_GPT4O_NO_OBJECTIVE_ALLOW_SAFE,
+            name=REFUSAL_GPT4O_NO_OBJECTIVE_LENIENT,
             factory=lambda: SelfAskRefusalScorer(
                 chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
-                refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_ALLOW_SAFE,
+                refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_LENIENT,
             ),
             required_targets=[gpt4o],
             tags=refusal_tag,
@@ -275,7 +275,9 @@ class ScorerInitializer(PyRITInitializer):
         )
         self._try_register(
             name=REFUSAL_GPT4O_UNSAFE,
-            factory=lambda: SelfAskRefusalScorer(chat_target=self._require_dependency(unsafe, name=GPT4O_UNSAFE_TARGET)),
+            factory=lambda: SelfAskRefusalScorer(
+                chat_target=self._require_dependency(unsafe, name=GPT4O_UNSAFE_TARGET)
+            ),
             required_targets=[unsafe],
             tags=refusal_tag,
         )
@@ -489,10 +491,13 @@ class ScorerInitializer(PyRITInitializer):
             name=ACS_WITH_REFUSAL,
             factory=lambda: TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=cast(list[TrueFalseScorer], [
-                    self._require_dependency(acs, name="acs_threshold"),
-                    TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
-                ]),
+                scorers=cast(
+                    "list[TrueFalseScorer]",
+                    [
+                        self._require_dependency(acs, name="acs_threshold"),
+                        TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
+                    ],
+                ),
             ),
             required_targets=[acs, refusal],
             tags=composite_tag,
@@ -501,10 +506,13 @@ class ScorerInitializer(PyRITInitializer):
             name=SCALE_AND_REFUSAL,
             factory=lambda: TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=cast(list[TrueFalseScorer], [
-                    self._require_dependency(scale, name="scale"),
-                    TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
-                ]),
+                scorers=cast(
+                    "list[TrueFalseScorer]",
+                    [
+                        self._require_dependency(scale, name="scale"),
+                        TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
+                    ],
+                ),
             ),
             required_targets=[scale, refusal],
             tags=composite_tag,
@@ -517,7 +525,6 @@ class ScorerInitializer(PyRITInitializer):
         These combine core scorers into composites used for harm evaluation.
         Currently empty — will be populated as harm compound scorers are added.
         """
-        pass
 
     def _tag_best_objective(self) -> None:
         """
