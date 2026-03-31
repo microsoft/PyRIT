@@ -55,7 +55,7 @@ describe("msalConfig", () => {
   });
 
   // Tests 6-9: fetchAuthConfig — module-level _cachedConfig state.
-  // jest.resetModules() + require() gives each test a fresh module.
+  // jest.resetModules() + dynamic import() gives each test a fresh module.
   describe("fetchAuthConfig", () => {
     const originalFetch = global.fetch;
 
@@ -78,8 +78,7 @@ describe("msalConfig", () => {
         json: () => Promise.resolve(mockConfig),
       });
 
-      const { fetchAuthConfig } =
-        require("./msalConfig") as typeof import("./msalConfig");
+      const { fetchAuthConfig } = await import("./msalConfig");
       const result = await fetchAuthConfig();
 
       expect(result).toEqual(mockConfig);
@@ -93,8 +92,7 @@ describe("msalConfig", () => {
         json: () => Promise.resolve(mockConfig),
       });
 
-      const { fetchAuthConfig } =
-        require("./msalConfig") as typeof import("./msalConfig");
+      const { fetchAuthConfig } = await import("./msalConfig");
       await fetchAuthConfig();
       const secondResult = await fetchAuthConfig();
 
@@ -105,8 +103,7 @@ describe("msalConfig", () => {
     it("returns empty config when response is not ok", async () => {
       (global.fetch as jest.Mock).mockResolvedValue({ ok: false });
 
-      const { fetchAuthConfig } =
-        require("./msalConfig") as typeof import("./msalConfig");
+      const { fetchAuthConfig } = await import("./msalConfig");
       const result = await fetchAuthConfig();
 
       expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupId: "" });
@@ -115,8 +112,7 @@ describe("msalConfig", () => {
     it("returns empty config on network error", async () => {
       (global.fetch as jest.Mock).mockRejectedValue(new Error("Network error"));
 
-      const { fetchAuthConfig } =
-        require("./msalConfig") as typeof import("./msalConfig");
+      const { fetchAuthConfig } = await import("./msalConfig");
       const result = await fetchAuthConfig();
 
       expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupId: "" });
