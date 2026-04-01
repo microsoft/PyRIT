@@ -129,7 +129,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
         # Determine the device
-        self.device = "cuda" if self.use_cuda and torch.cuda.is_available() else "cpu"  # type: ignore[attr-defined]
+        self.device = "cuda" if self.use_cuda and torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {self.device}")
 
         # Set necessary files if provided, otherwise set to None to trigger general download
@@ -141,7 +141,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         self._top_p = top_p
         self.skip_special_tokens = skip_special_tokens
 
-        if self.use_cuda and not torch.cuda.is_available():  # type: ignore[attr-defined]
+        if self.use_cuda and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but not available.")
 
         self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer())

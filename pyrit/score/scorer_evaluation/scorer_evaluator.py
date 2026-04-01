@@ -198,8 +198,7 @@ class ScorerEvaluator(abc.ABC):
             )
         combined_harm_definition_version = next(iter(harm_definition_versions)) if harm_definition_versions else None
 
-        # Use harm_definition from CSV headers if available (e.g., "fairness_bias.yaml"),
-        # otherwise fall back to deriving from harm_category (e.g., "bias" -> "bias.yaml").
+        # Use harm_definition from CSV headers (e.g., "fairness_bias.yaml").
         # The CSV header is authoritative since the harm_category name may differ from
         # the YAML filename (e.g., harm_category="bias" but file is "fairness_bias.yaml").
         if len(harm_definitions) > 1:
@@ -209,8 +208,13 @@ class ScorerEvaluator(abc.ABC):
             )
         if harm_definitions:
             harm_definition = next(iter(harm_definitions))
+        elif metrics_type == MetricsType.HARM:
+            raise ValueError(
+                f"No harm_definition found in CSV headers for harm category '{dataset_files.harm_category}'. "
+                f"Add a '# harm_definition=<filename>.yaml' comment line to your CSV files."
+            )
         else:
-            harm_definition = f"{dataset_files.harm_category}.yaml" if dataset_files.harm_category else None
+            harm_definition = None
 
         # Build dataset name from input CSV files
         dataset_name = "_".join(sorted(csv_file.name for csv_file in csv_files))
