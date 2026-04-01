@@ -27,7 +27,7 @@ What PyRIT Offers
 ::::{card}
 🎯 **Automated Red Teaming**
 
-Run multi-turn attack strategies like Crescendo [@russinovich2024crescendo], TAP [@mehrotra2023tap], and Skeleton Key [@microsoft2024skeletonkey] against AI systems with minimal setup. Single-turn and multi-turn attacks supported out of the box.
+Run multi-turn attack strategies like Crescendo, TAP, and Skeleton Key against AI systems with minimal setup. Single-turn and multi-turn attacks supported out of the box.
 ::::
 
 ::::{card}
@@ -62,25 +62,29 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 
 :::::
 
-+++ { "kind": "justified" }
+---
 
-## Installation Guide
+## Getting Started
+
+Getting PyRIT running takes two steps: **install** the package, then **configure** your AI endpoints. For the path that's right for you, see the [Getting Started](getting_started/README) guide.
+
+### Step 1: Install
 
 PyRIT offers flexible installation options to suit different needs. Choose the path that best fits your use case.
 
 ::::{important}
 **Version Compatibility:**
-- **User installations** (Docker, Pip/Conda) install the **latest stable release** from PyPI
-- **Contributor installations** (DevContainers, Local Development) use the **latest development code** from the `main` branch
+- **User installations** (Docker, Local) install the **latest stable release** from PyPI
+- **Contributor installations** (Docker, Local) use the **latest development code** from the `main` branch
 - Always match your notebooks to your PyRIT version
 ::::
 
 :::::{grid} 1 1 2 2
 :gutter: 3
 
-::::{card} 🐋 Docker Installation
-:link: setup/1b_install_docker
-**For Users - Quick Start** ⭐
+::::{card} 🐋 User Docker Installation
+:link: getting_started/install_docker
+**Quick Start** ⭐
 
 Get started immediately with a pre-configured environment:
 - ✅ All dependencies included
@@ -89,33 +93,55 @@ Get started immediately with a pre-configured environment:
 - ✅ Works on all platforms
 ::::
 
-::::{card} ☀️ Local Pip/uv Installation
-:link: setup/1a_install_uv
-**For Users - Custom Setup**
+::::{card} ☀️ User Local Installation
+:link: getting_started/install_local
+**Custom Setup**
 
 Install PyRIT directly on your machine:
+- ✅ Pip, uv, or conda
 - ✅ Full Python environment control
-- ✅ Lighter weight installation
 - ✅ Easy integration with existing workflows
 ::::
 
-::::{card} 🐋 DevContainers in VS Code
-:link: contributing/1b_install_devcontainers
-**For Contributors** ⭐
+::::{card} 🐋 Contributor Docker Installation
+:link: getting_started/install_devcontainers
+**Recommended for Contributors** ⭐
 
-Standardized development environment:
-- ✅ Pre-configured VS Code setup
+Pre-configured Docker container with VS Code:
 - ✅ Consistent across all contributors
 - ✅ All extensions pre-installed
+- ✅ One-click setup
 ::::
 
-::::{card} ☀️ Local uv Development
-:link: contributing/1a_install_uv
-**For Contributors - Custom Dev Setup**
+::::{card} ☀️ Contributor Local Installation
+:link: getting_started/install_local_dev
+**Custom Dev Setup**
 
 Install from source in editable mode:
 - ✅ Full development control
 - ✅ Use any IDE or editor
 - ✅ Customize environment
+::::
+:::::
+
+### Step 2: Configure
+
+After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For more details, see the [Configure PyRIT](getting_started/configuration) page.
+
+:::::{grid} 1 1 2 2
+:gutter: 3
+
+::::{card} 🔑 Populating Secrets
+:link: getting_started/populating_secrets
+**Set Up Your .env File**
+
+Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, and more.
+::::
+
+::::{card} 📄 Config File (Recommended)
+:link: getting_started/pyrit_conf
+**Full Framework Setup** ⭐
+
+Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and scenarios.
 ::::
 :::::

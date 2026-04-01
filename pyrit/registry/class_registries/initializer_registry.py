@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from pyrit.identifiers.class_name_utils import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.class_registries.base_class_registry import (
     BaseClassRegistry,
@@ -93,9 +94,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         # At this point _discovery_path is guaranteed to be a Path
         assert self._discovery_path is not None
 
-        # Track file paths for collision detection and resolution
-        self._initializer_paths: dict[str, Path] = {}
-
         super().__init__(lazy_discovery=lazy_discovery)
 
     def _discover(self) -> None:
@@ -113,14 +111,12 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         if discovery_path.is_file():
             self._process_file(file_path=discovery_path, base_class=PyRITInitializer)
         else:
-            for file_stem, file_path, initializer_class in discover_in_directory(
+            for _file_stem, _file_path, initializer_class in discover_in_directory(
                 directory=discovery_path,
                 base_class=PyRITInitializer,  # type: ignore[type-abstract]
                 recursive=True,
             ):
                 self._register_initializer(
-                    short_name=file_stem,
-                    file_path=file_path,
                     initializer_class=initializer_class,
                 )
 
@@ -135,16 +131,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         import inspect
 
         short_name = file_path.stem
-
-        # Check for name collision
-        if short_name in self._initializer_paths:
-            existing_path = self._initializer_paths[short_name]
-            logger.error(
-                f"Initializer name collision: '{short_name}' found in both "
-                f"'{file_path}' and '{existing_path}'. "
-                f"Initializer filenames must be unique across all directories."
-            )
-            return
 
         try:
             spec = importlib.util.spec_from_file_location(f"initializer.{short_name}", file_path)
@@ -163,8 +149,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                     and not inspect.isabstract(attr)
                 ):
                     self._register_initializer(
-                        short_name=short_name,
-                        file_path=file_path,
                         initializer_class=attr,  # type: ignore[arg-type]
                     )
 
@@ -174,32 +158,30 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
     def _register_initializer(
         self,
         *,
-        short_name: str,
-        file_path: Path,
         initializer_class: type[PyRITInitializer],
     ) -> None:
         """
         Register an initializer class.
 
         Args:
-            short_name: The short name for the initializer (filename without extension).
-            file_path: The path to the file containing the initializer.
             initializer_class: The initializer class to register.
         """
-        # Check for name collision
-        if short_name in self._initializer_paths:
-            existing_path = self._initializer_paths[short_name]
-            logger.error(
-                f"Initializer name collision: '{short_name}' found in both '{file_path}' and '{existing_path}'."
-            )
-            return
-
         try:
-            # Create the entry
+            # Convert class name to snake_case for registry name
+            registry_name = class_name_to_snake_case(initializer_class.__name__, suffix="Initializer")
+
+            # Check for registry key collision
+            if registry_name in self._class_entries:
+                logger.warning(
+                    f"Initializer registry name collision: '{registry_name}' "
+                    f"conflicts with an already-registered initializer. Original "
+                    f"initializer is kept: {self._class_entries[registry_name].registered_class.__name__}"
+                )
+                return
+
             entry = ClassEntry(registered_class=initializer_class)
-            self._class_entries[short_name] = entry
-            self._initializer_paths[short_name] = file_path
-            logger.debug(f"Registered initializer: {short_name} ({initializer_class.__name__})")
+            self._class_entries[registry_name] = entry
+            logger.debug(f"Registered initializer: {registry_name} ({initializer_class.__name__})")
 
         except Exception as e:
             logger.warning(f"Failed to register initializer {initializer_class.__name__}: {e}")
@@ -223,6 +205,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 class_name=initializer_class.__name__,
                 class_module=initializer_class.__module__,
                 class_description=instance.description,
+                registry_name=name,
                 display_name=instance.name,
                 required_env_vars=tuple(instance.required_env_vars),
                 execution_order=instance.execution_order,
@@ -236,43 +219,11 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 class_name=initializer_class.__name__,
                 class_module=initializer_class.__module__,
                 class_description="Error loading initializer metadata",
+                registry_name=name,
                 display_name=name,
                 required_env_vars=(),
                 execution_order=100,
             )
-
-    def resolve_initializer_paths(self, *, initializer_names: list[str]) -> list[Path]:
-        """
-        Resolve initializer names to their file paths.
-
-        Args:
-            initializer_names: List of initializer names to resolve.
-
-        Returns:
-            List of resolved file paths.
-
-        Raises:
-            ValueError: If any initializer name is not found or has no file path.
-        """
-        self._ensure_discovered()
-        resolved_paths = []
-
-        for initializer_name in initializer_names:
-            if initializer_name not in self._class_entries:
-                available = ", ".join(sorted(self.get_names()))
-                raise ValueError(
-                    f"Built-in initializer '{initializer_name}' not found.\n"
-                    f"Available initializers: {available}\n"
-                    f"Use 'pyrit_scan --list-initializers' to see detailed information."
-                )
-
-            initializer_file = self._initializer_paths.get(initializer_name)
-            if initializer_file is None:
-                raise ValueError(f"Could not locate file for initializer '{initializer_name}'.")
-
-            resolved_paths.append(initializer_file)
-
-        return resolved_paths
 
     @staticmethod
     def resolve_script_paths(*, script_paths: list[str]) -> list[Path]:

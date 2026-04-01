@@ -135,10 +135,10 @@ async def test_extract_frames_true_false(video_converter_sample_video):
     image_scorer = MockTrueFalseScorer()
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
     video_path = video_converter_sample_video.converted_value
-    frame_paths = scorer._extract_frames(video_path=video_path)
+    frame_paths = scorer._video_helper._extract_frames(video_path=video_path)
 
-    assert len(frame_paths) == scorer.num_sampled_frames, (
-        f"Expected {scorer.num_sampled_frames} frames, got {len(frame_paths)}"
+    assert len(frame_paths) == scorer._video_helper.num_sampled_frames, (
+        f"Expected {scorer._video_helper.num_sampled_frames} frames, got {len(frame_paths)}"
     )
 
     # Verify frames are valid images and cleanup
@@ -159,10 +159,10 @@ async def test_extract_frames_float_scale(video_converter_sample_video):
     image_scorer = MockFloatScaleScorer()
     scorer = VideoFloatScaleScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
     video_path = video_converter_sample_video.converted_value
-    frame_paths = scorer._extract_frames(video_path=video_path)
+    frame_paths = scorer._video_helper._extract_frames(video_path=video_path)
 
-    assert len(frame_paths) == scorer.num_sampled_frames, (
-        f"Expected {scorer.num_sampled_frames} frames, got {len(frame_paths)}"
+    assert len(frame_paths) == scorer._video_helper.num_sampled_frames, (
+        f"Expected {scorer._video_helper.num_sampled_frames} frames, got {len(frame_paths)}"
     )
 
     # Verify frames are valid images and cleanup
@@ -228,7 +228,7 @@ async def test_score_video_no_frames(video_converter_sample_video):
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
 
     # Mock _extract_frames to return empty list
-    scorer._extract_frames = MagicMock(return_value=[])
+    scorer._video_helper._extract_frames = MagicMock(return_value=[])
 
     with pytest.raises(ValueError, match="No frames extracted from video for scoring."):
         await scorer._score_piece_async(video_converter_sample_video)
@@ -292,10 +292,10 @@ def test_video_scorer_default_num_frames():
     image_scorer = MockTrueFalseScorer()
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer)
 
-    assert scorer.num_sampled_frames == 5  # Default value
+    assert scorer._video_helper.num_sampled_frames == 5  # Default value
 
 
-class MockAudioTrueFalseScorer(TrueFalseScorer, AudioTranscriptHelper):
+class MockAudioTrueFalseScorer(TrueFalseScorer):
     """Mock AudioTrueFalseScorer for testing video+audio integration"""
 
     def __init__(self, return_value: bool = True):

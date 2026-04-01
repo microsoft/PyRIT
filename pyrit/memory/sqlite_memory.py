@@ -15,6 +15,7 @@ from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
 from pyrit.common.path import DB_DATA_PATH
@@ -84,6 +85,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Creates an engine bound to the specified database file. The `has_echo` parameter
         controls the verbosity of SQL execution logging.
 
+        For in-memory databases (``db_path=":memory:"``), a ``StaticPool`` is used so
+        that a single shared connection backs all threads.  SQLAlchemy's default pool
+        for ``:memory:`` is ``SingletonThreadPool``, which gives each thread its own
+        connection — and therefore its own *separate* in-memory database.  That causes
+        tables created on one thread (e.g. a background initialisation thread) to be
+        invisible from another thread (e.g. the main thread), resulting in
+        "no such table" errors.
+
         Args:
             has_echo (bool): Flag to enable detailed SQL execution logging.
 
@@ -94,8 +103,17 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             SQLAlchemyError: If there's an issue creating the engine.
         """
         try:
-            # Create the SQLAlchemy engine.
-            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo)
+            extra_kwargs: dict[str, Any] = {}
+
+            if self.db_path == ":memory:":
+                # Use StaticPool so every checkout returns the same underlying
+                # DBAPI connection, keeping all threads on a single in-memory
+                # database.  ``check_same_thread=False`` is required because
+                # the connection will be shared across threads.
+                extra_kwargs["poolclass"] = StaticPool
+                extra_kwargs["connect_args"] = {"check_same_thread": False}
+
+            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo, **extra_kwargs)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:

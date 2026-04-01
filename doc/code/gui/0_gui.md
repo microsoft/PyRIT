@@ -20,7 +20,7 @@ Then open `http://localhost:8000` in your browser.
 
 ### Docker
 
-CoPyRIT is also available as a Docker container. See the [Docker setup](https://github.com/Azure/PyRIT/blob/main/docker/) for details.
+CoPyRIT is also available as a Docker container. See the [Docker setup](https://github.com/microsoft/PyRIT/blob/main/docker/) for details.
 
 ### Azure Deployment
 
@@ -149,7 +149,7 @@ Click "New Target" to open the creation dialog. Fill in:
 
 #### Auto-Populating Targets
 
-Targets can also be auto-populated by adding an initializer (e.g., `airt`) to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/Azure/PyRIT/blob/main/.pyrit_conf_example) for details.
+Targets can also be auto-populated by adding an initializer (e.g., `airt`) to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
 
 ---
 

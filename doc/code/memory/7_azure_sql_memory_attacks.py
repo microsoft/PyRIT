@@ -16,8 +16,7 @@
 # how you can modify the prompts, and how you can view results. Before starting, import the necessary libraries.
 #
 # ## Prerequisites
-#  - Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
-#  - In addition, ensure that you have proper access to the Azure SQL resource by running this [6_azure_sql_memory.ipynb](./6_azure_sql_memory.ipynb).
+#  - Ensure that you have proper access to the Azure SQL resource by running this [6_azure_sql_memory.ipynb](./6_azure_sql_memory.ipynb).
 #
 # The first example is as simple as it gets.
 
@@ -158,7 +157,6 @@ red_teaming_attack = RedTeamingAttack(
 
 result = await red_teaming_attack.execute_async(objective=image_objective)  # type: ignore
 await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
-
 
 # %% [markdown]
 # ## OpenAI Chat Target using AzureSQLMemory and local image path

@@ -42,7 +42,6 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-
 image_path = pathlib.Path(".") / ".." / ".." / ".." / "assets" / "pyrit_architecture.png"
 
 # A SeedGroup is a collection of Seeds that are grouped together as part of a conversation
@@ -70,7 +69,6 @@ scoring_config = AttackScoringConfig(
 
 attack = PromptSendingAttack(objective_target=target, attack_scoring_config=scoring_config)
 printer = ConsoleAttackResultPrinter()
-
 
 # every attack has this to extract parameters from the seed group
 params = await attack.params_type.from_seed_group_async(seed_group=seed_group)  # type: ignore

@@ -14,6 +14,7 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "scoring").resolve()
 
 skipped_files = [
     "5_human_in_the_loop_scorer.ipynb",  # requires human input
+    "prompt_shield_scorer.ipynb",  # requires Azure Content Safety API key
 ]
 
 

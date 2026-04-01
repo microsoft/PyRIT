@@ -17,7 +17,6 @@
 #
 # This demo will walk you through how to measure and gauge performance of PyRIT scoring configurations, both harm scorers and objective scorers.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # ## Understanding Scorer Metrics
 #
@@ -307,7 +306,6 @@ from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
 
 # Create a harm scorer using the hate speech Likert scale
 likert_scorer = SelfAskLikertScorer(chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE)
-
 
 # # Configure evaluation to use a small sample dataset
 # likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(

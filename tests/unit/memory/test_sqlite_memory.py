@@ -692,3 +692,10 @@ def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
 
     captured = capsys.readouterr()
     assert "Logging error" not in captured.err
+
+
+def test_create_engine_uses_static_pool_for_in_memory(sqlite_instance):
+    """In-memory databases must use StaticPool so all threads share one database."""
+    from sqlalchemy.pool import StaticPool
+
+    assert isinstance(sqlite_instance.engine.pool, StaticPool)

@@ -18,7 +18,7 @@
 # Before proceeding with this notebook, ensure the following prerequisites are met:
 #
 # 1. **Azure ML Model Deployment**: Your Azure ML model must be deployed to an Azure ML managed online endpoint. If your model is not yet deployed, please follow the instructions in the [deployment notebook](./deploy_hf_model_aml.ipynb).
-# 2. Execute the `az login` command to sign in to your Azure subscription. For detailed instructions, refer to the "Authenticate with Azure Subscription" section [here](../setup/populating_secrets.md)
+# 2. Execute the `az login` command to sign in to your Azure subscription. For detailed instructions, refer to the "Authenticate with Azure Subscription" section [here](../populating_secrets.md)
 #
 #
 # ## Environment Variables
@@ -27,15 +27,15 @@
 #
 # 1. **AZURE_ML_SCORE_DEPLOYMENT_NAME**
 #    - This deployment name can be acquired from the Azure ML managed online endpoint, as illustrated in image below.
-#    <br> <img src="./../../assets/aml_deployment_name.png" alt="AML Deployment Name" height="400"/> <br>
+#    <br> <img src="./../../../assets/aml_deployment_name.png" alt="AML Deployment Name" height="400"/> <br>
 #
 # 2. **AZURE_ML_MANAGED_ENDPOINT**
 #    - To obtain the managed endpoint, navigate through the Azure ML workspace by selecting 'Launch Studio', then 'Endpoints' on the left side, followed by 'Consume'. Copy the REST endpoint as depicted below.
-#     <br> <img src="./../../assets/aml_score_uri.png" alt="AML Score URI" height="400"/> <br>
+#     <br> <img src="./../../../assets/aml_score_uri.png" alt="AML Score URI" height="400"/> <br>
 #
 # 3. **AZURE_ML_KEY**
 #    - Navigate through the Azure ML workspace by selecting 'Launch Studio', then 'Endpoints' on the left side, followed by 'Consume'. The primary key can be obtained as shown in the subsequent image.
-#    <br> <img src="./../../assets/aml_score_key.png" alt="AML Score Key" height="400"/> <br>
+#    <br> <img src="./../../../assets/aml_score_key.png" alt="AML Score Key" height="400"/> <br>
 #
 #
 # %%
@@ -61,7 +61,7 @@ print(f"API key loaded" if api_key else "API key not set.")
 # **Azure ML endpoint JSON body**
 #
 # The JSON body can be acquired by the following method: Access the Hugging Face model within the Azure ML model catalog by going to the workspace, then to the studio, selecting 'Model Catalog', and using the search bar to find the model ID. Open the model to view the sample input schema as shown in the image below.
-# <br> <img src="./../../assets/aml_model_endpoint_schema.png" alt="aml_model_endpoint_schema.png" height="400"/> <br>
+# <br> <img src="./../../../assets/aml_model_endpoint_schema.png" alt="aml_model_endpoint_schema.png" height="400"/> <br>
 #
 # In addition, we have compiled the details of the request and response for the Hugging Face models hosted on the Azure Machine Learning (Azure ML) endpoint. Please review the [provided link](./hf_aml_model_endpoint_guide.md) to access the JSON request body and response for the Azure ML endpoint. Additionally, you can deduce the schema from the response if a bad request was sent to the inference endpoint.
 # %%

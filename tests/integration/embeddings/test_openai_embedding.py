@@ -9,6 +9,7 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.embedding import OpenAITextEmbedding
 
 
+@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
     "endpoint_env,key_env,model_env",
     [

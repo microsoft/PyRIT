@@ -1,4 +1,4 @@
-# 5. Running Tests
+# 4. Running Tests
 
 Testing plays a crucial role in PyRIT development. Ensuring robust tests in PyRIT is crucial for verifying that functionalities are implemented correctly and for preventing unintended alterations to these functionalities when changes are made to PyRIT.
 

@@ -199,9 +199,7 @@ class PyRITShell(cmd.Cmd):
         """List all available initializers."""
         self._ensure_initialized()
         try:
-            # Discover from scenarios directory by default (same as scan)
-            discovery_path = self._fc.get_default_initializer_discovery_path()
-            asyncio.run(self._fc.print_initializers_list_async(context=self.context, discovery_path=discovery_path))
+            asyncio.run(self._fc.print_initializers_list_async(context=self.context))
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
@@ -231,22 +229,22 @@ class PyRITShell(cmd.Cmd):
             --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
         Examples:
-            run garak.encoding --target my_target --initializers targets \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets
-            run garak.encoding --target my_target --initializers targets \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets --strategies base64 rot13
-            run foundry --target my_target --initializers targets:tags=default,scorer \
+            run foundry.red_team_agent --target my_target --initializers target:tags=default,scorer \
                 dataset:mode=strict --strategies base64
-            run foundry --target my_target --initializers targets \
+            run foundry.red_team_agent --target my_target --initializers target \
                 load_default_datasets --max-concurrency 10 --max-retries 3
-            run garak.encoding --target my_target --initializers targets \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets \
                 --memory-labels '{"run_id":"test123","env":"dev"}'
-            run foundry --target my_target --initializers targets \
+            run foundry.red_team_agent --target my_target --initializers target \
                 load_default_datasets -s jailbreak crescendo
-            run garak.encoding --target my_target --initializers targets \
+            run garak.encoding --target my_target --initializers target \
                 load_default_datasets --log-level DEBUG
-            run foundry --target my_target --initialization-scripts ./my_custom_init.py -s all
+            run foundry.red_team_agent --target my_target --initialization-scripts ./my_custom_init.py -s all
 
         Note:
             --target is required for every run.
@@ -274,7 +272,7 @@ class PyRITShell(cmd.Cmd):
                 "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
             )
             print("\nExample:")
-            print("  run foundry --target my_target --initializers targets load_default_datasets")
+            print("  run foundry.red_team_agent --target my_target --initializers target load_default_datasets")
             print("\nType 'help run' for more details and examples")
             return
 
@@ -321,6 +319,8 @@ class PyRITShell(cmd.Cmd):
             )
             # Store the command and result in history
             self._scenario_history.append((line, result))
+        except KeyboardInterrupt:
+            print("\n\nScenario interrupted. Returning to shell.")
         except ValueError as e:
             print(f"Error: {e}")
         except Exception as e:
@@ -429,20 +429,21 @@ class PyRITShell(cmd.Cmd):
             print("=" * 70)
             print("  --target <name>  (REQUIRED)")
             print(f"      {ARG_HELP['target']}")
-            print("      Example: run foundry --target my_target --initializers targets load_default_datasets")
+            print("      Example: run foundry.red_team_agent --target my_target")
+            print("               --initializers target load_default_datasets")
             print()
             print("  --initializers <name> [<name> ...]")
             print(f"      {ARG_HELP['initializers']}")
-            print("      Example: run foundry --target my_target --initializers targets load_default_datasets")
-            print("      With params: run foundry --target my_target --initializers targets:tags=default,scorer")
-            print(
-                "      Multiple with params: run foundry --target my_target"
-                " --initializers targets:tags=default,scorer dataset:mode=strict"
-            )
+            print("      Example: run foundry.red_team_agent --target my_target")
+            print("               --initializers target load_default_datasets")
+            print("      With params: run foundry.red_team_agent --target my_target")
+            print("               --initializers target:tags=default,scorer")
+            print("      Multiple with params: run foundry.red_team_agent --target my_target")
+            print("               --initializers target:tags=default,scorer dataset:mode=strict")
             print()
             print("  --initialization-scripts <path> [<path> ...]  (Alternative to --initializers)")
             print(f"      {ARG_HELP['initialization_scripts']}")
-            print("      Example: run foundry --initialization-scripts ./my_init.py")
+            print("      Example: run foundry.red_team_agent --initialization-scripts ./my_init.py")
             print()
             print("  --strategies, -s <s1> [<s2> ...]")
             print(f"      {ARG_HELP['scenario_strategies']}")
@@ -456,7 +457,7 @@ class PyRITShell(cmd.Cmd):
             print()
             print("  --memory-labels <JSON>")
             print(f"      {ARG_HELP['memory_labels']}")
-            print('      Example: run foundry --memory-labels \'{"env":"test"}\'')
+            print('      Example: run foundry.red_team_agent --memory-labels \'{"env":"test"}\'')
             print()
             print("  --log-level <level>             Override (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
             print()

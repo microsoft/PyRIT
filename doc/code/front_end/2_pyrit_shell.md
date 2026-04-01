@@ -13,14 +13,15 @@ pyrit_shell
 With startup options:
 
 ```bash
-# Set default database for all runs
-pyrit_shell --database InMemory
+# Load configuration file (if not provided, defaults to ~/.pyrit/.pyrit_conf if it exists)
+# to set database preference, initializers, labels, env_file, and more.
+pyrit_shell --config-file ./.pyrit_conf
 
 # Set default log level
 pyrit_shell --log-level DEBUG
 
 # Load initializers at startup
-pyrit_shell --initializers openai_objective_target load_default_datasets
+pyrit_shell --initializers load_default_datasets
 
 # Load custom initialization scripts
 pyrit_shell --initialization-scripts ./my_config.py
@@ -28,12 +29,13 @@ pyrit_shell --initialization-scripts ./my_config.py
 
 ## Available Commands
 
-Once in the shell, you have access to:
+Once starting the shell, you will see the list of commands you have access to. Some of them are shown below:
 
 | Command | Description |
 |---------|-------------|
 | `list-scenarios` | List all available scenarios |
 | `list-initializers` | List all available initializers |
+| `list-targets` | List all available targets from the registry |
 | `run <scenario> [options]` | Run a scenario with optional parameters |
 | `scenario-history` | List all previous scenario runs in this session |
 | `print-scenario [N]` | Print detailed results for scenario run(s) |
@@ -48,32 +50,32 @@ The `run` command executes scenarios with the same options as `pyrit_scan`:
 ### Basic Usage
 
 ```bash
-pyrit> run foundry.red_team_agent --initializers openai_objective_target load_default_datasets
+pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets
 ```
 
 ### With Strategies
 
 ```bash
-pyrit> run garak.encoding --initializers openai_objective_target load_default_datasets --strategies base64 rot13
+pyrit> run garak.encoding --target my_target --initializers target load_default_datasets --strategies base64 rot13
 
-pyrit> run foundry.red_team_agent --initializers openai_objective_target load_default_datasets -s jailbreak crescendo
+pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets -s jailbreak crescendo
 ```
 
 ### With Runtime Parameters
 
 ```bash
 # Set concurrency and retries
-pyrit> run foundry.red_team_agent --initializers openai_objective_target load_default_datasets --max-concurrency 10 --max-retries 3
+pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets --max-concurrency 10 --max-retries 3
 
 # Add memory labels for tracking
-pyrit> run garak.encoding --initializers openai_objective_target load_default_datasets --memory-labels '{"experiment":"test1","version":"v2"}'
+pyrit> run garak.encoding --target my_target --initializers target load_default_datasets --memory-labels '{"experiment":"test1","version":"v2"}'
 ```
 
 ### Override Defaults Per-Run
 
 ```bash
-# Override database and log level for this run only
-pyrit> run garak.encoding --initializers openai_objective_target load_default_datasets --database InMemory --log-level DEBUG
+# Override log level for this run only
+pyrit> run garak.encoding --target my_target --initializers target load_default_datasets --log-level DEBUG
 ```
 
 ### Run Command Options
@@ -85,7 +87,6 @@ pyrit> run garak.encoding --initializers openai_objective_target load_default_da
 --max-concurrency <N>           Maximum concurrent operations
 --max-retries <N>               Maximum retry attempts
 --memory-labels <JSON>          JSON string of labels
---database <type>               Override default database (InMemory, SQLite, AzureSQL)
 --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 ```
 
@@ -114,9 +115,9 @@ pyrit> scenario-history
 
 Scenario Run History:
 ================================================================================
-1) foundry.red_team_agent --initializers openai_objective_target load_default_datasets --strategies base64
-2) garak.encoding --initializers openai_objective_target load_default_datasets --strategies rot13
-3) foundry.red_team_agent --initializers openai_objective_target load_default_datasets -s jailbreak
+1) foundry.red_team_agent --initializers target load_default_datasets --strategies base64
+2) garak.encoding --initializers target load_default_datasets --strategies rot13
+3) foundry.red_team_agent --initializers target load_default_datasets -s jailbreak
 ================================================================================
 
 Total runs: 3
@@ -130,7 +131,7 @@ The shell excels at interactive testing workflows:
 
 ```bash
 # Start shell with defaults
-pyrit_shell --database InMemory --initializers openai_objective_target load_default_datasets
+pyrit_shell --initializers target load_default_datasets
 
 # Quick exploration
 pyrit> list-scenarios
@@ -161,7 +162,7 @@ pyrit> print-scenario 2
 
 2. **Use short strategy aliases** with `-s`:
    ```bash
-   pyrit> run foundry.red_team_agent --initializers openai_objective_target load_default_datasets -s base64 rot13
+   pyrit> run foundry.red_team_agent --initializers target load_default_datasets -s base64 rot13
    ```
 
 3. **Review history regularly** to track what you've tested:

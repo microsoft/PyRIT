@@ -21,7 +21,7 @@ window.addEventListener("DOMContentLoaded", () => {
 		rssLink.rel = 'alternate';
 		rssLink.type = 'application/rss+xml';
 		rssLink.title = 'PyRIT Blog RSS Feed';
-		rssLink.href = 'https://azure.github.io/PyRIT/blog/rss.xml';
+		rssLink.href = 'https://microsoft.github.io/PyRIT/blog/rss.xml';
 
 		document.head.appendChild(rssLink);
 	}
