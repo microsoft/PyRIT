@@ -1045,11 +1045,7 @@ class MemoryInterface(abc.ABC):
             await prompt.set_sha256_value_async()
 
             existing = self.get_seeds(value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name)
-            if existing:
-                # Overwrite: reuse the existing entry's ID so merge updates in place
-                prompt.id = existing[0].id
-                self._update_entry(SeedEntry(entry=prompt))
-            else:
+            if not existing:
                 entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
