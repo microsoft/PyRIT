@@ -27,6 +27,7 @@ from pyrit.cli._cli_args import _argparse_validator as _argparse_validator
 from pyrit.cli._cli_args import _parse_initializer_arg as _parse_initializer_arg
 from pyrit.cli._cli_args import add_common_arguments as add_common_arguments
 from pyrit.cli._cli_args import non_negative_int as non_negative_int
+from pyrit.cli._cli_args import parse_list_targets_arguments as parse_list_targets_arguments
 from pyrit.cli._cli_args import parse_memory_labels as parse_memory_labels
 from pyrit.cli._cli_args import parse_run_arguments as parse_run_arguments
 from pyrit.cli._cli_args import positive_int as positive_int
@@ -254,18 +255,16 @@ async def list_initializers_async(
 async def list_targets_async(
     *,
     context: FrontendCore,
-    initializer_names: Optional[list[Any]] = None,
 ) -> list[str]:
     """
     List available target names from the TargetRegistry.
 
     Since targets are registered by initializers, this function requires initializers
-    to have been run first. If initializer_names are provided, they will be resolved
-    and run before querying the registry.
+    to have been run first. Configure initializers on the FrontendCore context
+    (via initializer_names or initialization_scripts) before calling this function.
 
     Args:
         context: PyRIT context with loaded registries.
-        initializer_names: Optional list of initializer entries to run before listing.
 
     Returns:
         Sorted list of registered target names.
@@ -273,25 +272,24 @@ async def list_targets_async(
     if not context._initialized:
         await context.initialize_async()
 
-    # If initializer names are provided, run them to populate the target registry
-    if initializer_names or context._initializer_configs:
-        configs = context._initializer_configs
-        if configs:
-            initializer_instances = []
-            for config in configs:
+    # Run initializers and/or initialization scripts to populate the target registry
+    if context._initializer_configs or context._initialization_scripts:
+        initializer_instances = []
+        if context._initializer_configs:
+            for config in context._initializer_configs:
                 initializer_class = context.initializer_registry.get_class(config.name)
                 instance = initializer_class()
                 if config.args:
                     instance.set_params_from_args(args=config.args)
                 initializer_instances.append(instance)
 
-            await initialize_pyrit_async(
-                memory_db_type=context._database,
-                initialization_scripts=context._initialization_scripts,
-                initializers=initializer_instances,
-                env_files=context._env_files,
-                silent=getattr(context, "_silent_reinit", False),
-            )
+        await initialize_pyrit_async(
+            memory_db_type=context._database,
+            initialization_scripts=context._initialization_scripts,
+            initializers=initializer_instances or None,
+            env_files=context._env_files,
+            silent=getattr(context, "_silent_reinit", False),
+        )
 
     target_registry = TargetRegistry.get_registry_singleton()
     return target_registry.get_names()

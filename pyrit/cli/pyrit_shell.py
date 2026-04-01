@@ -33,7 +33,7 @@ class PyRITShell(cmd.Cmd):
     Commands:
         list-scenarios             - List all available scenarios
         list-initializers          - List all available initializers
-        list-targets               - List all available targets from the registry
+        list-targets [opts]        - List all available targets from the registry
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history           - List all previous scenario runs
         print-scenario [N]         - Print detailed results for scenario run(s)
@@ -189,6 +189,9 @@ class PyRITShell(cmd.Cmd):
 
     def do_list_scenarios(self, arg: str) -> None:
         """List all available scenarios."""
+        if arg.strip():
+            print(f"Error: list-scenarios does not accept arguments, got: {arg.strip()}")
+            return
         self._ensure_initialized()
         try:
             asyncio.run(self._fc.print_scenarios_list_async(context=self.context))
@@ -197,6 +200,9 @@ class PyRITShell(cmd.Cmd):
 
     def do_list_initializers(self, arg: str) -> None:
         """List all available initializers."""
+        if arg.strip():
+            print(f"Error: list-initializers does not accept arguments, got: {arg.strip()}")
+            return
         self._ensure_initialized()
         try:
             asyncio.run(self._fc.print_initializers_list_async(context=self.context))
@@ -204,10 +210,49 @@ class PyRITShell(cmd.Cmd):
             print(f"Error listing initializers: {e}")
 
     def do_list_targets(self, arg: str) -> None:
-        """List all available targets from the TargetRegistry."""
+        """
+        List all available targets from the TargetRegistry.
+
+        Usage:
+            list-targets
+            list-targets --initializers <name> [<name> ...]
+            list-targets --initialization-scripts <path> [<path> ...]
+
+        Options:
+            --initializers <name> ...       Built-in initializers to run first
+            --initialization-scripts <...>  Custom Python scripts to run first
+
+        Examples:
+            list-targets --initializers target
+            list-targets --initializers target:tags=default,scorer
+        """
         self._ensure_initialized()
         try:
-            asyncio.run(self._fc.print_targets_list_async(context=self.context))
+            context_to_use = self.context
+
+            if arg.strip():
+                args = self._fc.parse_list_targets_arguments(args_string=arg)
+
+                resolved_scripts = None
+                if args["initialization_scripts"]:
+                    resolved_scripts = self._fc.resolve_initialization_scripts(
+                        script_paths=args["initialization_scripts"]
+                    )
+
+                context_to_use = self._fc.FrontendCore(
+                    initialization_scripts=resolved_scripts,
+                    initializer_names=args["initializers"],
+                    log_level=self.default_log_level,
+                )
+                context_to_use._scenario_registry = self.context._scenario_registry
+                context_to_use._initializer_registry = self.context._initializer_registry
+                context_to_use._initialized = True
+
+            asyncio.run(self._fc.print_targets_list_async(context=context_to_use))
+        except ValueError as e:
+            print(f"Error: {e}")
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
         except Exception as e:
             print(f"Error listing targets: {e}")
 
@@ -338,6 +383,9 @@ class PyRITShell(cmd.Cmd):
 
         Shows a numbered list of all scenario runs with the commands used.
         """
+        if arg.strip():
+            print(f"Error: scenario-history does not accept arguments, got: {arg.strip()}")
+            return
         if not self._scenario_history:
             print("No scenario runs in history.")
             return
@@ -467,8 +515,9 @@ class PyRITShell(cmd.Cmd):
             print("  pyrit_shell")
             print("  pyrit_shell --config-file ./my_config.yaml --log-level DEBUG")
         else:
-            # Show help for specific command
-            super().do_help(arg)
+            # Convert hyphens to underscores (e.g. help list-targets -> help list_targets) for command lookup
+            normalized_arg = arg.replace("-", "_")
+            super().do_help(normalized_arg)
 
     def do_exit(self, arg: str) -> bool:
         """

@@ -672,6 +672,46 @@ class TestParseRunArguments:
             frontend_core.parse_run_arguments(args_string="test_scenario --max-concurrency")
 
 
+class TestParseListTargetsArguments:
+    """Tests for parse_list_targets_arguments function."""
+
+    def test_parse_list_targets_arguments_empty(self):
+        """Test parsing empty string returns defaults."""
+        result = frontend_core.parse_list_targets_arguments(args_string="")
+        assert result["initializers"] is None
+        assert result["initialization_scripts"] is None
+
+    def test_parse_list_targets_arguments_with_initializers(self):
+        """Test parsing with initializers."""
+        result = frontend_core.parse_list_targets_arguments(args_string="--initializers target init2")
+        assert result["initializers"] == ["target", "init2"]
+
+    def test_parse_list_targets_arguments_with_initializer_params(self):
+        """Test parsing initializers with key=value params."""
+        result = frontend_core.parse_list_targets_arguments(args_string="--initializers target:tags=default,scorer")
+        assert result["initializers"] == [{"name": "target", "args": {"tags": ["default", "scorer"]}}]
+
+    def test_parse_list_targets_arguments_with_initialization_scripts(self):
+        """Test parsing with initialization-scripts."""
+        result = frontend_core.parse_list_targets_arguments(
+            args_string="--initialization-scripts script1.py script2.py"
+        )
+        assert result["initialization_scripts"] == ["script1.py", "script2.py"]
+
+    def test_parse_list_targets_arguments_with_both(self):
+        """Test parsing with both initializers and scripts."""
+        result = frontend_core.parse_list_targets_arguments(
+            args_string="--initializers target --initialization-scripts script1.py"
+        )
+        assert result["initializers"] == ["target"]
+        assert result["initialization_scripts"] == ["script1.py"]
+
+    def test_parse_list_targets_arguments_unknown_arg_raises(self):
+        """Test parsing with unknown argument raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown argument"):
+            frontend_core.parse_list_targets_arguments(args_string="--unknown-flag")
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsync:
@@ -1141,3 +1181,31 @@ class TestPrintTargetsList:
         captured = capsys.readouterr()
         assert "No targets found" in captured.out
         assert "--initializers target" in captured.out
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_list_targets_with_initialization_scripts_calls_initialize(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+    ):
+        """Test list_targets_async calls initialize_pyrit_async when only scripts are configured."""
+        mock_registry = MagicMock()
+        mock_registry.get_names.return_value = ["script_target"]
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+        context._initialization_scripts = ["/path/to/script.py"]
+        context._initializer_configs = None
+
+        result = await frontend_core.list_targets_async(context=context)
+
+        assert result == ["script_target"]
+        # Verify initialize_pyrit_async was called with the scripts
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["initialization_scripts"] == ["/path/to/script.py"]
+        assert call_kwargs["initializers"] is None

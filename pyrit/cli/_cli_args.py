@@ -457,6 +457,48 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
     return result
 
 
+def parse_list_targets_arguments(*, args_string: str) -> dict[str, Any]:
+    """
+    Parse list-targets command arguments from a string (for shell mode).
+
+    Args:
+        args_string: Space-separated argument string (e.g., "--initializers target").
+
+    Returns:
+        Dictionary with parsed arguments:
+            - initializers: Optional[list[str | dict[str, Any]]]
+            - initialization_scripts: Optional[list[str]]
+
+    Raises:
+        ValueError: If parsing or validation fails.
+    """
+    parts = args_string.split()
+
+    result: dict[str, Any] = {
+        "initializers": None,
+        "initialization_scripts": None,
+    }
+
+    i = 0
+    while i < len(parts):
+        if parts[i] == "--initializers":
+            result["initializers"] = []
+            i += 1
+            while i < len(parts) and not parts[i].startswith("--"):
+                result["initializers"].append(_parse_initializer_arg(parts[i]))
+                i += 1
+        elif parts[i] == "--initialization-scripts":
+            result["initialization_scripts"] = []
+            i += 1
+            while i < len(parts) and not parts[i].startswith("--"):
+                result["initialization_scripts"].append(parts[i])
+                i += 1
+        else:
+            raise ValueError(f"Unknown argument: {parts[i]}")
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Shared argparse builder
 # ---------------------------------------------------------------------------
