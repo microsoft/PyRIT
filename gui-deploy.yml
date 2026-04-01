@@ -70,7 +70,7 @@ stages:
                   .devcontainer/
 
                 echo "=== Building production image ==="
-                docker build \
+                docker build --no-cache \
                   -f docker/Dockerfile \
                   -t $(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
                   -t $(acrLoginServer)/$(imageName):latest \
