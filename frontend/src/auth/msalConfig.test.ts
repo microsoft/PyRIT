@@ -14,7 +14,7 @@ describe("msalConfig", () => {
     });
 
     it("returns client-specific scope when clientId is provided", () => {
-      expect(getApiScopes("my-client-id")).toEqual(["my-client-id/access"]);
+      expect(getApiScopes("my-client-id")).toEqual(["https://graph.microsoft.com/User.Read"]);
     });
   });
 
@@ -22,7 +22,7 @@ describe("msalConfig", () => {
   describe("buildLoginRequest", () => {
     it("builds request with client-specific scopes", () => {
       expect(buildLoginRequest("my-client-id")).toEqual({
-        scopes: ["my-client-id/access"],
+        scopes: ["https://graph.microsoft.com/User.Read"],
       });
     });
 

@@ -62,18 +62,21 @@ export function buildMsalConfig(authConfig: AuthConfig): Configuration {
 /**
  * Build the API scopes for token acquisition.
  *
- * Requests the explicit `access` scope rather than `.default` to avoid
- * triggering admin consent in corporate tenants. The `.default` scope requires
- * the app to list itself in `requiredResourceAccess`, which triggers mandatory
- * admin consent in the Microsoft tenant. Using the explicit scope bypasses this.
+ * Requests the Microsoft Graph `User.Read` delegated scope so the resulting
+ * access token has `aud: https://graph.microsoft.com`. This serves two purposes:
  *
- * The `access` scope is defined in the app registration's "Expose an API"
- * configuration. Access tokens include the `groups` claim when the app manifest
- * has `groupMembershipClaims: "SecurityGroup"` configured.
+ * 1. The backend can forward the same token to Graph for groups-overage
+ *    resolution (users in >200 groups). A custom app-audience token would be
+ *    rejected by Graph with 401.
+ * 2. It avoids needing a custom "Expose an API" scope on the app registration,
+ *    simplifying setup and eliminating admin-consent triggers in corporate tenants.
+ *
+ * The token still contains identity claims (oid, name, groups) because the app
+ * manifest has `groupMembershipClaims: "SecurityGroup"` configured.
  */
 export function getApiScopes(clientId: string): string[] {
   if (!clientId) return ['openid', 'profile', 'email']
-  return [`${clientId}/access`]
+  return ['https://graph.microsoft.com/User.Read']
 }
 
 export function buildLoginRequest(clientId: string) {

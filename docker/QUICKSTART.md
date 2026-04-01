@@ -4,40 +4,19 @@ Docker container for PyRIT with support for both **Jupyter Notebook** and **GUI*
 
 ## Prerequisites
 - Docker installed and running
-- `~/.pyrit/.env` with your API keys and Azure service principal credentials
+- `~/.pyrit/.env` with your API keys
 - `~/.pyrit/.pyrit_conf` with your configuration (operator, operation, initializers)
 - Optionally, `~/.pyrit/.env.local` for additional environment overrides
 
 ## Azure Authentication in Docker
 
-`DefaultAzureCredential` is used automatically. The method depends on
-where the container runs:
+When deployed to **Azure infrastructure** (AKS, ACI, Azure VM), managed identity
+works out of the box — no configuration needed. Assign the managed identity the
+**Cognitive Services OpenAI User** role on your Azure OpenAI resources.
 
-### Azure infrastructure (AKS, ACI, Azure VM)
-
-Managed identity works out of the box — no configuration needed.
-Assign the managed identity the **Cognitive Services OpenAI User** role
-on your Azure OpenAI resources.
-
-### Local Docker Desktop
-
-Managed identity is not available locally. Use a **service principal**
-by adding these variables to your `~/.pyrit/.env`:
-
-```bash
-AZURE_TENANT_ID=<your-tenant-id>
-AZURE_CLIENT_ID=<your-client-id>
-AZURE_CLIENT_SECRET=<your-client-secret>
-```
-
-The Azure SDK picks these up automatically and refreshes tokens
-without any manual intervention.
-
-To create a service principal:
-```bash
-az ad sp create-for-rbac --name pyrit-docker --role "Cognitive Services OpenAI User" \
-    --scopes /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>
-```
+> **Note:** Azure authentication for local Docker Desktop is not yet supported.
+> Local Docker is currently limited to targets that use API keys configured in
+> your `.env` file.
 
 ## Quick Start
 
@@ -74,7 +53,7 @@ python docker/run_pyrit_docker.py gui
 ```
 
 The run script automatically mounts these files from `~/.pyrit/`:
-- `.env` — API keys and service principal credentials (required)
+- `.env` — API keys (required)
 - `.env.local` — Additional environment overrides (optional)
 - `.pyrit_conf` — PyRIT configuration: operator, operation, initializers (optional)
 
@@ -114,8 +93,8 @@ docker-compose --profile gui up
 
 **.env missing**: Create `.env` file at `~/.pyrit/.env` with your API keys
 
-**Azure auth fails in container**: Add `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
-`AZURE_CLIENT_SECRET` to your `.env` file (see Azure Authentication section above)
+**Azure auth fails in container**: Local Docker Desktop does not currently support
+Azure token-based authentication. Use API key-based targets instead.
 
 **GUI frontend missing**: Build with `--source local` (PyPI builds before GUI release won't work)
 

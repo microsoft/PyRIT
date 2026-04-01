@@ -16,7 +16,7 @@ const mockBuildMsalConfig = jest.fn().mockReturnValue({
   system: { loggerOptions: { logLevel: 3, piiLoggingEnabled: false } },
 });
 const mockBuildLoginRequest = jest.fn().mockReturnValue({
-  scopes: ["test-client/access"],
+  scopes: ["https://graph.microsoft.com/User.Read"],
 });
 
 jest.mock("./msalConfig", () => ({

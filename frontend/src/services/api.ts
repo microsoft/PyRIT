@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { toApiError } from './errors'
+import { getApiScopes } from './msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
@@ -60,11 +61,6 @@ export function setClientId(clientId: string): void {
   _clientId = clientId
 }
 
-function getApiScopes(): string[] {
-  if (!_clientId) return ['openid', 'profile', 'email']
-  return [`${_clientId}/access`]
-}
-
 async function getAccessToken(forceRefresh = false): Promise<string | null> {
   if (!_msalInstance) return null
 
@@ -73,7 +69,7 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
 
   try {
     const response = await _msalInstance.acquireTokenSilent({
-      scopes: getApiScopes(),
+      scopes: getApiScopes(_clientId),
       account,
       forceRefresh,
     })
@@ -81,7 +77,7 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
   } catch (error) {
     if (error instanceof InteractionRequiredAuthError) {
       await _msalInstance.acquireTokenRedirect({
-        scopes: getApiScopes(),
+        scopes: getApiScopes(_clientId),
       })
     }
     return null
