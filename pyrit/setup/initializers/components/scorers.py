@@ -572,26 +572,54 @@ class ScorerInitializer(PyRITInitializer):
     # ---------------------------------------------------------------------------
 
     def _get_best_scorer(self, best_tag: str) -> Scorer | None:
-        """Get the scorer tagged with the given BEST_* tag, or None."""
+        """
+        Get the scorer tagged with the given BEST_* tag, or None.
+
+        Returns:
+            Scorer | None: The scorer instance if found, otherwise None.
+        """
         entries = self._get_scorer_registry().get_by_tag(tag=best_tag)
         return entries[0].instance if entries else None
 
     def _get_registered_scorer(self, name: str) -> Scorer | None:
-        """Get a registered scorer by name, or None if not found."""
+        """
+        Get a registered scorer by name, or None if not found.
+
+        Returns:
+            Scorer | None: The scorer instance if found, otherwise None.
+        """
         entry = self._get_scorer_registry().get_entry(name)
         return entry.instance if entry else None
 
     def _get_scorer_registry(self) -> ScorerRegistry:
-        """Get the singleton scorer registry used by this initializer."""
+        """
+        Get the singleton scorer registry used by this initializer.
+
+        Returns:
+            ScorerRegistry: The singleton scorer registry.
+        """
         return ScorerRegistry.get_registry_singleton()
 
     def _get_chat_target(self, target_name: str) -> "PromptChatTarget | None":
-        """Get a chat target from the singleton target registry by name."""
+        """
+        Get a chat target from the singleton target registry by name.
+
+        Returns:
+            PromptChatTarget | None: The chat target instance if found, otherwise None.
+        """
         target_registry = TargetRegistry.get_registry_singleton()
         return target_registry.get_instance_by_name(target_name)  # type: ignore[return-value]
 
     def _require_dependency(self, value: RequiredDependencyT | None, *, name: str) -> RequiredDependencyT:
-        """Return a dependency after asserting it was already validated as present."""
+        """
+        Return a dependency after asserting it was already validated as present.
+
+        Returns:
+            RequiredDependencyT: The validated dependency value.
+
+        Raises:
+            ValueError: If the dependency value is None.
+        """
         if value is None:
             raise ValueError(f"Required dependency is missing: {name}")
         return value

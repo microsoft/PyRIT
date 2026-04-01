@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import Any, Optional, cast
 
 from transformers import (
     AutoModelForCausalLM,
@@ -24,9 +24,6 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    import torch
 
 
 class HuggingFaceChatTarget(PromptChatTarget):
@@ -65,7 +62,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         skip_special_tokens: bool = True,
         trust_remote_code: bool = False,
         device_map: Optional[str] = None,
-        torch_dtype: Optional["torch.dtype"] = None,
+        torch_dtype: Optional[Any] = None,
         attn_implementation: Optional[str] = None,
         max_requests_per_minute: Optional[int] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
@@ -132,7 +129,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
         # Determine the device
-        self.device = "cuda" if self.use_cuda and torch.cuda.is_available() else "cpu"
+        self.device = "cuda" if self.use_cuda and torch.cuda.is_available() else "cpu"  # type: ignore[attr-defined]
         logger.info(f"Using device: {self.device}")
 
         # Set necessary files if provided, otherwise set to None to trigger general download
@@ -144,7 +141,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         self._top_p = top_p
         self.skip_special_tokens = skip_special_tokens
 
-        if self.use_cuda and not torch.cuda.is_available():
+        if self.use_cuda and not torch.cuda.is_available():  # type: ignore[attr-defined]
             raise RuntimeError("CUDA requested but not available.")
 
         self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer())

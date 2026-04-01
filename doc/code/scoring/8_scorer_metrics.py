@@ -191,7 +191,7 @@ from pyrit.score import ConsoleScorerPrinter, get_all_objective_metrics
 # Load all objective scorer metrics - returns ScorerMetricsWithIdentity[ObjectiveScorerMetrics]
 all_scorers = get_all_objective_metrics()
 
-print(f"Found {len(all_scorers)} scorer configurations in the registry\n")
+print(f"Found {len(all_scorers)} scorer configurations in the metrics file\n")
 
 # Sort by F1 score - type checker knows entry.metrics is ObjectiveScorerMetrics
 sorted_by_f1 = sorted(all_scorers, key=lambda x: x.metrics.f1_score, reverse=True)
