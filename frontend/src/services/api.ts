@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { toApiError } from './errors'
-import { getApiScopes } from './msalConfig'
+import { getApiScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
