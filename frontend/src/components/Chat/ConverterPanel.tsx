@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAsyncCallback } from 'react-async-hook'
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Switch, Tab, TabList, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
@@ -284,7 +283,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   // converter type or parameters change.
   const cachedInstanceRef = useRef<{ type: string; params: string; id: string } | null>(null)
 
-  const getOrCreateConverterInstance = useAsyncCallback(async (type: string, params: Record<string, string>) => {
+  const getOrCreateConverterInstance = useCallback(async (type: string, params: Record<string, string>): Promise<string> => {
     const paramsKey = JSON.stringify(params)
     if (cachedInstanceRef.current?.type === type && cachedInstanceRef.current?.params === paramsKey) {
       return cachedInstanceRef.current.id
@@ -292,7 +291,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     const response = await convertersApi.createConverter({ type, params: { ...params } })
     cachedInstanceRef.current = { type, params: paramsKey, id: response.converter_id }
     return response.converter_id
-  })
+  }, [])
 
   const handlePreview = useCallback(async () => {
     // For text tab, use chat input text; for other tabs, use attachment data
@@ -310,7 +309,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     setPreviewOutput('')
 
     try {
-      const converterId = await getOrCreateConverterInstance.execute(selectedConverterType, paramValues)
+      const converterId = await getOrCreateConverterInstance(selectedConverterType, paramValues)
 
       const previewResponse = await convertersApi.previewConversion({
         original_value: previewValue,
@@ -325,7 +324,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     } finally {
       setIsPreviewing(false)
     }
-  }, [activeTab, previewText, attachmentData, selectedConverterType, missingRequiredParams, paramValues, activeDataType])
+  }, [activeTab, previewText, attachmentData, selectedConverterType, missingRequiredParams, paramValues, activeDataType, getOrCreateConverterInstance])
 
   // Auto-preview for non-LLM text-output converters (they're fast/cheap)
   const autoPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
