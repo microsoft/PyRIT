@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, KeyboardEvent } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, KeyboardEvent, Ref } from 'react'
 import {
   Button,
   Caption1,
@@ -44,6 +44,129 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
         </Button>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Attachment list
+// ---------------------------------------------------------------------------
+
+interface AttachmentListProps {
+  attachments: MessageAttachment[]
+  mediaConversions: Array<{ pieceType: string; convertedValue: string }>
+  onRemove: (index: number) => void
+  onClearMediaConversion?: (pieceType: string) => void
+  formatFileSize: (bytes: number) => string
+  styles: ReturnType<typeof useChatInputAreaStyles>
+}
+
+function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaConversion, formatFileSize, styles }: AttachmentListProps) {
+  if (attachments.length === 0) return null
+  return (
+    <div className={styles.attachmentsContainer}>
+      {attachments.map((att, index) => {
+        const conversion = mediaConversions.find((mc) => mc.pieceType === att.type)
+        return (
+          <div key={index} className={styles.attachmentGroup}>
+            <div className={styles.attachmentRow}>
+              <span className={styles.attachmentContent}>
+                {conversion && <span className={styles.originalBadge}>Original</span>}
+                <Caption1>
+                  {att.type === 'image' && '🖼️'}
+                  {att.type === 'audio' && '🎵'}
+                  {att.type === 'video' && '🎥'}
+                  {att.type === 'file' && '📄'}
+                  {' '}{att.name} ({formatFileSize(att.size)})
+                </Caption1>
+              </span>
+              <Button
+                appearance="transparent"
+                size="small"
+                className={styles.dismissBtn}
+                icon={<DismissRegular />}
+                onClick={() => onRemove(index)}
+                data-testid={`remove-attachment-${index}`}
+              />
+            </div>
+            {conversion && (
+              <div className={styles.attachmentRow}>
+                <span className={styles.attachmentContent}>
+                  <span className={styles.convertedBadge}>Converted</span>
+                  <Caption1 className={styles.convertedFilename}>{conversion.convertedValue.split('/').pop()}</Caption1>
+                </span>
+                <Button
+                  appearance="transparent"
+                  size="small"
+                  className={styles.dismissBtn}
+                  icon={<DismissRegular />}
+                  onClick={() => onClearMediaConversion?.(att.type)}
+                  data-testid={`clear-media-conversion-${att.type}`}
+                />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Text input rows (original + converted)
+// ---------------------------------------------------------------------------
+
+interface TextInputRowsProps {
+  input: string
+  convertedValue?: string | null
+  disabled: boolean
+  textareaRef: Ref<HTMLTextAreaElement>
+  onInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void
+  onConvertedValueChange?: (value: string) => void
+  onClearConversion?: () => void
+  styles: ReturnType<typeof useChatInputAreaStyles>
+}
+
+function TextInputRows({ input, convertedValue, disabled, textareaRef, onInput, onKeyDown, onConvertedValueChange, onClearConversion, styles }: TextInputRowsProps) {
+  return (
+    <>
+      <div className={styles.textRow}>
+        {convertedValue && (
+          <span className={styles.originalBadge} data-testid="original-banner">Original</span>
+        )}
+        <textarea
+          ref={textareaRef}
+          className={styles.textInput}
+          placeholder="Type prompt here"
+          value={input}
+          onChange={onInput}
+          onKeyDown={onKeyDown}
+          disabled={disabled}
+          rows={1}
+          data-testid="chat-input"
+        />
+      </div>
+      {convertedValue && (
+        <div className={styles.convertedRow} data-testid="converted-indicator">
+          <span className={styles.convertedBadge}>Converted</span>
+          <textarea
+            className={styles.convertedTextarea}
+            value={convertedValue}
+            onChange={(e) => onConvertedValueChange?.(e.target.value)}
+            rows={1}
+            data-testid="converted-value-input"
+          />
+          <Button
+            appearance="transparent"
+            size="small"
+            className={styles.dismissBtn}
+            icon={<DismissRegular />}
+            onClick={onClearConversion}
+            data-testid="clear-conversion-btn"
+          />
+        </div>
+      )}
+    </>
   )
 }
 
@@ -285,89 +408,25 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               />
             </div>
             <div className={styles.columnCenter}>
-              {attachments.length > 0 && (
-                <div className={styles.attachmentsContainer}>
-                  {attachments.map((att, index) => {
-                    const conversion = mediaConversions.find((mc) => mc.pieceType === att.type)
-                    return (
-                      <div key={index} className={styles.attachmentGroup}>
-                        <div className={styles.attachmentRow}>
-                          <span className={styles.attachmentContent}>
-                            {conversion && <span className={styles.originalBadge}>Original</span>}
-                            <Caption1>
-                              {att.type === 'image' && '🖼️'}
-                              {att.type === 'audio' && '🎵'}
-                              {att.type === 'video' && '🎥'}
-                              {att.type === 'file' && '📄'}
-                              {' '}{att.name} ({formatFileSize(att.size)})
-                            </Caption1>
-                          </span>
-                          <Button
-                            appearance="transparent"
-                            size="small"
-                            className={styles.dismissBtn}
-                            icon={<DismissRegular />}
-                            onClick={() => removeAttachment(index)}
-                            data-testid={`remove-attachment-${index}`}
-                          />
-                        </div>
-                        {conversion && (
-                          <div className={styles.attachmentRow}>
-                            <span className={styles.attachmentContent}>
-                              <span className={styles.convertedBadge}>Converted</span>
-                              <Caption1 className={styles.convertedFilename}>{conversion.convertedValue.split('/').pop()}</Caption1>
-                            </span>
-                            <Button
-                              appearance="transparent"
-                              size="small"
-                              className={styles.dismissBtn}
-                              icon={<DismissRegular />}
-                              onClick={() => onClearMediaConversion?.(att.type)}
-                              data-testid={`clear-media-conversion-${att.type}`}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              <div className={styles.textRow}>
-                {convertedValue && (
-                  <span className={styles.originalBadge} data-testid="original-banner">Original</span>
-                )}
-                <textarea
-                  ref={textareaRef}
-                  className={styles.textInput}
-                  placeholder="Type something here"
-                  value={input}
-                  onChange={handleInput}
-                  onKeyDown={handleKeyDown}
-                  disabled={disabled}
-                  rows={1}
-                  data-testid="chat-input"
-                />
-              </div>
-              {convertedValue && (
-                <div className={styles.convertedRow} data-testid="converted-indicator">
-                  <span className={styles.convertedBadge}>Converted</span>
-                  <textarea
-                    className={styles.convertedTextarea}
-                    value={convertedValue}
-                    onChange={(e) => onConvertedValueChange?.(e.target.value)}
-                    rows={1}
-                    data-testid="converted-value-input"
-                  />
-                  <Button
-                    appearance="transparent"
-                    size="small"
-                    className={styles.dismissBtn}
-                    icon={<DismissRegular />}
-                    onClick={onClearConversion}
-                    data-testid="clear-conversion-btn"
-                  />
-                </div>
-              )}
+              <AttachmentList
+                attachments={attachments}
+                mediaConversions={mediaConversions}
+                onRemove={removeAttachment}
+                onClearMediaConversion={onClearMediaConversion}
+                formatFileSize={formatFileSize}
+                styles={styles}
+              />
+              <TextInputRows
+                input={input}
+                convertedValue={convertedValue}
+                disabled={disabled}
+                textareaRef={textareaRef}
+                onInput={handleInput}
+                onKeyDown={handleKeyDown}
+                onConvertedValueChange={onConvertedValueChange}
+                onClearConversion={onClearConversion}
+                styles={styles}
+              />
             </div>
             <div className={styles.columnRight}>
               {activeTarget && activeTarget.supports_multi_turn === false && (

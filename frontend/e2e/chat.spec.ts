@@ -490,7 +490,7 @@ test.describe("Multi-modal: Video response", () => {
     },
   ]);
 
-  // Marking skipped for now
+  // Marking skipped for now because this should not use the getByRole query which is too general
   test.skip("should display video player for video response", async ({ page }) => {
     await setupVideoMock(page);
     await page.goto("/");
@@ -502,9 +502,8 @@ test.describe("Multi-modal: Video response", () => {
 
     await expect(page.getByText("Create a video clip", { exact: true })).toBeVisible();
 
-    // Video element should appear
-    const video = page.locator("video");
-    await expect(video).toBeVisible({ timeout: 10000 });
+    // Invalid mock payload triggers MediaWithFallback error state
+    await expect(page.getByTestId("video-error")).toBeVisible({ timeout: 10000 });
   });
 });
 

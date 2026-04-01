@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAsyncCallback } from 'react-async-hook'
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Spinner, Switch, Tab, TabList, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
@@ -15,6 +16,159 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
 
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
+
+interface ConverterGroup {
+  type: string
+  converters: { converter_type: string; is_llm_based?: boolean }[]
+}
+
+interface SelectConverterInputProps {
+  query: string
+  selectedConverterType: string
+  groupedConverters: ConverterGroup[]
+  onOptionSelect: (type: string, text: string) => void
+  onQueryChange: (value: string) => void
+}
+
+function SelectConverterInput({ query, selectedConverterType, groupedConverters, onOptionSelect, onQueryChange }: SelectConverterInputProps) {
+  const styles = useConverterPanelStyles()
+
+  return (
+    <Field label="Converter">
+      <Combobox
+        value={query}
+        selectedOptions={selectedConverterType ? [selectedConverterType] : []}
+        onOptionSelect={(_, data) => {
+          onOptionSelect(data.optionValue ?? '', data.optionText ?? '')
+        }}
+        onChange={(e) => onQueryChange((e.target as HTMLInputElement).value)}
+        placeholder="Search converters..."
+        data-testid="converter-panel-select"
+      >
+        {groupedConverters.map((group) => (
+          <React.Fragment key={group.type}>
+            <Option key={`__header_${group.type}`} text="" disabled value="">
+              <span className={`${styles.groupHeader} ${styles[`header_${group.type}` as keyof typeof styles] ?? ''}`}>
+                — {group.type.replace('_path', '')} output —
+              </span>
+            </Option>
+            {group.converters.map((converter) => (
+              <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type} data-testid={`converter-option-${converter.converter_type}`}>
+                <span className={styles.optionContent}>
+                  {converter.converter_type}
+                  {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
+                </span>
+              </Option>
+            ))}
+          </React.Fragment>
+        ))}
+      </Combobox>
+    </Field>
+  )
+}
+
+interface ConverterPreviewProps {
+  activeTab: string
+  previewText: string
+  attachmentData: Record<string, string>
+  selectedConverterType: string
+  isPreviewing: boolean
+  previewError: string | null
+  previewOutput: string
+  previewConverterInstanceId: string | null
+  onPreview: () => void
+  onUseConvertedValue?: (conversion: PieceConversion) => void
+}
+
+function ConverterPreview({ activeTab, previewText, attachmentData, selectedConverterType, isPreviewing, previewError, previewOutput, previewConverterInstanceId, onPreview, onUseConvertedValue }: ConverterPreviewProps) {
+  const styles = useConverterPanelStyles()
+
+  return (
+    <div className={styles.outputSection} data-testid="converter-preview-section">
+      <Button
+        appearance="primary"
+        size="small"
+        icon={isPreviewing ? <Spinner size="tiny" /> : <PlayRegular />}
+        onClick={onPreview}
+        disabled={isPreviewing || !(activeTab === 'text' ? previewText.trim() : attachmentData[activeTab]) || !selectedConverterType}
+        data-testid="converter-preview-btn"
+      >
+        {isPreviewing ? 'Converting...' : 'Preview'}
+      </Button>
+
+      {activeTab === 'text' && !previewText.trim() && (
+        <Text size={200} className={styles.hintText}>
+          Type in the chat input box to preview a conversion.
+        </Text>
+      )}
+
+      {activeTab !== 'text' && !attachmentData[activeTab] && (
+        <Text size={200} className={styles.hintText}>
+          Attach a {activeTab} file to preview a conversion.
+        </Text>
+      )}
+
+      {previewError && (
+        <MessageBar intent="error" data-testid="converter-preview-error">
+          <MessageBarBody className={styles.errorBody}>{previewError}</MessageBarBody>
+        </MessageBar>
+      )}
+
+      <div data-testid="converter-output">
+        <Text weight="semibold" size={300}>Output</Text>
+        <div className={styles.outputBox}>
+          {previewOutput ? (
+            previewOutput.match(/\.(png|jpg|jpeg|gif|bmp|webp)$/i) ? (
+              <img
+                src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
+                alt="Converter output"
+                className={styles.previewImage}
+                data-testid="converter-preview-result"
+              />
+            ) : previewOutput.match(/\.(wav|mp3|ogg|flac)$/i) ? (
+              <audio
+                controls
+                src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
+                className={styles.previewAudio}
+                data-testid="converter-preview-result"
+              />
+            ) : previewOutput.match(/\.(mp4|webm|mov)$/i) ? (
+              <video
+                controls
+                src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
+                className={styles.previewVideo}
+                data-testid="converter-preview-result"
+              />
+            ) : (
+              <pre className={styles.previewPre} data-testid="converter-preview-result">{previewOutput}</pre>
+            )
+          ) : (
+            <Text size={200} className={styles.hintText}>
+              Converted output will appear here.
+            </Text>
+          )}
+        </div>
+      </div>
+
+      {previewOutput && previewConverterInstanceId && (
+        <Button
+          appearance="primary"
+          size="small"
+          onClick={() => onUseConvertedValue?.({
+            pieceType: activeTab,
+            converterInstanceId: previewConverterInstanceId,
+            convertedValue: previewOutput,
+            originalValue: activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? ''),
+          })}
+          disabled={!onUseConvertedValue}
+          data-testid="use-converted-btn"
+        >
+          Use Converted Value
+        </Button>
+      )}
+    </div>
+  )
+}
 
 interface ConverterPanelProps {
   onClose: () => void
@@ -39,49 +193,36 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   const [showValidation, setShowValidation] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [panelWidth, setPanelWidth] = useState(320)
+  const isDragging = useRef(false)
 
-  useEffect(() => {
-    let isMounted = true
+  const loadConverters = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
 
-    const loadConverters = async () => {
-      setIsLoading(true)
-      setError(null)
-
-      try {
-        const response = await convertersApi.listConverterCatalog()
-        if (!isMounted) {
-          return
-        }
-        setConverters(response.items)
-      } catch (err) {
-        if (!isMounted) {
-          return
-        }
-        setConverters([])
-        setSelectedConverterType('')
-        setQuery('')
-        setError(toApiError(err).detail)
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadConverters()
-
-    return () => {
-      isMounted = false
+    try {
+      const response = await convertersApi.listConverterCatalog()
+      setConverters(response.items)
+    } catch (err) {
+      setConverters([])
+      setSelectedConverterType('')
+      setQuery('')
+      setError(toApiError(err).detail)
+    } finally {
+      setIsLoading(false)
     }
   }, [])
 
+  useEffect(() => {
+    void loadConverters()
+  }, [loadConverters])
+
   // Tabs: always show Text, plus one for each attachment type
   const tabs = useMemo(() => {
-    const seen = new Set<string>()
+    const seen = new Set(['text'])
     const result: string[] = ['text']
-    seen.add('text')
     for (const t of activeInputTypes) {
-      if (!seen.has(t) && t !== 'text') {
+      if (!seen.has(t)) {
         result.push(t)
         seen.add(t)
       }
@@ -102,7 +243,9 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   const filteredConverters = useMemo(() => {
     let filtered = converters.filter((c) => {
       const supported = c.supported_input_types ?? []
-      if (supported.length === 0) return true
+      if (!supported.length) {
+          return true
+       }
       return supported.includes(activeDataType)
     })
     if (query !== selectedConverterType) {
@@ -115,11 +258,13 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   const groupedConverters = useMemo(() => {
     const groups: Record<string, typeof filteredConverters> = {}
     const order = ['text', 'image_path', 'audio_path', 'video_path', 'binary_path']
+    // for each filtered Converter, find its primary output type (the first in supported_output_types) and group by that
     for (const c of filteredConverters) {
-      const outType = (c.supported_output_types ?? [])[0] ?? 'text'
+      const outType = (c.supported_output_types ?? [])[0] ?? 'text' // default to text if not specified
       if (!groups[outType]) groups[outType] = []
       groups[outType].push(c)
     }
+    // Return groups in the defined order, excluding any empty groups
     return order.filter((t) => groups[t]?.length).map((t) => ({ type: t, converters: groups[t] }))
   }, [filteredConverters])
 
@@ -134,14 +279,12 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
       .map((p) => p.name)
   }, [selectedConverter, paramValues])
 
-  const hasRequiredParamErrors = missingRequiredParams.length > 0
-
   // Cache converter instance ID to avoid creating duplicate instances in the
   // backend registry on every preview. Only create a new instance when the
   // converter type or parameters change.
   const cachedInstanceRef = useRef<{ type: string; params: string; id: string } | null>(null)
 
-  const getOrCreateConverterInstance = async (type: string, params: Record<string, string>): Promise<string> => {
+  const getOrCreateConverterInstance = useAsyncCallback(async (type: string, params: Record<string, string>) => {
     const paramsKey = JSON.stringify(params)
     if (cachedInstanceRef.current?.type === type && cachedInstanceRef.current?.params === paramsKey) {
       return cachedInstanceRef.current.id
@@ -149,15 +292,15 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     const response = await convertersApi.createConverter({ type, params: { ...params } })
     cachedInstanceRef.current = { type, params: paramsKey, id: response.converter_id }
     return response.converter_id
-  }
+  })
 
-  const handlePreview = async () => {
+  const handlePreview = useCallback(async () => {
     // For text tab, use chat input text; for other tabs, use attachment data
     const previewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
     if (!selectedConverterType || !previewValue.trim()) {
       return
     }
-    if (hasRequiredParamErrors) {
+    if (missingRequiredParams.length) {
       setShowValidation(true)
       return
     }
@@ -167,7 +310,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     setPreviewOutput('')
 
     try {
-      const converterId = await getOrCreateConverterInstance(selectedConverterType, paramValues)
+      const converterId = await getOrCreateConverterInstance.execute(selectedConverterType, paramValues)
 
       const previewResponse = await convertersApi.previewConversion({
         original_value: previewValue,
@@ -182,7 +325,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     } finally {
       setIsPreviewing(false)
     }
-  }
+  }, [activeTab, previewText, attachmentData, selectedConverterType, missingRequiredParams, paramValues, activeDataType])
 
   // Auto-preview for non-LLM text-output converters (they're fast/cheap)
   const autoPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -205,7 +348,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
       !selectedConverter ||
       selectedConverter.is_llm_based ||
       !currentPreviewValue.trim() ||
-      hasRequiredParamErrors
+      missingRequiredParams.length
     ) {
       return
     }
@@ -221,9 +364,6 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConverterType, previewText, paramValues, selectedConverter])
-
-  const [panelWidth, setPanelWidth] = useState(320)
-  const isDragging = useRef(false)
 
   const handleMouseDown = useCallback(() => {
     isDragging.current = true
@@ -319,51 +459,28 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
 
         {!isLoading && !error && converters.length > 0 && (
           <div className={styles.converterList} data-testid="converter-panel-list">
-            <Field label="Converter">
-              <Combobox
-                value={query}
-                selectedOptions={selectedConverterType ? [selectedConverterType] : []}
-                onOptionSelect={(_, data) => {
-                  const newType = data.optionValue ?? ''
-                  setSelectedConverterType(newType)
-                  setQuery(data.optionText ?? '')
-                  // Reset param values to defaults for the newly selected converter
-                  const newConverter = converters.find((c) => c.converter_type === newType)
-                  const defaults: Record<string, string> = {}
-                  for (const p of newConverter?.parameters ?? []) {
-                    if (p.default_value != null) {
-                      defaults[p.name] = p.default_value
-                    }
+            <SelectConverterInput
+              query={query}
+              selectedConverterType={selectedConverterType}
+              groupedConverters={groupedConverters}
+              onOptionSelect={(type, text) => {
+                setSelectedConverterType(type)
+                setQuery(text)
+                const newConverter = converters.find((c) => c.converter_type === type)
+                const defaults: Record<string, string> = {}
+                for (const p of newConverter?.parameters ?? []) {
+                  if (p.default_value != null) {
+                    defaults[p.name] = p.default_value
                   }
-                  setParamValues(defaults)
-                  setPreviewOutput('')
-                  setPreviewConverterInstanceId(null)
-                  setPreviewError(null)
-                  setShowValidation(false)
-                }}
-                onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
-                placeholder="Search converters..."
-                data-testid="converter-panel-select"
-              >
-                {groupedConverters.map((group) => (
-                  <React.Fragment key={group.type}>
-                    <Option key={`__header_${group.type}`} text="" disabled value="">
-                      <span className={`${styles.groupHeader} ${styles[`header_${group.type}` as keyof typeof styles] ?? ''}`}>
-                        — {group.type.replace('_path', '')} output —
-                      </span>
-                    </Option>
-                    {group.converters.map((converter) => (
-                      <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type} data-testid={`converter-option-${converter.converter_type}`}>
-                        <span className={styles.optionContent}>
-                          {converter.converter_type}
-                          {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
-                        </span>
-                      </Option>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </Combobox>
-            </Field>
+                }
+                setParamValues(defaults)
+                setPreviewOutput('')
+                setPreviewConverterInstanceId(null)
+                setPreviewError(null)
+                setShowValidation(false)
+              }}
+              onQueryChange={setQuery}
+            />
             {selectedConverter && (
               <div
                 className={styles.converterCard}
@@ -498,89 +615,18 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
               </div>
             )}
 
-            <div className={styles.outputSection} data-testid="converter-preview-section">
-              <Button
-                appearance="primary"
-                size="small"
-                icon={isPreviewing ? <Spinner size="tiny" /> : <PlayRegular />}
-                onClick={handlePreview}
-                disabled={isPreviewing || !(activeTab === 'text' ? previewText.trim() : attachmentData[activeTab]) || !selectedConverterType}
-                data-testid="converter-preview-btn"
-              >
-                {isPreviewing ? 'Converting...' : 'Preview'}
-              </Button>
-
-              {activeTab === 'text' && !previewText.trim() && (
-                <Text size={200} className={styles.hintText}>
-                  Type in the chat input box to preview a conversion.
-                </Text>
-              )}
-
-              {activeTab !== 'text' && !attachmentData[activeTab] && (
-                <Text size={200} className={styles.hintText}>
-                  Attach a {activeTab} file to preview a conversion.
-                </Text>
-              )}
-
-              {previewError && (
-                <MessageBar intent="error" data-testid="converter-preview-error">
-                  <MessageBarBody className={styles.errorBody}>{previewError}</MessageBarBody>
-                </MessageBar>
-              )}
-
-              <div data-testid="converter-output">
-                <Text weight="semibold" size={300}>Output</Text>
-                <div className={styles.outputBox}>
-                  {previewOutput ? (
-                    previewOutput.match(/\.(png|jpg|jpeg|gif|bmp|webp)$/i) ? (
-                      <img
-                        src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
-                        alt="Converter output"
-                        className={styles.previewImage}
-                        data-testid="converter-preview-result"
-                      />
-                    ) : previewOutput.match(/\.(wav|mp3|ogg|flac)$/i) ? (
-                      <audio
-                        controls
-                        src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
-                        className={styles.previewAudio}
-                        data-testid="converter-preview-result"
-                      />
-                    ) : previewOutput.match(/\.(mp4|webm|mov)$/i) ? (
-                      <video
-                        controls
-                        src={`/api/media?path=${encodeURIComponent(previewOutput)}`}
-                        className={styles.previewVideo}
-                        data-testid="converter-preview-result"
-                      />
-                    ) : (
-                      <pre className={styles.previewPre} data-testid="converter-preview-result">{previewOutput}</pre>
-                    )
-                  ) : (
-                    <Text size={200} className={styles.hintText}>
-                      Converted output will appear here.
-                    </Text>
-                  )}
-                </div>
-              </div>
-
-              {previewOutput && previewConverterInstanceId && (
-                <Button
-                  appearance="primary"
-                  size="small"
-                  onClick={() => onUseConvertedValue?.({
-                    pieceType: activeTab,
-                    converterInstanceId: previewConverterInstanceId,
-                    convertedValue: previewOutput,
-                    originalValue: activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? ''),
-                  })}
-                  disabled={!onUseConvertedValue}
-                  data-testid="use-converted-btn"
-                >
-                  Use Converted Value
-                </Button>
-              )}
-            </div>
+            <ConverterPreview
+              activeTab={activeTab}
+              previewText={previewText}
+              attachmentData={attachmentData}
+              selectedConverterType={selectedConverterType}
+              isPreviewing={isPreviewing}
+              previewError={previewError}
+              previewOutput={previewOutput}
+              previewConverterInstanceId={previewConverterInstanceId}
+              onPreview={handlePreview}
+              onUseConvertedValue={onUseConvertedValue}
+            />
           </div>
         )}
       </div>
