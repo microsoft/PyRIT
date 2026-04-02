@@ -30,6 +30,12 @@
 # | RolePlay | `role_play` | single_turn | Persuasion-based role-play |
 # | PersuasiveRedTeamingAttack | `persuasive_rta` | multi_turn | Multi-turn persuasive attack (max 5 turns) |
 #
+# ## Default Datasets
+#
+# The default dataset is `airt_scams`, containing phishing and fraud generation objectives. You can bring
+# your own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI
+# flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+#
 # ## Setup
 
 # %%

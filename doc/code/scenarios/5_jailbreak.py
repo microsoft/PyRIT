@@ -36,6 +36,16 @@
 # `num_attempts` to repeat each template multiple times, and `jailbreak_names` to select specific templates
 # by name.
 #
+# **Note:** This scenario does not include a default baseline (`include_baseline=False`). Jailbreak testing
+# is inherently template-based — a raw prompt without a jailbreak template would not test the intended
+# attack vector.
+#
+# ## Default Datasets
+#
+# The default dataset is `airt_harms`, containing general harmful objectives. You can bring your own
+# datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI flag —
+# see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+#
 # ## Setup
 
 # %%

@@ -47,15 +47,23 @@
 #
 # ## Available Strategies
 #
-# | Strategy | CLI Value | Description |
-# |----------|-----------|-------------|
-# | ALL | `all` | Aggregate — runs both subharms |
-# | ImminentCrisis | `imminent_crisis` | Tests crisis escalation responses |
-# | LicensedTherapist | `licensed_therapist` | Tests for clinical advice impersonation |
+# | Strategy | CLI Value | Type | Description |
+# |----------|-----------|------|-------------|
+# | ALL | `all` | Aggregate | Runs both subharms |
+# | ImminentCrisis | `imminent_crisis` | Concrete | Tests crisis escalation responses |
+# | LicensedTherapist | `licensed_therapist` | Concrete | Tests for clinical advice impersonation |
 #
 # **Note:** This scenario does not include a default baseline (`include_default_baseline=False`).
-# It uses multi-turn attacks (PromptSending+ToneConverter, RolePlay, Crescendo) rather than
-# simple prompt sending.
+# A single-turn baseline would not be meaningful here because psychosocial harms emerge through
+# multi-turn escalation — the built-in rubric-based scorer evaluates conversation-level crisis handling,
+# which requires the specific attack strategies (PromptSending+ToneConverter, RolePlay, Crescendo) to
+# produce evaluable conversations.
+#
+# ## Default Datasets
+#
+# The default dataset is `airt_imminent_crisis`, containing crisis-related objectives. You can bring your
+# own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI flag —
+# see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
 #
 # ## Setup
 

@@ -24,16 +24,23 @@
 #
 # Each strategy targets a specific harm category with its own dataset:
 #
-# | Strategy | CLI Value | Description |
-# |----------|-----------|-------------|
-# | ALL | `all` | Aggregate — runs all 7 harm categories |
-# | Hate | `hate` | Tests for hateful content generation |
-# | Fairness | `fairness` | Tests for unfair or biased content |
-# | Violence | `violence` | Tests for violent content generation |
-# | Sexual | `sexual` | Tests for sexual content generation |
-# | Harassment | `harassment` | Tests for harassing content generation |
-# | Misinformation | `misinformation` | Tests for misinformation generation |
-# | Leakage | `leakage` | Tests for data leakage in content |
+# | Strategy | CLI Value | Type | Description |
+# |----------|-----------|------|-------------|
+# | ALL | `all` | Aggregate | Runs all 7 harm categories |
+# | Hate | `hate` | Concrete | Tests for hateful content generation |
+# | Fairness | `fairness` | Concrete | Tests for unfair or biased content |
+# | Violence | `violence` | Concrete | Tests for violent content generation |
+# | Sexual | `sexual` | Concrete | Tests for sexual content generation |
+# | Harassment | `harassment` | Concrete | Tests for harassing content generation |
+# | Misinformation | `misinformation` | Concrete | Tests for misinformation generation |
+# | Leakage | `leakage` | Concrete | Tests for data leakage in content |
+#
+# ## Default Datasets
+#
+# Each harm category has a corresponding default dataset (e.g., `airt_hate`, `airt_violence`). These contain
+# English-language prompts targeting that specific harm area. You can bring your own datasets using
+# `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI flag — see
+# [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
 #
 # ## Setup
 

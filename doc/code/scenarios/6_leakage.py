@@ -18,7 +18,7 @@
 # The `Leakage` scenario tests whether a target model can be induced to leak sensitive data, intellectual
 # property, secrets, or system prompts. It provides a rich set of strategies organized along two dimensions:
 # **turn type** (single-turn vs. multi-turn) and **data type** (IP vs. sensitive data), allowing you to
-# filter by either axis.
+# run targeted evaluations filtering by either axis.
 #
 # ## Available Strategies
 #
@@ -34,12 +34,17 @@
 # | RolePlay | `role_play` | single_turn, sensitive_data | Persuasion-based role-play |
 # | Crescendo | `crescendo` | multi_turn, ip, sensitive_data | Gradual multi-turn escalation |
 #
+# All of these strategies test for data leakage — they differ in technique (encoding, image embedding,
+# persuasion, escalation) rather than goal. The strategies can be combined with the `PlagiarismScorer`
+# described below to measure how much copyrighted or sensitive text appears in model responses.
+#
 # ## Copyright and Plagiarism Testing
 #
 # The `FirstLetter` strategy is particularly useful for testing whether a model has memorized copyrighted
 # text. It works by encoding text using the `FirstLetterConverter` (extracting the first letter of each
 # word) and then asking the model to decode the sequence. If the model can reconstruct the original text,
-# it suggests memorization of that content.
+# it suggests memorization of that content. While this example highlights FirstLetter, the `PlagiarismScorer`
+# can be applied to responses from **any** leakage strategy.
 #
 # For deeper plagiarism analysis of model responses, the `PlagiarismScorer` provides three complementary
 # metrics:
@@ -52,6 +57,12 @@
 #   Score = matching n-grams / total reference n-grams.
 #
 # All metrics are normalized to [0, 1] where 1 indicates the reference text is fully present in the response.
+#
+# ## Default Datasets
+#
+# The default dataset is `airt_leakage`, containing data leakage and extraction objectives. You can bring
+# your own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI
+# flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
 #
 # ## Setup
 
@@ -121,19 +132,20 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # ## Using PlagiarismScorer for Deeper Analysis
 #
 # After running the leakage scenario, you can use the `PlagiarismScorer` to perform additional plagiarism
-# analysis on the model's responses. This is complementary to the scenario's built-in leakage scorer.
-#
-# ```python
-# from pyrit.score import PlagiarismMetric, PlagiarismScorer
-#
-# reference_text = "It was the best of times, it was the worst of times."
-#
-# lcs_scorer = PlagiarismScorer(reference_text=reference_text, metric=PlagiarismMetric.LCS)
-# levenshtein_scorer = PlagiarismScorer(reference_text=reference_text, metric=PlagiarismMetric.LEVENSHTEIN)
-# jaccard_scorer = PlagiarismScorer(reference_text=reference_text, metric=PlagiarismMetric.JACCARD, n=3)
-#
-# # Score a model response against the reference text
-# scores = await lcs_scorer.score_text_async(text="It was the very best of times and the worst of times.")
-# for score in scores:
-#     print(f"LCS score: {score.score_value}")  # 0.0 = no match, 1.0 = full match
-# ```
+# analysis on the model's responses. This is complementary to the scenario's built-in leakage scorer and
+# can be applied to responses from any strategy.
+
+# %%
+from pyrit.score import PlagiarismMetric, PlagiarismScorer
+
+reference_text = "It was the best of times, it was the worst of times."
+
+lcs_scorer = PlagiarismScorer(reference_text=reference_text, metric=PlagiarismMetric.LCS)
+levenshtein_scorer = PlagiarismScorer(reference_text=reference_text, metric=PlagiarismMetric.LEVENSHTEIN)
+jaccard_scorer = PlagiarismScorer(reference_text=reference_text, metric=PlagiarismMetric.JACCARD, n=3)
+
+# Score a sample response against the reference text
+sample_response = "It was the very best of times and the worst of times."
+for name, scorer in [("LCS", lcs_scorer), ("Levenshtein", levenshtein_scorer), ("Jaccard", jaccard_scorer)]:
+    scores = await scorer.score_text_async(text=sample_response)  # type: ignore
+    print(f"{name}: {scores[0].score_value}")
