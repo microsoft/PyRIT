@@ -96,7 +96,9 @@ def run_container(mode, tag="latest"):
         print(f"   Found .pyrit_conf - including it")
         cmd.extend(["-v", f"{pyrit_conf_file}:/home/vscode/.pyrit/.pyrit_conf:ro"])
 
-    # Mount Azure CLI config so 'az login' tokens persist across container restarts
+    # Mount Azure CLI config so 'az login' tokens persist across container restarts.
+    # ~/.azure is created by the Azure CLI when you run 'az login' on the host.
+    # Mounting it lets the container reuse existing auth tokens without re-login.
     azure_dir = Path.home() / ".azure"
     if azure_dir.exists():
         print(f"   Found .azure/ - mounting for Azure CLI auth")

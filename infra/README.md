@@ -45,7 +45,7 @@ all requests are allowed. Swagger UI is available at `http://localhost:8000/docs
 > ⚠️ Auth-disabled mode is for **local development only**. Never deploy to a
 > network-accessible environment without both env vars set.
 
-### Promotion flow
+### Deployment Workflow
 
 ```
 Local dev → Push to branch → Trigger pipeline in ADO → Deploys to test → Opt-in prod deploy
@@ -79,7 +79,7 @@ Production is opt-in via `deployToProd: true`.
   - Neither is required — MSAL auth + group checks are the primary access controls.
 - **Response headers**: `SecurityHeadersMiddleware` adds
   [CSP](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP),
-  HSTS (production only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+  HTTP Strict Transport Security (HSTS, production only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
   Permissions-Policy, and Cache-Control (`no-store` on API routes). Swagger/OpenAPI
   disabled in production.
 - **Data**: Azure SQL with managed identity authentication (no passwords)
@@ -108,8 +108,10 @@ separately (Microsoft Graph, not ARM). Key Vault must be an existing vault
 be created manually — see [Post-Deployment §2](#post-deployment).
 
 **Requirements:**
-- Azure CLI **2.84+** (version 2.77 has a known `content-already-consumed` bug)
-- Container image must be pushed to ACR **before** deployment
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) **2.84+**
+(version 2.77 has a known `content-already-consumed` bug)
+- Container image must be pushed to ACR **before** deployment (see [§5 
+below](#5-container-image-must-be-pushed-to-acr-before-deployment))
 
 **Quick reference** — what you need before running `az deployment group create`:
 
@@ -306,6 +308,22 @@ az keyvault show --name <vault-name> --query id -o tsv
 > **Note**: The vault should have `enableRbacAuthorization: true` so the managed
 > identity can be granted access. Diagnostic settings (AuditEvent logs) should be
 > configured on the vault separately by the vault owner.
+
+## Preview changes before deploying (recommended)
+
+Use `what-if` to see what Azure will create, modify, or delete
+— without making any changes. Review the output before deploying.
+
+```bash
+az deployment group what-if \
+  --resource-group <rg> \
+  --template-file infra/main.bicep \
+  --parameters @infra/parameters.json
+```
+
+The output shows a color-coded diff: green (+) for new resources,
+orange (~) for modifications, red (-) for deletions, and purple (*)
+for no change.
 
 ## Deploy
 

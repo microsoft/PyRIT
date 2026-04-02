@@ -85,21 +85,6 @@ describe("msalConfig", () => {
       expect(global.fetch).toHaveBeenCalledWith("/api/auth/config");
     });
 
-    it("returns cached config on subsequent calls", async () => {
-      const mockConfig = { clientId: "abc", tenantId: "xyz", allowedGroupId: "g1" };
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockConfig),
-      });
-
-      const { fetchAuthConfig } = await import("./msalConfig");
-      await fetchAuthConfig();
-      const secondResult = await fetchAuthConfig();
-
-      expect(global.fetch).toHaveBeenCalledTimes(1);
-      expect(secondResult).toEqual(mockConfig);
-    });
-
     it("returns empty config when response is not ok", async () => {
       (global.fetch as jest.Mock).mockResolvedValue({ ok: false });
 

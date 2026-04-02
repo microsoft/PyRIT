@@ -11,7 +11,7 @@ The middleware:
 - Skips auth for health check and auth config endpoints
 - Validates JWT signature against Entra ID's JWKS endpoint
 - Verifies issuer, audience, and expiration
-- Optionally checks group membership (handles groups overage for users in >200 groups)
+- Optionally checks group membership (resolves via Graph API if user is in >200 groups)
 - Attaches user info to request.state for use by route handlers
 """
 
@@ -55,6 +55,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         """Initialize the middleware with Entra ID configuration from environment variables."""
         super().__init__(app)
         self._tenant_id = os.getenv("ENTRA_TENANT_ID", "")
+        # _client_id is used as the expected JWT audience in _validate_token
         self._client_id = os.getenv("ENTRA_CLIENT_ID", "")
         groups_raw = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "")
         self._allowed_group_ids: set[str] = {g.strip() for g in groups_raw.split(",") if g.strip()}
@@ -89,30 +90,44 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         if not self._enabled or path in _PUBLIC_PATHS or not path.startswith("/api"):
             return await call_next(request)
 
-        # Extract Bearer token
+        result = await self._authenticate_request_async(request)
+        if isinstance(result, JSONResponse):
+            return result  # Authentication failed with 401 or 403
+        
+        request.state.user = result
+        return await call_next(request)
+    
+    async def _authenticate_request_async(self, request: Request) -> AuthenticatedUser | JSONResponse:
+        """Extract, validate, and authorize the Bearer token from the request.
+        
+        Returns:
+            AuthenticatedUser if validation and authorization succeed,
+            JSONResponse with 401 or 403 if they fail.
+        """
+        # Extract Bearer token from Authorization header
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Missing or invalid Authorization header"},
             )
+        
+        token = auth_header.removeprefix("Bearer ")
 
-        token = auth_header[7:]  # Strip "Bearer "
-
-        # Validate JWT
+        # Validate the token and extract user info and claims
         user, claims = self._validate_token(token)
         if user is None:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or expired token"},
             )
-
-        # Handle groups overage: when user is in >200 groups, Entra replaces the
-        # groups array with _claim_sources containing a Graph API URL.
+        
+        # If groups claim is missing due to user being in >200 groups,
+        # resolve group membership via Graph API
         if not user.groups and self._allowed_group_ids and "_claim_sources" in claims:
-            user.groups = await self._resolve_groups_overage_async(claims, token)
-
-        # Authorization: check group membership
+            user.groups = await self._resolve_excess_groups_async(claims, token)
+        
+        # Authorize the user based on group membership
         if not self._is_authorized(user):
             logger.warning(
                 "User %s (%s) denied — groups=%s, allowed_groups=%s",
@@ -125,10 +140,8 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 status_code=403,
                 content={"detail": "You are not authorized to access this application"},
             )
-
-        # Attach user to request state
-        request.state.user = user
-        return await call_next(request)
+        
+        return user
 
     def _is_authorized(self, user: AuthenticatedUser) -> bool:
         """
@@ -145,9 +158,9 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             return True
         return bool(self._allowed_group_ids & set(user.groups))
 
-    async def _resolve_groups_overage_async(self, claims: dict[str, Any], token: str) -> list[str]:
+    async def _resolve_excess_groups_async(self, claims: dict[str, Any], token: str) -> list[str]:
         """
-        Resolve group membership via Microsoft Graph when groups overage occurs.
+        Resolve group membership via Microsoft Graph when user is in >200 groups.
 
         When a user is in >200 groups, Entra ID replaces the `groups` claim with
         `_claim_sources` containing a Graph API endpoint. This method calls the
@@ -167,7 +180,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             endpoint = src.get("endpoint", "")
 
             if not endpoint:
-                logger.debug("No overage endpoint found in _claim_sources")
+                logger.debug("No group resolution endpoint found in _claim_sources")
                 return []
 
             # The _claim_sources endpoint may be a legacy graph.windows.net URL.
@@ -192,7 +205,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
 
                 if response.status_code != 200:
                     logger.warning(
-                        "Groups overage endpoint returned %d: %s",
+                        "Group resolution endpoint returned %d: %s",
                         response.status_code,
                         response.text[:200],
                     )
@@ -210,17 +223,17 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                         timeout=10.0,
                     )
                     if response.status_code != 200:
-                        logger.warning("Overage pagination failed at %s: %d", next_link, response.status_code)
+                        logger.warning("Group resolution pagination failed at %s: %d", next_link, response.status_code)
                         break
                     data = response.json()
                     all_group_ids.extend(data.get("value", []))
                     next_link = data.get("@odata.nextLink")
 
-            logger.debug("Overage resolution returned %d group memberships", len(all_group_ids))
+            logger.debug("Group resolution returned %d group memberships", len(all_group_ids))
             return all_group_ids
 
         except Exception as e:
-            logger.warning("Failed to resolve groups overage: %s", e)
+            logger.warning("Failed to resolve group memberships: %s", e)
             return []
 
     def _validate_token(self, token: str) -> tuple[Optional[AuthenticatedUser], dict[str, Any]]:

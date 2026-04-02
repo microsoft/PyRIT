@@ -10,7 +10,7 @@
  * - Shows a loading state while auth initializes
  */
 
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect, createContext, useContext, type ReactNode} from 'react'
 import {
   PublicClientApplication,
   EventType,
@@ -22,21 +22,21 @@ import {
   UnauthenticatedTemplate,
   useMsal,
 } from '@azure/msal-react'
-import { fetchAuthConfig, buildMsalConfig, buildLoginRequest } from './msalConfig'
+import { fetchAuthConfig, buildMsalConfig, buildLoginRequest, type AuthConfig } from './msalConfig'
 import { setMsalInstance as setApiMsalInstance, setClientId as setApiClientId } from '../services/api'
+
+const AuthConfigContext = createContext<AuthConfig>({clientId: '', tenantId: '', allowedGroupId: ''})
+export const useAuthConfig = () => useContext(AuthConfigContext)
 
 function LoginRedirect() {
   const { instance } = useMsal()
+  const config = useAuthConfig()
 
   useEffect(() => {
-    const doLogin = async () => {
-      const config = await fetchAuthConfig()
-      instance.loginRedirect(buildLoginRequest(config.clientId)).catch((error) => {
-        console.error('Login redirect failed:', error)
-      })
-    }
-    doLogin()
-  }, [instance])
+    instance.loginRedirect(buildLoginRequest(config.clientId)).catch((error) => {
+      console.error('Login redirect failed:', error)
+    })
+  }, [instance, config])
 
   return <div style={{ padding: '2rem', textAlign: 'center' }}>Redirecting to login...</div>
 }
@@ -49,6 +49,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [msalInstance, setMsalInstance] = useState<PublicClientApplication | null>(null)
   const [authDisabled, setAuthDisabled] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({clientId: '', tenantId: '', allowedGroupId: ''})
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +63,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           if (!cancelled) {
             setMsalInstance(null) // null signals "auth disabled"
             setAuthDisabled(true)
+            setAuthConfig(config)
           }
           return
         }
@@ -100,6 +102,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setApiMsalInstance(instance)
           setApiClientId(config.clientId)
           setMsalInstance(instance)
+          setAuthConfig(config)
         }
       } catch (err) {
         if (!cancelled) {
@@ -132,11 +135,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   return (
-    <MsalProvider instance={msalInstance}>
-      <AuthenticatedTemplate>{children}</AuthenticatedTemplate>
-      <UnauthenticatedTemplate>
-        <LoginRedirect />
-      </UnauthenticatedTemplate>
-    </MsalProvider>
+   <AuthConfigContext.Provider value={authConfig}>
+     <MsalProvider instance={msalInstance}>
+       <AuthenticatedTemplate>{children}</AuthenticatedTemplate>
+       <UnauthenticatedTemplate>
+         <LoginRedirect />
+       </UnauthenticatedTemplate>
+     </MsalProvider>
+   </AuthConfigContext.Provider>
   )
 }

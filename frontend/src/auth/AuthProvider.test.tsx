@@ -90,6 +90,9 @@ describe("AuthProvider", () => {
     mockGetAllAccounts.mockReturnValue([]);
     mockHandleRedirectPromise.mockResolvedValue(null);
   });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   // Test 10: fetchAuthConfig never resolves → stuck in loading state
   it("shows loading state while initializing", () => {
@@ -101,7 +104,7 @@ describe("AuthProvider", () => {
       </AuthProvider>
     );
 
-    expect(screen.getByText("Initializing authentication...")).toBeInTheDocument();
+    expect(screen.getByText("Initializing authentication...")).toBeVisible();
   });
 
   // Test 11: empty clientId + tenantId → auth disabled, children render directly
@@ -154,8 +157,8 @@ describe("AuthProvider", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Authentication Error")).toBeInTheDocument();
-      expect(screen.getByText("Config fetch failed")).toBeInTheDocument();
+      expect(screen.getByText("Authentication Error")).toBeVisible();
+      expect(screen.getByText("Config fetch failed")).toBeVisible();
     });
   });
 
@@ -170,10 +173,10 @@ describe("AuthProvider", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Authentication Error")).toBeInTheDocument();
+      expect(screen.getByText("Authentication Error")).toBeVisible();
       expect(
         screen.getByText("Failed to initialize authentication")
-      ).toBeInTheDocument();
+      ).toBeVisible();
     });
   });
 
@@ -258,7 +261,7 @@ describe("AuthProvider", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Redirecting to login...")).toBeInTheDocument();
+      expect(screen.getByText("Redirecting to login...")).toBeVisible();
     });
   });
 
@@ -284,7 +287,5 @@ describe("AuthProvider", () => {
         expect.any(Error)
       );
     });
-
-    consoleSpy.mockRestore();
   });
 });

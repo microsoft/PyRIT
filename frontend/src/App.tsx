@@ -38,7 +38,7 @@ function ConnectionBannerContainer() {
 }
 
 function App() {
-  const { instance } = useMsal()
+  const { instance: msalInstance } = useMsal()
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [currentView, setCurrentView] = useState<ViewName>('chat')
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
@@ -50,8 +50,8 @@ function App() {
 
   // Wire MSAL instance into the API client for Bearer token injection
   useEffect(() => {
-    setMsalInstance(instance as PublicClientApplication)
-  }, [instance])
+    setMsalInstance(msalInstance as PublicClientApplication)
+  }, [msalInstance])
 
   // Fetch default labels from backend configuration on startup
   useEffect(() => {

@@ -20,19 +20,14 @@ export interface AuthConfig {
   allowedGroupId: string
 }
 
-let _cachedConfig: AuthConfig | null = null
-
 export async function fetchAuthConfig(): Promise<AuthConfig> {
-  if (_cachedConfig) return _cachedConfig
-
   try {
     const response = await fetch('/api/auth/config')
     if (!response.ok) {
       // Auth endpoint not available — treat as auth disabled
       return { clientId: '', tenantId: '', allowedGroupId: '' }
     }
-    _cachedConfig = (await response.json()) as AuthConfig
-    return _cachedConfig
+    return (await response.json()) as AuthConfig
   } catch {
     // Network error (e.g., backend not running yet) — treat as auth disabled
     return { clientId: '', tenantId: '', allowedGroupId: '' }
