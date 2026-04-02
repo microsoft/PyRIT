@@ -227,6 +227,51 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         entry.tags.update(self._normalize_tags(tags))
         self._metadata_cache = None
 
+    def find_dependents_of_tag(self, *, tag: str) -> list[RegistryEntry[T]]:
+        """
+        Find entries whose children depend on entries with the given tag.
+
+        Scans each registry entry's ``ComponentIdentifier`` tree and checks
+        whether any child's ``eval_hash`` matches the ``eval_hash`` of an
+        entry that carries *tag*.  Entries that themselves carry *tag* are
+        excluded from the results.
+
+        This enables automatic dependency detection: for example, tagging
+        base refusal scorers with ``"refusal"`` lets you discover all
+        wrapper scorers (inverters, composites) that embed a refusal scorer
+        without any explicit ``depends_on`` declaration.
+
+        Args:
+            tag: The tag key that identifies the "base" entries.
+
+        Returns:
+            List of ``RegistryEntry`` objects that depend on tagged entries,
+            sorted by name.
+        """
+        # Collect eval_hashes of all tagged entries
+        tagged_hashes: set[str] = set()
+        tagged_names: set[str] = set()
+        for entry in self.get_by_tag(tag=tag):
+            tagged_names.add(entry.name)
+            identifier = self._build_metadata(entry.name, entry.instance)
+            if identifier.eval_hash:
+                tagged_hashes.add(identifier.eval_hash)
+
+        if not tagged_hashes:
+            return []
+
+        # Find non-tagged entries whose children reference a tagged eval_hash
+        dependents: list[RegistryEntry[T]] = []
+        for name in sorted(self._registry_items.keys()):
+            if name in tagged_names:
+                continue
+            entry = self._registry_items[name]
+            identifier = self._build_metadata(name, entry.instance)
+            child_hashes = identifier._collect_child_eval_hashes()
+            if child_hashes & tagged_hashes:
+                dependents.append(entry)
+        return dependents
+
     def list_metadata(
         self,
         *,

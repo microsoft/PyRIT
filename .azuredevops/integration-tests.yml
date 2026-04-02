@@ -1,0 +1,19 @@
+
+# Builds the pyrit environment and runs integration tests
+
+trigger:
+  branches:
+    include:
+      - main
+
+# There are additional PR triggers for this that are configurable in ADO.
+
+jobs:
+- template: test-job-template.yml
+  parameters:
+    jobName: IntegrationTests
+    jobDisplayName: "Builds the pyrit environment and runs integration tests"
+    testAzureSubscription: 'integration-test-service-connection'
+    newDir: integration_test_directory
+    testsFolder: integration
+    makeTarget: integration-test

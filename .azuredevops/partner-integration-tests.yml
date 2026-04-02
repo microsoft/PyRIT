@@ -1,0 +1,21 @@
+# Builds the pyrit environment and runs partner integration tests. Partner integration tests are to ensure that we
+# are not breaking any contract between PyRIT and its partners.
+trigger: none  # Disable automatic CI triggers
+
+schedules:
+- cron: "0 6 * * *"  # 6 AM UTC = 10 PM PST (UTC-8) / 11PM PDT (UTC-6)
+  displayName: Nightly Partner Integration Tests at 10 PM PST
+  branches:
+    include:
+    - main
+  always: true  # Run even if there are no code changes
+
+jobs:
+- template: test-job-template.yml
+  parameters:
+    jobName: PartnerIntegrationTests
+    jobDisplayName: "Builds the pyrit environment and runs partner integration tests"
+    testAzureSubscription: 'partner-integration-test-service-connection'
+    newDir: partner_integration_test_directory
+    testsFolder: partner_integration
+    makeTarget: partner-integration-test

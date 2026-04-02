@@ -1,19 +1,21 @@
-# Runs end-to-end scenario tests using pyrit_scan CLI
-
-trigger: none  # Disable automatic CI triggers
-
-schedules:
-- cron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8) / Midnight PDT (UTC-7)
-  displayName: Nightly E2E Tests at 11 PM PST
-  branches:
-    include:
-    - main
-  always: true  # Run even if there are no code changes
+parameters:
+  - name: jobName
+    type: string
+  - name: jobDisplayName
+    type: string
+  - name: testAzureSubscription
+    type: string
+  - name: newDir
+    type: string
+  - name: testsFolder
+    type: string
+  - name: makeTarget
+    type: string
 
 jobs:
-- job: EndToEndTests
-  displayName: "Run end-to-end scenario tests"
-  timeoutInMinutes: 360   # Allows the job to run up to 6 hours
+- job: ${{ parameters.jobName }}
+  displayName: ${{ parameters.jobDisplayName }}
+  timeoutInMinutes: 360
   pool:
     vmImage: ubuntu-latest
   steps:
@@ -81,21 +83,21 @@ jobs:
     name: install_PyRIT
   - bash: df -all -h
     name: disk_space_check
-# This step ensures that end-to-end tests are run outside of the PyRIT repository to test that .env files are accessed correctly.
+# This step ensures that tests are run outside of the PyRIT repository to test that .env files are accessed correctly.
   - bash: |
       PyRIT_DIR=$(pwd)
-      NEW_DIR="e2e_test_directory"
+      NEW_DIR="${{ parameters.newDir }}"
       cd ..
       mkdir -p $NEW_DIR/tests
       cp -r $PyRIT_DIR/doc $NEW_DIR
       cp -r $PyRIT_DIR/assets $NEW_DIR
-      cp -r $PyRIT_DIR/tests/end_to_end $NEW_DIR/tests
+      cp -r $PyRIT_DIR/tests/${{ parameters.testsFolder }} $NEW_DIR/tests
       cd $NEW_DIR
-    displayName: "Create and switch to E2E test directory"
+    displayName: "Create and switch to new test directory"
   - task: AzureCLI@2
-    displayName: "Authenticate with service principal, cache access tokens, and run E2E tests"
+    displayName: "Authenticate with service principal, cache Cognitive Services access token, and run tests"
     inputs:
-      azureSubscription: 'integration-test-service-connection'
+      azureSubscription: ${{ parameters.testAzureSubscription }}
       scriptType: 'bash'
       scriptLocation: 'inlineScript'
       inlineScript: |
@@ -111,8 +113,8 @@ jobs:
         az account get-access-token --scope https://database.windows.net/.default --output none
         echo "Azure SQL Database access token cached successfully."
 
-        # Run end-to-end tests
-        make end-to-end-test
+        # Run tests
+        make ${{ parameters.makeTarget }}
   - bash: |
       rm -f ~/.pyrit/.env ~/.pyrit/.env.local
     name: clean_up_env_files

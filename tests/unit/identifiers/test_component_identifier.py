@@ -1237,3 +1237,99 @@ class TestComputeEvalHash:
             child_eval_rules={},
         )
         assert result == identifier.hash
+
+
+class TestCollectChildEvalHashes:
+    """Tests for ComponentIdentifier._collect_child_eval_hashes."""
+
+    def test_no_children_returns_empty(self):
+        """Test that an identifier with no children returns empty set."""
+        identifier = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+        )
+        assert identifier._collect_child_eval_hashes() == set()
+
+    def test_single_child_with_eval_hash(self):
+        """Test collecting eval_hash from a single child."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            eval_hash="abc123",
+        )
+        parent = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+        assert parent._collect_child_eval_hashes() == {"abc123"}
+
+    def test_child_without_eval_hash_excluded(self):
+        """Test that children without eval_hash are not included."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+        )
+        parent = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+        assert parent._collect_child_eval_hashes() == set()
+
+    def test_list_children_with_eval_hashes(self):
+        """Test collecting eval_hashes from a list of children."""
+        child1 = ComponentIdentifier(
+            class_name="Scorer1",
+            class_module="pyrit.score",
+            eval_hash="hash1",
+        )
+        child2 = ComponentIdentifier(
+            class_name="Scorer2",
+            class_module="pyrit.score",
+            eval_hash="hash2",
+        )
+        parent = ComponentIdentifier(
+            class_name="Composite",
+            class_module="pyrit.score",
+            children={"sub_scorers": [child1, child2]},
+        )
+        assert parent._collect_child_eval_hashes() == {"hash1", "hash2"}
+
+    def test_nested_children_collected_recursively(self):
+        """Test that eval_hashes are collected from deeply nested children."""
+        grandchild = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            eval_hash="deep_hash",
+        )
+        child = ComponentIdentifier(
+            class_name="InnerScorer",
+            class_module="pyrit.score",
+            eval_hash="child_hash",
+            children={"prompt_target": grandchild},
+        )
+        parent = ComponentIdentifier(
+            class_name="OuterScorer",
+            class_module="pyrit.score",
+            children={"sub_scorers": [child]},
+        )
+        assert parent._collect_child_eval_hashes() == {"child_hash", "deep_hash"}
+
+    def test_mixed_children_with_and_without_eval_hash(self):
+        """Test a mix of children where only some have eval_hash."""
+        child_with = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            eval_hash="has_hash",
+        )
+        child_without = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+        )
+        parent = ComponentIdentifier(
+            class_name="Composite",
+            class_module="pyrit.score",
+            children={"sub_scorers": [child_with, child_without]},
+        )
+        assert parent._collect_child_eval_hashes() == {"has_hash"}
