@@ -623,7 +623,7 @@ describe("ChatInputArea", () => {
           {...defaultProps}
           onSend={onSend}
           activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
-          convertedValue="aGVsbG8="
+          convertedValue="convertedHello"
           originalValue="hello"
           onClearConversion={onClearConversion}
         />
@@ -634,7 +634,7 @@ describe("ChatInputArea", () => {
     await user.type(input, "hello");
     await user.click(getSendButton());
 
-    expect(onSend).toHaveBeenCalledWith("hello", "aGVsbG8=", []);
+    expect(onSend).toHaveBeenCalledWith("hello", "convertedHello", []);
     expect(onClearConversion).toHaveBeenCalled();
   });
 });

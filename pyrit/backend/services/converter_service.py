@@ -229,9 +229,11 @@ class ConverterService:
         """
         items: list[ConverterCatalogEntry] = []
         for converter_type, converter_class in sorted(_CONVERTER_CLASS_REGISTRY.items()):
-            if converter_type in ("PromptConverter", "ConverterResult") or "Strategy" in converter_type:
-                continue
-            if converter_type in ("HumanInTheLoopConverter", "SelectiveTextConverter"):
+            if (
+                converter_type
+                in ("PromptConverter", "ConverterResult", "HumanInTheLoopConverter", "SelectiveTextConverter")
+                or "Strategy" in converter_type
+            ):
                 continue
 
             supported_input_types = [
@@ -434,8 +436,10 @@ class ConverterService:
         """
         try:
             sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
-        except (ValueError, TypeError):
-            return params
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Failed to inspect __init__ signature for converter '{converter_class.__name__}': {e}"
+            ) from e
 
         coerced = dict(params)
         for name, value in coerced.items():

@@ -133,7 +133,7 @@ beforeEach(() => {
 describe('ConverterPanel loading', () => {
   it('shows loading spinner then renders converter list on success', async () => {
     renderPanel()
-    expect(screen.getByTestId('converter-panel-loading')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-panel-loading')).toBeVisible()
     await waitForList()
     expect(screen.queryByTestId('converter-panel-loading')).not.toBeInTheDocument()
   })
@@ -141,7 +141,7 @@ describe('ConverterPanel loading', () => {
   it('shows error message when catalog load fails', async () => {
     mockedConvertersApi.listConverterCatalog.mockRejectedValueOnce(new Error('Network fail'))
     renderPanel()
-    await waitFor(() => expect(screen.getByTestId('converter-panel-error')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('converter-panel-error')).toBeVisible())
   })
 
   it('shows empty state when catalog returns no items', async () => {

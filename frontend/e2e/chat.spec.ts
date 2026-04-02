@@ -502,8 +502,9 @@ test.describe("Multi-modal: Video response", () => {
 
     await expect(page.getByText("Create a video clip", { exact: true })).toBeVisible();
 
-    // Invalid mock payload triggers MediaWithFallback error state
-    await expect(page.getByTestId("video-error")).toBeVisible({ timeout: 10000 });
+    // Video element should appear
+    const video = page.locator("video");
+    await expect(video).toBeVisible({ timeout: 10000 });
   });
 });
 

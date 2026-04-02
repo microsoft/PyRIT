@@ -3,7 +3,7 @@ import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Sel
 import { ChevronDownRegular, ChevronRightRegular, DismissRegular, InfoRegular, PlayRegular } from '@fluentui/react-icons'
 import { convertersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import type { ConverterCatalogEntry } from '../../types'
+import type { ConverterCatalogEntry, ConverterParameterSchema } from '../../types'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
 
 const PIECE_TYPE_LABELS: Record<string, string> = {
@@ -169,6 +169,67 @@ function ConverterPreview({ activeTab, previewText, attachmentData, selectedConv
   )
 }
 
+interface ParamInputProps {
+  param: ConverterParameterSchema
+  value: string
+  isMissing: boolean
+  onChange: (name: string, value: string) => void
+}
+
+function ParameterChoiceViewer({ param, value, onChange }: ParamInputProps) {
+  return (
+    <Select
+      value={value ?? param.default_value ?? ''}
+      onChange={(_, data) => onChange(param.name, data.value)}
+      data-testid={`param-${param.name}`}
+    >
+      {(param.choices ?? []).map((choice) => (
+        <option key={choice} value={choice}>
+          {choice}
+        </option>
+      ))}
+    </Select>
+  )
+}
+
+function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: ParamInputProps & { onBrowse: (name: string) => void }) {
+  const styles = useConverterPanelStyles()
+
+  return (
+    <div className={styles.filePickerRow}>
+      <Input
+        value={value ?? ''}
+        placeholder={param.default_value ?? 'Select a file...'}
+        onChange={(_, data) => onChange(param.name, data.value)}
+        className={isMissing ? styles.paramInputError : undefined}
+        data-testid={`param-${param.name}`}
+      />
+      <Button
+        appearance="subtle"
+        size="small"
+        onClick={() => onBrowse(param.name)}
+        data-testid={`param-${param.name}-browse`}
+      >
+        Browse
+      </Button>
+    </div>
+  )
+}
+
+function ParameterViewer({ param, value, isMissing, onChange }: ParamInputProps) {
+  const styles = useConverterPanelStyles()
+
+  return (
+    <Input
+      value={value ?? ''}
+      placeholder={param.default_value ?? undefined}
+      onChange={(_, data) => onChange(param.name, data.value)}
+      className={isMissing ? styles.paramInputError : undefined}
+      data-testid={`param-${param.name}`}
+    />
+  )
+}
+
 interface ConverterPanelProps {
   onClose: () => void
   previewText?: string
@@ -293,6 +354,52 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     return response.converter_id
   }, [])
 
+  const handleTabSelect = useCallback((_: unknown, data: { value: unknown }) => {
+    const newTab = data.value as string
+    setActiveTab(newTab)
+    setSelectedConverterType('')
+    setQuery('')
+    setParamValues({})
+    setPreviewOutput('')
+    setPreviewConverterInstanceId(null)
+    setPreviewError(null)
+    setShowValidation(false)
+    cachedInstanceRef.current = null
+  }, [])
+
+  const handleConverterSelect = useCallback((type: string, text: string) => {
+    setSelectedConverterType(type)
+    setQuery(text)
+    const newConverter = converters.find((c) => c.converter_type === type)
+    const defaults: Record<string, string> = {}
+    for (const p of newConverter?.parameters ?? []) {
+      if (p.default_value != null) {
+        defaults[p.name] = p.default_value
+      }
+    }
+    setParamValues(defaults)
+    setPreviewOutput('')
+    setPreviewConverterInstanceId(null)
+    setPreviewError(null)
+    setShowValidation(false)
+  }, [converters])
+
+  const handleFileBrowse = useCallback((paramName: string) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (file) {
+        setParamValues((prev) => ({ ...prev, [paramName]: file.name }))
+      }
+    }
+    input.click()
+  }, [])
+
+  const handleParamChange = useCallback((name: string, value: string) => {
+    setParamValues((prev) => ({ ...prev, [name]: value }))
+  }, [])
+
   const handlePreview = useCallback(async () => {
     // For text tab, use chat input text; for other tabs, use attachment data
     const previewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
@@ -411,18 +518,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
       {tabs.length > 1 && (
         <TabList
           selectedValue={activeTab}
-          onTabSelect={(_, data) => {
-            const newTab = data.value as string
-            setActiveTab(newTab)
-            setSelectedConverterType('')
-            setQuery('')
-            setParamValues({})
-            setPreviewOutput('')
-            setPreviewConverterInstanceId(null)
-            setPreviewError(null)
-            setShowValidation(false)
-            cachedInstanceRef.current = null
-          }}
+          onTabSelect={handleTabSelect}
           size="small"
           className={styles.tabBar}
           data-testid="converter-piece-tabs"
@@ -462,22 +558,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
               query={query}
               selectedConverterType={selectedConverterType}
               groupedConverters={groupedConverters}
-              onOptionSelect={(type, text) => {
-                setSelectedConverterType(type)
-                setQuery(text)
-                const newConverter = converters.find((c) => c.converter_type === type)
-                const defaults: Record<string, string> = {}
-                for (const p of newConverter?.parameters ?? []) {
-                  if (p.default_value != null) {
-                    defaults[p.name] = p.default_value
-                  }
-                }
-                setParamValues(defaults)
-                setPreviewOutput('')
-                setPreviewConverterInstanceId(null)
-                setPreviewError(null)
-                setShowValidation(false)
-              }}
+              onOptionSelect={handleConverterSelect}
               onQueryChange={setQuery}
             />
             {selectedConverter && (
@@ -539,68 +620,16 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                     {param.type_name === 'bool' || param.type_name === 'Optional[bool]' ? (
                       <Switch
                         checked={(paramValues[param.name] ?? param.default_value ?? 'false').toLowerCase() === 'true'}
-                        onChange={(_, data) =>
-                          setParamValues((prev) => ({ ...prev, [param.name]: data.checked ? 'true' : 'false' }))
-                        }
+                        onChange={(_, data) => handleParamChange(param.name, data.checked ? 'true' : 'false')}
                         label={(paramValues[param.name] ?? param.default_value ?? 'false').toLowerCase() === 'true' ? 'True' : 'False'}
                         data-testid={`param-${param.name}`}
                       />
                     ) : param.choices ? (
-                      <Select
-                        value={paramValues[param.name] ?? param.default_value ?? ''}
-                        onChange={(_, data) =>
-                          setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
-                        }
-                        data-testid={`param-${param.name}`}
-                      >
-                        {param.choices.map((choice) => (
-                          <option key={choice} value={choice}>
-                            {choice}
-                          </option>
-                        ))}
-                      </Select>
+                      <ParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={handleParamChange} />
                     ) : /path|file/i.test(param.name) ? (
-                      <div className={styles.filePickerRow}>
-                        <Input
-                          value={paramValues[param.name] ?? ''}
-                          placeholder={param.default_value ?? 'Select a file...'}
-                          onChange={(_, data) =>
-                            setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
-                          }
-                          className={isMissing ? styles.paramInputError : undefined}
-                          data-testid={`param-${param.name}`}
-                        />
-                        <Button
-                          appearance="subtle"
-                          size="small"
-                          onClick={() => {
-                            const input = document.createElement('input')
-                            input.type = 'file'
-                            input.onchange = () => {
-                              const file = input.files?.[0]
-                              if (file) {
-                                // Use webkitRelativePath or name — for local backend the full path isn't available
-                                // The user can also manually type/paste the path
-                                setParamValues((prev) => ({ ...prev, [param.name]: file.name }))
-                              }
-                            }
-                            input.click()
-                          }}
-                          data-testid={`param-${param.name}-browse`}
-                        >
-                          Browse
-                        </Button>
-                      </div>
+                      <ParameterFileViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={handleParamChange} onBrowse={handleFileBrowse} />
                     ) : (
-                      <Input
-                        value={paramValues[param.name] ?? ''}
-                        placeholder={param.default_value ?? undefined}
-                        onChange={(_, data) =>
-                          setParamValues((prev) => ({ ...prev, [param.name]: data.value }))
-                        }
-                        className={isMissing ? styles.paramInputError : undefined}
-                        data-testid={`param-${param.name}`}
-                      />
+                      <ParameterViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={handleParamChange} />
                     )}
                     {isMissing && (
                       <Text size={100} className={styles.paramErrorText}>Required</Text>
