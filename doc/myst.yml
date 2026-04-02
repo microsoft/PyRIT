@@ -163,7 +163,7 @@ project:
             - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
-            - file: code/scenarios/1_configuring_scenarios.ipynb
+            - file: code/scenarios/1_red_team_agent.ipynb
             - file: code/scenarios/2_content_harms.ipynb
             - file: code/scenarios/3_psychosocial.ipynb
             - file: code/scenarios/4_cyber.ipynb

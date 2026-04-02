@@ -25,16 +25,17 @@
 # | Strategy | CLI Value | Tags | Description |
 # |----------|-----------|------|-------------|
 # | ALL | `all` | all | Aggregate — runs all strategies |
-# | SIMPLE | `simple` | simple | Aggregate — runs simple strategies |
+# | SIMPLE | `simple` | simple | Aggregate — currently expands to PromptSending only |
 # | COMPLEX | `complex` | complex | Aggregate — runs complex strategies |
 # | PromptSending | `prompt_sending` | simple | Single-turn with jailbreak template |
 # | ManyShot | `many_shot` | complex | Multi-turn ManyShot jailbreak |
 # | SkeletonKey | `skeleton` | complex | SkeletonKey jailbreak technique |
 # | RolePlay | `role_play` | complex | Role-play based persuasion |
 #
-# The scenario also accepts `num_templates` to limit how many jailbreak templates are used per strategy,
-# `num_attempts` to repeat each template multiple times, and `jailbreak_names` to select specific templates
-# by name.
+# The scenario also accepts `num_templates` to limit how many jailbreak templates are used per strategy
+# (if not passed, the scenario runs all 90+ templates which can take a long time; if passed, templates
+# are selected randomly from the full list), `num_attempts` to repeat each template multiple times, and
+# `jailbreak_names` to select specific templates by name.
 #
 # **Note:** This scenario does not include a default baseline (`include_baseline=False`). Jailbreak testing
 # is inherently template-based — a raw prompt without a jailbreak template would not test the intended
@@ -44,7 +45,8 @@
 #
 # The default dataset is `airt_harms`, containing general harmful objectives. You can bring your own
 # datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI flag —
-# see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+# see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details and
+# [Configuring RedTeamAgent](1_red_team_agent.ipynb) for advanced dataset configuration.
 #
 # ## Setup
 

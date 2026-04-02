@@ -22,17 +22,18 @@
 #
 # ## Available Strategies
 #
-# | Strategy | CLI Value | Type | Description |
+# | Strategy | CLI Value | Tags | Description |
 # |----------|-----------|------|-------------|
-# | ALL | `all` | Aggregate | Runs all strategies |
-# | SINGLE_TURN | `single_turn` | Aggregate | Single-turn PromptSending attack |
-# | MULTI_TURN | `multi_turn` | Aggregate | Multi-turn RedTeaming attack |
+# | ALL | `all` | all | Runs all strategies |
+# | SINGLE_TURN | `single_turn` | single_turn | Single-turn PromptSending attack |
+# | MULTI_TURN | `multi_turn` | multi_turn | Multi-turn RedTeaming attack |
 #
 # ## Default Datasets
 #
 # The default dataset is `airt_malware`, containing English-language malware generation requests. You can
 # bring your own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names`
-# CLI flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+# CLI flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details and
+# [Configuring RedTeamAgent](1_red_team_agent.ipynb) for advanced dataset configuration.
 #
 # ## Setup
 

@@ -34,7 +34,8 @@
 #
 # The default dataset is `airt_scams`, containing phishing and fraud generation objectives. You can bring
 # your own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI
-# flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+# flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details and
+# [Configuring RedTeamAgent](1_red_team_agent.ipynb) for advanced dataset configuration.
 #
 # ## Setup
 

@@ -28,7 +28,7 @@
 #
 # ## Conversation-Level Scoring
 #
-# Unlike content harms that can be detected in a single response, psychosocial harms often emerge
+# Unlike content harms that can often be evaluated from a single response, psychosocial harms often emerge
 # gradually across a multi-turn conversation. The Psychosocial scenario uses `create_conversation_scorer()`
 # to wrap its rubric-based scorer, enabling evaluation of the **entire conversation history** rather than
 # just the latest response. This is critical for detecting patterns like gradual crisis escalation.
@@ -47,11 +47,11 @@
 #
 # ## Available Strategies
 #
-# | Strategy | CLI Value | Type | Description |
+# | Strategy | CLI Value | Tags | Description |
 # |----------|-----------|------|-------------|
-# | ALL | `all` | Aggregate | Runs both subharms |
-# | ImminentCrisis | `imminent_crisis` | Concrete | Tests crisis escalation responses |
-# | LicensedTherapist | `licensed_therapist` | Concrete | Tests for clinical advice impersonation |
+# | ALL | `all` | all | Runs both subharms |
+# | ImminentCrisis | `imminent_crisis` | — | Tests crisis escalation responses |
+# | LicensedTherapist | `licensed_therapist` | — | Tests for clinical advice impersonation |
 #
 # **Note:** This scenario does not include a default baseline (`include_default_baseline=False`).
 # A single-turn baseline would not be meaningful here because psychosocial harms emerge through
@@ -63,7 +63,8 @@
 #
 # The default dataset is `airt_imminent_crisis`, containing crisis-related objectives. You can bring your
 # own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI flag —
-# see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+# see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details and
+# [Configuring RedTeamAgent](1_red_team_agent.ipynb) for advanced dataset configuration.
 #
 # ## Setup
 
@@ -127,7 +128,9 @@ scenario_result = await scenario.run_async()  # type: ignore
 #
 # The Psychosocial scenario uses a `FloatScaleThresholdScorer` rather than a binary true/false scorer.
 # The underlying rubric scores responses on a 1–5 scale based on how harmful the model's behavior is.
-# The threshold determines the cutoff for "objective achieved" (i.e., the model produced harmful content).
+# The default threshold is 1.0, meaning only a raw score of 5 (extremely harmful) counts as attack
+# success. You can create your own `FloatScaleThresholdScorer` with a different threshold to adjust
+# sensitivity based on your requirements.
 
 # %%
 await printer.print_summary_async(scenario_result)  # type: ignore

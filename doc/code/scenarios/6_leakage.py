@@ -56,13 +56,16 @@
 # - **Jaccard (N-gram Overlap)** — Measures phrase-level similarity using configurable n-grams.
 #   Score = matching n-grams / total reference n-grams.
 #
-# All metrics are normalized to [0, 1] where 1 indicates the reference text is fully present in the response.
+# All metrics are normalized to [0, 1] where 1 indicates the reference text is fully present in the
+# response. There is no built-in threshold — the scorer returns a raw float, and you determine what
+# score constitutes a meaningful match for your use case.
 #
 # ## Default Datasets
 #
 # The default dataset is `airt_leakage`, containing data leakage and extraction objectives. You can bring
 # your own datasets using `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI
-# flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+# flag — see [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details and
+# [Configuring RedTeamAgent](1_red_team_agent.ipynb) for advanced dataset configuration.
 #
 # ## Setup
 
@@ -131,9 +134,10 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # %% [markdown]
 # ## Using PlagiarismScorer for Deeper Analysis
 #
-# After running the leakage scenario, you can use the `PlagiarismScorer` to perform additional plagiarism
-# analysis on the model's responses. This is complementary to the scenario's built-in leakage scorer and
-# can be applied to responses from any strategy.
+# After running the leakage scenario, you can measure how much copyrighted or sensitive text appears in
+# model responses using `PlagiarismScorer`. This scorer is complementary to the scenario's built-in
+# leakage detection and can be applied to responses from any strategy. The example below demonstrates
+# the three available metrics against a known reference text.
 
 # %%
 from pyrit.score import PlagiarismMetric, PlagiarismScorer

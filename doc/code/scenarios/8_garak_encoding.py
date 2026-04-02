@@ -25,26 +25,26 @@
 #
 # ## Available Strategies
 #
-# | Strategy | CLI Value | Type | Description |
+# | Strategy | CLI Value | Tags | Description |
 # |----------|-----------|------|-------------|
-# | ALL | `all` | Aggregate | Runs all 17 encodings |
-# | Base64 | `base64` | Concrete | Base64 encoding |
-# | Base2048 | `base2048` | Concrete | Base2048 encoding |
-# | Base16 | `base16` | Concrete | Base16 (hex) encoding |
-# | Base32 | `base32` | Concrete | Base32 encoding |
-# | ASCII85 | `ascii85` | Concrete | ASCII85 encoding |
-# | Hex | `hex` | Concrete | Hexadecimal encoding |
-# | QuotedPrintable | `quoted_printable` | Concrete | Quoted-printable encoding |
-# | UUencode | `uuencode` | Concrete | UUencode format |
-# | ROT13 | `rot13` | Concrete | ROT13 cipher |
-# | Braille | `braille` | Concrete | Braille character encoding |
-# | Atbash | `atbash` | Concrete | Atbash cipher |
-# | MorseCode | `morse_code` | Concrete | Morse code encoding |
-# | NATO | `nato` | Concrete | NATO phonetic alphabet |
-# | Ecoji | `ecoji` | Concrete | Emoji-based encoding |
-# | Zalgo | `zalgo` | Concrete | Zalgo text encoding |
-# | LeetSpeak | `leet_speak` | Concrete | Leet speak encoding |
-# | AsciiSmuggler | `ascii_smuggler` | Concrete | ASCII smuggling technique |
+# | ALL | `all` | all | Runs all 17 encodings |
+# | Base64 | `base64` | — | Base64 encoding |
+# | Base2048 | `base2048` | — | Base2048 encoding |
+# | Base16 | `base16` | — | Base16 (hex) encoding |
+# | Base32 | `base32` | — | Base32 encoding |
+# | ASCII85 | `ascii85` | — | ASCII85 encoding |
+# | Hex | `hex` | — | Hexadecimal encoding |
+# | QuotedPrintable | `quoted_printable` | — | Quoted-printable encoding |
+# | UUencode | `uuencode` | — | UUencode format |
+# | ROT13 | `rot13` | — | ROT13 cipher |
+# | Braille | `braille` | — | Braille character encoding |
+# | Atbash | `atbash` | — | Atbash cipher |
+# | MorseCode | `morse_code` | — | Morse code encoding |
+# | NATO | `nato` | — | NATO phonetic alphabet |
+# | Ecoji | `ecoji` | — | Emoji-based encoding |
+# | Zalgo | `zalgo` | — | Zalgo text encoding |
+# | LeetSpeak | `leet_speak` | — | Leet speak encoding |
+# | AsciiSmuggler | `ascii_smuggler` | — | ASCII smuggling technique |
 #
 # **Note:** This scenario does not support strategy composition.
 #
@@ -53,7 +53,8 @@
 # The default datasets are `garak_slur_terms_en` (English slur terms) and `garak_web_html_js` (web
 # injection payloads), with a max of 3 items per dataset. You can bring your own datasets using
 # `DatasetConfiguration(seed_groups=your_groups)` or the `--dataset-names` CLI flag — see
-# [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details.
+# [Loading Datasets](../datasets/1_loading_datasets.ipynb) for details and
+# [Configuring RedTeamAgent](1_red_team_agent.ipynb) for advanced dataset configuration.
 #
 # ## Setup
 
