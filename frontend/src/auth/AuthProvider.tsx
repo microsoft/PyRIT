@@ -10,7 +10,7 @@
  * - Shows a loading state while auth initializes
  */
 
-import { useState, useEffect, createContext, useContext, type ReactNode} from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import {
   PublicClientApplication,
   EventType,
@@ -23,10 +23,8 @@ import {
   useMsal,
 } from '@azure/msal-react'
 import { fetchAuthConfig, buildMsalConfig, buildLoginRequest, type AuthConfig } from './msalConfig'
+import { AuthConfigContext, useAuthConfig } from './AuthConfigContext'
 import { setMsalInstance as setApiMsalInstance, setClientId as setApiClientId } from '../services/api'
-
-const AuthConfigContext = createContext<AuthConfig>({clientId: '', tenantId: '', allowedGroupId: ''})
-export const useAuthConfig = () => useContext(AuthConfigContext)
 
 function LoginRedirect() {
   const { instance } = useMsal()
