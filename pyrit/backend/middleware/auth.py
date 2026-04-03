@@ -93,13 +93,14 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         result = await self._authenticate_request_async(request)
         if isinstance(result, JSONResponse):
             return result  # Authentication failed with 401 or 403
-        
+
         request.state.user = result
         return await call_next(request)
-    
+
     async def _authenticate_request_async(self, request: Request) -> AuthenticatedUser | JSONResponse:
-        """Extract, validate, and authorize the Bearer token from the request.
-        
+        """
+        Extract, validate, and authorize the Bearer token from the request.
+
         Returns:
             AuthenticatedUser if validation and authorization succeed,
             JSONResponse with 401 or 403 if they fail.
@@ -111,7 +112,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
                 content={"detail": "Missing or invalid Authorization header"},
             )
-        
+
         token = auth_header.removeprefix("Bearer ")
 
         # Validate the token and extract user info and claims
@@ -121,12 +122,12 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
                 content={"detail": "Invalid or expired token"},
             )
-        
+
         # If groups claim is missing due to user being in >200 groups,
         # resolve group membership via Graph API
         if not user.groups and self._allowed_group_ids and "_claim_sources" in claims:
             user.groups = await self._resolve_excess_groups_async(claims, token)
-        
+
         # Authorize the user based on group membership
         if not self._is_authorized(user):
             logger.warning(
@@ -140,7 +141,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 status_code=403,
                 content={"detail": "You are not authorized to access this application"},
             )
-        
+
         return user
 
     def _is_authorized(self, user: AuthenticatedUser) -> bool:

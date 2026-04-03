@@ -110,7 +110,7 @@ be created manually — see [Post-Deployment §2](#post-deployment).
 **Requirements:**
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) **2.84+**
 (version 2.77 has a known `content-already-consumed` bug)
-- Container image must be pushed to ACR **before** deployment (see [§5 
+- Container image must be pushed to ACR **before** deployment (see [§5
 below](#5-container-image-must-be-pushed-to-acr-before-deployment))
 
 **Quick reference** — what you need before running `az deployment group create`:
