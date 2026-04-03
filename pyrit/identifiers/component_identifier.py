@@ -418,6 +418,25 @@ class ComponentIdentifier:
             return [child]
         return child
 
+    def _collect_child_eval_hashes(self) -> set[str]:
+        """
+        Recursively collect all eval_hash values from child identifiers.
+
+        Walks the entire children tree and returns a set of all non-None
+        eval_hash values found on any descendant ComponentIdentifier.
+
+        Returns:
+            set[str]: All eval_hash values found in the children tree.
+        """
+        hashes: set[str] = set()
+        for child_val in self.children.values():
+            children_list = child_val if isinstance(child_val, list) else [child_val]
+            for child in children_list:
+                if child.eval_hash:
+                    hashes.add(child.eval_hash)
+                hashes.update(child._collect_child_eval_hashes())
+        return hashes
+
     @classmethod
     def _reconstruct_children(
         cls, children_dict: Optional[dict[str, Any]]
