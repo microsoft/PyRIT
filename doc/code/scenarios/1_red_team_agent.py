@@ -18,9 +18,6 @@
 # - **Strategy composition**: Combine multiple converters together
 # - **Difficulty levels**: Organized into EASY, MODERATE, and DIFFICULT categories
 #
-# While this notebook focuses on `RedTeamAgent`, the configuration patterns shown here (strategy
-# selection, custom datasets, baseline execution, resiliency) apply to all scenarios.
-#
 # ## Setup
 #
 # First, we'll initialize PyRIT and configure the target we want to test.
@@ -189,14 +186,3 @@ await printer.print_summary_async(baseline_result)  # type: ignore
 #     scenario_strategies=[FoundryStrategy.Base64],
 # )
 # ```
-
-# %% [markdown]
-# ## Scenario Resiliency
-#
-# The `RedTeamAgent` scenario supports automatic resume and retry mechanisms:
-#
-# - **Automatic Resume**: If execution is interrupted, re-running the scenario will continue from where it left off
-# - **Retry Mechanism**: Set `max_retries` to automatically retry on transient failures
-# - **Progress Tracking**: The scenario tracks completed objectives in memory
-#
-# For more details on resiliency features, see the [resiliency documentation](../setup/2_resiliency.ipynb).
