@@ -65,7 +65,7 @@ class ImageCompressionConverter(PromptConverter):
         Initialize the converter with specified compression settings.
 
         Args:
-            output_format (str, optional): Output image format. Must be one of 'JPEG', 'PNG', or 'WEBP'. 
+            output_format (str, optional): Output image format. Must be one of 'JPEG', 'PNG', or 'WEBP'.
             If None, keeps original format (if supported).
             quality (int, optional): General quality setting for JPEG and WEBP formats (0-100).
                 For JPEG format, it represents the image quality, on a scale from 0 (worst) to 95 (best).
