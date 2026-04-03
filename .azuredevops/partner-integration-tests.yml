@@ -15,7 +15,7 @@ jobs:
   parameters:
     jobName: PartnerIntegrationTests
     jobDisplayName: "Builds the pyrit environment and runs partner integration tests"
-    testAzureSubscription: 'partner-integration-test-service-connection'
+    testAzureSubscription: 'integration-test-service-connection'
     newDir: partner_integration_test_directory
     testsFolder: partner_integration
     makeTarget: partner-integration-test

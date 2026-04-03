@@ -772,3 +772,49 @@ async def test_run_evaluation_async_raises_on_mismatched_harm_definition_version
             num_scorer_trials=1,
             update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE,
         )
+
+
+@pytest.mark.asyncio
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
+async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition(
+    mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
+):
+    """Test that run_evaluation_async raises when harm CSVs have no harm_definition header."""
+    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+
+    csv1 = tmp_path / "harm" / "file1.csv"
+    (tmp_path / "harm").mkdir(parents=True)
+    csv1.touch()
+
+    mock_evals_path.__truediv__ = lambda self, x: tmp_path / x
+    mock_evals_path.glob = lambda pattern: [csv1]
+
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
+    ]
+    entry = HarmHumanLabeledEntry(responses, [0.2], "violence")
+
+    # Dataset with no harm_definition set
+    mock_from_csv.return_value = HumanLabeledDataset(
+        name="test",
+        metrics_type=MetricsType.HARM,
+        entries=[entry],
+        version="1.0",
+        harm_definition=None,
+        harm_definition_version=None,
+    )
+
+    evaluator = HarmScorerEvaluator(mock_harm_scorer)
+    dataset_files = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["harm/*.csv"],
+        result_file="harm/test_metrics.jsonl",
+        harm_category="violence",
+    )
+
+    with pytest.raises(ValueError, match="No harm_definition found in CSV headers"):
+        await evaluator.run_evaluation_async(
+            dataset_files=dataset_files,
+            num_scorer_trials=1,
+            update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE,
+        )
