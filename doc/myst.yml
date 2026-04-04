@@ -69,6 +69,7 @@ project:
             - file: code/datasets/2_seed_programming.ipynb
             - file: code/datasets/3_dataset_writing.md
             - file: code/datasets/4_dataset_coding.ipynb
+            - file: code/datasets/5_simulated_conversation.ipynb
         - file: code/executor/0_executor.md
           children:
             - file: code/executor/attack/0_attack.md
@@ -92,6 +93,7 @@ project:
             - file: code/executor/benchmark/0_benchmark.md
               children:
                 - file: code/executor/benchmark/1_qa_benchmark.ipynb
+                - file: code/executor/benchmark/2_bias_benchmark.ipynb
             - file: code/executor/promptgen/0_promptgen.md
               children:
                 - file: code/executor/promptgen/1_anecdoctor_generator.ipynb
@@ -171,6 +173,7 @@ project:
             - file: code/scenarios/6_leakage.ipynb
             - file: code/scenarios/7_scam.ipynb
             - file: code/scenarios/8_garak_encoding.ipynb
+            - file: code/scenarios/9_sending_raw_datasets.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb
