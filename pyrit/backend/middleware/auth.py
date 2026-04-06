@@ -253,7 +253,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
-                audience="https://graph.microsoft.com",
+                audience=self._client_id,
                 issuer=self._issuer,
                 options={"require": ["exp", "iss", "aud", "sub"]},
             )
