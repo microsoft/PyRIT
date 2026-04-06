@@ -29,6 +29,46 @@ interface SelectConverterInputProps {
   onQueryChange: (value: string) => void
 }
 
+interface ConverterDescriptionProps {
+  converter: ConverterCatalogEntry
+}
+
+function ConverterDescription({ converter }: ConverterDescriptionProps) {
+  const styles = useConverterPanelStyles()
+
+  return (
+    <div
+      className={styles.converterCard}
+      data-testid={`converter-item-${converter.converter_type}`}
+    >
+      <Text weight="semibold" size={300} className={styles.converterName}>
+        {converter.converter_type}
+      </Text>
+      {converter.description && (
+        <Text size={200} className={styles.hintText}>
+          {converter.description}
+        </Text>
+      )}
+      <div className={styles.metaRow}>
+        <Text size={200} className={styles.badgeText}>In:</Text>
+        {(converter.supported_input_types ?? []).map((t) => (
+          <span key={t} className={`${styles.typeBadge} ${styles[`input_${t}` as keyof typeof styles] ?? ''}`}>
+            {t.replace('_path', '')}
+          </span>
+        ))}
+      </div>
+      <div className={styles.metaRow}>
+        <Text size={200} className={styles.badgeText}>Out:</Text>
+        {(converter.supported_output_types ?? []).map((t) => (
+          <span key={t} className={`${styles.typeBadge} ${styles[`output_${t}` as keyof typeof styles] ?? ''}`}>
+            {t.replace('_path', '')}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SelectConverterInput({ query, selectedConverterType, groupedConverters, onOptionSelect, onQueryChange }: SelectConverterInputProps) {
   const styles = useConverterPanelStyles()
 
@@ -176,7 +216,7 @@ interface ParamInputProps {
   onChange: (name: string, value: string) => void
 }
 
-function ParameterChoiceViewer({ param, value, onChange }: ParamInputProps) {
+function ConverterParameterChoiceViewer({ param, value, onChange }: ParamInputProps) {
   return (
     <Select
       value={value ?? param.default_value ?? ''}
@@ -562,35 +602,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
               onQueryChange={setQuery}
             />
             {selectedConverter && (
-              <div
-                className={styles.converterCard}
-                data-testid={`converter-item-${selectedConverter.converter_type}`}
-              >
-                <Text weight="semibold" size={300} className={styles.converterName}>
-                  {selectedConverter.converter_type}
-                </Text>
-                {selectedConverter.description && (
-                  <Text size={200} className={styles.hintText}>
-                    {selectedConverter.description}
-                  </Text>
-                )}
-                <div className={styles.metaRow}>
-                  <Text size={200} className={styles.badgeText}>In:</Text>
-                  {(selectedConverter.supported_input_types ?? []).map((t) => (
-                    <span key={t} className={`${styles.typeBadge} ${styles[`input_${t}` as keyof typeof styles] ?? ''}`}>
-                      {t.replace('_path', '')}
-                    </span>
-                  ))}
-                </div>
-                <div className={styles.metaRow}>
-                  <Text size={200} className={styles.badgeText}>Out:</Text>
-                  {(selectedConverter.supported_output_types ?? []).map((t) => (
-                    <span key={t} className={`${styles.typeBadge} ${styles[`output_${t}` as keyof typeof styles] ?? ''}`}>
-                      {t.replace('_path', '')}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <ConverterDescription converter={selectedConverter} />
             )}
 
             {selectedConverter && (selectedConverter.parameters?.length ?? 0) > 0 && (
@@ -625,7 +637,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                         data-testid={`param-${param.name}`}
                       />
                     ) : param.choices ? (
-                      <ParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={handleParamChange} />
+                      <ConverterParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={handleParamChange} />
                     ) : /path|file/i.test(param.name) ? (
                       <ParameterFileViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={handleParamChange} onBrowse={handleFileBrowse} />
                     ) : (
