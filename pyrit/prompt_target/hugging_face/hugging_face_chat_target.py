@@ -33,7 +33,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
     """
 
     _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True, supports_editable_history=True
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_system_prompt=True,
     )
 
     # Class-level cache for model and tokenizer

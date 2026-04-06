@@ -27,7 +27,6 @@ class TestDefaultCapabilitiesDefined:
         from pyrit.prompt_target import (
             AzureBlobStorageTarget,
             AzureMLChatTarget,
-            CrucibleTarget,
             GandalfTarget,
             HTTPTarget,
             HTTPXAPITarget,
@@ -50,7 +49,6 @@ class TestDefaultCapabilitiesDefined:
         return [
             AzureBlobStorageTarget,
             AzureMLChatTarget,
-            CrucibleTarget,
             GandalfTarget,
             HTTPTarget,
             HTTPXAPITarget,
@@ -243,6 +241,7 @@ class TestTargetCapabilitiesModalities:
         caps = HuggingFaceChatTarget._DEFAULT_CAPABILITIES
         assert caps.supports_editable_history is True
         assert caps.supports_multi_turn is True
+        assert caps.supports_system_prompt is True
 
     def test_azure_ml_chat_target_capabilities(self):
         from pyrit.prompt_target import AzureMLChatTarget
@@ -253,6 +252,31 @@ class TestTargetCapabilitiesModalities:
         )
         assert target.capabilities.supports_editable_history is True
         assert target.capabilities.supports_multi_message_pieces is True
+        assert target.capabilities.supports_system_prompt is True
+
+    @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+    def test_prompt_chat_targets_support_system_prompt(self):
+        from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, RealtimeTarget
+
+        openai_chat_target = OpenAIChatTarget(
+            model_name="test-model",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+        )
+        openai_response_target = OpenAIResponseTarget(
+            model_name="o1",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+        )
+        realtime_target = RealtimeTarget(
+            model_name="gpt-4o-realtime",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+        )
+
+        assert openai_chat_target.capabilities.supports_system_prompt is True
+        assert openai_response_target.capabilities.supports_system_prompt is True
+        assert realtime_target.capabilities.supports_system_prompt is True
 
     def test_custom_capabilities_override_modalities(self):
         from pyrit.prompt_target import OpenAIChatTarget, TargetCapabilities
@@ -415,3 +439,12 @@ class TestGetDefaultCapabilities:
         cls = self._make_target_class(default_caps=minimal_caps)
         result = cls.get_default_capabilities("tts")
         assert result.output_modalities == frozenset({frozenset(["audio_path"])})
+
+    def test_prompt_chat_target_preserves_system_prompt_for_recognized_model(self):
+        from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+
+        result = PromptChatTarget.get_default_capabilities("gpt-4o")
+
+        assert result.supports_multi_turn is True
+        assert result.supports_multi_message_pieces is True
+        assert result.supports_system_prompt is True

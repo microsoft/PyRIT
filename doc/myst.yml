@@ -163,7 +163,14 @@ project:
             - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
-            - file: code/scenarios/1_configuring_scenarios.ipynb
+            - file: code/scenarios/1_red_team_agent.ipynb
+            - file: code/scenarios/2_content_harms.ipynb
+            - file: code/scenarios/3_psychosocial.ipynb
+            - file: code/scenarios/4_cyber.ipynb
+            - file: code/scenarios/5_jailbreak.ipynb
+            - file: code/scenarios/6_leakage.ipynb
+            - file: code/scenarios/7_scam.ipynb
+            - file: code/scenarios/8_garak_encoding.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb

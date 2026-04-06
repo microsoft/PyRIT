@@ -65,13 +65,14 @@ class ImageCompressionConverter(PromptConverter):
         Initialize the converter with specified compression settings.
 
         Args:
-            output_format (str, optional): Output image format. If None, keeps original format (if supported).
-            quality (int, optional): General quality setting for JPEG and WEBP formats (0-100).\n
-                For JPEG format, it represents the image quality, on a scale from 0 (worst) to 95 (best).\n
+            output_format (str, optional): Output image format. Must be one of 'JPEG', 'PNG', or 'WEBP'.
+            If None, keeps original format (if supported).
+            quality (int, optional): General quality setting for JPEG and WEBP formats (0-100).
+                For JPEG format, it represents the image quality, on a scale from 0 (worst) to 95 (best).
                 For WEBP format, the value ranges from 0 to 100; for lossy compression: 0-smallest file size and
                 100-largest; for ``lossless``: 0-fastest/less efficient, and 100 gives the best compression.
-            optimize (bool, optional): Whether to optimize the image during compression. \n
-                For JPEG: makes the encoder perform an extra pass over the image to select optimal settings.\n
+            optimize (bool, optional): Whether to optimize the image during compression.
+                For JPEG: makes the encoder perform an extra pass over the image to select optimal settings.
                 For PNG: instructs the PNG writer to make the output file as small as possible.
             progressive (bool, optional): Whether to save JPEG images as progressive.
             compress_level (int, optional): ZLIB compression level (0-9): 1=fastest, 9=best, 0=none.

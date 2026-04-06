@@ -38,6 +38,9 @@ class TargetCapabilities:
     # multi-turn interactions and that the attack history is not immutable once set.
     supports_editable_history: bool = False
 
+    # Whether the target natively supports system prompts.
+    supports_system_prompt: bool = False
+
     # The input modalities supported by the target (e.g., "text", "image").
     input_modalities: frozenset[frozenset[PromptDataType]] = frozenset({frozenset(["text"])})
 
@@ -76,6 +79,7 @@ _TEXT_OUTPUT: frozenset[frozenset[PromptDataType]] = cast(
 _GPT_4O = TargetCapabilities(
     supports_multi_turn=True,
     supports_multi_message_pieces=True,
+    supports_system_prompt=True,
     supports_json_output=True,
     input_modalities=_TEXT_IMAGE_INPUT,
     output_modalities=_TEXT_OUTPUT,
@@ -84,6 +88,7 @@ _GPT_4O = TargetCapabilities(
 _GPT_5 = TargetCapabilities(
     supports_multi_turn=True,
     supports_multi_message_pieces=True,
+    supports_system_prompt=True,
     supports_json_schema=True,
     supports_json_output=True,
     input_modalities=_TEXT_IMAGE_INPUT,
