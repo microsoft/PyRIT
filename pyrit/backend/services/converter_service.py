@@ -16,7 +16,9 @@ import inspect
 import re
 import uuid
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal, Optional, Union, get_args, get_origin
+from urllib.parse import parse_qs, urlparse
 
 from pyrit import prompt_converter
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -325,28 +327,58 @@ class ConverterService:
         original_value = request.original_value
         data_type = request.original_value_data_type
 
-        # For path-based data types, persist base64/data-uri to a file
-        if str(data_type).endswith("_path") and not original_value.startswith("/"):
-            value = original_value
-            if value.startswith("data:"):
-                _, _, value = value.partition(",")
+        # For path-based data types, persist base64/data-uri to a file.
+        # Reuse the same detection logic as AttackService._persist_base64_pieces_async
+        # to correctly distinguish file paths / URLs from raw base64 payloads.
+        if str(data_type).endswith("_path"):
+            # Already a remote URL — keep as-is
+            if original_value.startswith(("http://", "https://")):
+                pass
+            # Already a local media URL (e.g. /api/media?path=...) — extract the file path
+            elif original_value.startswith("/api/media"):
+                parsed = urlparse(original_value)
+                file_path = parse_qs(parsed.query).get("path", [None])[0]
+                if file_path:
+                    original_value = file_path
+            # Data URI from the frontend (e.g. "data:image/png;base64,...") — decode and persist
+            elif original_value.startswith("data:"):
+                _, _, value = original_value.partition(",")
 
-            ext = ".bin"
-            mime_guess = {
-                "image_path": ".png",
-                "audio_path": ".wav",
-                "video_path": ".mp4",
-                "binary_path": ".bin",
-            }
-            ext = mime_guess.get(str(data_type), ".bin")
+                mime_guess = {
+                    "image_path": ".png",
+                    "audio_path": ".wav",
+                    "video_path": ".mp4",
+                    "binary_path": ".bin",
+                }
+                ext = mime_guess.get(str(data_type), ".bin")
 
-            serializer = data_serializer_factory(
-                category="prompt-memory-entries",
-                data_type=data_type,
-                extension=ext,
-            )
-            await serializer.save_b64_image(data=value)
-            original_value = str(serializer.value)
+                serializer = data_serializer_factory(
+                    category="prompt-memory-entries",
+                    data_type=data_type,
+                    extension=ext,
+                )
+                await serializer.save_b64_image(data=value)
+                original_value = str(serializer.value)
+            # Already an existing file on disk — keep as-is
+            elif Path(original_value).is_file():
+                pass
+            else:
+                # Treat as raw base64
+                mime_guess = {
+                    "image_path": ".png",
+                    "audio_path": ".wav",
+                    "video_path": ".mp4",
+                    "binary_path": ".bin",
+                }
+                ext = mime_guess.get(str(data_type), ".bin")
+
+                serializer = data_serializer_factory(
+                    category="prompt-memory-entries",
+                    data_type=data_type,
+                    extension=ext,
+                )
+                await serializer.save_b64_image(data=original_value)
+                original_value = str(serializer.value)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters(
