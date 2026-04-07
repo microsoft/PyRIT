@@ -11,6 +11,7 @@ import requests
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -303,7 +304,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         metadata = self._build_metadata(record)
 
         # Escape Jinja2 template syntax in the prompt text
-        escaped_prompt = f"{{% raw %}}{prompt_value}{{% endraw %}}"
+        escaped_prompt = escape_jinja_template_syntax(prompt_value)
 
         return SeedPrompt(
             value=escaped_prompt,

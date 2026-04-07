@@ -9,6 +9,7 @@ from typing import Literal, Optional
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
 
@@ -175,7 +176,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
                 # Create text prompt (sequence=0, sent first)
                 text_prompt = SeedPrompt(
-                    value=f"{{% raw %}}{text}{{% endraw %}}",
+                    value=escape_jinja_template_syntax(text),
                     data_type="text",
                     name="ML-VLSU Text",
                     dataset_name=self.dataset_name,

@@ -6,6 +6,7 @@ import re
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -113,7 +114,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
+                value=escape_jinja_template_syntax(item["prompt"]),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[self._parse_category(c) for c in item["categories"]],

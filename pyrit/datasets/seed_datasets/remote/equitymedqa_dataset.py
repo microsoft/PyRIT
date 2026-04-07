@@ -7,6 +7,7 @@ from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -134,7 +135,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{prompt}{{% endraw %}}",
+                value=escape_jinja_template_syntax(prompt),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess medical biases in AI systems",

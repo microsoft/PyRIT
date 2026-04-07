@@ -7,6 +7,7 @@ from typing import Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -197,7 +198,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                     continue
 
                 seed_prompt = SeedPrompt(
-                    value=f"{{% raw %}}{prompt_text}{{% endraw %}}",
+                    value=escape_jinja_template_syntax(prompt_text),
                     harm_categories=[category],
                     groups=[item_prompt_style] if item_prompt_style else [],
                     metadata={

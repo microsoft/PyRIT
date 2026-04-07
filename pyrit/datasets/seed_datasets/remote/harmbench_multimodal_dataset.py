@@ -9,6 +9,7 @@ from typing import Literal, Optional
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
 
@@ -172,7 +173,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             prompts.append(image_prompt)
 
             text_prompt = SeedPrompt(
-                value=f"{{% raw %}}{behavior_text}{{% endraw %}}",
+                value=escape_jinja_template_syntax(behavior_text),
                 data_type="text",
                 name=f"HarmBench Multimodal Text - {behavior_id}",
                 dataset_name=self.dataset_name,

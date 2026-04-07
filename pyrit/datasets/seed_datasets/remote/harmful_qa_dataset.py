@@ -5,6 +5,7 @@ import logging
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -79,7 +80,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['question']}{{% endraw %}}",
+                value=escape_jinja_template_syntax(item["question"]),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["topic"]] if item.get("topic") else [],

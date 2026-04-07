@@ -8,6 +8,7 @@ import pandas as pd
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -107,7 +108,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                     metadata["question_sentiment"] = sentiment_value
 
             prompt = SeedPrompt(
-                value=f"{{% raw %}}{str(row['Quora Question'])}{{% endraw %}}",
+                value=escape_jinja_template_syntax(str(row["Quora Question"])),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=["transphobia"],

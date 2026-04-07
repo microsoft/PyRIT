@@ -5,6 +5,7 @@ from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedObjective
 
@@ -85,7 +86,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
 
             # Create SeedPrompt
             seed_prompt = SeedObjective(
-                value=f"{{% raw %}}{example['Behavior']}{{% endraw %}}",
+                value=escape_jinja_template_syntax(example["Behavior"]),
                 name="HarmBench Examples",
                 dataset_name=self.dataset_name,
                 harm_categories=[category],

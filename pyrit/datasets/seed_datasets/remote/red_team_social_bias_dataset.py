@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -128,7 +129,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                 # Clean up single turn prompts that contain unwanted lines of text
                 cleaned_value = prompt_value.replace("### Response:", "").replace("### Instruction:", "").strip()
                 # some entries have contents that trip up jinja2, so we escape them
-                escaped_cleaned_value = f"{{% raw %}}{cleaned_value}{{% endraw %}}"
+                escaped_cleaned_value = escape_jinja_template_syntax(cleaned_value)
                 seed_prompts.append(
                     SeedPrompt(
                         value=escaped_cleaned_value,

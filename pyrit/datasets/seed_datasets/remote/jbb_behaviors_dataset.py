@@ -5,6 +5,7 @@ import logging
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -100,7 +101,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
-                    value=f"{{% raw %}}{behavior}{{% endraw %}}",
+                    value=escape_jinja_template_syntax(behavior),
                     harm_categories=harm_categories,
                     groups=[category] if category else [],
                     metadata={

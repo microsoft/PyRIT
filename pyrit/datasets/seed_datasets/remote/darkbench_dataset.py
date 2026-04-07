@@ -3,6 +3,7 @@
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
+    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -73,7 +74,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         # Process into SeedPrompts
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['Example']}{{% endraw %}}",
+                value=escape_jinja_template_syntax(item["Example"]),
                 data_type="text",
                 name="",
                 dataset_name=self.dataset_name,
