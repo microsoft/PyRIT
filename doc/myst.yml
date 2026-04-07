@@ -232,13 +232,11 @@ site:
     - title: User Guide
       url: /code/user-guide
       children:
-        - title: Architecture
-          url: /code/architecture
         - title: Datasets
           url: /code/datasets/dataset
-        - title: Attacks
-          url: /code/executor/attack/attack
-        - title: Targets
+        - title: Executor
+          url: /code/executor/executor
+        - title: Prompt Targets
           url: /code/targets/prompt-targets
         - title: Converters
           url: /code/converters/converters
@@ -246,8 +244,16 @@ site:
           url: /code/scoring/scoring
         - title: Memory
           url: /code/memory/memory
+        - title: Setup
+          url: /code/setup/setup
         - title: Scenarios
           url: /code/scenarios/scenarios
+        - title: Registry
+          url: /code/registry/registry
+        - title: GUI
+          url: /code/gui/gui
+        - title: CLI
+          url: /code/front-end/front-end
     - title: API Reference
       url: /api/index
     - title: Blog

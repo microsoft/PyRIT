@@ -135,6 +135,7 @@ async def _assert_can_send_video_prompt(target):
         ("AZURE_FOUNDRY_PHI4_ENDPOINT", "AZURE_CHAT_PHI4_KEY", "AZURE_CHAT_PHI4_MODEL", True),
         ("GOOGLE_GEMINI_ENDPOINT", "GOOGLE_GEMINI_API_KEY", "GOOGLE_GEMINI_MODEL", False),
         ("ANTHROPIC_CHAT_ENDPOINT", "ANTHROPIC_CHAT_KEY", "ANTHROPIC_CHAT_MODEL", False),
+        ("AWS_ENDPOINT", "AWS_KEY", "AWS_CHAT_MODEL", False),
     ],
 )
 async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, api_key, model_name, supports_seed):
@@ -178,6 +179,7 @@ async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, a
             "AZURE_OPENAI_GPT5_KEY",
             "AZURE_OPENAI_GPT5_MODEL",
         ),
+        ("AWS_ENDPOINT", "AWS_KEY", "AWS_RESPONSES_MODEL"),
     ],
 )
 async def test_connect_required_openai_response_targets(sqlite_instance, endpoint, api_key, model_name):
