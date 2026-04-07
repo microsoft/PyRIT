@@ -6,7 +6,7 @@ import logging
 from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
+from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # as it constructs its own prompt format with examples.
 ManyShotJailbreakParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
-_MANY_SHOT_EXAMPLES_PATH = JAILBREAK_TEMPLATES_PATH / "many_shot_examples.json"
+_MANY_SHOT_EXAMPLES_PATH = DATASETS_PATH / "jailbreak" / "many_shot_examples.json"
 
 
 def load_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
