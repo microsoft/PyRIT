@@ -12,7 +12,9 @@ Converters can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import base64
 import inspect
+import mimetypes
 import re
 import uuid
 from functools import lru_cache
@@ -37,7 +39,15 @@ from pyrit.backend.models.converters import (
 from pyrit.models import PromptDataType
 from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
+from pyrit.prompt_target import PromptChatTarget
 from pyrit.registry.instance_registries import ConverterRegistry
+
+_DATA_TYPE_EXTENSION: dict[str, str] = {
+    "image_path": ".png",
+    "audio_path": ".wav",
+    "video_path": ".mp4",
+    "binary_path": ".bin",
+}
 
 
 def _build_converter_class_registry() -> dict[str, type]:
@@ -179,7 +189,16 @@ def _is_llm_based(converter_class: type) -> bool:
         sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
     except (ValueError, TypeError):
         return False
-    return any("target" in name.lower() for name in sig.parameters if name != "self")
+
+    for name, p in sig.parameters.items():
+        if name == "self":
+            continue
+        ann = p.annotation
+        if ann is inspect.Parameter.empty:
+            continue
+        if isinstance(ann, type) and issubclass(ann, PromptChatTarget):
+            return True
+    return False
 
 
 class ConverterService:
@@ -305,6 +324,7 @@ class ConverterService:
         params = self._resolve_converter_params(params=request.params)
         converter_class = self._get_converter_class(converter_type=request.type)
         params = self._coerce_params(converter_class=converter_class, params=params)
+        params = await self._persist_data_uri_params_async(converter_class=converter_class, params=params)
         converter_obj = converter_class(**params)
         self._registry.register_instance(converter_obj, name=converter_id)
 
@@ -344,13 +364,7 @@ class ConverterService:
             elif original_value.startswith("data:"):
                 _, _, value = original_value.partition(",")
 
-                mime_guess = {
-                    "image_path": ".png",
-                    "audio_path": ".wav",
-                    "video_path": ".mp4",
-                    "binary_path": ".bin",
-                }
-                ext = mime_guess.get(str(data_type), ".bin")
+                ext = _DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
@@ -364,13 +378,7 @@ class ConverterService:
                 pass
             else:
                 # Treat as raw base64
-                mime_guess = {
-                    "image_path": ".png",
-                    "audio_path": ".wav",
-                    "video_path": ".mp4",
-                    "binary_path": ".bin",
-                }
-                ext = mime_guess.get(str(data_type), ".bin")
+                ext = _DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
@@ -497,10 +505,75 @@ class ConverterService:
                     coerced[name] = float(value)
                 elif annotation is bool:
                     coerced[name] = value.lower() in ("true", "1", "yes")
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Parameter '{name}' expects {annotation.__name__}, got {value!r}") from e
 
         return coerced
+
+    @staticmethod
+    async def _persist_data_uri_params_async(
+        *,
+        converter_class: type,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Persist data-URI parameter values to disk.
+
+        The frontend file picker sends file contents as data URIs
+        (e.g. ``data:image/png;base64,...``). Constructor parameters typed as
+        ``Path`` or ``str`` params whose names suggest a file path receive the
+        decoded file persisted to the results store, with the value replaced
+        by the resulting file path.
+
+        Returns:
+            Params dict with data-URI values replaced by file paths.
+        """
+        try:
+            sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
+        except (ValueError, TypeError):
+            return params
+
+        result = dict(params)
+        for name, value in result.items():
+            if not isinstance(value, str) or not value.startswith("data:"):
+                continue
+            if name not in sig.parameters:
+                continue
+
+            # Parse data URI: data:[<mediatype>][;base64],<data>
+            header, _, payload = value.partition(",")
+            if not payload:
+                continue
+
+            # Derive extension from the MIME type in the header
+            mime_type = header.split(":")[1].split(";")[0] if ":" in header else ""
+            ext = mimetypes.guess_extension(mime_type, strict=False) if mime_type else None
+            if not ext:
+                ext = ".bin"
+
+            serializer = data_serializer_factory(
+                category="prompt-memory-entries",
+                data_type="binary_path",
+                extension=ext,
+            )
+            await serializer.save_data(data=base64.b64decode(payload))
+            file_path = str(serializer.value)
+
+            # Coerce to Path if the constructor expects it
+            annotation = sig.parameters[name].annotation
+            origin = get_origin(annotation)
+            if origin is Union:
+                args = get_args(annotation)
+                non_none = [a for a in args if a is not type(None)]
+                if len(non_none) == 1:
+                    annotation = non_none[0]
+
+            if annotation is Path:
+                result[name] = Path(file_path)
+            else:
+                result[name] = file_path
+
+        return result
 
     def _gather_converters(self, *, converter_ids: list[str]) -> list[tuple[str, str, Any]]:
         """

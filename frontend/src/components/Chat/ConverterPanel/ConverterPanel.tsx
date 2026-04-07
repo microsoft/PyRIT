@@ -176,7 +176,11 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     input.onchange = () => {
       const file = input.files?.[0]
       if (file) {
-        setParamValues((prev) => ({ ...prev, [paramName]: file.name }))
+        const reader = new FileReader()
+        reader.onload = () => {
+          setParamValues((prev) => ({ ...prev, [paramName]: reader.result as string }))
+        }
+        reader.readAsDataURL(file)
       }
     }
     input.click()

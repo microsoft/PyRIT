@@ -112,7 +112,7 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
               />
             ) : param.choices ? (
               <ConverterParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} />
-            ) : /path|file/i.test(param.name) ? (
+            ) : /path|file/i.test(param.name) || /path|file/i.test(param.description ?? '') ? (
               <ParameterFileViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} onBrowse={onFileBrowse} />
             ) : (
               <ConverterParameterViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} />

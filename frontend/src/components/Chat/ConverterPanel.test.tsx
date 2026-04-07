@@ -587,31 +587,57 @@ describe('ConverterPanel attachment preview', () => {
 // ─── File picker browse button ───────────────────────────────────
 
 describe('ConverterPanel file picker', () => {
-  it('opens file dialog on browse click and sets param value', async () => {
+  let createElementSpy: jest.SpyInstance | null = null
+
+  afterEach(() => {
+    createElementSpy?.mockRestore()
+    createElementSpy = null
+  })
+
+  it('opens file dialog on browse click and reads file as data URI', async () => {
     renderPanel({ previewText: 'hello' })
     await waitForList()
     await openComboboxAndSelect('FileParamConverter')
 
+    const mockFile = new File(['content'], 'template.txt', { type: 'text/plain' })
     const mockClick = jest.fn()
     const mockInput = {
       type: '',
       onchange: null as (() => void) | null,
       click: mockClick,
-      files: [{ name: 'template.txt' }],
+      files: [mockFile],
     }
     const origCreateElement = document.createElement.bind(document)
-    jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+    createElementSpy = jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       if (tag === 'input') return mockInput as unknown as HTMLElement
       return origCreateElement(tag)
     })
+
+    // Mock FileReader to call onload synchronously with a data URI
+    const OrigFileReader = globalThis.FileReader
+    const mockDataUri = 'data:text/plain;base64,Y29udGVudA=='
+    globalThis.FileReader = class MockFileReader {
+      result: string | null = null
+      onload: (() => void) | null = null
+      readAsDataURL() {
+        this.result = mockDataUri
+        this.onload?.()
+      }
+    } as unknown as typeof FileReader
 
     fireEvent.click(screen.getByTestId('param-template_file_path-browse'))
     expect(mockClick).toHaveBeenCalled()
     expect(mockInput.type).toBe('file')
 
-    act(() => { mockInput.onchange() })
+    // Restore before the state update triggers a re-render
+    createElementSpy.mockRestore()
+    createElementSpy = null
 
-    ;(document.createElement as jest.Mock).mockRestore()
+    act(() => { mockInput.onchange?.() })
+
+    expect(screen.getByTestId('param-template_file_path')).toHaveValue(mockDataUri)
+
+    globalThis.FileReader = OrigFileReader
   })
 })
 
