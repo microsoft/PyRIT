@@ -196,8 +196,11 @@ def _is_llm_based(converter_class: type) -> bool:
         ann = p.annotation
         if ann is inspect.Parameter.empty:
             continue
-        if isinstance(ann, type) and issubclass(ann, PromptChatTarget):
-            return True
+        try:
+            if isinstance(ann, type) and issubclass(ann, PromptChatTarget):
+                return True
+        except TypeError:
+            continue
     return False
 
 
