@@ -85,7 +85,7 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=example["prompt_text"],
+                value=f"{{% raw %}}{example['prompt_text']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 # Saving both the full hazard category name and the abbreviation

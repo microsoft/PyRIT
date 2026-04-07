@@ -175,7 +175,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
                 # Create text prompt (sequence=0, sent first)
                 text_prompt = SeedPrompt(
-                    value=text,
+                    value=f"{{% raw %}}{text}{{% endraw %}}",
                     data_type="text",
                     name="ML-VLSU Text",
                     dataset_name=self.dataset_name,

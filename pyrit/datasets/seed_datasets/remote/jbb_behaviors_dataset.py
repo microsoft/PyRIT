@@ -100,7 +100,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
-                    value=behavior,
+                    value=f"{{% raw %}}{behavior}{{% endraw %}}",
                     harm_categories=harm_categories,
                     groups=[category] if category else [],
                     metadata={

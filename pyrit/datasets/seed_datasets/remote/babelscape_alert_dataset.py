@@ -78,7 +78,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=prompt,
+                value=f"{{% raw %}}{prompt}{{% endraw %}}",
                 harm_categories=[category],
                 data_type="text",
                 dataset_name=self.dataset_name,

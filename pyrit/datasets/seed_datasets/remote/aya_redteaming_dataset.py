@@ -119,7 +119,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
 
             seed_prompts.append(
                 SeedPrompt(
-                    value=example["prompt"],
+                    value=f"{{% raw %}}{example['prompt']}{{% endraw %}}",
                     data_type="text",
                     dataset_name=self.dataset_name,
                     harm_categories=categories,

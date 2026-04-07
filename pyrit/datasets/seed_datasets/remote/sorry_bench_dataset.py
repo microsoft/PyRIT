@@ -197,7 +197,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                     continue
 
                 seed_prompt = SeedPrompt(
-                    value=prompt_text,
+                    value=f"{{% raw %}}{prompt_text}{{% endraw %}}",
                     harm_categories=[category],
                     groups=[item_prompt_style] if item_prompt_style else [],
                     metadata={

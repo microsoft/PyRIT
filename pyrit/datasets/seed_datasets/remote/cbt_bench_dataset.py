@@ -120,7 +120,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
                 metadata["core_belief_fine_grained"] = core_beliefs
 
             seed_prompt = SeedPrompt(
-                value=value,
+                value=f"{{% raw %}}{value}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=["psycho-social harms"],

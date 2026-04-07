@@ -134,7 +134,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=prompt,
+                value=f"{{% raw %}}{prompt}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess medical biases in AI systems",

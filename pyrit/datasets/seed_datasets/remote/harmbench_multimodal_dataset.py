@@ -172,7 +172,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             prompts.append(image_prompt)
 
             text_prompt = SeedPrompt(
-                value=behavior_text,
+                value=f"{{% raw %}}{behavior_text}{{% endraw %}}",
                 data_type="text",
                 name=f"HarmBench Multimodal Text - {behavior_id}",
                 dataset_name=self.dataset_name,

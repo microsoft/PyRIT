@@ -62,7 +62,7 @@ class _XSTestDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=example["prompt"],
+                value=f"{{% raw %}}{example['prompt']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[example["note"]],

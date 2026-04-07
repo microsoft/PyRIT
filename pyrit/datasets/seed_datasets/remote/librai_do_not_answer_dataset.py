@@ -60,7 +60,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=entry["question"],
+                value=f"{{% raw %}}{entry['question']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[entry["risk_area"], entry["types_of_harm"], entry["specific_harms"]],

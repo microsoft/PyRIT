@@ -116,7 +116,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             ):
                 seed_prompts.append(
                     SeedPrompt(
-                        value=item["prompt"],
+                        value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
                         data_type="text",
                         dataset_name=self.dataset_name,
                         harm_categories=sorted(harm_categories),

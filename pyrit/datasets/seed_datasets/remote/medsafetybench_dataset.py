@@ -121,7 +121,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
 
                 all_prompts.append(
                     SeedPrompt(
-                        value=prompt,
+                        value=f"{{% raw %}}{prompt}{{% endraw %}}",
                         data_type="text",
                         dataset_name=self.dataset_name,
                         harm_categories=["medical safety"],

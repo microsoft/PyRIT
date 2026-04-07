@@ -60,7 +60,7 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=item["prompt"],
+                value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess and analyze harmful behaviors in llm",

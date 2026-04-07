@@ -61,7 +61,7 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=item["prompt"],
+                value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description=(

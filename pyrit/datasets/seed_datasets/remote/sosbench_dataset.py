@@ -61,7 +61,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=item["goal"],
+                value=f"{{% raw %}}{item['goal']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["subject"]],

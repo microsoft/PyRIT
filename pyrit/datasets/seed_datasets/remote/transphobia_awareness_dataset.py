@@ -107,7 +107,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                     metadata["question_sentiment"] = sentiment_value
 
             prompt = SeedPrompt(
-                value=str(row["Quora Question"]),
+                value=f"{{% raw %}}{str(row['Quora Question'])}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=["transphobia"],

@@ -60,7 +60,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=row["prompt"],
+                value=f"{{% raw %}}{row['prompt']}{{% endraw %}}",
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[row["subject"]],

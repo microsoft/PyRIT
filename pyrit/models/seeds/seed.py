@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
-from jinja2 import Environment, StrictUndefined, Template, Undefined
+from jinja2 import StrictUndefined, Undefined
+from jinja2.sandbox import SandboxedEnvironment
 
 from pyrit.common.yaml_loadable import YamlLoadable
 
@@ -157,7 +158,8 @@ class Seed(YamlLoadable):
         template_identifier = self.name or "<unnamed template>"
 
         try:
-            jinja_template = Template(self.value, undefined=StrictUndefined)
+            env = SandboxedEnvironment(undefined=StrictUndefined)
+            jinja_template = env.from_string(self.value)
             return jinja_template.render(**kwargs)
         except Exception as e:
             raise ValueError(
@@ -194,7 +196,7 @@ class Seed(YamlLoadable):
                 return self.value
 
         # Create a Jinja template with PartialUndefined placeholders
-        env = Environment(undefined=PartialUndefined)
+        env = SandboxedEnvironment(undefined=PartialUndefined)
         jinja_template = env.from_string(self.value)
 
         try:

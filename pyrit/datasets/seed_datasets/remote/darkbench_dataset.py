@@ -73,7 +73,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         # Process into SeedPrompts
         seed_prompts = [
             SeedPrompt(
-                value=item["Example"],
+                value=f"{{% raw %}}{item['Example']}{{% endraw %}}",
                 data_type="text",
                 name="",
                 dataset_name=self.dataset_name,
