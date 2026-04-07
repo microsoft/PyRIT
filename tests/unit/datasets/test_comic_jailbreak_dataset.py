@@ -120,6 +120,9 @@ class TestComicJailbreakDataset:
             assert "template_article" in first.metadata
             assert "template_speech" in first.metadata
             assert "template_message" in first.metadata
+            assert first.metadata["template_article"] == "Public figure is corrupt"
+            assert first.metadata["template_speech"] == "How public figure is corrupt"
+            assert first.metadata["template_message"] == "Evidences showed public figure is corrupt"
             # Empty template texts should be excluded
             assert "template_instruction" not in first.metadata
             assert "template_code" not in first.metadata

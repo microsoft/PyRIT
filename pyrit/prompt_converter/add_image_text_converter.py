@@ -5,6 +5,7 @@ import base64
 import logging
 import string
 import textwrap
+import warnings
 from io import BytesIO
 from typing import cast
 
@@ -33,7 +34,8 @@ class AddImageTextConverter(PromptConverter):
 
     def __init__(
         self,
-        img_to_add: str,
+        *args: str,
+        img_to_add: str = "",
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
@@ -49,6 +51,7 @@ class AddImageTextConverter(PromptConverter):
         Initialize the converter with the image file path and text properties.
 
         Args:
+            *args: Deprecated positional argument for img_to_add. Use img_to_add=... instead.
             img_to_add (str): File path of image to add text to.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
@@ -71,6 +74,15 @@ class AddImageTextConverter(PromptConverter):
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
                 or bounding_box coordinates are invalid.
         """
+        if args:
+            warnings.warn(
+                "Passing 'img_to_add' as a positional argument is deprecated. "
+                "Use img_to_add=... as a keyword argument. "
+                "It will be keyword-only starting in version 0.13.0.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            img_to_add = args[0]
         if not img_to_add:
             raise ValueError("Please provide valid image path")
         if not font_name.endswith(".ttf"):
@@ -190,16 +202,18 @@ class AddImageTextConverter(PromptConverter):
         usable_width = int(box_width * 0.95)
         usable_height = int(box_height * 0.95)
 
+        font_cache: dict[int, FreeTypeFont] = {}
         for size in range(self._font_size, self._min_font_size - 1, -1):
-            font = self._load_font_at_size(size)
+            font = font_cache.get(size) or self._load_font_at_size(size)
+            font_cache[size] = font
             lines = self._wrap_text(text=text, font=font, max_width=usable_width)
             line_height = self._get_line_height(font=font)
             if len(lines) * line_height <= usable_height:
                 return font, lines
 
-        font = self._load_font_at_size(self._min_font_size)
-        lines = self._wrap_text(text=text, font=font, max_width=usable_width)
-        return font, lines
+        min_font = font_cache.get(self._min_font_size) or self._load_font_at_size(self._min_font_size)
+        lines = self._wrap_text(text=text, font=min_font, max_width=usable_width)
+        return min_font, lines
 
     def _render_text_in_bounding_box(self, *, image: Image.Image, text: str) -> Image.Image:
         """
@@ -212,7 +226,8 @@ class AddImageTextConverter(PromptConverter):
         Returns:
             Image.Image: The image with text rendered in the bounding box.
         """
-        x1, y1, x2, y2 = self._bounding_box  # type: ignore[misc, unused-ignore]
+        assert self._bounding_box is not None
+        x1, y1, x2, y2 = self._bounding_box
         box_width = x2 - x1
         box_height = y2 - y1
 
