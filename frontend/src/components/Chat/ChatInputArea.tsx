@@ -296,23 +296,33 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   useEffect(() => {
     const types = [...new Set(attachments.map((a) => a.type))]
 
-    // Convert attachment files to base64 data URIs for the converter panel
+    // Convert the first attachment per media type to a base64 data URI for the
+    // converter panel. Only one attachment per type is supported because the
+    // converter panel operates on a single value per piece type.
+    let cancelled = false
     const buildData = async () => {
       const data: Record<string, string> = {}
       for (const att of attachments) {
+        if (cancelled) return
         if (!data[att.type] && att.file) {
           const reader = new FileReader()
-          const base64 = await new Promise<string>((resolve) => {
+          const base64 = await new Promise<string>((resolve, reject) => {
             reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
             reader.readAsDataURL(att.file!)
           })
+          if (cancelled) return
           data[att.type] = base64
         }
       }
-      onAttachmentsChange?.(types, data)
+      if (!cancelled) {
+        onAttachmentsChange?.(types, data)
+      }
     }
 
     void buildData()
+
+    return () => { cancelled = true }
   }, [attachments, onAttachmentsChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

@@ -215,17 +215,17 @@ export default function ChatWindow({
       // Build message pieces from text + attachments — always use original text
       const pieces = await buildMessagePieces(originalValue, attachments)
 
-      // Apply per-piece-type conversions from the converter panel
-      // Each piece type (text, image, audio, video) can have its own converter
+      // Send converter selections to the backend and let it apply conversions per piece.
+      // Avoid setting converted_value client-side because one preview value does not
+      // necessarily correspond to every piece of the same data type, and any locally
+      // preconverted piece may cause the backend to skip converter_ids entirely.
       const allConverterIds: string[] = []
       for (const [pieceType, conv] of Object.entries(conversions)) {
         const dataType = PIECE_TYPE_TO_DATA_TYPE[pieceType]
         if (!dataType) continue
-        allConverterIds.push(conv.converterInstanceId)
-        for (const piece of pieces) {
-          if (piece.data_type === dataType && !piece.converted_value) {
-            piece.converted_value = conv.convertedValue
-          }
+        const hasMatchingPiece = pieces.some(piece => piece.data_type === dataType)
+        if (hasMatchingPiece) {
+          allConverterIds.push(conv.converterInstanceId)
         }
       }
 

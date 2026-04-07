@@ -166,6 +166,12 @@ async function mockBackendAPIs(page: Page) {
         // ignore
       }
 
+      // Simulate backend conversion: when converter_ids are provided but no
+      // converted_value was set client-side, the backend applies the converter.
+      if (!convertedText && converterIds.length > 0) {
+        convertedText = Buffer.from(userText).toString("base64");
+      }
+
       const displayText = convertedText ?? userText;
       const turnNumber = Math.floor(accumulatedMessages.length / 2) + 1;
 
