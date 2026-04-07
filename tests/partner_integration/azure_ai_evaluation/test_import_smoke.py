@@ -52,6 +52,29 @@ class TestRedTeamModuleImports:
         assert SupportedLanguages is not None
 
 
+class TestPromptChatTargetTransitionalCompat:
+    """Verify PromptChatTarget still exists and extends PromptTarget.
+
+    The SDK currently imports PromptChatTarget in 6+ production files
+    (_callback_chat_target.py, _orchestrator_manager.py, _scenario_orchestrator.py,
+    _execution_manager.py, strategy_utils.py, _rai_service_target.py). PyRIT is
+    migrating from PromptChatTarget to PromptTarget, but during the transition
+    both must exist with correct inheritance.
+    """
+
+    def test_prompt_chat_target_exists(self):
+        """PromptChatTarget must remain importable during the transition."""
+        from pyrit.prompt_target import PromptChatTarget
+
+        assert PromptChatTarget is not None
+
+    def test_prompt_chat_target_extends_prompt_target(self):
+        """PromptChatTarget must be a subclass of PromptTarget."""
+        from pyrit.prompt_target import PromptChatTarget
+
+        assert issubclass(PromptChatTarget, PromptTarget)
+
+
 @requires_azure_ai_evaluation
 class TestCallbackChatTargetInheritance:
     """Verify _CallbackChatTarget correctly extends PromptTarget.
@@ -59,8 +82,13 @@ class TestCallbackChatTargetInheritance:
     NOTE: These tests intentionally import private (_-prefixed) modules from
     azure-ai-evaluation. This is correct for contract testing — we need to verify
     the actual subclass relationships that PyRIT API changes could break.
-    Explicit inheritance checks are needed because azure-ai-evaluation subclasses
-    are detected via issubclass() checks in PyRIT orchestrators and scenarios.
+
+    Explicit inheritance checks are REQUIRED here because:
+    1. PyRIT orchestrators and scenarios detect subclasses via issubclass() at
+       runtime to determine capabilities (multi-turn, system prompt support, etc.)
+    2. If the inheritance chain breaks, attacks silently fall back to single-turn
+       mode or skip system prompt injection — causing false negatives.
+    3. These checks catch breaking changes that import-only tests would miss.
     """
 
     def test_callback_chat_target_extends_prompt_target(self):
@@ -72,7 +100,11 @@ class TestCallbackChatTargetInheritance:
 
 @requires_azure_ai_evaluation
 class TestRAIScorerInheritance:
-    """Verify RAIServiceScorer correctly extends TrueFalseScorer."""
+    """Verify RAIServiceScorer correctly extends TrueFalseScorer.
+
+    Explicit inheritance check — see TestCallbackChatTargetInheritance docstring
+    for why issubclass() contract tests are necessary.
+    """
 
     def test_rai_scorer_extends_true_false_scorer(self):
         """RAIServiceScorer must be a subclass of pyrit.score.true_false.TrueFalseScorer."""

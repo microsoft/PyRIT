@@ -77,3 +77,23 @@ class TestPromptTargetContract:
         target = _MinimalTarget()
         # _memory is set during initialization or via property
         assert hasattr(target, "_memory")
+
+
+class TestOpenAIChatTargetContract:
+    """Validate OpenAIChatTarget importability and interface.
+
+    strategy_utils.py imports OpenAIChatTarget for get_chat_target() and
+    converter strategy instantiation (e.g., TenseConverter needs a chat target).
+    """
+
+    def test_openai_chat_target_importable(self):
+        """OpenAIChatTarget must be importable from pyrit.prompt_target."""
+        from pyrit.prompt_target import OpenAIChatTarget
+
+        assert OpenAIChatTarget is not None
+
+    def test_openai_chat_target_extends_prompt_target(self):
+        """OpenAIChatTarget must be a PromptTarget subclass."""
+        from pyrit.prompt_target import OpenAIChatTarget
+
+        assert issubclass(OpenAIChatTarget, PromptTarget)

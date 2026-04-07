@@ -61,10 +61,14 @@ class TestSpecificConvertersImportable:
             "BinaryConverter",
             "CaesarConverter",
             "CharacterSpaceConverter",
+            # NOTE: _agent/_agent_utils.py imports "CharSwapGenerator" but PyRIT
+            # exports "CharSwapConverter". This is a naming discrepancy in the SDK;
+            # the canonical PyRIT name is CharSwapConverter.
             "CharSwapConverter",
             "DiacriticConverter",
             "FlipConverter",
             "LeetspeakConverter",
+            "MathPromptConverter",
             "MorseConverter",
             "ROT13Converter",
             "StringJoinConverter",

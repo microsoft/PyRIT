@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Contract tests for Foundry scenario APIs used by azure-ai-evaluation.
+"""Contract tests for red team scenario APIs used by azure-ai-evaluation.
 
-The azure-ai-evaluation red team module uses the Foundry framework for modern attack execution:
+The azure-ai-evaluation red team module uses the scenario framework for attack execution:
 - FoundryExecutionManager creates FoundryScenario instances per risk category
 - StrategyMapper maps AttackStrategy enum → FoundryStrategy
 - DatasetConfigurationBuilder produces DatasetConfiguration from RAI objectives
@@ -18,7 +18,19 @@ from pyrit.scenario import DatasetConfiguration, ScenarioStrategy
 from pyrit.scenario.foundry import FoundryScenario, FoundryStrategy
 
 
-class TestFoundryStrategyContract:
+class TestScenarioStrategyContract:
+    """Validate ScenarioStrategy base class availability and interface."""
+
+    def test_scenario_strategy_class_exists(self):
+        """ScenarioStrategy is the base enum for all attack strategies."""
+        assert ScenarioStrategy is not None
+
+    def test_scenario_strategy_is_base_for_foundry(self):
+        """FoundryStrategy must extend ScenarioStrategy."""
+        assert issubclass(FoundryStrategy, ScenarioStrategy)
+
+
+class TestRedTeamStrategyContract:
     """Validate FoundryStrategy availability and structure."""
 
     def test_foundry_strategy_class_exists(self):
@@ -30,7 +42,7 @@ class TestFoundryStrategyContract:
         assert issubclass(FoundryStrategy, ScenarioStrategy)
 
 
-class TestFoundryScenarioContract:
+class TestRedTeamScenarioContract:
     """Validate FoundryScenario availability."""
 
     def test_foundry_scenario_class_exists(self):
