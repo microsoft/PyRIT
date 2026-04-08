@@ -3,7 +3,7 @@
 ```{note}
 We welcome contributions and suggestions!
 
-See our [GitHub issues with the "help wanted"](https://github.com/Azure/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22), and ["good first issue"](https://github.com/Azure/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22) tags for pre-scoped items to contribute.
+See our [GitHub issues with the "help wanted"](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22), and ["good first issue"](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22) tags for pre-scoped items to contribute.
 ```
 
 For a more detailed overview on how to contribute read below.
@@ -46,7 +46,7 @@ flowchart TB
 
 Contributions come in many forms such as *writing code* or *adding examples*.
 
-It can be just as useful to use the package and [file issues](https://github.com/Azure/PyRIT/issues) for *bugs* or potential *improvements* as well as *missing or inadequate documentation*. Most open source developers start out with small contributions like this as it is a great way to learn about the project and the associated processes. I you already have a problem that you want to solve we recommend opening an issue before submitting a pull request. Opening the issue can help in clarifying the approach to addressing the problem. In some cases, this saves the author from spending time on a pull request that cannot be accepted. If you want to contribute but you're not sure in which way, head on over to the issues marked with ["help wanted"](https://github.com/Azure/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22) or ["good first issue"](https://github.com/Azure/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22) and see if one of them sounds interesting. If you're still not sure, join our [Discord server](https://discord.gg/9fMpq3tc8u) and ask for help. One of the maintainers will respond.
+It can be just as useful to use the package and [file issues](https://github.com/microsoft/PyRIT/issues) for *bugs* or potential *improvements* as well as *missing or inadequate documentation*. Most open source developers start out with small contributions like this as it is a great way to learn about the project and the associated processes. I you already have a problem that you want to solve we recommend opening an issue before submitting a pull request. Opening the issue can help in clarifying the approach to addressing the problem. In some cases, this saves the author from spending time on a pull request that cannot be accepted. If you want to contribute but you're not sure in which way, head on over to the issues marked with ["help wanted"](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22) or ["good first issue"](https://github.com/microsoft/PyRIT/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22) and see if one of them sounds interesting. If you're still not sure, join our [Discord server](https://discord.gg/9fMpq3tc8u) and ask for help. One of the maintainers will respond.
 
 For new features, it's important to understand our basic [architecture](../code/architecture.md). This can help you get on the right track to contributing.
 

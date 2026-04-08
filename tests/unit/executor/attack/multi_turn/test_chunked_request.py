@@ -3,9 +3,6 @@
 
 """
 Tests for ChunkedRequestAttack.
-
-This attack was developed based on techniques discovered and validated
-during Crucible CTF red teaming exercises using PyRIT.
 """
 
 from unittest.mock import AsyncMock, MagicMock

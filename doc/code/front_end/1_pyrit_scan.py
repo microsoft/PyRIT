@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -47,7 +43,7 @@
 #
 # PyRITInitializers are how you can configure the CLI scanner. PyRIT includes several built-in initializers you can use with the `--initializers` flag.
 #
-# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `objective_target`, `objective_list`, `simple`) regardless of which subdirectory they're in.
+# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `objective_list`, `simple`) regardless of which subdirectory they're in.
 #
 # List the available initializers using the --list-initializers flag.
 
@@ -60,13 +56,13 @@
 # You need a single scenario to run, you need two things:
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
-# 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts`). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against).
+# 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts` or `initializers` section of config file (see [here](../../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
 # 3. Scenario Strategies (optional). These are supplied by the `--scenario-strategies` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
 #
 # Basic usage will look something like:
 #
 # ```shell
-# pyrit_scan <scenario> --initializers <initializer1> <initializer2> --scenario-strategies <strategy1> <strategy2>
+# pyrit_scan <scenario> --target <target_name> --initializers <initializer1> <initializer2> --scenario-strategies <strategy1> <strategy2>
 # ```
 #
 # You can also override scenario parameters directly from the CLI:
@@ -78,29 +74,29 @@
 # Or concretely:
 #
 # ```shell
-# !pyrit_scan foundry.red_team_agent --initializers simple openai_objective_target --scenario-strategies base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --scenario-strategies base64
 # ```
 #
-# Example with a basic configuration that runs the Foundry scenario against the objective target defined in `openai_objective_target` (which just is an OpenAIChatTarget with `DEFAULT_OPENAI_FRONTEND_ENDPOINT` and `DEFAULT_OPENAI_FRONTEND_KEY`).
+# Example with a basic configuration that runs the Foundry scenario against the objective target defined in the `target` initializer.
 
 # %%
-# !pyrit_scan foundry.red_team_agent --initializers openai_objective_target --strategies base64
+# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --strategies base64
 
 # %% [markdown]
 # Or with all options and multiple initializers and multiple strategies:
 #
 # ```shell
-# pyrit_scan foundry.red_team_agent --database InMemory --initializers simple objective_target objective_list --scenario-strategies easy crescendo
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --strategies easy crescendo
 # ```
 #
 # You can also override scenario execution parameters:
 #
 # ```shell
 # # Override concurrency and retry settings
-# pyrit_scan foundry.red_team_agent --initializers simple objective_target --max-concurrency 10 --max-retries 3
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --max-concurrency 10 --max-retries 3
 #
 # # Add custom memory labels for tracking (must be valid JSON)
-# pyrit_scan foundry.red_team_agent --initializers simple objective_target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
+# pyrit_scan foundry.red_team_agent --target openai_chat --initializers load_default_datasets target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
 # ```
 #
 # Available CLI parameter overrides:
@@ -174,6 +170,7 @@ class MyCustomScenario(Scenario):
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore
 MyCustomScenario()
+
 
 # %% [markdown]
 # Then discover and run it:

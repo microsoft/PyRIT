@@ -109,12 +109,12 @@ Most users should enable the following initializers. These are what the `.pyrit_
 | Initializer | What It Registers | When You Need It |
 |---|---|---|
 | `simple` | Baseline defaults for converters, scorers, and attack configs using your `OPENAI_CHAT_*` env vars | Always — provides the foundation for most PyRIT operations |
-| `targets` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
-| `scorers` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
+| `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
+| `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
 | `load_default_datasets` | Seed datasets for all registered scenarios into memory | **Required for `pyrit_scan` scenarios** — they need data to run |
 
 ```{note}
-**Execution order is automatic.** Initializers are sorted by their built-in `execution_order` regardless of how you list them in the config: `simple`/`targets` run first (order 1), then `scorers` (order 2), then `load_default_datasets` (order 10). This ensures dependencies are satisfied — for example, `scorers` needs targets to be registered first.
+**Execution order is automatic.** Initializers are sorted by their built-in `execution_order` regardless of how you list them in the config: `simple`/`target` run first (order 1), then `scorer` (order 2), then `load_default_datasets` (order 10). This ensures dependencies are satisfied — for example, `scorer` needs targets to be registered first.
 ```
 
 The recommended config:
@@ -123,8 +123,8 @@ The recommended config:
 initializers:
   - name: simple
   - name: load_default_datasets
-  - name: scorers
-  - name: targets
+  - name: scorer
+  - name: target
     args:
       tags:
         - default

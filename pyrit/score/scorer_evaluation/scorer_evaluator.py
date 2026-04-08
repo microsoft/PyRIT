@@ -171,6 +171,7 @@ class ScorerEvaluator(abc.ABC):
         all_entries = []
         dataset_versions = []
         harm_definition_versions = set()
+        harm_definitions = set()
         for csv_file in csv_files:
             dataset = HumanLabeledDataset.from_csv(
                 csv_path=csv_file,
@@ -180,6 +181,8 @@ class ScorerEvaluator(abc.ABC):
             dataset_versions.append(dataset.version)
             if dataset.harm_definition_version:
                 harm_definition_versions.add(dataset.harm_definition_version)
+            if dataset.harm_definition:
+                harm_definitions.add(dataset.harm_definition)
 
         # Concatenate all dataset versions (including duplicates) for full traceability
         # e.g., combining 3 CSVs all at v1.0 yields "1.0_1.0_1.0"
@@ -195,8 +198,23 @@ class ScorerEvaluator(abc.ABC):
             )
         combined_harm_definition_version = next(iter(harm_definition_versions)) if harm_definition_versions else None
 
-        # Derive harm_definition from harm_category for harm datasets
-        harm_definition = f"{dataset_files.harm_category}.yaml" if dataset_files.harm_category else None
+        # Use harm_definition from CSV headers (e.g., "fairness_bias.yaml").
+        # The CSV header is authoritative since the harm_category name may differ from
+        # the YAML filename (e.g., harm_category="bias" but file is "fairness_bias.yaml").
+        if len(harm_definitions) > 1:
+            raise ValueError(
+                f"All CSVs in a harm evaluation must reference the same harm_definition, "
+                f"but found multiple: {sorted(harm_definitions)}."
+            )
+        if harm_definitions:
+            harm_definition = next(iter(harm_definitions))
+        elif metrics_type == MetricsType.HARM:
+            raise ValueError(
+                f"No harm_definition found in CSV headers for harm category '{dataset_files.harm_category}'. "
+                f"Add a '# harm_definition=<filename>.yaml' comment line to your CSV files."
+            )
+        else:
+            harm_definition = None
 
         # Build dataset name from input CSV files
         dataset_name = "_".join(sorted(csv_file.name for csv_file in csv_files))

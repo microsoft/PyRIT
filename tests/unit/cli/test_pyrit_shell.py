@@ -151,28 +151,14 @@ class TestPyRITShell:
         captured = capsys.readouterr()
         assert "Error listing scenarios" in captured.out
 
-    @patch("pyrit.cli.frontend_core.get_default_initializer_discovery_path")
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
-    def test_do_list_initializers(self, mock_print_initializers: AsyncMock, mock_get_path: MagicMock, shell):
+    def test_do_list_initializers(self, mock_print_initializers: AsyncMock, shell):
         """Test do_list_initializers command."""
         s, ctx, _ = shell
-        mock_path = Path("/test/path")
-        mock_get_path.return_value = mock_path
 
         s.do_list_initializers("")
 
-        mock_print_initializers.assert_called_once_with(context=ctx, discovery_path=mock_path)
-
-    @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
-    def test_do_list_initializers_with_path(self, mock_print_initializers: AsyncMock, shell):
-        """Test do_list_initializers with custom path."""
-        s, ctx, _ = shell
-
-        s.do_list_initializers("/custom/path")
-
-        assert mock_print_initializers.call_count == 1
-        call_kwargs = mock_print_initializers.call_args[1]
-        assert isinstance(call_kwargs["discovery_path"], Path)
+        mock_print_initializers.assert_called_once_with(context=ctx)
 
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
     def test_do_list_initializers_with_exception(self, mock_print_initializers: AsyncMock, shell, capsys):
@@ -347,6 +333,43 @@ class TestPyRITShell:
 
         captured = capsys.readouterr()
         assert "Error: Test error" in captured.out
+
+    @patch("pyrit.cli.pyrit_shell.asyncio.run")
+    @patch("pyrit.cli.frontend_core.parse_run_arguments")
+    def test_do_run_keyboard_interrupt_returns_to_shell(
+        self,
+        mock_parse_args: MagicMock,
+        mock_asyncio_run: MagicMock,
+        shell,
+        capsys,
+    ):
+        """Test that Ctrl+C during scenario run returns to shell instead of crashing."""
+        s, ctx, _ = shell
+
+        mock_parse_args.return_value = {
+            "scenario_name": "test_scenario",
+            "initializers": ["test_init"],
+            "initialization_scripts": None,
+            "env_files": None,
+            "scenario_strategies": None,
+            "max_concurrency": None,
+            "max_retries": None,
+            "memory_labels": None,
+            "database": None,
+            "log_level": None,
+            "dataset_names": None,
+            "max_dataset_size": None,
+            "target": None,
+        }
+
+        mock_asyncio_run.side_effect = KeyboardInterrupt()
+
+        s.do_run("test_scenario --initializers test_init")
+
+        captured = capsys.readouterr()
+        assert "interrupted" in captured.out.lower()
+        # Scenario should NOT be added to history
+        assert len(s._scenario_history) == 0
 
     def test_do_scenario_history_empty(self, shell, capsys):
         """Test do_scenario_history with no history."""

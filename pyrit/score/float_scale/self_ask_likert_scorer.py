@@ -166,7 +166,9 @@ class SelfAskLikertScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptChatTarget,
-        likert_scale: LikertScalePaths,
+        likert_scale: Optional[LikertScalePaths] = None,
+        custom_likert_path: Optional[Path] = None,
+        custom_system_prompt_path: Optional[Path] = None,
         validator: Optional[ScorerPromptValidator] = None,
     ) -> None:
         """
@@ -174,28 +176,53 @@ class SelfAskLikertScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptChatTarget): The chat target to use for scoring.
-            likert_scale (LikertScalePaths): The Likert scale configuration to use for scoring.
+            likert_scale (Optional[LikertScalePaths]): The Likert scale configuration to use for scoring.
+            custom_likert_path (Optional[Path]): Path to a custom YAML file containing the Likert scale definition.
+                This allows users to use their own Likert scales without modifying the code, as long as
+                the YAML file follows the expected format. Only one of `likert_scale` or `custom_likert_path`
+                should be provided. Defaults to None.
+            custom_system_prompt_path (Optional[Path]): Path to a custom system prompt file. This allows users to
+                provide their own system prompt without modifying the code. Defaults to None.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+
+        Raises:
+            ValueError: If both `likert_scale` and `custom_likert_path` are provided, if neither is provided,
+                or if the provided Likert scale or system prompt YAML file is improperly formatted.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self._prompt_target = chat_target
         self._likert_scale = likert_scale
 
-        # Auto-set evaluation file mapping from the LikertScalePaths enum
-        if likert_scale.evaluation_files is not None:
-            from pyrit.score.scorer_evaluation.scorer_evaluator import (
-                ScorerEvalDatasetFiles,
-            )
+        if likert_scale is not None and custom_likert_path is not None:
+            raise ValueError("Only one of 'likert_scale' or 'custom_likert_path' should be provided, not both.")
+        if likert_scale is None and custom_likert_path is None:
+            raise ValueError("One of 'likert_scale' or 'custom_likert_path' must be provided.")
 
-            eval_files = likert_scale.evaluation_files
-            self.evaluation_file_mapping = ScorerEvalDatasetFiles(
-                human_labeled_datasets_files=eval_files.human_labeled_datasets_files,
-                result_file=eval_files.result_file,
-                harm_category=eval_files.harm_category,
-            )
+        self._scoring_instructions_template: Optional[SeedPrompt] = (
+            None  # Will be set in _set_likert_scale_system_prompt
+        )
+        if custom_system_prompt_path is not None:
+            self._validate_custom_system_prompt_path(custom_system_prompt_path)
+            self._scoring_instructions_template = SeedPrompt.from_yaml_file(custom_system_prompt_path)
+        if likert_scale is not None:
+            # Auto-set evaluation file mapping from the LikertScalePaths enum
+            if likert_scale.evaluation_files is not None:
+                from pyrit.score.scorer_evaluation.scorer_evaluator import (
+                    ScorerEvalDatasetFiles,
+                )
 
-        self._set_likert_scale_system_prompt(likert_scale_path=likert_scale.path)
+                eval_files = likert_scale.evaluation_files
+                self.evaluation_file_mapping = ScorerEvalDatasetFiles(
+                    human_labeled_datasets_files=eval_files.human_labeled_datasets_files,
+                    result_file=eval_files.result_file,
+                    harm_category=eval_files.harm_category,
+                )
+
+            self._set_likert_scale_system_prompt(likert_scale_path=likert_scale.path)
+        elif custom_likert_path is not None:
+            self._validate_custom_likert_path(custom_likert_path)
+            self._set_likert_scale_system_prompt(likert_scale_path=custom_likert_path)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -268,9 +295,12 @@ class SelfAskLikertScorer(FloatScaleScorer):
                 f"but only a single unique value was found: {self._max_scale_value}."
             )
 
-        self._scoring_instructions_template = SeedPrompt.from_yaml_file(
-            SCORER_LIKERT_PATH / "likert_system_prompt.yaml"
-        )
+        # Only load the default system prompt template if a custom one wasn't already
+        # set via custom_system_prompt_path in __init__.
+        if self._scoring_instructions_template is None:
+            self._scoring_instructions_template = SeedPrompt.from_yaml_file(
+                SCORER_LIKERT_PATH / "likert_system_prompt.yaml"
+            )
 
         self._system_prompt = self._scoring_instructions_template.render_template_value(
             likert_scale=likert_scale_str,
@@ -336,6 +366,63 @@ class SelfAskLikertScorer(FloatScaleScorer):
             likert_scale_description += f"'{val}': {desc}\n"
 
         return likert_scale_description
+
+    @staticmethod
+    def _validate_custom_system_prompt_path(custom_system_prompt_path: Path) -> None:
+        """
+        Validate the custom system prompt path.
+
+        Checks that the file exists, has a YAML extension, and contains the required
+        template parameters (category, likert_scale, min_scale_value, max_scale_value)
+        that the Likert scorer needs to render the system prompt.
+
+        Args:
+            custom_system_prompt_path (Path): Path to the custom system prompt YAML file.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the file is not a YAML file or is missing required template parameters.
+        """
+        if not custom_system_prompt_path.exists():
+            raise FileNotFoundError(f"Custom system prompt file not found: '{custom_system_prompt_path}'")
+        if custom_system_prompt_path.suffix not in (".yaml", ".yml"):
+            raise ValueError(
+                f"Custom system prompt file must be a YAML file (.yaml or .yml), "
+                f"got '{custom_system_prompt_path.suffix}'."
+            )
+
+        # Validate the template contains all required parameters used by the Likert scorer.
+        SeedPrompt.from_yaml_with_required_parameters(
+            template_path=custom_system_prompt_path,
+            required_parameters=["category", "likert_scale", "min_scale_value", "max_scale_value"],
+            error_message=(
+                "Custom system prompt YAML must define parameters: "
+                "category, likert_scale, min_scale_value, max_scale_value"
+            ),
+        )
+
+    @staticmethod
+    def _validate_custom_likert_path(custom_likert_path: Path) -> None:
+        """
+        Validate the custom Likert scale path.
+
+        Performs basic path checks (existence and YAML extension). Deeper content
+        validation (category, scale_descriptions structure, score values) is handled
+        by ``_set_likert_scale_system_prompt`` when the file is actually parsed.
+
+        Args:
+            custom_likert_path (Path): Path to the custom Likert scale YAML file.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the file is not a YAML file.
+        """
+        if not custom_likert_path.exists():
+            raise FileNotFoundError(f"Custom Likert scale file not found: '{custom_likert_path}'")
+        if custom_likert_path.suffix not in (".yaml", ".yml"):
+            raise ValueError(
+                f"Custom Likert scale file must be a YAML file (.yaml or .yml), got '{custom_likert_path.suffix}'."
+            )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         """

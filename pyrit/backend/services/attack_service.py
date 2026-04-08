@@ -734,6 +734,18 @@ class AttackService:
                     children=new_children,
                 )
                 update_fields["attack_identifier"] = new_aid.to_dict()
+                # Also update atomic_attack_identifier so get_attack_strategy_identifier() sees the change
+                if ar.atomic_attack_identifier:
+                    atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
+                    atomic_children = dict(atomic.children)
+                    atomic_children["attack"] = new_aid
+                    new_atomic = ComponentIdentifier(
+                        class_name=atomic.class_name,
+                        class_module=atomic.class_module,
+                        params=dict(atomic.params),
+                        children=atomic_children,
+                    )
+                    update_fields["atomic_attack_identifier"] = new_atomic.to_dict()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,

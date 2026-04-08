@@ -180,8 +180,6 @@ class MyScenario(Scenario):
         return atomic_attacks
 
 
-scenario = MyScenario()
-
 # %% [markdown]
 #
 # ## Existing Scenarios

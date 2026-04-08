@@ -182,6 +182,6 @@ The JupyterLab instance is configured to run without authentication by default f
 ## Documentation & Support
 
 - 📖 **[Docker Installation Guide](./../doc/getting_started/install_docker.md)** - Complete user-friendly installation instructions
-- 🚀 **[PyRIT Documentation](https://azure.github.io/PyRIT/)** - Full documentation site
-- 🔧 **[Contributing Guide](https://azure.github.io/PyRIT/contributing/readme/)** - For developers and contributors
-- 🐛 **[Issues](https://github.com/Azure/PyRIT/issues)** - Report bugs or request features
+- 🚀 **[PyRIT Documentation](https://microsoft.github.io/PyRIT/)** - Full documentation site
+- 🔧 **[Contributing Guide](https://microsoft.github.io/PyRIT/contributing/readme/)** - For developers and contributors
+- 🐛 **[Issues](https://github.com/microsoft/PyRIT/issues)** - Report bugs or request features
