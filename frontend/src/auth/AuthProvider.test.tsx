@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import App from "../App";
 
 // ---------------------------------------------------------------------------
 // Mock setup — declare mock fns before jest.mock so they're hoisted correctly
@@ -79,7 +78,6 @@ jest.mock("@azure/msal-react", () => ({
 }));
 
 import { AuthProvider } from "./AuthProvider";
-import { ItemCompare16Filled } from "@fluentui/react-icons";
 
 // ---------------------------------------------------------------------------
 // Tests
