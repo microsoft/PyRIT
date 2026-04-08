@@ -208,7 +208,7 @@ class TestPyRITShell:
         mock_print_targets: AsyncMock,
         shell,
     ):
-        """Test do_list_targets with --initializers creates a new context."""
+        """Test do_list_targets with --initializers uses _rebuild_context."""
         s, ctx, _ = shell
         mock_parse.return_value = {"initializers": ["target"], "initialization_scripts": None}
         mock_run_context = MagicMock()
@@ -217,14 +217,13 @@ class TestPyRITShell:
         s.do_list_targets("--initializers target")
 
         mock_parse.assert_called_once_with(args_string="--initializers target")
-        mock_fc_class.assert_called_once_with(
-            initialization_scripts=None,
-            initializer_names=["target"],
-            log_level=s.default_log_level,
-        )
-        assert mock_run_context._scenario_registry == ctx._scenario_registry
-        assert mock_run_context._initializer_registry == ctx._initializer_registry
+        # _rebuild_context passes _context_kwargs plus overrides to FrontendCore
+        call_kwargs = mock_fc_class.call_args[1]
+        assert call_kwargs["initializer_names"] == ["target"]
+        assert call_kwargs["initialization_scripts"] is None
+        assert call_kwargs["log_level"] == s.default_log_level
         assert mock_run_context._initialized is True
+        assert mock_run_context._silent_reinit is True
         mock_print_targets.assert_called_once_with(context=mock_run_context)
 
     @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
@@ -694,6 +693,101 @@ class TestPyRITShell:
 
         captured = capsys.readouterr()
         assert "Unknown command" in captured.out
+
+
+class TestRebuildContext:
+    """Tests for _rebuild_context helper method."""
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_propagates_startup_config(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context passes config_file, database, env_files from startup kwargs."""
+        s, ctx, _ = shell
+        s._context_kwargs = {
+            "config_file": Path("/my/config.yaml"),
+            "database": "InMemory",
+            "env_files": [Path("/my/.env")],
+        }
+        mock_derived = MagicMock()
+        mock_fc_class.return_value = mock_derived
+
+        result = s._rebuild_context(
+            initializer_names=["target"],
+            initialization_scripts=None,
+            log_level=logging.DEBUG,
+        )
+
+        call_kwargs = mock_fc_class.call_args[1]
+        assert call_kwargs["config_file"] == Path("/my/config.yaml")
+        assert call_kwargs["database"] == "InMemory"
+        assert call_kwargs["env_files"] == [Path("/my/.env")]
+        assert call_kwargs["initializer_names"] == ["target"]
+        assert call_kwargs["initialization_scripts"] is None
+        assert call_kwargs["log_level"] == logging.DEBUG
+        assert result is mock_derived
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_shares_registries(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context shares scenario and initializer registries from shell context."""
+        s, ctx, _ = shell
+        mock_derived = MagicMock()
+        mock_fc_class.return_value = mock_derived
+
+        s._rebuild_context(initializer_names=None)
+
+        assert mock_derived._scenario_registry == ctx._scenario_registry
+        assert mock_derived._initializer_registry == ctx._initializer_registry
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_sets_initialized_and_silent(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context sets _initialized and _silent_reinit on the derived context."""
+        s, ctx, _ = shell
+        mock_derived = MagicMock()
+        mock_fc_class.return_value = mock_derived
+
+        s._rebuild_context(initializer_names=None)
+
+        assert mock_derived._initialized is True
+        assert mock_derived._silent_reinit is True
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_defaults_log_level_to_shell_default(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context uses default_log_level when log_level is None."""
+        s, ctx, _ = shell
+        s.default_log_level = logging.ERROR
+        mock_fc_class.return_value = MagicMock()
+
+        s._rebuild_context(initializer_names=None, log_level=None)
+
+        call_kwargs = mock_fc_class.call_args[1]
+        assert call_kwargs["log_level"] == logging.ERROR
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_overrides_do_not_mutate_context_kwargs(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context does not modify the original _context_kwargs dict."""
+        s, ctx, _ = shell
+        s._context_kwargs = {"config_file": Path("/original.yaml")}
+        original_kwargs = dict(s._context_kwargs)
+        mock_fc_class.return_value = MagicMock()
+
+        s._rebuild_context(initializer_names=["new_init"], initialization_scripts=[Path("/script.py")])
+
+        assert s._context_kwargs == original_kwargs
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_with_empty_startup_kwargs(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context works when shell was started with no extra kwargs."""
+        s, ctx, _ = shell
+        s._context_kwargs = {}
+        mock_fc_class.return_value = MagicMock()
+
+        s._rebuild_context(initializer_names=["target"])
+
+        call_kwargs = mock_fc_class.call_args[1]
+        assert call_kwargs["initializer_names"] == ["target"]
+        # config_file, database, env_files should not be in kwargs
+        assert "config_file" not in call_kwargs
+        assert "database" not in call_kwargs
+        assert "env_files" not in call_kwargs
 
 
 class TestMain:

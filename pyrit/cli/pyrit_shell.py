@@ -166,6 +166,42 @@ class PyRITShell(cmd.Cmd):
             self._init_complete.wait()
         self._raise_init_error()
 
+    def _rebuild_context(
+        self,
+        *,
+        initializer_names: Optional[list[Any]] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
+    ) -> frontend_core.FrontendCore:
+        """
+        Create a per-command FrontendCore that inherits the shell's startup config.
+
+        Propagates config_file, database, and env_files from the shell's startup
+        kwargs, then overrides initializer_names, initialization_scripts, and
+        log_level for the current command. Shares registries with the shell
+        context to avoid redundant re-discovery.
+
+        Args:
+            initializer_names (Optional[list[Any]]): Per-command initializer overrides.
+            initialization_scripts (Optional[list[Path]]): Per-command script overrides.
+            log_level (Optional[int]): Per-command log level override.
+
+        Returns:
+            frontend_core.FrontendCore: A new context ready for use in a command.
+        """
+        cmd_kwargs = dict(self._context_kwargs)
+        cmd_kwargs["initializer_names"] = initializer_names
+        cmd_kwargs["initialization_scripts"] = initialization_scripts
+        cmd_kwargs["log_level"] = log_level if log_level is not None else self.default_log_level
+
+        cmd_context = self._fc.FrontendCore(**cmd_kwargs)
+        cmd_context._scenario_registry = self.context._scenario_registry
+        cmd_context._initializer_registry = self.context._initializer_registry
+        cmd_context._initialized = True
+        cmd_context._silent_reinit = True
+
+        return cmd_context
+
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
@@ -228,8 +264,7 @@ class PyRITShell(cmd.Cmd):
         """
         self._ensure_initialized()
         try:
-            context_to_use = self.context
-
+            list_targets_context = self.context
             if arg.strip():
                 args = self._fc.parse_list_targets_arguments(args_string=arg)
 
@@ -238,17 +273,12 @@ class PyRITShell(cmd.Cmd):
                     resolved_scripts = self._fc.resolve_initialization_scripts(
                         script_paths=args["initialization_scripts"]
                     )
-
-                context_to_use = self._fc.FrontendCore(
+                list_targets_context = self._rebuild_context(
                     initialization_scripts=resolved_scripts,
                     initializer_names=args["initializers"],
-                    log_level=self.default_log_level,
                 )
-                context_to_use._scenario_registry = self.context._scenario_registry
-                context_to_use._initializer_registry = self.context._initializer_registry
-                context_to_use._initialized = True
 
-            asyncio.run(self._fc.print_targets_list_async(context=context_to_use))
+            asyncio.run(self._fc.print_targets_list_async(context=list_targets_context))
         except ValueError as e:
             print(f"Error: {e}")
         except FileNotFoundError as e:
@@ -337,16 +367,13 @@ class PyRITShell(cmd.Cmd):
                 print(f"Error: {e}")
                 return
 
-        # Create a context for this run with overrides
-        run_context = self._fc.FrontendCore(
-            initialization_scripts=resolved_scripts,
+        # Create a context for this run with per-command overrides,
+        # inheriting config_file, database, and env_files from startup.
+        run_context = self._rebuild_context(
             initializer_names=args["initializers"],
-            log_level=args["log_level"] if args["log_level"] else self.default_log_level,
+            initialization_scripts=resolved_scripts,
+            log_level=args["log_level"],
         )
-        # Use the existing registries (don't reinitialize)
-        run_context._scenario_registry = self.context._scenario_registry
-        run_context._initializer_registry = self.context._initializer_registry
-        run_context._initialized = True
 
         try:
             result = asyncio.run(
