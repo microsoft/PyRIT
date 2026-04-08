@@ -190,8 +190,10 @@ class PyRITShell(cmd.Cmd):
             frontend_core.FrontendCore: A new context ready for use in a command.
         """
         cmd_kwargs = dict(self._context_kwargs)
-        cmd_kwargs["initializer_names"] = initializer_names
-        cmd_kwargs["initialization_scripts"] = initialization_scripts
+        if initializer_names is not None:
+            cmd_kwargs["initializer_names"] = initializer_names
+        if initialization_scripts is not None:
+            cmd_kwargs["initialization_scripts"] = initialization_scripts
         cmd_kwargs["log_level"] = log_level if log_level is not None else self.default_log_level
 
         cmd_context = self._fc.FrontendCore(**cmd_kwargs)

@@ -220,7 +220,8 @@ class TestPyRITShell:
         # _rebuild_context passes _context_kwargs plus overrides to FrontendCore
         call_kwargs = mock_fc_class.call_args[1]
         assert call_kwargs["initializer_names"] == ["target"]
-        assert call_kwargs["initialization_scripts"] is None
+        # initialization_scripts=None should not appear in kwargs (preserves startup value)
+        assert "initialization_scripts" not in call_kwargs
         assert call_kwargs["log_level"] == s.default_log_level
         assert mock_run_context._initialized is True
         assert mock_run_context._silent_reinit is True
@@ -721,9 +722,26 @@ class TestRebuildContext:
         assert call_kwargs["database"] == "InMemory"
         assert call_kwargs["env_files"] == [Path("/my/.env")]
         assert call_kwargs["initializer_names"] == ["target"]
-        assert call_kwargs["initialization_scripts"] is None
+        # initialization_scripts=None should NOT override startup kwargs
+        assert "initialization_scripts" not in call_kwargs
         assert call_kwargs["log_level"] == logging.DEBUG
         assert result is mock_derived
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_rebuild_context_none_does_not_override_startup_kwargs(self, mock_fc_class: MagicMock, shell):
+        """Test _rebuild_context preserves startup initializer_names/scripts when None is passed."""
+        s, ctx, _ = shell
+        s._context_kwargs = {
+            "initializer_names": ["startup_init"],
+            "initialization_scripts": [Path("/startup_script.py")],
+        }
+        mock_fc_class.return_value = MagicMock()
+
+        s._rebuild_context(initializer_names=None, initialization_scripts=None)
+
+        call_kwargs = mock_fc_class.call_args[1]
+        assert call_kwargs["initializer_names"] == ["startup_init"]
+        assert call_kwargs["initialization_scripts"] == [Path("/startup_script.py")]
 
     @patch("pyrit.cli.frontend_core.FrontendCore")
     def test_rebuild_context_shares_registries(self, mock_fc_class: MagicMock, shell):
