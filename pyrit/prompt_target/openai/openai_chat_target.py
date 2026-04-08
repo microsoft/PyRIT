@@ -69,6 +69,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         supports_multi_turn=True,
         supports_json_output=True,
         supports_multi_message_pieces=True,
+        supports_system_prompt=True,
     )
 
     def __init__(

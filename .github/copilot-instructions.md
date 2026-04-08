@@ -36,5 +36,7 @@ BEFORE editing or code-reviewing any file, you MUST read the `.github/instructio
 - Editing/code-reviewing `pyrit/prompt_converter/**` → also read `converters.instructions.md`
 - Editing/code-reviewing `tests/**` → also read `test.instructions.md`
 - Editing/code-reviewing `doc/**/*.py` or `doc/**/*.ipynb` → also read `docs.instructions.md`
+- Editing/code-reviewing `frontend/**/*.{ts,tsx}` → also read `frontend-style-guide.instructions.md`
+- Editing/code-reviewing `frontend/**/*.test.{ts,tsx}` → also read `frontend-test.instructions.md`
 
 Follow every rule in the applicable instruction files. Do not skip this step.

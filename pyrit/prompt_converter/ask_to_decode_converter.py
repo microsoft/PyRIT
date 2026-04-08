@@ -53,7 +53,7 @@ class AskToDecodeConverter(PromptConverter):
                 If None, a random template is selected. Defaults to None.
             encoding_name (str, optional): Name of the encoding scheme (e.g., "Base64",
                 "ROT13", "Morse"). Used in encoding_name_templates to provide context
-                about the encoding type. Defaults to empty string.
+                about the encoding type. Defaults to "cipher".
         """
         self._encoding_name = encoding_name
         self._template = template

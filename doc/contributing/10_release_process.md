@@ -13,6 +13,7 @@ Before starting the release process, verify the codebase is in a healthy state.
 
 - **Check for pending changes.** Ask other PyRIT maintainers whether they have any in-flight changes that should land before the release.
 - **Verify build pipelines.** Confirm that all integration tests and end-to-end tests are passing in the CI pipelines. If any tests are failing, fix them before proceeding.
+  - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
 - **Update scorer metrics.** Run `python .\build_scripts\evaluate_scorers.py` and commit the results so that scorer evaluation metrics are up to date.
 
 ## 2. Decide the Next Version

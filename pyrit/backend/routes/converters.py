@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.converters import (
+    ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
@@ -39,6 +40,21 @@ async def list_converters() -> ConverterInstanceListResponse:
     """
     service = get_converter_service()
     return await service.list_converters_async()
+
+
+@router.get(
+    "/catalog",
+    response_model=ConverterCatalogResponse,
+)
+async def list_converter_catalog() -> ConverterCatalogResponse:
+    """
+    List all available converter types from the backend converter registry.
+
+    Returns:
+        ConverterCatalogResponse: List of available converter types.
+    """
+    service = get_converter_service()
+    return await service.list_converter_catalog_async()
 
 
 @router.post(
