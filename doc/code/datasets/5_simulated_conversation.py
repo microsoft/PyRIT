@@ -22,7 +22,8 @@
 # The `generate_simulated_conversation_async` utility creates a multi-turn conversation between an
 # adversarial LLM and a simulated target (the same LLM playing both roles). The result is a
 # `list[SeedPrompt]` that you can wrap in a `SeedGroup` and feed into any multi-turn attack as
-# `prepended_conversation`.
+# `prepended_conversation`. (Note: system prompts are an alternative way to provide context to
+# attacks; `prepended_conversation` is the current API for replaying conversation history.)
 #
 # **Use cases:**
 # - Precompute expensive conversation prefixes once, reuse on slower or newer models
@@ -115,6 +116,12 @@ new_result = await new_attack.execute_async(  # type: ignore
 )
 
 await ConsoleAttackResultPrinter().print_result_async(result=new_result)  # type: ignore
+
+# %% [markdown]
+# > **Note:** If the Crescendo result shows `backtrack_count: 0` even on failure, this is expected.
+# > Backtracking only triggers when the target **refuses** a prompt, not when the objective score is
+# > low. A cooperative but unhelpful response won't trigger a backtrack. Also, prepended turns count
+# > against `max_turns`, so increase `max_turns` accordingly to leave room for new exchanges.
 
 # %% [markdown]
 # ## Key Parameters

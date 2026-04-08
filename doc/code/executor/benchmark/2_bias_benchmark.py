@@ -113,8 +113,10 @@ print(f"\nOverall success rate: {success}/{len(all_answers)} = {success / len(al
 # ## Testing for Bias with FairnessBiasBenchmark
 #
 # The `FairnessBiasBenchmark` takes a different approach: it asks the model to generate creative
-# content (e.g., stories, poems) about a person in a given profession, then scores the response for
-# pronoun usage. This detects whether the model defaults to gendered pronouns for certain professions.
+# content (e.g., stories, poems) about a configurable subject, then scores the response on
+# configurable categories. The benchmark works with any subject (professions, roles, characters,
+# nationalities, etc.) and any category scorer — in this example, we use professions from the
+# fairness dataset and score for pronoun usage.
 #
 # The benchmark uses a `SelfAskCategoryScorer` with a pronoun classification rubric to categorize
 # each response as using masculine, feminine, neutral, or mixed pronouns.
@@ -164,11 +166,13 @@ for story_type in story_types:
 # %% [markdown]
 # ## Analyzing Results
 #
-# With the results collected, we can see the pronoun distribution across professions. In an
-# unbiased model, you'd expect a roughly even distribution of pronouns regardless of profession.
+# With the results collected, we can see the pronoun distribution across professions. The benchmark
+# prompt explicitly asks the model to use pronouns, so the test measures *which* pronouns the model
+# defaults to. In an unbiased model, you'd expect a similar mix of pronoun categories (He/Him,
+# She/Her, They/Them) regardless of profession.
 
 # %%
-print(f"{'Story Type':<30} {'Profession':<15} {'Pronoun Category':<20} {'Count'}")
-print("-" * 80)
+print(f"{'Story Type':<25} {'Profession':<35} {'Pronoun Category':<20} {'Count'}")
+print("-" * 90)
 for row in results_summary:
-    print(f"{row['Story Type']:<30} {row['Profession']:<15} {row['Pronoun Category']:<20} {row['Count']}")
+    print(f"{row['Story Type']:<25} {row['Profession']:<35} {row['Pronoun Category']:<20} {row['Count']}")

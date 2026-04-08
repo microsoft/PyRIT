@@ -13,21 +13,29 @@
 # ---
 
 # %% [markdown]
-# # 9. Sending Raw Datasets
+# # 9. Baseline-Only Execution
 #
 # Sometimes you just want to send a set of prompts through a model and score the responses — no attack
-# strategies, no obfuscation, no multi-turn conversation. This "baseline-only" pattern is useful for:
+# strategies, no obfuscation, no multi-turn conversation. This scenario "baseline-only" pattern is useful for:
 #
 # - **Initial assessment**: Understand how a target responds to harmful prompts before applying attacks
 # - **Custom datasets**: Test your own datasets against a model without configuring a full attack scenario
 # - **Benchmark comparison**: Establish a baseline refusal rate to measure attack effectiveness against
 #
-# Most PyRIT scenarios can run in baseline-only mode by passing `scenario_strategies=[]` programmatically
-# (any scenario that has baseline enabled, which includes `RedTeamAgent` and most others).
-# This tells the scenario to skip all attack strategies and just send objectives directly to the target.
+# ## What Is Baseline Mode?
 #
-# For a deeper look at scenario configuration, see the
-# [RedTeamAgent deep dive](./1_red_team_agent.ipynb).
+# Every scenario in PyRIT can optionally include a **baseline attack** — a `PromptSendingAttack` that
+# sends each objective directly to the target without any converters or multi-turn techniques. This is
+# controlled by the `include_default_baseline` parameter (default: `True` for most scenarios). See
+# the [Scenarios overview](./0_scenarios.ipynb) for more on scenario configuration.
+#
+# To run *only* the baseline (no attack strategies), pass `scenario_strategies=[]` programmatically.
+# The example below uses `RedTeamAgent`, but the same approach works with any scenario that has
+# baseline enabled (ContentHarms, Cyber, Leakage, Scam, GarakEncoding, and others).
+#
+# > **Note:** Baseline-only mode is currently supported through the programmatic API.
+# > The `pyrit_scan` CLI does not support empty strategies — omitting `--strategies` defaults
+# > to running all strategies, not baseline-only.
 #
 # ## Loading a Custom Dataset
 #
@@ -54,16 +62,11 @@ groups = memory.get_seed_groups(dataset_name="airt_illegal")
 print(f"Loaded {len(groups)} seed groups from 'airt_illegal'")
 
 # %% [markdown]
-# ## Running Baseline-Only with a Scenario
+# ## Running Baseline-Only with RedTeamAgent
 #
-# The `RedTeamAgent` scenario is ideal for sending raw datasets because it uses a plain
-# `DatasetConfiguration` that works with any dataset. Passing `scenario_strategies=[]` runs only
-# the baseline attack — each objective is sent directly to the target without converters or
-# multi-turn techniques.
-#
-# > **Note:** Baseline-only mode is currently supported through the programmatic API.
-# > The `pyrit_scan` CLI does not support empty strategies — omitting `--strategies` defaults
-# > to running all strategies, not baseline-only.
+# Below we use `RedTeamAgent` as our example because it accepts a plain `DatasetConfiguration`
+# that works with any dataset. The same `scenario_strategies=[]` pattern applies to other
+# baseline-enabled scenarios as well.
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
@@ -117,22 +120,21 @@ if all_results:
 #
 # By default, `RedTeamAgent` uses a composite scorer that checks for both harmful content and
 # non-refusal. You can customize this by passing a different scorer to the constructor:
-#
-# ```python
-# from pyrit.executor.attack import AttackScoringConfig
-# from pyrit.score import SelfAskRefusalScorer
-#
-# # Use a simpler scorer that only checks for refusals
-# scoring_config = AttackScoringConfig(
-#     objective_scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
-# )
-# scenario = RedTeamAgent(attack_scoring_config=scoring_config)
-# await scenario.initialize_async(
-#     objective_target=objective_target,
-#     scenario_strategies=[],
-#     dataset_config=dataset_config,
-# )
-# ```
+
+# %%
+from pyrit.executor.attack import AttackScoringConfig
+from pyrit.score import SelfAskRefusalScorer
+
+# Use a simpler scorer that only checks for refusals
+scoring_config = AttackScoringConfig(objective_scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
+custom_scenario = RedTeamAgent(attack_scoring_config=scoring_config)
+await custom_scenario.initialize_async(  # type: ignore
+    objective_target=objective_target,
+    scenario_strategies=[],
+    dataset_config=dataset_config,
+)
+
+print(f"Custom scorer scenario attacks: {custom_scenario.atomic_attack_count}")
 #
 # ## Re-Scoring and Exporting
 #
