@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Contract tests for CentralMemory and SQLiteMemory used by azure-ai-evaluation.
+"""Contract tests for SQLiteMemory used by azure-ai-evaluation.
 
 The azure-ai-evaluation RedTeam class initializes PyRIT memory during __init__:
     CentralMemory.set_memory_instance(SQLiteMemory())
@@ -119,35 +119,20 @@ class TestMemoryQueryMethodContract:
         assert callable(memory.get_conversation)
         memory.dispose_engine()
 
-    def test_get_conversation_returns_list(self):
+    def test_get_conversation_returns_list(self, sqlite_instance):
         """get_conversation should return a list (empty for unknown conversation_id)."""
-        memory = SQLiteMemory(db_path=":memory:")
-        memory.disable_embedding()
-        memory.reset_database()
-        CentralMemory.set_memory_instance(memory)
-        result = memory.get_conversation(conversation_id="nonexistent-id")
+        result = sqlite_instance.get_conversation(conversation_id="nonexistent-id")
         assert isinstance(result, list)
-        memory.dispose_engine()
 
-    def test_get_message_pieces_with_labels_returns_list(self):
+    def test_get_message_pieces_with_labels_returns_list(self, sqlite_instance):
         """get_message_pieces(labels={...}) should return a list (empty for no matches).
 
         This is the current equivalent of the SDK's get_prompt_request_pieces(labels=...) call.
         """
-        memory = SQLiteMemory(db_path=":memory:")
-        memory.disable_embedding()
-        memory.reset_database()
-        CentralMemory.set_memory_instance(memory)
-        result = memory.get_message_pieces(labels={"nonexistent": "label"})
+        result = sqlite_instance.get_message_pieces(labels={"nonexistent": "label"})
         assert isinstance(result, (list, tuple))
-        memory.dispose_engine()
 
-    def test_get_message_pieces_returns_list(self):
+    def test_get_message_pieces_returns_list(self, sqlite_instance):
         """get_message_pieces should return a list (empty for unknown conversation_id)."""
-        memory = SQLiteMemory(db_path=":memory:")
-        memory.disable_embedding()
-        memory.reset_database()
-        CentralMemory.set_memory_instance(memory)
-        result = memory.get_message_pieces(conversation_id="nonexistent-id")
+        result = sqlite_instance.get_message_pieces(conversation_id="nonexistent-id")
         assert isinstance(result, list)
-        memory.dispose_engine()

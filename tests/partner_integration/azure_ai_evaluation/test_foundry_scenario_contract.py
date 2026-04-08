@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Contract tests for red team scenario APIs used by azure-ai-evaluation.
+"""Contract tests for Foundry scenario APIs used by azure-ai-evaluation.
 
 The azure-ai-evaluation red team module uses the scenario framework for attack execution:
 - FoundryExecutionManager creates FoundryScenario instances per risk category

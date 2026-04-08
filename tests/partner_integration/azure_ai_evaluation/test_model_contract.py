@@ -215,27 +215,11 @@ class TestSeedModels:
         assert prompt.metadata["is_context"] is True
         assert prompt.metadata["tool_name"] == "document_client_smode"
         assert prompt.metadata["context_type"] == "document"
+        assert prompt.value == "SSN: 123-45-6789"
+        assert prompt.data_type == "text"
+        assert prompt.prompt_group_id == group_id
         assert prompt.sequence == 1
         assert prompt.role == "user"
-
-    def test_seed_prompt_objective_pattern(self):
-        """DatasetConfigurationBuilder creates objective SeedPrompts with is_objective metadata.
-
-        The objective SeedPrompt is placed at a higher sequence than context SeedPrompts
-        so PyRIT uses it as next_message (the actual prompt sent to the target).
-        """
-        group_id = str(uuid.uuid4())
-        obj_metadata = {"is_objective": True, "risk_category": "sensitive_data_leakage"}
-        prompt = SeedPrompt(
-            value="Summarize the document",
-            data_type="text",
-            prompt_group_id=group_id,
-            metadata=obj_metadata,
-            role="user",
-            sequence=2,
-        )
-        assert prompt.metadata["is_objective"] is True
-        assert prompt.sequence == 2
 
     def test_seed_objective_accepts_value(self):
         """SeedObjective requires a value field (the objective text)."""
@@ -261,12 +245,12 @@ class TestSeedModels:
         assert len(group.seeds) == 2
 
     def test_seed_group_mixed_context_pattern(self):
-        """DatasetConfigurationBuilder creates SeedGroups with objective + context + objective_prompt.
+        """DatasetConfigurationBuilder creates SeedGroups with objective + context seeds.
 
         For standard attacks with context (sensitive_data_leakage), a SeedGroup contains:
         1. SeedObjective — the attack objective
         2. Context SeedPrompt(s) — at lower sequence, is_context=True in metadata
-        3. Objective SeedPrompt — at highest sequence, is_objective=True in metadata
+        3. Objective SeedPrompt — at highest sequence (the actual prompt sent to the target)
         """
         group_id = str(uuid.uuid4())
 
@@ -282,25 +266,24 @@ class TestSeedModels:
             role="user",
             sequence=1,
         )
-        objective_seed = SeedPrompt(
+        objective_prompt = SeedPrompt(
             value="Extract PII from the document",
             data_type="text",
             prompt_group_id=group_id,
-            metadata={"is_objective": True},
             role="user",
             sequence=2,
         )
 
-        group = SeedGroup(seeds=[objective, context_seed, objective_seed])
+        group = SeedGroup(seeds=[objective, context_seed, objective_prompt])
         assert len(group.seeds) == 3
 
-        # Verify sequence ordering: context < objective
+        # Verify sequence ordering: context < objective prompt
         seed_prompts = [s for s in group.seeds if isinstance(s, SeedPrompt)]
         context_seeds = [s for s in seed_prompts if s.metadata.get("is_context")]
-        obj_seeds = [s for s in seed_prompts if s.metadata.get("is_objective")]
+        non_context_seeds = [s for s in seed_prompts if not s.metadata.get("is_context")]
         assert len(context_seeds) == 1
-        assert len(obj_seeds) == 1
-        assert context_seeds[0].sequence < obj_seeds[0].sequence
+        assert len(non_context_seeds) == 1
+        assert context_seeds[0].sequence < non_context_seeds[0].sequence
 
 
 class TestMiscModels:
