@@ -29,9 +29,9 @@ class TestRedTeamScenarioContract:
 
     def test_foundry_scenario_importable(self):
         """ScenarioOrchestrator creates FoundryScenario instances."""
-        from pyrit.scenario.foundry import FoundryScenario as FS
+        from pyrit.scenario.foundry import FoundryScenario  # noqa: F811
 
-        assert FS is not None
+        assert FoundryScenario is not None
 
 
 class TestDatasetConfigurationContract:
@@ -39,9 +39,9 @@ class TestDatasetConfigurationContract:
 
     def test_dataset_configuration_importable(self):
         """DatasetConfigurationBuilder produces DatasetConfiguration."""
-        from pyrit.scenario import DatasetConfiguration as DC
+        from pyrit.scenario import DatasetConfiguration  # noqa: F811
 
-        assert DC is not None
+        assert DatasetConfiguration is not None
 
 
 class TestAttackScoringConfigContract:
@@ -59,9 +59,9 @@ class TestScenarioResultContract:
 
     def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
-        from pyrit.models.scenario_result import ScenarioResult as SR
+        from pyrit.models.scenario_result import ScenarioResult  # noqa: F811
 
-        assert SR is not None
+        assert ScenarioResult is not None
 
     def test_attack_result_importable(self):
         """FoundryResultProcessor processes AttackResult."""
