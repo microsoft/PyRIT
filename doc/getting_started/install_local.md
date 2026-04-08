@@ -46,7 +46,7 @@ Notebooks and your PyRIT installation must be on the same version. This pip inst
    ```
 
 2. **Match notebooks to your version**:
-   - If using a **release version** (e.g., `0.9.0`), download notebooks from the corresponding release branch: `https://github.com/Azure/PyRIT/tree/releases/v0.9.0/doc`
+   - If using a **release version** (e.g., `0.9.0`), download notebooks from the corresponding release branch: `https://github.com/microsoft/PyRIT/tree/releases/v0.9.0/doc`
    - The automatically cloned notebooks from the `main` branch may not match your installed version
    - This website documentation shows the latest development version (`main` branch).
 
