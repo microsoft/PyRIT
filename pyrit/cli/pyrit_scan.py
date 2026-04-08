@@ -196,7 +196,7 @@ def main(args: Optional[list[str]] = None) -> int:
         return asyncio.run(frontend_core.print_initializers_list_async(context=context))
 
     if parsed_args.list_targets:
-        # Need initializers to populate target registry
+        # Need initializers or initialization scripts to populate the target registry
         initialization_scripts = None
         if parsed_args.initialization_scripts:
             try:
