@@ -9,7 +9,6 @@ from jinja2 import TemplateSyntaxError
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
-    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -132,7 +131,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
             harm_categories = self._extract_harm_categories(item)
             try:
                 prompt = SeedPrompt(
-                    value=escape_jinja_template_syntax(user_input),
+                    value=user_input,
                     data_type="text",
                     dataset_name=self.dataset_name,
                     description=description,

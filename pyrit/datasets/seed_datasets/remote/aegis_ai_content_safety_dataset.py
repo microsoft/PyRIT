@@ -8,7 +8,6 @@ from datasets import load_dataset
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
-    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -170,7 +169,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
                 # Escape Jinja2 template syntax by wrapping the entire prompt in raw tags
                 # This tells Jinja2 to treat everything inside as literal text
-                prompt_value = escape_jinja_template_syntax(prompt_value)
+                prompt_value = prompt_value
 
                 seed_prompts.append(
                     SeedPrompt(

@@ -7,7 +7,6 @@ from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
-    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -120,7 +119,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
 
             seed_prompts.append(
                 SeedPrompt(
-                    value=escape_jinja_template_syntax(example["prompt"]),
+                    value=example["prompt"],
                     data_type="text",
                     dataset_name=self.dataset_name,
                     harm_categories=categories,

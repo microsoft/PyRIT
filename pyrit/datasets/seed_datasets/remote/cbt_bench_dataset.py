@@ -6,7 +6,6 @@ from typing import Any
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
-    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -121,7 +120,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
                 metadata["core_belief_fine_grained"] = core_beliefs
 
             seed_prompt = SeedPrompt(
-                value=escape_jinja_template_syntax(value),
+                value=value,
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=["psycho-social harms"],

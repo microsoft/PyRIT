@@ -25,22 +25,6 @@ from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
 logger = logging.getLogger(__name__)
 
 
-def escape_jinja_template_syntax(value: str) -> str:
-    """
-    Wrap a string in Jinja2 {% raw %}...{% endraw %} tags to prevent template evaluation.
-
-    Use this for any untrusted or externally-fetched text that will be stored as a
-    SeedPrompt value, to ensure it is treated as literal text by the Jinja2 renderer.
-
-    Args:
-        value: The raw string to escape.
-
-    Returns:
-        str: The string wrapped in {% raw %}...{% endraw %} tags.
-    """
-    return f"{{% raw %}}{value}{{% endraw %}}"
-
-
 # Define the type for the file handlers
 FileHandlerRead = Callable[[TextIO], list[dict[str, str]]]
 FileHandlerWrite = Callable[[TextIO, list[dict[str, str]]], None]

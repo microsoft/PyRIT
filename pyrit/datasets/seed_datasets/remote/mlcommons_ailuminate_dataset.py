@@ -6,7 +6,6 @@ from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
-    escape_jinja_template_syntax,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -86,7 +85,7 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=escape_jinja_template_syntax(example["prompt_text"]),
+                value=example["prompt_text"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 # Saving both the full hazard category name and the abbreviation

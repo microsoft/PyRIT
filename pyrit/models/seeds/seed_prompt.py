@@ -55,6 +55,8 @@ class SeedPrompt(Seed):
             ValueError: If file-based data type cannot be inferred from extension.
 
         """
+        if not self.is_jinja_template:
+            self.value = self.escape_for_jinja(self.value)
         self.value = self.render_template_value_silent(**PATHS_DICT)
 
         if not self.data_type:

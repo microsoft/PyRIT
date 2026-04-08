@@ -49,6 +49,7 @@ class SeedGroup(YamlLoadable):
         self,
         *,
         seeds: Sequence[Union[Seed, dict[str, Any]]],
+        is_jinja_template: bool = False,
     ):
         """
         Initialize a SeedGroup.
@@ -59,6 +60,8 @@ class SeedGroup(YamlLoadable):
                 - SeedSimulatedConversation (or dict with seed_type="simulated_conversation")
                 - SeedPrompt for prompts (or dict with seed_type="prompt" or no seed_type)
                 Note: is_objective and is_simulated_conversation are deprecated since 0.13.0.
+            is_jinja_template: When True, seed values are treated as Jinja2 templates.
+                Set automatically by from_yaml_file for trusted sources.
 
         Raises:
             ValueError: If seeds is empty.
@@ -74,6 +77,7 @@ class SeedGroup(YamlLoadable):
             if isinstance(seed, Seed):
                 self.seeds.append(seed)
             elif isinstance(seed, dict):
+                seed["is_jinja_template"] = is_jinja_template
                 # Support new seed_type field with backward compatibility for deprecated fields
                 seed_type = seed.pop("seed_type", None)
                 is_objective = seed.pop("is_objective", False)
