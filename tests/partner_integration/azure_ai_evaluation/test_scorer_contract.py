@@ -10,7 +10,6 @@ The azure-ai-evaluation red team module extends these classes:
 Both are critical for scoring attack results.
 """
 
-from pyrit.identifiers import ScorerIdentifier
 from pyrit.score import ScorerPromptValidator
 from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -18,10 +17,6 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 class TestScorerContract:
     """Validate Scorer base class interface stability."""
-
-    def test_scorer_base_exists(self):
-        """AzureRAIServiceTrueFalseScorer extends Scorer."""
-        assert Scorer is not None
 
     def test_scorer_has_score_piece_async(self):
         """Scorer subclasses must implement _score_piece_async."""
@@ -51,13 +46,11 @@ class TestTrueFalseScorerContract:
 class TestScorerUtilities:
     """Validate scorer utility classes used by azure-ai-evaluation."""
 
-    def test_scorer_identifier_exists(self):
+    def test_scorer_identifier_importable(self):
         """RAIServiceScorer uses ScorerIdentifier for identity tracking."""
-        assert ScorerIdentifier is not None
+        from pyrit.identifiers import ScorerIdentifier
 
-    def test_scorer_prompt_validator_exists(self):
-        """RAIServiceScorer uses ScorerPromptValidator for input validation."""
-        assert ScorerPromptValidator is not None
+        assert ScorerIdentifier is not None
 
     def test_scorer_prompt_validator_instantiable(self):
         """ScorerPromptValidator should accept supported_data_types kwarg."""

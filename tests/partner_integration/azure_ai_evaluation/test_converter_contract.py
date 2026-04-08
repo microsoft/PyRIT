@@ -17,14 +17,6 @@ from pyrit.prompt_converter import ConverterResult, PromptConverter
 class TestPromptConverterContract:
     """Validate PromptConverter base class interface stability."""
 
-    def test_prompt_converter_base_exists(self):
-        """_DefaultConverter extends PromptConverter."""
-        assert PromptConverter is not None
-
-    def test_converter_result_exists(self):
-        """_DefaultConverter.convert_async returns ConverterResult."""
-        assert ConverterResult is not None
-
     def test_prompt_converter_has_convert_async(self):
         """_DefaultConverter overrides convert_async."""
         assert hasattr(PromptConverter, "convert_async")

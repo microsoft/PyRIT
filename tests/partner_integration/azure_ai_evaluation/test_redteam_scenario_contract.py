@@ -12,30 +12,12 @@ The azure-ai-evaluation red team module uses the scenario framework for attack e
 """
 
 from pyrit.executor.attack import AttackScoringConfig
-from pyrit.models import AttackOutcome, AttackResult
-from pyrit.models.scenario_result import ScenarioResult
-from pyrit.scenario import DatasetConfiguration, ScenarioStrategy
-from pyrit.scenario.foundry import FoundryScenario, FoundryStrategy
-
-
-class TestScenarioStrategyContract:
-    """Validate ScenarioStrategy base class availability and interface."""
-
-    def test_scenario_strategy_class_exists(self):
-        """ScenarioStrategy is the base enum for all attack strategies."""
-        assert ScenarioStrategy is not None
-
-    def test_scenario_strategy_is_base_for_foundry(self):
-        """FoundryStrategy must extend ScenarioStrategy."""
-        assert issubclass(FoundryStrategy, ScenarioStrategy)
+from pyrit.scenario import ScenarioStrategy
+from pyrit.scenario.foundry import FoundryStrategy
 
 
 class TestRedTeamStrategyContract:
     """Validate FoundryStrategy availability and structure."""
-
-    def test_foundry_strategy_class_exists(self):
-        """StrategyMapper maps to FoundryStrategy values."""
-        assert FoundryStrategy is not None
 
     def test_foundry_strategy_is_scenario_strategy(self):
         """FoundryStrategy should extend ScenarioStrategy."""
@@ -43,27 +25,27 @@ class TestRedTeamStrategyContract:
 
 
 class TestRedTeamScenarioContract:
-    """Validate FoundryScenario availability."""
+    """Validate FoundryScenario importability."""
 
-    def test_foundry_scenario_class_exists(self):
+    def test_foundry_scenario_importable(self):
         """ScenarioOrchestrator creates FoundryScenario instances."""
-        assert FoundryScenario is not None
+        from pyrit.scenario.foundry import FoundryScenario as FS
+
+        assert FS is not None
 
 
 class TestDatasetConfigurationContract:
-    """Validate DatasetConfiguration availability."""
+    """Validate DatasetConfiguration importability."""
 
-    def test_dataset_configuration_class_exists(self):
+    def test_dataset_configuration_importable(self):
         """DatasetConfigurationBuilder produces DatasetConfiguration."""
-        assert DatasetConfiguration is not None
+        from pyrit.scenario import DatasetConfiguration as DC
+
+        assert DC is not None
 
 
 class TestAttackScoringConfigContract:
     """Validate AttackScoringConfig availability."""
-
-    def test_attack_scoring_config_exists(self):
-        """ScenarioOrchestrator uses AttackScoringConfig."""
-        assert AttackScoringConfig is not None
 
     def test_attack_scoring_config_has_expected_fields(self):
         """AttackScoringConfig should accept objective_scorer and refusal_scorer."""
@@ -73,16 +55,22 @@ class TestAttackScoringConfigContract:
 
 
 class TestScenarioResultContract:
-    """Validate ScenarioResult model availability."""
+    """Validate ScenarioResult and AttackResult importability."""
 
-    def test_scenario_result_class_exists(self):
+    def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
-        assert ScenarioResult is not None
+        from pyrit.models.scenario_result import ScenarioResult as SR
 
-    def test_attack_result_class_exists(self):
+        assert SR is not None
+
+    def test_attack_result_importable(self):
         """FoundryResultProcessor processes AttackResult."""
+        from pyrit.models import AttackResult
+
         assert AttackResult is not None
 
-    def test_attack_outcome_class_exists(self):
+    def test_attack_outcome_importable(self):
         """FoundryResultProcessor checks AttackOutcome values."""
+        from pyrit.models import AttackOutcome
+
         assert AttackOutcome is not None

@@ -33,6 +33,18 @@ def _initialize_pyrit():
     asyncio.run(initialize_pyrit_async(memory_db_type=IN_MEMORY))
 
 
+@pytest.fixture(autouse=True)
+def _restore_central_memory():
+    """Save and restore CentralMemory singleton between tests.
+
+    Prevents tests that call CentralMemory.set_memory_instance() from
+    leaking state into subsequent tests.
+    """
+    previous = CentralMemory._memory_instance
+    yield
+    CentralMemory._memory_instance = previous
+
+
 @pytest.fixture
 def sqlite_instance() -> Generator[SQLiteMemory, None, None]:
     """Provide an in-memory SQLite database for partner integration tests."""

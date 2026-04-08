@@ -16,16 +16,12 @@ The red team module uses these models extensively:
 import uuid
 
 from pyrit.models import (
-    ChatMessage,
     Message,
     MessagePiece,
     PromptDataType,
-    ScenarioResult,
-    Score,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
-    UnvalidatedScore,
     construct_response_from_request,
 )
 
@@ -128,12 +124,16 @@ class TestMessageContract:
 class TestScoreModels:
     """Validate Score and UnvalidatedScore interfaces."""
 
-    def test_score_class_exists(self):
+    def test_score_importable(self):
         """RAIServiceScorer and AzureRAIServiceTrueFalseScorer return Score objects."""
+        from pyrit.models import Score
+
         assert Score is not None
 
-    def test_unvalidated_score_class_exists(self):
+    def test_unvalidated_score_importable(self):
         """Scorers create UnvalidatedScore before validation."""
+        from pyrit.models import UnvalidatedScore
+
         assert UnvalidatedScore is not None
 
 
@@ -143,10 +143,6 @@ class TestSeedModels:
     These tests cover the full contract including context propagation patterns
     from PR #46151 (sensitive_data_leakage tool context flow).
     """
-
-    def test_seed_prompt_class_exists(self):
-        """DatasetConfigurationBuilder creates SeedPrompt instances."""
-        assert SeedPrompt is not None
 
     def test_seed_prompt_accepts_value(self):
         """SeedPrompt requires a value field (the actual prompt text)."""
@@ -241,10 +237,6 @@ class TestSeedModels:
         assert prompt.metadata["is_objective"] is True
         assert prompt.sequence == 2
 
-    def test_seed_objective_class_exists(self):
-        """DatasetConfigurationBuilder creates SeedObjective instances."""
-        assert SeedObjective is not None
-
     def test_seed_objective_accepts_value(self):
         """SeedObjective requires a value field (the objective text)."""
         obj = SeedObjective(value="test objective")
@@ -260,10 +252,6 @@ class TestSeedModels:
         context_items = [{"content": "secret data", "tool_name": "doc_reader"}]
         obj = SeedObjective(value="test", metadata={"context_items": context_items})
         assert obj.metadata["context_items"] == context_items
-
-    def test_seed_group_class_exists(self):
-        """DatasetConfigurationBuilder creates SeedGroup instances."""
-        assert SeedGroup is not None
 
     def test_seed_group_accepts_seeds(self):
         """SeedGroup groups multiple seeds together."""
@@ -318,8 +306,10 @@ class TestSeedModels:
 class TestMiscModels:
     """Validate miscellaneous models used by azure-ai-evaluation."""
 
-    def test_chat_message_class_exists(self):
+    def test_chat_message_importable(self):
         """formatting_utils.py imports ChatMessage."""
+        from pyrit.models import ChatMessage
+
         assert ChatMessage is not None
 
     def test_prompt_data_type_has_text(self):
@@ -330,8 +320,10 @@ class TestMiscModels:
         valid_types = get_args(PromptDataType)
         assert "text" in valid_types
 
-    def test_scenario_result_class_exists(self):
+    def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
+        from pyrit.models import ScenarioResult
+
         assert ScenarioResult is not None
 
     def test_construct_response_from_request_signature(self):
