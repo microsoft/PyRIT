@@ -572,13 +572,13 @@ export default function ChatWindow({
           disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}
-          onNewConversation={attackResultId ? handleNewConversation : undefined}
+          onNewConversation={handleNewConversation}
           operatorLocked={isOperatorLocked}
           crossTargetLocked={isCrossTargetLocked}
-          onUseAsTemplate={(isOperatorLocked || isCrossTargetLocked) ? handleUseAsTemplate : undefined}
+          onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={!activeTarget ? () => onNavigate?.('config') : undefined}
+          onConfigureTarget={() => onNavigate?.('config')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}

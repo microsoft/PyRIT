@@ -55,7 +55,7 @@ interface AttachmentListProps {
   attachments: MessageAttachment[]
   mediaConversions: Array<{ pieceType: string; convertedValue: string }>
   onRemove: (index: number) => void
-  onClearMediaConversion?: (pieceType: string) => void
+  onClearMediaConversion: (pieceType: string) => void
   formatFileSize: (bytes: number) => string
   styles: ReturnType<typeof useChatInputAreaStyles>
 }
@@ -99,7 +99,7 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
                   size="small"
                   className={styles.dismissBtn}
                   icon={<DismissRegular />}
-                  onClick={() => onClearMediaConversion?.(att.type)}
+                  onClick={() => onClearMediaConversion(att.type)}
                   data-testid={`clear-media-conversion-${att.type}`}
                 />
               </div>
@@ -122,8 +122,8 @@ interface TextInputRowsProps {
   textareaRef: Ref<HTMLTextAreaElement>
   onInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void
-  onConvertedValueChange?: (value: string) => void
-  onClearConversion?: () => void
+  onConvertedValueChange: (value: string) => void
+  onClearConversion: () => void
   styles: ReturnType<typeof useChatInputAreaStyles>
 }
 
@@ -152,7 +152,7 @@ function TextInputRows({ input, convertedValue, disabled, textareaRef, onInput, 
           <textarea
             className={styles.convertedTextarea}
             value={convertedValue}
-            onChange={(e) => onConvertedValueChange?.(e.target.value)}
+            onChange={(e) => onConvertedValueChange(e.target.value)}
             rows={1}
             data-testid="converted-value-input"
           />
@@ -184,23 +184,23 @@ interface ChatInputAreaProps {
   disabled?: boolean
   activeTarget?: TargetInstance | null
   singleTurnLimitReached?: boolean
-  onNewConversation?: () => void
+  onNewConversation: () => void
   operatorLocked?: boolean
   crossTargetLocked?: boolean
-  onUseAsTemplate?: () => void
+  onUseAsTemplate: () => void
   attackOperator?: string
   noTargetSelected?: boolean
-  onConfigureTarget?: () => void
-  onToggleConverterPanel?: () => void
-  isConverterPanelOpen?: boolean
-  onInputChange?: (value: string) => void
-  onAttachmentsChange?: (types: string[], data: Record<string, string>) => void
+  onConfigureTarget: () => void
+  onToggleConverterPanel: () => void
+  isConverterPanelOpen: boolean
+  onInputChange: (value: string) => void
+  onAttachmentsChange: (types: string[], data: Record<string, string>) => void
   convertedValue?: string | null
   originalValue?: string | null
-  onClearConversion?: () => void
-  onConvertedValueChange?: (value: string) => void
+  onClearConversion: () => void
+  onConvertedValueChange: (value: string) => void
   mediaConversions?: Array<{ pieceType: string; convertedValue: string }>
-  onClearMediaConversion?: (pieceType: string) => void
+  onClearMediaConversion: (pieceType: string) => void
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, mediaConversions = [], onClearMediaConversion }, ref) {
@@ -262,7 +262,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       onSend(input, convertedValue ?? undefined, attachments)
       setInput('')
       setAttachments([])
-      onClearConversion?.()
+      onClearConversion()
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto'
       }
@@ -290,7 +290,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 96) + 'px'
     }
-    onInputChange?.(input)
+    onInputChange(input)
   }, [input, onInputChange])
 
   useEffect(() => {
@@ -316,7 +316,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         }
       }
       if (!cancelled) {
-        onAttachmentsChange?.(types, data)
+        onAttachmentsChange(types, data)
       }
     }
 
@@ -344,7 +344,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             textClassName={styles.noTargetText}
             icon={<WarningRegular fontSize={18} style={{ color: tokens.colorPaletteRedForeground1 }} />}
             text="No target selected"
-            buttonText={onConfigureTarget ? "Configure Target" : undefined}
+            buttonText="Configure Target"
             buttonIcon={<SettingsRegular />}
             onButtonClick={onConfigureTarget}
             testId="no-target-banner"
@@ -356,7 +356,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             textClassName={styles.statusBannerText}
             icon={<InfoRegular fontSize={18} />}
             text={`This conversation belongs to operator: ${attackOperator}.`}
-            buttonText={onUseAsTemplate ? "Continue with your target" : undefined}
+            buttonText="Continue with your target"
             buttonIcon={<CopyRegular />}
             onButtonClick={onUseAsTemplate}
             testId="operator-locked-banner"
@@ -368,7 +368,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             textClassName={styles.statusBannerText}
             icon={<InfoRegular fontSize={18} />}
             text="This attack uses a different target. Continue with your target to keep the conversation."
-            buttonText={onUseAsTemplate ? "Continue with your target" : undefined}
+            buttonText="Continue with your target"
             buttonIcon={<CopyRegular />}
             onButtonClick={onUseAsTemplate}
             testId="cross-target-banner"
@@ -380,7 +380,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             textClassName={styles.statusBannerText}
             icon={<InfoRegular fontSize={18} />}
             text="This target only supports single-turn conversations."
-            buttonText={onNewConversation ? "New Conversation" : undefined}
+            buttonText="New Conversation"
             buttonIcon={<AddRegular />}
             onButtonClick={onNewConversation}
             testId="single-turn-banner"
@@ -412,7 +412,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
                 icon={<ArrowShuffleRegular />}
                 onClick={onToggleConverterPanel}
-                disabled={disabled || !onToggleConverterPanel}
+                disabled={disabled}
                 data-testid="toggle-converter-panel-btn"
                 title="Toggle converter panel"
               />

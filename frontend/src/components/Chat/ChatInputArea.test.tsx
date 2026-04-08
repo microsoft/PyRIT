@@ -17,6 +17,16 @@ describe("ChatInputArea", () => {
   const defaultProps = {
     onSend: jest.fn(),
     disabled: false,
+    onNewConversation: jest.fn(),
+    onUseAsTemplate: jest.fn(),
+    onConfigureTarget: jest.fn(),
+    onToggleConverterPanel: jest.fn(),
+    isConverterPanelOpen: false,
+    onInputChange: jest.fn(),
+    onAttachmentsChange: jest.fn(),
+    onClearConversion: jest.fn(),
+    onConvertedValueChange: jest.fn(),
+    onClearMediaConversion: jest.fn(),
   };
 
   beforeEach(() => {
@@ -26,7 +36,7 @@ describe("ChatInputArea", () => {
   it("should render input area and send button", () => {
     render(
       <TestWrapper>
-        <ChatInputArea {...defaultProps} onToggleConverterPanel={jest.fn()} />
+        <ChatInputArea {...defaultProps} />
       </TestWrapper>
     );
 
@@ -492,7 +502,7 @@ describe("ChatInputArea", () => {
     expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
 
-  it("should not show New Conversation button when onNewConversation is not provided", () => {
+  it("should show New Conversation button when singleTurnLimitReached", () => {
     render(
       <TestWrapper>
         <ChatInputArea
@@ -503,7 +513,7 @@ describe("ChatInputArea", () => {
     );
 
     expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
-    expect(screen.queryByTestId("new-conversation-btn")).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
   });
 
   it("should show normal input when singleTurnLimitReached is false", () => {
