@@ -69,6 +69,7 @@ project:
             - file: code/datasets/2_seed_programming.ipynb
             - file: code/datasets/3_dataset_writing.md
             - file: code/datasets/4_dataset_coding.ipynb
+            - file: code/datasets/5_simulated_conversation.ipynb
         - file: code/executor/0_executor.md
           children:
             - file: code/executor/attack/0_attack.md
@@ -92,6 +93,7 @@ project:
             - file: code/executor/benchmark/0_benchmark.md
               children:
                 - file: code/executor/benchmark/1_qa_benchmark.ipynb
+                - file: code/executor/benchmark/2_bias_benchmark.ipynb
             - file: code/executor/promptgen/0_promptgen.md
               children:
                 - file: code/executor/promptgen/1_anecdoctor_generator.ipynb
@@ -171,6 +173,7 @@ project:
             - file: code/scenarios/6_leakage.ipynb
             - file: code/scenarios/7_scam.ipynb
             - file: code/scenarios/8_garak_encoding.ipynb
+            - file: code/scenarios/9_baseline_only.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb
@@ -232,13 +235,11 @@ site:
     - title: User Guide
       url: /code/user-guide
       children:
-        - title: Architecture
-          url: /code/architecture
         - title: Datasets
           url: /code/datasets/dataset
-        - title: Attacks
-          url: /code/executor/attack/attack
-        - title: Targets
+        - title: Executor
+          url: /code/executor/executor
+        - title: Prompt Targets
           url: /code/targets/prompt-targets
         - title: Converters
           url: /code/converters/converters
@@ -246,8 +247,16 @@ site:
           url: /code/scoring/scoring
         - title: Memory
           url: /code/memory/memory
+        - title: Setup
+          url: /code/setup/setup
         - title: Scenarios
           url: /code/scenarios/scenarios
+        - title: Registry
+          url: /code/registry/registry
+        - title: GUI
+          url: /code/gui/gui
+        - title: CLI
+          url: /code/front-end/front-end
     - title: API Reference
       url: /api/index
     - title: Blog

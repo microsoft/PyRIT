@@ -5,6 +5,9 @@ import { getApiScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
+  ConverterCatalogResponse,
+  ConverterInstance,
+  ConverterListResponse,
   CreateTargetRequest,
   CreateAttackRequest,
   CreateAttackResponse,
@@ -157,6 +160,33 @@ export const targetsApi = {
 
   createTarget: async (request: CreateTargetRequest): Promise<TargetInstance> => {
     const response = await apiClient.post('/targets', request)
+    return response.data
+  },
+}
+
+export const convertersApi = {
+  listConverterCatalog: async (): Promise<ConverterCatalogResponse> => {
+    const response = await apiClient.get('/converters/catalog')
+    return response.data
+  },
+
+  listConverters: async (): Promise<ConverterListResponse> => {
+    const response = await apiClient.get('/converters')
+    return response.data
+  },
+
+  getConverter: async (converterId: string): Promise<ConverterInstance> => {
+    const response = await apiClient.get(`/converters/${encodeURIComponent(converterId)}`)
+    return response.data
+  },
+
+  createConverter: async (request: { type: string; params?: Record<string, unknown> }): Promise<{ converter_id: string; converter_type: string }> => {
+    const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+
+  previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string }> => {
+    const response = await apiClient.post('/converters/preview', request)
     return response.data
   },
 }

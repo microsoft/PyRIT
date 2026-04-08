@@ -76,6 +76,32 @@ class TestListConverters:
         assert result.items[0].converter_specific_params == {"param1": "value1", "param2": 42}
 
 
+class TestListConverterCatalog:
+    """Tests for ConverterService.list_converter_catalog_async method."""
+
+    @pytest.mark.asyncio
+    async def test_list_converter_catalog_returns_known_converter_types(self) -> None:
+        """Test that the converter catalog exposes available converter classes."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        converter_types = [item.converter_type for item in result.items]
+        assert "Base64Converter" in converter_types
+        assert "CaesarConverter" in converter_types
+
+    @pytest.mark.asyncio
+    async def test_list_converter_catalog_includes_supported_types(self) -> None:
+        """Test that catalog entries include supported input and output types."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        base64_entry = next(item for item in result.items if item.converter_type == "Base64Converter")
+        assert "text" in base64_entry.supported_input_types
+        assert "text" in base64_entry.supported_output_types
+
+
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
 
@@ -306,7 +332,7 @@ class TestPreviewConversion:
 
         assert result.converted_value == "step2_output"
         assert len(result.steps) == 2
-        mock_converter2.convert_async.assert_called_with(prompt="step1_output")
+        mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
 
 
 class TestGetConverterObjectsForIds:
