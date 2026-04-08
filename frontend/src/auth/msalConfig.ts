@@ -17,7 +17,7 @@ import { type Configuration, LogLevel } from '@azure/msal-browser'
 export interface AuthConfig {
   clientId: string
   tenantId: string
-  allowedGroupId: string
+  allowedGroupIds: string
 }
 
 export async function fetchAuthConfig(): Promise<AuthConfig> {
@@ -25,12 +25,12 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
     const response = await fetch('/api/auth/config')
     if (!response.ok) {
       // Auth endpoint not available — treat as auth disabled
-      return { clientId: '', tenantId: '', allowedGroupId: '' }
+      return { clientId: '', tenantId: '', allowedGroupIds: '' }
     }
     return (await response.json()) as AuthConfig
   } catch {
     // Network error (e.g., backend not running yet) — treat as auth disabled
-    return { clientId: '', tenantId: '', allowedGroupId: '' }
+    return { clientId: '', tenantId: '', allowedGroupIds: '' }
   }
 }
 
@@ -66,7 +66,7 @@ export function buildMsalConfig(authConfig: AuthConfig): Configuration {
   */
 export function getApiScopes(clientId: string): string[] {
   if (!clientId) return ['openid', 'profile', 'email']
-  return [`${clientId}/access`]
+  return [`api://${clientId}/access`]
 }
 
 export function buildLoginRequest(clientId: string) {

@@ -156,7 +156,7 @@ az account show --query tenantId -o tsv
 >   --spa-redirect-uris "https://$FQDN"
 > ```
 
-**Expose an API scope** (required — the frontend requests `{clientId}/access` tokens):
+**Expose an API scope** (required — the frontend requests `api://{clientId}/access` tokens):
 
 1. In Azure Portal → App registrations → your app → **Expose an API**
 2. Set the Application ID URI (accept the default `api://<client-id>`)

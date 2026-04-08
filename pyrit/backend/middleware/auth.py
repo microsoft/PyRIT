@@ -123,8 +123,11 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Invalid or expired token"},
             )
 
-        # If groups claim is missing due to user being in >200 groups,
-        # resolve group membership via Graph API
+        # NOTE: This fallback is currently non-functional. The access token's
+        # audience is this app's client ID, but Graph requires tokens with
+        # aud=https://graph.microsoft.com. The call will return 401 and the
+        # user will be denied. This will be resolved when the frontend
+        # migrates from the custom `access` scope to Graph's User.Read scope.
         if not user.groups and self._allowed_group_ids and "_claim_sources" in claims:
             user.groups = await self._resolve_excess_groups_async(claims, token)
 

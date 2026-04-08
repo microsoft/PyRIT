@@ -1,7 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
-import { useMsal } from '@azure/msal-react'
-import type { PublicClientApplication } from '@azure/msal-browser'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import TargetConfig from './components/Config/TargetConfig'
@@ -14,7 +12,7 @@ import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnec
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
-import { attacksApi, versionApi, setMsalInstance } from './services/api'
+import { attacksApi, versionApi } from './services/api'
 
 const AUTO_DISMISS_MS = 5_000
 
@@ -38,7 +36,6 @@ function ConnectionBannerContainer() {
 }
 
 function App() {
-  const { instance: msalInstance } = useMsal()
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [currentView, setCurrentView] = useState<ViewName>('chat')
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
@@ -47,11 +44,6 @@ function App() {
   const [isLoadingAttack, setIsLoadingAttack] = useState(false)
   /** Persisted filter state for the history view */
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
-
-  // Wire MSAL instance into the API client for Bearer token injection
-  useEffect(() => {
-    setMsalInstance(msalInstance as PublicClientApplication)
-  }, [msalInstance])
 
   // Fetch default labels from backend configuration on startup
   useEffect(() => {

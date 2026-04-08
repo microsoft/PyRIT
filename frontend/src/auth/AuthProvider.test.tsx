@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import App from "../App";
 
 // ---------------------------------------------------------------------------
 // Mock setup — declare mock fns before jest.mock so they're hoisted correctly
@@ -78,6 +79,7 @@ jest.mock("@azure/msal-react", () => ({
 }));
 
 import { AuthProvider } from "./AuthProvider";
+import { ItemCompare16Filled } from "@fluentui/react-icons";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -112,7 +114,7 @@ describe("AuthProvider", () => {
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "",
       tenantId: "",
-      allowedGroupId: "",
+      allowedGroupIds: "",
     });
 
     render(
@@ -132,7 +134,7 @@ describe("AuthProvider", () => {
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "some-client",
       tenantId: "",
-      allowedGroupId: "",
+      allowedGroupIds: "",
     });
 
     render(
@@ -185,7 +187,7 @@ describe("AuthProvider", () => {
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "test-client",
       tenantId: "test-tenant",
-      allowedGroupId: "g1",
+      allowedGroupIds: "g1",
     });
 
     render(
@@ -209,7 +211,7 @@ describe("AuthProvider", () => {
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "test-client",
       tenantId: "test-tenant",
-      allowedGroupId: "g1",
+      allowedGroupIds: "g1",
     });
     mockHandleRedirectPromise.mockResolvedValue({ account: mockAccount });
 
@@ -230,7 +232,7 @@ describe("AuthProvider", () => {
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "test-client",
       tenantId: "test-tenant",
-      allowedGroupId: "g1",
+      allowedGroupIds: "g1",
     });
     mockGetActiveAccount.mockReturnValue(null);
     mockGetAllAccounts.mockReturnValue([cachedAccount]);
@@ -251,7 +253,7 @@ describe("AuthProvider", () => {
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "test-client",
       tenantId: "test-tenant",
-      allowedGroupId: "g1",
+      allowedGroupIds: "g1",
     });
 
     render(
@@ -267,25 +269,50 @@ describe("AuthProvider", () => {
 
   // Test 19: loginRedirect rejects → .catch logs the error
   it("handles login redirect failure gracefully", async () => {
-    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    mockFetchAuthConfig.mockResolvedValue({
-      clientId: "test-client",
-      tenantId: "test-tenant",
-      allowedGroupId: "g1",
-    });
-    mockLoginRedirect.mockRejectedValue(new Error("Redirect failed"));
+      const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      mockFetchAuthConfig.mockResolvedValue({
+        clientId: "test-client",
+        tenantId: "test-tenant",
+        allowedGroupIds: "g1",
+      });
+      mockLoginRedirect.mockRejectedValue(new Error("Redirect failed"));
 
-    render(
-      <AuthProvider>
-        <div>Child</div>
-      </AuthProvider>
-    );
-
-    await waitFor(() => {
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Login redirect failed:",
-        expect.any(Error)
+      render(
+        <AuthProvider>
+          <div>Child</div>
+        </AuthProvider>
       );
+
+      await waitFor(() => {
+        expect(consoleSpy).toHaveBeenCalledWith(
+          "Login redirect failed:",
+          expect.any(Error)
+        );
+      });
     });
-  });
+
+    it("does not crash when a child calls useMsal and auth is disabled", async () => {
+      const {useMsal} = await import("@azure/msal-react");
+
+      function MsalConsumer() {
+        const { instance: msalInstance } = useMsal();
+        return <div data-testid="consumer">Got instance: {String(msalInstance)}</div>;
+      }
+
+      mockFetchAuthConfig.mockResolvedValue({
+        clientId: "",
+        tenantId: "",
+        allowedGroupIds: "",
+      });
+
+      render(
+        <AuthProvider>
+          <MsalConsumer />
+        </AuthProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("consumer")).toBeVisible();
+      });
+    });
 });

@@ -14,7 +14,7 @@ describe("msalConfig", () => {
     });
 
     it("returns client-specific scope when clientId is provided", () => {
-      expect(getApiScopes("my-client-id")).toEqual(["my-client-id/access"]);
+      expect(getApiScopes("my-client-id")).toEqual(["api://my-client-id/access"]);
     });
   });
 
@@ -22,7 +22,7 @@ describe("msalConfig", () => {
   describe("buildLoginRequest", () => {
     it("builds request with client-specific scopes", () => {
       expect(buildLoginRequest("my-client-id")).toEqual({
-        scopes: ["my-client-id/access"],
+        scopes: ["api://my-client-id/access"],
       });
     });
 
@@ -39,7 +39,7 @@ describe("msalConfig", () => {
       const authConfig = {
         clientId: "test-client",
         tenantId: "test-tenant",
-        allowedGroupId: "group-1",
+        allowedGroupIds: "group-1",
       };
       const result = buildMsalConfig(authConfig);
 
@@ -72,7 +72,7 @@ describe("msalConfig", () => {
     });
 
     it("fetches config from /api/auth/config", async () => {
-      const mockConfig = { clientId: "abc", tenantId: "xyz", allowedGroupId: "g1" };
+      const mockConfig = { clientId: "abc", tenantId: "xyz", allowedGroupIds: "g1" };
       (global.fetch as jest.Mock).mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockConfig),
@@ -91,7 +91,7 @@ describe("msalConfig", () => {
       const { fetchAuthConfig } = await import("./msalConfig");
       const result = await fetchAuthConfig();
 
-      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupId: "" });
+      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupIds: "" });
     });
 
     it("returns empty config on network error", async () => {
@@ -100,7 +100,7 @@ describe("msalConfig", () => {
       const { fetchAuthConfig } = await import("./msalConfig");
       const result = await fetchAuthConfig();
 
-      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupId: "" });
+      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupIds: "" });
     });
   });
 });

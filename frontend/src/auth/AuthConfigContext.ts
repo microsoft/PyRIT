@@ -4,5 +4,5 @@
 import { createContext, useContext } from 'react'
 import type { AuthConfig } from './msalConfig'
 
-export const AuthConfigContext = createContext<AuthConfig>({clientId: '', tenantId: '', allowedGroupId: ''})
+export const AuthConfigContext = createContext<AuthConfig>({clientId: '', tenantId: '', allowedGroupIds: ''})
 export const useAuthConfig = () => useContext(AuthConfigContext)

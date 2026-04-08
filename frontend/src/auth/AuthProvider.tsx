@@ -47,7 +47,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [msalInstance, setMsalInstance] = useState<PublicClientApplication | null>(null)
   const [authDisabled, setAuthDisabled] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [authConfig, setAuthConfig] = useState<AuthConfig>({clientId: '', tenantId: '', allowedGroupId: ''})
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({clientId: '', tenantId: '', allowedGroupIds: ''})
 
   useEffect(() => {
     let cancelled = false
