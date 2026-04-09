@@ -85,9 +85,7 @@ aggregate_strategy = [FoundryStrategy.EASY]
 # %%
 from pyrit.scenario import ScenarioCompositeStrategy
 
-composite_strategy = [
-    ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
-]
+composite_strategy = [ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])]
 
 # %% [markdown]
 # You can mix all three types in a single list:
