@@ -13,6 +13,11 @@ repos:
         entry: python ./build_scripts/sanitize_notebook_paths.py
         language: python
         files: ^doc.*\.(ipynb)$
+      - id: strip-notebook-progress-bars
+        name: Strip Notebook Progress Bars
+        entry: python ./build_scripts/strip_notebook_progress_bars.py
+        language: python
+        files: ^doc.*\.(ipynb)$
       - id: validate-docs
         name: Validate Documentation Structure
         entry: python ./build_scripts/validate_docs.py
