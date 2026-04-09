@@ -131,7 +131,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
             harm_categories = self._extract_harm_categories(item)
             try:
                 prompt = SeedPrompt(
-                    value=f"{{% raw %}}{user_input}{{% endraw %}}",
+                    value=user_input,
                     data_type="text",
                     dataset_name=self.dataset_name,
                     description=description,

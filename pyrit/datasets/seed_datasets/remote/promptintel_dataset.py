@@ -303,7 +303,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         metadata = self._build_metadata(record)
 
         # Escape Jinja2 template syntax in the prompt text
-        escaped_prompt = f"{{% raw %}}{prompt_value}{{% endraw %}}"
+        escaped_prompt = prompt_value
 
         return SeedPrompt(
             value=escaped_prompt,

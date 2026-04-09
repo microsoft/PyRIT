@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
-from typing import Any, Optional, cast
-
-import requests
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -22,18 +22,34 @@ logger = logging.getLogger(__name__)
 # as it constructs its own prompt format with examples.
 ManyShotJailbreakParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
+_MANY_SHOT_EXAMPLES_PATH = DATASETS_PATH / "jailbreak" / "many_shot_examples.json"
 
-def fetch_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
+
+def load_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
     """
-    Fetch many-shot jailbreaking dataset from a specified source.
+    Load the bundled many-shot jailbreaking examples from the local dataset file.
 
     Returns:
         list[dict[str, str]]: A list of many-shot jailbreaking examples.
     """
-    source = "https://raw.githubusercontent.com/KutalVolkan/many-shot-jailbreaking-dataset/5eac855/examples.json"
-    response = requests.get(source)
-    response.raise_for_status()
-    return cast("list[dict[str, str]]", response.json())
+    with open(_MANY_SHOT_EXAMPLES_PATH, encoding="utf-8") as f:
+        data: list[dict[str, str]] = json.load(f)
+        return data
+
+
+def fetch_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
+    """
+    Load many-shot jailbreaking examples (deprecated, use load_many_shot_jailbreaking_dataset).
+
+    Returns:
+        list[dict[str, str]]: A list of many-shot jailbreaking examples.
+    """
+    print_deprecation_message(
+        old_item=fetch_many_shot_jailbreaking_dataset,
+        new_item=load_many_shot_jailbreaking_dataset,
+        removed_in="0.14.0",
+    )
+    return load_many_shot_jailbreaking_dataset()
 
 
 class ManyShotJailbreakAttack(PromptSendingAttack):
@@ -87,7 +103,7 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         self._examples = (
             many_shot_examples[:example_count]
             if (many_shot_examples is not None)
-            else fetch_many_shot_jailbreaking_dataset()[:example_count]
+            else load_many_shot_jailbreaking_dataset()[:example_count]
         )
         if not self._examples:
             raise ValueError("Many shot examples must be provided.")

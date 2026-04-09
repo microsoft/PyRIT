@@ -13,13 +13,6 @@ project:
       output: exports/book.pdf
   toc:
     - file: index.md
-    - file: cookbooks/README.md
-      children:
-        - file: cookbooks/1_sending_prompts.ipynb
-        - file: cookbooks/2_precomputing_turns.ipynb
-        - file: cookbooks/3_copyright_violations.ipynb
-        - file: cookbooks/4_testing_bias.ipynb
-        - file: cookbooks/5_psychosocial_harms.ipynb
     - file: getting_started/README.md
       children:
         - file: getting_started/install.md
@@ -226,8 +219,6 @@ project:
     - file: bibliography.md
 site:
   nav:
-    - title: Cookbooks
-      url: /cookbooks/readme
     - title: Getting Started
       url: /getting-started/readme
     - title: Contributing
