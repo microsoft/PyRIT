@@ -871,15 +871,13 @@ class AttackService:
                 continue
 
             # Already an existing file on disk — keep as-is.
-            # Guard against base64 strings that would exceed OS path length limits.
             try:
-                is_existing_file = len(piece.original_value) < 4096 and Path(piece.original_value).is_file()
-            except OSError:
-                is_existing_file = False
-            if is_existing_file:
-                if piece.converted_value is None:
-                    piece.converted_value = piece.original_value
-                continue
+                if Path(piece.original_value).is_file():
+                    if piece.converted_value is None:
+                        piece.converted_value = piece.original_value
+                    continue
+            except (OSError, ValueError):
+                pass
 
             # Derive file extension from the MIME type sent by the frontend
             ext = None
