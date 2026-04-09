@@ -15,10 +15,9 @@ def _make_notebook(outputs: list) -> dict:
 
 
 def _write_notebook(nb: dict) -> str:
-    f = tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8")
-    json.dump(nb, f)
-    f.close()
-    return f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8") as f:
+        json.dump(nb, f)
+        return f.name
 
 
 class TestIsTqdmLine:
