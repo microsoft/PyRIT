@@ -169,7 +169,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
                 # Escape Jinja2 template syntax by wrapping the entire prompt in raw tags
                 # This tells Jinja2 to treat everything inside as literal text
-                prompt_value = f"{{% raw %}}{prompt_value}{{% endraw %}}"
+                prompt_value = prompt_value
 
                 seed_prompts.append(
                     SeedPrompt(

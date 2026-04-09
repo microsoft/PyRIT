@@ -104,7 +104,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
             try:
                 seed_prompts.append(
                     SeedPrompt(
-                        value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
+                        value=item["prompt"],
                         data_type="text",
                         dataset_name=self.dataset_name,
                         harm_categories=harm_categories,

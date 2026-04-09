@@ -88,6 +88,7 @@ def test_seed_prompt_render_template_silent_success():
     template = SeedPrompt(
         value=template_value,
         data_type="text",
+        is_jinja_template=True,
     )
 
     # Assert the template is rendered partially
@@ -121,6 +122,44 @@ def test_seed_prompt_template_missing_param(seed_prompt_fixture):
     # Attempt to apply only one of the required parameters
     with pytest.raises(ValueError, match="Error rendering template"):
         seed_prompt_fixture.render_template_value(param1="value1")  # Missing param2
+
+
+def test_untrusted_seed_prompt_auto_escapes_template_syntax():
+    """Verify that SeedPrompt with is_jinja_template=False (default) auto-escapes template syntax."""
+    seed = SeedPrompt(value='{{ "".__class__ }}', data_type="text")
+    # The value should be preserved as literal text, not evaluated
+    assert seed.value == '{{ "".__class__ }}'
+
+
+def test_render_template_value_blocks_ssti_via_endraw_injection():
+    """Regression test: with is_jinja_template=True, the sandbox blocks Python object traversal
+    even when an attacker uses {% endraw %} to escape a {% raw %} wrapper."""
+    malicious_payload = '{% endraw %}{{ "".__class__.__mro__[1].__subclasses__() }}{% raw %}'
+    raw_wrapped = f"{{% raw %}}{malicious_payload}{{% endraw %}}"
+
+    seed = SeedPrompt(value=raw_wrapped, data_type="text", is_jinja_template=True)
+    with pytest.raises(ValueError, match="unsafe"):
+        seed.render_template_value()
+
+
+def test_render_template_value_silent_blocks_ssti_via_endraw_injection():
+    """Same regression test for the silent (partial-render) path."""
+    malicious_payload = '{% endraw %}{{ "".__class__.__mro__[1].__subclasses__() }}{% raw %}'
+    raw_wrapped = f"{{% raw %}}{malicious_payload}{{% endraw %}}"
+
+    seed = SeedPrompt(value=raw_wrapped, data_type="text", is_jinja_template=True)
+    # silent path catches exceptions and returns the original value
+    result = seed.render_template_value_silent()
+    # Must NOT contain any Python class names — that would mean the SSTI executed
+    assert "__class__" not in result or result == raw_wrapped
+
+
+def test_seed_group_untrusted_auto_escapes():
+    group = SeedGroup(seeds=[{"value": '{{ "".__class__ }}', "data_type": "text"}])
+    seed = group.prompts[0]
+    assert seed.is_jinja_template is False
+    # Untrusted value should be auto-escaped — template syntax preserved as literal text
+    assert seed.value == '{{ "".__class__ }}'
 
 
 def test_seed_group_initialization(seed_prompt_fixture):

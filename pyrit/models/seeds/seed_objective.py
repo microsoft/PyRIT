@@ -35,6 +35,8 @@ class SeedObjective(Seed):
         """
         if self.is_general_technique:
             raise ValueError("SeedObjective cannot be a general technique.")
+        if not self.is_jinja_template:
+            self.value = self.escape_for_jinja(self.value)
         self.value = super().render_template_value_silent(**PATHS_DICT)
 
     @classmethod

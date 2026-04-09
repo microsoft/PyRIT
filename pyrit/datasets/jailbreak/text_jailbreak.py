@@ -134,7 +134,7 @@ class TextJailBreak:
             self.template = SeedPrompt.from_yaml_file(template_path)
             self.template_source = str(template_path)
         elif string_template:
-            self.template = SeedPrompt(value=string_template, is_general_technique=True)
+            self.template = SeedPrompt(value=string_template, is_general_technique=True, is_jinja_template=True)
             self.template_source = "<string_template>"
         elif template_file_name:
             resolved_path = self._resolve_template_by_name(template_file_name)
