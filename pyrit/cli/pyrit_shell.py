@@ -166,44 +166,6 @@ class PyRITShell(cmd.Cmd):
             self._init_complete.wait()
         self._raise_init_error()
 
-    def _rebuild_context(
-        self,
-        *,
-        initializer_names: Optional[list[Any]] = None,
-        initialization_scripts: Optional[list[Path]] = None,
-        log_level: Optional[int] = None,
-    ) -> frontend_core.FrontendCore:
-        """
-        Create a per-command FrontendCore that inherits the shell's startup config.
-
-        Propagates config_file, database, and env_files from the shell's startup
-        kwargs, then overrides initializer_names, initialization_scripts, and
-        log_level for the current command. Shares registries with the shell
-        context to avoid redundant re-discovery.
-
-        Args:
-            initializer_names (Optional[list[Any]]): Per-command initializer overrides.
-            initialization_scripts (Optional[list[Path]]): Per-command script overrides.
-            log_level (Optional[int]): Per-command log level override.
-
-        Returns:
-            frontend_core.FrontendCore: A new context ready for use in a command.
-        """
-        cmd_kwargs = dict(self._context_kwargs)
-        if initializer_names is not None:
-            cmd_kwargs["initializer_names"] = initializer_names
-        if initialization_scripts is not None:
-            cmd_kwargs["initialization_scripts"] = initialization_scripts
-        cmd_kwargs["log_level"] = log_level if log_level is not None else self.default_log_level
-
-        cmd_context = self._fc.FrontendCore(**cmd_kwargs)
-        cmd_context._scenario_registry = self.context._scenario_registry
-        cmd_context._initializer_registry = self.context._initializer_registry
-        cmd_context._initialized = True
-        cmd_context._silent_reinit = True
-
-        return cmd_context
-
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
@@ -275,7 +237,7 @@ class PyRITShell(cmd.Cmd):
                     resolved_scripts = self._fc.resolve_initialization_scripts(
                         script_paths=args["initialization_scripts"]
                     )
-                list_targets_context = self._rebuild_context(
+                list_targets_context = self.context.with_overrides(
                     initialization_scripts=resolved_scripts,
                     initializer_names=args["initializers"],
                 )
@@ -371,7 +333,7 @@ class PyRITShell(cmd.Cmd):
 
         # Create a context for this run with per-command overrides,
         # inheriting config_file, database, and env_files from startup.
-        run_context = self._rebuild_context(
+        run_context = self.context.with_overrides(
             initializer_names=args["initializers"],
             initialization_scripts=resolved_scripts,
             log_level=args["log_level"],

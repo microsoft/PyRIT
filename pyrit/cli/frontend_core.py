@@ -188,6 +188,64 @@ class FrontendCore:
 
         self._initialized = True
 
+    def with_overrides(
+        self,
+        *,
+        initializer_names: Optional[list[Any]] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
+    ) -> FrontendCore:
+        """
+        Create a derived FrontendCore with per-command overrides.
+
+        Copies inherited state (database, env_files, operator, operation, config)
+        from this instance and applies the given overrides. Shares registries
+        with the parent to avoid redundant re-discovery and skips re-reading
+        config files.
+
+        Args:
+            initializer_names (Optional[list[Any]]): Per-command initializer overrides.
+                Each entry can be a string name or a dict with 'name' and optional 'args'.
+                None keeps the parent's value.
+            initialization_scripts (Optional[list[Path]]): Per-command script overrides.
+                None keeps the parent's value.
+            log_level (Optional[int]): Per-command log level override.
+                None keeps the parent's value.
+
+        Returns:
+            FrontendCore: A new context ready for use, without re-reading config files.
+        """
+        derived = object.__new__(FrontendCore)
+
+        # Inherit from parent
+        derived._database = self._database
+        derived._env_files = self._env_files
+        derived._operator = self._operator
+        derived._operation = self._operation
+        derived._config = self._config
+
+        # Apply overrides or inherit
+        derived._log_level = log_level if log_level is not None else self._log_level
+
+        if initializer_names is not None:
+            loader = ConfigurationLoader.from_dict({"initializers": initializer_names})
+            derived._initializer_configs = loader._initializer_configs
+        else:
+            derived._initializer_configs = self._initializer_configs
+
+        if initialization_scripts is not None:
+            derived._initialization_scripts = initialization_scripts
+        else:
+            derived._initialization_scripts = self._initialization_scripts
+
+        # Share registries (singletons, no need to re-discover)
+        derived._scenario_registry = self._scenario_registry
+        derived._initializer_registry = self._initializer_registry
+        derived._initialized = True
+        derived._silent_reinit = True
+
+        return derived
+
     @property
     def scenario_registry(self) -> ScenarioRegistry:
         """

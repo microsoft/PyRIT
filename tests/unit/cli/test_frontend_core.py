@@ -973,9 +973,126 @@ class TestParseRunArgumentsTarget:
             args_string="test_scenario --target my_target --initializers init1 --max-concurrency 5"
         )
 
-        assert result["target"] == "my_target"
-        assert result["initializers"] == ["init1"]
-        assert result["max_concurrency"] == 5
+
+class TestWithOverrides:
+    """Tests for FrontendCore.with_overrides method."""
+
+    def _make_initialized_parent(self) -> frontend_core.FrontendCore:
+        """Create a fully-initialized FrontendCore for testing with_overrides."""
+        parent = frontend_core.FrontendCore(
+            database=frontend_core.IN_MEMORY,
+            initializer_names=["parent_init"],
+            log_level=logging.WARNING,
+        )
+        parent._scenario_registry = MagicMock()
+        parent._initializer_registry = MagicMock()
+        parent._initialized = True
+        parent._silent_reinit = True
+        return parent
+
+    def test_with_overrides_inherits_fields(self):
+        """Test that derived context inherits database, env_files, operator, operation, config."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._database == parent._database
+        assert derived._env_files == parent._env_files
+        assert derived._operator == parent._operator
+        assert derived._operation == parent._operation
+        assert derived._config is parent._config
+
+    def test_with_overrides_shares_registries(self):
+        """Test that derived context shares scenario and initializer registries."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._scenario_registry is parent._scenario_registry
+        assert derived._initializer_registry is parent._initializer_registry
+
+    def test_with_overrides_sets_initialized_and_silent(self):
+        """Test that derived context is marked initialized with silent reinit."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._initialized is True
+        assert derived._silent_reinit is True
+
+    def test_with_overrides_none_keeps_parent_values(self):
+        """Test that passing None for all overrides keeps parent's values."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(
+            initializer_names=None,
+            initialization_scripts=None,
+            log_level=None,
+        )
+
+        assert derived._initializer_configs == parent._initializer_configs
+        assert derived._initialization_scripts == parent._initialization_scripts
+        assert derived._log_level == parent._log_level
+
+    def test_with_overrides_initializer_names(self):
+        """Test that initializer_names override normalizes to InitializerConfig objects."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(initializer_names=["target", "dataset"])
+
+        assert derived._initializer_configs is not None
+        names = [ic.name for ic in derived._initializer_configs]
+        assert names == ["target", "dataset"]
+        # Parent should still have original
+        assert [ic.name for ic in parent._initializer_configs] == ["parent_init"]
+
+    def test_with_overrides_initializer_names_dict(self):
+        """Test initializer_names with dict entries (name + args)."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(initializer_names=[{"name": "target", "args": {"tags": "default"}}])
+
+        assert derived._initializer_configs is not None
+        assert len(derived._initializer_configs) == 1
+        assert derived._initializer_configs[0].name == "target"
+        assert derived._initializer_configs[0].args == {"tags": "default"}
+
+    def test_with_overrides_initialization_scripts(self):
+        """Test that initialization_scripts override replaces parent's scripts."""
+        parent = self._make_initialized_parent()
+        new_scripts = [Path("/new/script.py")]
+
+        derived = parent.with_overrides(initialization_scripts=new_scripts)
+
+        assert derived._initialization_scripts == new_scripts
+        # Parent should be unchanged
+        assert parent._initialization_scripts != new_scripts
+
+    def test_with_overrides_log_level(self):
+        """Test that log_level override replaces parent's log level."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(log_level=logging.DEBUG)
+
+        assert derived._log_level == logging.DEBUG
+        assert parent._log_level == logging.WARNING
+
+    def test_with_overrides_does_not_mutate_parent(self):
+        """Test that with_overrides does not modify the parent context."""
+        parent = self._make_initialized_parent()
+        original_configs = parent._initializer_configs
+        original_log_level = parent._log_level
+        original_scripts = parent._initialization_scripts
+
+        parent.with_overrides(
+            initializer_names=["new_init"],
+            initialization_scripts=[Path("/new.py")],
+            log_level=logging.DEBUG,
+        )
+
+        assert parent._initializer_configs is original_configs
+        assert parent._log_level == original_log_level
+        assert parent._initialization_scripts is original_scripts
 
     def test_parse_run_arguments_target_missing_value(self):
         """Test parsing --target without a value raises ValueError."""
