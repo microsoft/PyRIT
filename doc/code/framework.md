@@ -54,6 +54,8 @@ Register and discover targets, scorers, and converters via class and instance re
 
 ---
 
+The sections above link to detailed guides for each component. The architecture below explains how the pieces fit together — it's primarily aimed at contributors.
+
 # Architecture
 
 The main components of PyRIT are prompts, attacks, converters, targets, and scoring. The best way to contribute to PyRIT is by contributing to one of these components.

@@ -9,11 +9,13 @@
 # ---
 
 # %% [markdown]
-# # Working with Scenarios Programmatically
+# # Scenario Parameters
 #
-# This guide demonstrates how to configure, run, and inspect scenarios from Python code using
-# `RedTeamAgent` as a concrete example. For running scenarios via CLI, see
-# [pyrit_scan](../../scanner/pyrit_scan.ipynb).
+# This guide covers the key parameters for configuring scenarios programmatically: datasets,
+# strategies, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
+# patterns apply to any scenario.
+#
+# > **Running scenarios from the command line?** See the [Scanner documentation](../../scanner/0_scanner.md).
 #
 # ## Setup
 #
@@ -96,71 +98,6 @@ scenario_strategies = [
     FoundryStrategy.Binary,
     ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap]),
 ]
-
-# %% [markdown]
-# ## Creating and Running a Scenario
-#
-# Every scenario follows a three-step lifecycle: **create → initialize → run**.
-#
-# 1. **Create** the scenario instance (configures scorers and internal settings).
-# 2. **Initialize** with `initialize_async` to build the atomic attacks from strategies and datasets.
-#    This is where you provide the `objective_target`.
-# 3. **Run** with `run_async` to execute all attacks and collect results.
-
-# %%
-scenario = RedTeamAgent()
-await scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=scenario_strategies,
-    dataset_config=dataset_config,
-    max_concurrency=10,
-)
-
-print(f"Scenario: {scenario.name}")
-print(f"Atomic attacks: {scenario.atomic_attack_count}")
-
-scenario_result = await scenario.run_async()  # type: ignore
-
-# %% [markdown]
-# ## Inspecting Results
-#
-# `run_async` returns a `ScenarioResult` that aggregates all attack outcomes. Key properties and
-# methods include:
-#
-# - `scenario_run_state` — one of `"CREATED"`, `"IN_PROGRESS"`, `"COMPLETED"`, or `"FAILED"`
-# - `get_strategies_used()` — list all attack strategy names
-# - `get_objectives()` — list unique objectives tested
-# - `objective_achieved_rate()` — success rate as a percentage
-# - `attack_results` — dict mapping strategy names to lists of `AttackResult` objects
-
-# %%
-print(f"State: {scenario_result.scenario_run_state}")
-print(f"Strategies: {scenario_result.get_strategies_used()}")
-print(f"Objectives tested: {len(scenario_result.get_objectives())}")
-print(f"Success rate: {scenario_result.objective_achieved_rate():.1f}%")
-
-# %% [markdown]
-# Use the `ConsoleScenarioResultPrinter` for a formatted summary, and
-# `ConsoleAttackResultPrinter` to drill into individual results:
-
-# %%
-from pyrit.executor.attack import ConsoleAttackResultPrinter
-
-await printer.print_summary_async(scenario_result)  # type: ignore
-
-all_results = [result for results in scenario_result.attack_results.values() for result in results]
-if all_results:
-    await ConsoleAttackResultPrinter().print_result_async(result=all_results[0])  # type: ignore
-
-# %% [markdown]
-# You can also retrieve past scenario results from memory rather than holding onto the return value:
-
-# %%
-from pyrit.memory.central_memory import CentralMemory
-
-memory = CentralMemory.get_memory_instance()
-saved_results = memory.get_scenario_results(scenario_name="RedTeamAgent")
-print(f"Found {len(saved_results)} RedTeamAgent results in memory.")
 
 # %% [markdown]
 # ## Baseline Execution

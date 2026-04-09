@@ -17,7 +17,7 @@
 # and DIFFICULT.
 #
 # For full programming details, see
-# [Working with Scenarios Programmatically](../code/scenarios/1_red_team_agent.ipynb).
+# [Scenario Parameters](../code/scenarios/1_scenario_parameters.ipynb).
 
 # %%
 from pathlib import Path
