@@ -9,9 +9,13 @@
 # ---
 
 # %% [markdown]
-# # 1. PyRIT Scan
+# # PyRIT Scan
 #
-# `pyrit_scan` allows you to run automated security testing and red teaming attacks against AI systems using [scenarios](../scenarios/0_scenarios.ipynb) for strategies and [configuration](../setup/1_configuration.ipynb).
+# `pyrit_scan` is the primary command-line tool for running automated security assessments and red teaming attacks against AI systems. It leverages [scenarios](../code/scenarios/0_scenarios.ipynb) to define attack strategies and supports flexible [configuration](../code/setup/1_configuration.ipynb) for targeting different AI endpoints.
+#
+# For configuration setup, see [Configuration](../getting_started/configuration.md).
+#
+# For scenario-specific examples, see [AIRT](airt.ipynb), [Foundry](foundry.ipynb), and [Garak](garak.ipynb).
 #
 # Note in this doc the ! prefaces all commands in the terminal so we can run in a Jupyter Notebook.
 #
@@ -56,7 +60,7 @@
 # You need a single scenario to run, you need two things:
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
-# 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts` or `initializers` section of config file (see [here](../../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
+# 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts` or `initializers` section of config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
 # 3. Scenario Strategies (optional). These are supplied by the `--scenario-strategies` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
 #
 # Basic usage will look something like:

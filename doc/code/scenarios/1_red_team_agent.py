@@ -9,180 +9,215 @@
 # ---
 
 # %% [markdown]
-# # 1. Configuring the RedTeamAgent Scenario
+# # Working with Scenarios Programmatically
 #
-# This notebook demonstrates how to configure and run the `RedTeamAgent` scenario using composite
-# strategies. The `RedTeamAgent` uses `FoundryStrategy` which supports:
-# - **Converter-based attacks**: Apply various encoding/obfuscation techniques (Base64, Caesar cipher, etc.)
-# - **Multi-turn attacks**: Complex conversational attack strategies (Crescendo [@russinovich2024crescendo], RedTeaming)
-# - **Strategy composition**: Combine multiple converters together
-# - **Difficulty levels**: Organized into EASY, MODERATE, and DIFFICULT categories
+# This guide demonstrates how to configure, run, and inspect scenarios from Python code using
+# `RedTeamAgent` as a concrete example. For running scenarios via CLI, see
+# [pyrit_scan](../../scanner/pyrit_scan.ipynb).
 #
 # ## Setup
 #
-# First, we'll initialize PyRIT and configure the target we want to test.
+# Initialize PyRIT and create the target we want to test.
 
 # %%
-from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario import ScenarioCompositeStrategy
+from pathlib import Path
+
+from pyrit.registry import TargetRegistry
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.foundry import FoundryStrategy, RedTeamAgent
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup import initialize_from_config_async
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[])  # type: ignore
+await initialize_from_config_async(config_path=Path("../../scanner/pyrit_conf.yaml"))  # type: ignore
 
-objective_target = OpenAIChatTarget()
+objective_target = TargetRegistry.get_registry_singleton().get_instance_by_name("openai_chat")
 printer = ConsoleScenarioResultPrinter()
 
 # %% [markdown]
-# ## Define Seed Groups
+# ## Dataset Configuration
 #
-# By default, `RedTeamAgent` selects four random objectives from HarmBench [@mazeika2024harmbench]. Here we'll retrieve only two for demonstration. If you didn't pass any `seed_groups`, the default would be almost the same except with `max_dataset_size=4`.
+# `DatasetConfiguration` controls which prompts (objectives) are sent to the target.
+# The simplest approach uses `dataset_names` to load datasets by name from memory.
+# By default, `RedTeamAgent` loads four random objectives from HarmBench [@mazeika2024harmbench].
+
+# %%
+from pyrit.scenario import DatasetConfiguration
+
+dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=2)
+
+# %% [markdown]
+# For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
+# This is useful when you need to filter, combine, or inspect the prompts before running.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
-from pyrit.scenario import DatasetConfiguration
 
 datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbench"])  # type: ignore
 seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
+
+# Pass explicit seed_groups instead of dataset_names
 dataset_config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=2)
 
 # %% [markdown]
-# ## Select Attack Strategies
+# ## Strategy Selection and Composition
 #
-# You can specify individual strategies or compose multiple converters together.
-# The scenario supports three types of strategy specifications:
+# `FoundryStrategy` is an enum that defines which attack strategies the scenario runs. There are
+# three ways to specify strategies:
 #
-# 1. **Simple strategies**: Individual converter or attack strategies (e.g., `FoundryStrategy.Base64`)
-# 2. **Aggregate strategies**: Tag-based groups (e.g., `FoundryStrategy.EASY` expands to all easy strategies)
-# 3. **Composite strategies**: Multiple converters applied together (e.g., Caesar + CharSwap)
-#
-# If not selected, there are always defaults. In this case, the default is `FoundryStrategy.EASY`.
+# **Individual strategies** — a single converter or multi-turn attack:
 
 # %%
-scenario_strategies = [
-    FoundryStrategy.Base64,  # Simple strategy (auto-wrapped internally)
-    FoundryStrategy.Binary,  # Simple strategy (auto-wrapped internally)
-    ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap]),  # Composed strategy
+single_strategy = [FoundryStrategy.Base64]
+
+# %% [markdown]
+# **Aggregate strategies** — tag-based groups that expand to all matching strategies. For example,
+# `EASY` expands to all strategies tagged as easy (Base64, Binary, CharSwap, etc.):
+
+# %%
+aggregate_strategy = [FoundryStrategy.EASY]
+
+# %% [markdown]
+# **Composite strategies** — multiple converters applied together in sequence using
+# `ScenarioCompositeStrategy`:
+
+# %%
+from pyrit.scenario import ScenarioCompositeStrategy
+
+composite_strategy = [
+    ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
 ]
 
 # %% [markdown]
-# ## Create and Initialize the Scenario
-#
-# The scenario needs to be initialized before execution. This builds the atomic attacks based on the selected strategies. Most of these have defaults, but the one thing that needs to be supplied is an `objective_target` so the scenario knows what we're attacking.
+# You can mix all three types in a single list:
 
 # %%
-foundry_scenario = RedTeamAgent()
-await foundry_scenario.initialize_async(  # type: ignore
+scenario_strategies = [
+    FoundryStrategy.Base64,
+    FoundryStrategy.Binary,
+    ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap]),
+]
+
+# %% [markdown]
+# ## Creating and Running a Scenario
+#
+# Every scenario follows a three-step lifecycle: **create → initialize → run**.
+#
+# 1. **Create** the scenario instance (configures scorers and internal settings).
+# 2. **Initialize** with `initialize_async` to build the atomic attacks from strategies and datasets.
+#    This is where you provide the `objective_target`.
+# 3. **Run** with `run_async` to execute all attacks and collect results.
+
+# %%
+scenario = RedTeamAgent()
+await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
     scenario_strategies=scenario_strategies,
-    max_concurrency=10,
     dataset_config=dataset_config,
+    max_concurrency=10,
 )
 
-print(f"Created scenario: {foundry_scenario.name}")
-print(f"Number of atomic attacks: {foundry_scenario.atomic_attack_count}")
+print(f"Scenario: {scenario.name}")
+print(f"Atomic attacks: {scenario.atomic_attack_count}")
+
+scenario_result = await scenario.run_async()  # type: ignore
 
 # %% [markdown]
-# ## Execute the Scenario
+# ## Inspecting Results
 #
-# Now we'll run the scenario and print the results. The scenario will:
-# 1. Execute each atomic attack sequentially
-# 2. Apply the attack strategy to all objectives
-# 3. Score the results using the configured scorer
-# 4. Aggregate all results into a `ScenarioResult`
+# `run_async` returns a `ScenarioResult` that aggregates all attack outcomes. Key properties and
+# methods include:
 #
-# The below example actually executes the scenario, and stores the result.
+# - `scenario_run_state` — one of `"CREATED"`, `"IN_PROGRESS"`, `"COMPLETED"`, or `"FAILED"`
+# - `get_strategies_used()` — list all attack strategy names
+# - `get_objectives()` — list unique objectives tested
+# - `objective_achieved_rate()` — success rate as a percentage
+# - `attack_results` — dict mapping strategy names to lists of `AttackResult` objects
 
 # %%
-scenario_result = await foundry_scenario.run_async()  # type: ignore
+print(f"State: {scenario_result.scenario_run_state}")
+print(f"Strategies: {scenario_result.get_strategies_used()}")
+print(f"Objectives tested: {len(scenario_result.get_objectives())}")
+print(f"Success rate: {scenario_result.objective_achieved_rate():.1f}%")
 
 # %% [markdown]
-# ## Printing Scenarios
-#
-# The `ScenarioResult` object aggregates all results from a scenario execution. It contains a `scenario_identifier` (with name, description, and version), an `objective_target_identifier` describing the target tested, and an `attack_results` dictionary that maps each atomic attack strategy name to a list of `AttackResult` objects. Key properties include `scenario_run_state` (which can be "CREATED", "IN_PROGRESS", "COMPLETED", or "FAILED"), `labels` for metadata tagging, and `completion_time`. The class provides helper methods like `get_strategies_used()` to list all attack strategies, `get_objectives()` to retrieve unique objectives tested, and `objective_achieved_rate()` to calculate the success rate as a percentage. You can filter these methods by a specific `atomic_attack_name` or aggregate across all attacks.
-
-# %%
-await printer.print_summary_async(scenario_result)  # type: ignore
-
-# %% [markdown]
-# Then to look at all the individual results, you can look at the `attack_results` property of the `ScenarioResult`. Additionally, although, the scenario result is returned from `run_async`, you can also retrieve it from memory.
+# Use the `ConsoleScenarioResultPrinter` for a formatted summary, and
+# `ConsoleAttackResultPrinter` to drill into individual results:
 
 # %%
 from pyrit.executor.attack import ConsoleAttackResultPrinter
+
+await printer.print_summary_async(scenario_result)  # type: ignore
+
+all_results = [result for results in scenario_result.attack_results.values() for result in results]
+if all_results:
+    await ConsoleAttackResultPrinter().print_result_async(result=all_results[0])  # type: ignore
+
+# %% [markdown]
+# You can also retrieve past scenario results from memory rather than holding onto the return value:
+
+# %%
 from pyrit.memory.central_memory import CentralMemory
 
 memory = CentralMemory.get_memory_instance()
-scenario_results_from_memory = memory.get_scenario_results(scenario_name="RedTeamAgent")
-last_scenario_result = scenario_results_from_memory[-1]
-print(f"Retrieved {len(scenario_results_from_memory)} scenario results from memory.")
-
-# Flatten all attack results from all strategies
-all_results = [result for results in last_scenario_result.attack_results.values() for result in results]
-
-successful_attacks = [r for r in all_results if r.outcome.value == "success"]
-non_successful_attacks = [r for r in all_results if r.outcome.value != "success"]
-
-if len(successful_attacks) > 0:
-    print("\nSuccessful Attacks:")
-    for result in successful_attacks:
-        await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
-else:
-    print("\nNo successful attacks. Here is the first non success...\n")
-    await ConsoleAttackResultPrinter().print_result_async(result=non_successful_attacks[0])  # type: ignore
+saved_results = memory.get_scenario_results(scenario_name="RedTeamAgent")
+print(f"Found {len(saved_results)} RedTeamAgent results in memory.")
 
 # %% [markdown]
-# ## Alternative: Using Difficulty Levels
+# ## Baseline Execution
 #
-# Instead of specifying individual strategies, you can use aggregate tags like `EASY`, `MODERATE`, or `DIFFICULT` to test multiple strategies at once.
+# Pass an empty `scenario_strategies` list to run a baseline-only scenario. The baseline sends each
+# objective directly to the target without any converters or multi-turn strategies. This is useful for:
+#
+# - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
+# - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
+# - **Calculating attack lift** — how much does each strategy improve over the baseline?
 
 # %%
-# Example: Test all EASY strategies
-# easy_scenario = RedTeamAgent(
-#     objective_target=objective_target,
-#     scenario_strategies=[FoundryStrategy.EASY],  # Expands to all easy strategies
-#     objectives=objectives,
-# )
-# await easy_scenario.initialize_async()
-# easy_results = await easy_scenario.run_async()
-# await printer.print_summary_async(easy_results)
-
-# %% [markdown]
-# ## Baseline-Only Execution
-#
-# Sometimes you want to establish a baseline measurement of how the target responds to objectives
-# *without* any attack strategies applied. This is useful for:
-#
-# - **Measuring default defenses**: See how the target responds to harmful prompts with no obfuscation
-# - **Establishing comparison points**: Compare baseline refusal rates against strategy-enhanced attacks
-# - **Quick sanity checks**: Verify the target and scoring are working before running full scenarios
-# - **Understanding attack effectiveness**: Calculate the "lift" each strategy provides over baseline
-#
-# To run a baseline-only scenario, pass an empty list for `scenario_strategies`:
-
-# %%
-baseline_only_scenario = RedTeamAgent()
-await baseline_only_scenario.initialize_async(  # type: ignore
+baseline_scenario = RedTeamAgent()
+await baseline_scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
     scenario_strategies=[],  # Empty list = baseline only
     dataset_config=dataset_config,
 )
-baseline_result = await baseline_only_scenario.run_async()  # type: ignore
+baseline_result = await baseline_scenario.run_async()  # type: ignore
 await printer.print_summary_async(baseline_result)  # type: ignore
 
 # %% [markdown]
-# The baseline attack sends each objective directly to the target without any converters or
-# multi-turn strategies. This gives you the "unmodified" success/failure rate.
-#
-# You can also disable the baseline entirely by setting `include_default_baseline=False` in the
-# scenario constructor if you only want to run specific strategies without comparison:
+# To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
+# comparison), set `include_baseline=False` in the constructor:
 #
 # ```python
-# # Run only strategies, no baseline
-# scenario = RedTeamAgent(include_default_baseline=False)
+# scenario = RedTeamAgent(include_baseline=False)
 # await scenario.initialize_async(
 #     objective_target=objective_target,
 #     scenario_strategies=[FoundryStrategy.Base64],
 # )
 # ```
+
+# %% [markdown]
+# ## Custom Scorers
+#
+# By default, `RedTeamAgent` uses a composite scorer with Azure Content Filter and SelfAsk Refusal
+# scorers. You can override this by passing your own `AttackScoringConfig` with a custom
+# `objective_scorer`.
+#
+# For example, to use an inverted refusal scorer (where "True" means the target refused):
+
+# %%
+from pyrit.executor.attack import AttackScoringConfig
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
+
+refusal_scorer = SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
+inverted_scorer = TrueFalseInverterScorer(scorer=refusal_scorer)
+
+custom_scenario = RedTeamAgent(
+    attack_scoring_config=AttackScoringConfig(objective_scorer=inverted_scorer),
+)
+await custom_scenario.initialize_async(  # type: ignore
+    objective_target=objective_target,
+    scenario_strategies=[FoundryStrategy.Base64],
+    dataset_config=dataset_config,
+)
+custom_result = await custom_scenario.run_async()  # type: ignore
+await printer.print_summary_async(custom_result)  # type: ignore

@@ -86,4 +86,4 @@ The `.env_example` file in the repository root contains entries for **all** supp
 ## What's Next?
 
 - [Configuration File (.pyrit_conf)](./pyrit_conf.md) — Set up the full configuration with initializers, database, and environment file management
-- [User Guide](../code/user_guide.md) — Start using PyRIT
+- [Framework](../code/framework.md) — Start using PyRIT
