@@ -991,7 +991,7 @@ class TestWithOverrides:
         return parent
 
     def test_with_overrides_inherits_fields(self):
-        """Test that derived context inherits database, env_files, operator, operation, config."""
+        """Test that derived context inherits database, env_files, operator, operation."""
         parent = self._make_initialized_parent()
 
         derived = parent.with_overrides()
@@ -1000,7 +1000,6 @@ class TestWithOverrides:
         assert derived._env_files == parent._env_files
         assert derived._operator == parent._operator
         assert derived._operation == parent._operation
-        assert derived._config is parent._config
 
     def test_with_overrides_shares_registries(self):
         """Test that derived context shares scenario and initializer registries."""

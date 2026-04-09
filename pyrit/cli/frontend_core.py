@@ -136,9 +136,6 @@ class FrontendCore:
                 ) from e
             raise
 
-        # Store the merged configuration
-        self._config = config
-
         # Extract values from config for internal use
         # Use canonical mapping from configuration_loader
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
@@ -222,7 +219,6 @@ class FrontendCore:
         derived._env_files = self._env_files
         derived._operator = self._operator
         derived._operation = self._operation
-        derived._config = self._config
 
         # Apply overrides or inherit
         derived._log_level = log_level if log_level is not None else self._log_level
