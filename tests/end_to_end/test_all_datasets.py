@@ -12,6 +12,7 @@ Resiliency: each fetch is retried up to 3 times with exponential backoff to
 handle transient HuggingFace / GitHub rate-limiting and network errors.
 """
 
+import asyncio
 import logging
 import os
 
@@ -25,6 +26,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _VLSUMultimodalDataset,
 )
 from pyrit.models import SeedDataset
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,12 @@ def get_dataset_providers():
 async def _fetch_with_retry(provider) -> SeedDataset:
     """Fetch a dataset with retry on transient network errors."""
     return await provider.fetch_dataset(cache=False)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _init_memory():
+    """Multimodal providers need CentralMemory to save downloaded images."""
+    asyncio.run(initialize_pyrit_async(memory_db_type=IN_MEMORY))
 
 
 class TestAllDatasets:
