@@ -231,7 +231,7 @@ The process follows the same steps as a regular release with a few key differenc
 
 ### When to use a patch release
 
-- A security vulnerability needs to be shipped urgently.
+- A security vulnerability fix needs to be shipped urgently.
 - A critical bug was found in the latest release that blocks users.
 - The fix is already merged to `main`, but `main` also contains other changes
   that are not ready for release.
