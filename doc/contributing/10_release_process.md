@@ -294,7 +294,12 @@ git push origin vx.y.z
 - Update `main` with the next dev version (step 9) — for a patch release after `x.y.z`,
   the next version on `main` may be either `x.y.(z+1).dev0` or `x.(y+1).0.dev0`
   depending on what the next planned release is.
-- Create the GitHub release (step 10)
+- Create the GitHub release (step 10) — for patch releases the release notes should
+  clearly state the reason for the patch (e.g., "Security fix for …" or "Critical bug fix
+  for …"). Because a patch release contains only cherry-picked changes, the "What's
+  changed?" summary and the full changelog will be much shorter than a regular release.
+  Make sure to call out the specific issue or vulnerability that prompted the patch so
+  users can quickly assess whether they need to upgrade.
 
 ### Key differences from a regular release
 
@@ -304,3 +309,4 @@ git push origin vx.y.z
 | Changes included | Everything on `main` | Only cherry-picked fix(es) |
 | Deprecated code removal | Yes (if minor bump) | No |
 | Integration test scope | Full | Focused on affected areas |
+| Release notes | Full changelog with curated summary | Short, focused on the reason for the patch |
