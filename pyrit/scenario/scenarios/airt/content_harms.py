@@ -22,6 +22,7 @@ from pyrit.executor.attack import (
 from pyrit.models import SeedAttackGroup, SeedGroup
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -310,7 +311,7 @@ class ContentHarms(Scenario):
         return [
             AtomicAttack(
                 atomic_attack_name=strategy,
-                attack=prompt_sending_attack,
+                attack_technique=AttackTechnique(attack=prompt_sending_attack),
                 seed_groups=list(seed_groups),
                 adversarial_chat=self._adversarial_chat,
                 objective_scorer=self._objective_scorer,
@@ -318,7 +319,7 @@ class ContentHarms(Scenario):
             ),
             AtomicAttack(
                 atomic_attack_name=strategy,
-                attack=role_play_attack,
+                attack_technique=AttackTechnique(attack=role_play_attack),
                 seed_groups=list(seed_groups),
                 adversarial_chat=self._adversarial_chat,
                 objective_scorer=self._objective_scorer,
@@ -355,7 +356,7 @@ class ContentHarms(Scenario):
         return [
             AtomicAttack(
                 atomic_attack_name=strategy,
-                attack=many_shot_jailbreak_attack,
+                attack_technique=AttackTechnique(attack=many_shot_jailbreak_attack),
                 seed_groups=list(seed_groups),
                 adversarial_chat=self._adversarial_chat,
                 objective_scorer=self._objective_scorer,
@@ -363,7 +364,7 @@ class ContentHarms(Scenario):
             ),
             AtomicAttack(
                 atomic_attack_name=strategy,
-                attack=tap_attack,
+                attack_technique=AttackTechnique(attack=tap_attack),
                 seed_groups=list(seed_groups),
                 adversarial_chat=self._adversarial_chat,
                 objective_scorer=self._objective_scorer,

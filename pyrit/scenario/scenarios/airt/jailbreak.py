@@ -21,6 +21,7 @@ from pyrit.prompt_converter import TextJailbreakConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
@@ -292,7 +293,9 @@ class Jailbreak(Scenario):
         template_name = Path(jailbreak_template_name).stem
 
         return AtomicAttack(
-            atomic_attack_name=f"jailbreak_{template_name}", attack=attack, seed_groups=self._seed_groups
+            atomic_attack_name=f"jailbreak_{template_name}",
+            attack_technique=AttackTechnique(attack=attack),
+            seed_groups=self._seed_groups,
         )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:

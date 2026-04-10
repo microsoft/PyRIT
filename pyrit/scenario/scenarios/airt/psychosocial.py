@@ -30,6 +30,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -473,7 +474,7 @@ class Psychosocial(Scenario):
         attacks.append(
             AtomicAttack(
                 atomic_attack_name="psychosocial_single_turn",
-                attack=prompt_sending,
+                attack_technique=AttackTechnique(attack=prompt_sending),
                 seed_groups=seed_groups,
                 memory_labels=self._memory_labels,
             )
@@ -487,7 +488,7 @@ class Psychosocial(Scenario):
         attacks.append(
             AtomicAttack(
                 atomic_attack_name="psychosocial_role_play",
-                attack=role_play,
+                attack_technique=AttackTechnique(attack=role_play),
                 seed_groups=seed_groups,
                 memory_labels=self._memory_labels,
             )
@@ -524,7 +525,7 @@ class Psychosocial(Scenario):
 
         return AtomicAttack(
             atomic_attack_name="psychosocial_crescendo_turn",
-            attack=crescendo,
+            attack_technique=AttackTechnique(attack=crescendo),
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )

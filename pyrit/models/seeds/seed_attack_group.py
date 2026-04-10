@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.models.seeds.seed import Seed
+    from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
 
 
 class SeedAttackGroup(SeedGroup):
@@ -96,3 +97,24 @@ class SeedAttackGroup(SeedGroup):
         obj = self._get_objective()
         assert obj is not None, "SeedAttackGroup should always have an objective"
         return obj
+
+    def with_technique(self, *, technique: "SeedAttackTechniqueGroup") -> "SeedAttackGroup":
+        """
+        Return a new SeedAttackGroup with technique seeds merged in.
+
+        The original group is not mutated. Technique seeds are inserted at
+        ``technique.insertion_index`` (or appended at the end when ``None``).
+
+        Args:
+            technique: A validated SeedAttackTechniqueGroup whose seeds will be merged.
+
+        Returns:
+            A new SeedAttackGroup with the merged seeds.
+        """
+        base = list(self.seeds)
+        idx = technique.insertion_index
+        if idx is None:
+            merged_seeds = base + list(technique.seeds)
+        else:
+            merged_seeds = base[:idx] + list(technique.seeds) + base[idx:]
+        return SeedAttackGroup(seeds=merged_seeds)

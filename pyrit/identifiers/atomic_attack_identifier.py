@@ -8,11 +8,11 @@ Builds a composite ComponentIdentifier that uniquely identifies an attack run
 by combining the attack strategy's identity with the seed identifiers from
 the dataset.
 
-The composite identifier always has the same shape:
+The composite identifier has this shape:
     class_name = "AtomicAttack"
     children["attack"] = attack strategy's ComponentIdentifier
-    children["seeds"] = list of seed ComponentIdentifiers
-        (may be empty when no seeds are present)
+    children["technique_seeds"] = list of technique-only seed ComponentIdentifiers (optional)
+    children["seeds"] = list of ALL seed ComponentIdentifiers (for traceability)
 """
 
 import logging
@@ -22,6 +22,7 @@ from pyrit.identifiers.component_identifier import ComponentIdentifier
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed import Seed
+    from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
     from pyrit.models.seeds.seed_group import SeedGroup
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,10 @@ def build_seed_identifier(seed: "Seed") -> ComponentIdentifier:
     always produces the same identifier.
 
     Args:
-        seed (Seed): The seed to build an identifier for.
+        seed: The seed to build an identifier for.
 
     Returns:
-        ComponentIdentifier: An identifier capturing the seed's behavioral properties.
+        An identifier capturing the seed's behavioral properties.
     """
     params: dict[str, Any] = {
         "value": seed.value,
@@ -63,31 +64,29 @@ def build_atomic_attack_identifier(
     *,
     attack_identifier: ComponentIdentifier,
     seed_group: Optional["SeedGroup"] = None,
+    seed_technique: Optional["SeedAttackTechniqueGroup"] = None,
 ) -> ComponentIdentifier:
     """
     Build a composite ComponentIdentifier for an atomic attack.
 
-    Combines the attack strategy's identity with identifiers for all seeds
-    from the seed group. Every seed in the group is included in the identity;
-    each seed's ``is_general_technique`` flag is captured as a param so that
-    downstream consumers (e.g., evaluation identity) can filter as needed.
+    The identifier always includes the attack strategy as ``children["attack"]``
+    and all seeds from the seed group in ``children["seeds"]`` for traceability.
 
-    When no seed_group is provided, the resulting identifier has an empty
-    ``seeds`` children list, but still has the standard ``AtomicAttack``
-    shape for consistent querying.
+    When ``seed_technique`` is provided, its seeds are also included as
+    ``children["technique_seeds"]``. These represent the reusable "how to attack"
+    portion and are included in eval-hash computation, while ``seeds`` is excluded
+    from the eval hash.
 
     Args:
-        attack_identifier (ComponentIdentifier): The attack strategy's identifier
-            (from ``attack.get_identifier()``).
-        seed_group (Optional[SeedGroup]): The seed group to extract seeds from.
-            If None, the identifier has an empty seeds list.
+        attack_identifier: The attack strategy's identifier.
+        seed_group: The seed group to extract all seeds from.
+        seed_technique: Optional technique seed group whose seeds are added
+            as a separate ``technique_seeds`` child.
 
     Returns:
-        ComponentIdentifier: A composite identifier with class_name="AtomicAttack",
-            the attack as a child, and seed identifiers as children.
+        A composite ComponentIdentifier with class_name="AtomicAttack".
     """
     seed_identifiers: list[ComponentIdentifier] = []
-
     if seed_group is not None:
         seed_identifiers.extend(build_seed_identifier(seed) for seed in seed_group.seeds)
 
@@ -95,6 +94,11 @@ def build_atomic_attack_identifier(
         "attack": attack_identifier,
         "seeds": seed_identifiers,
     }
+
+    if seed_technique is not None:
+        technique_seed_ids = [build_seed_identifier(seed) for seed in seed_technique.seeds]
+        if technique_seed_ids:
+            children["technique_seeds"] = technique_seed_ids
 
     return ComponentIdentifier(
         class_name=_ATOMIC_ATTACK_CLASS_NAME,
