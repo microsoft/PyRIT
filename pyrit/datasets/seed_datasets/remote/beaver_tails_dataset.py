@@ -3,8 +3,6 @@
 
 import logging
 
-from jinja2 import TemplateSyntaxError
-
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -101,21 +99,18 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
 
             harm_categories = [k for k, v in item["category"].items() if v]
 
-            try:
-                seed_prompts.append(
-                    SeedPrompt(
-                        value=item["prompt"],
-                        data_type="text",
-                        dataset_name=self.dataset_name,
-                        harm_categories=harm_categories,
-                        description=description,
-                        source=source_url,
-                        authors=authors,
-                        groups=groups,
-                    )
+            seed_prompts.append(
+                SeedPrompt(
+                    value=item["prompt"],
+                    data_type="text",
+                    dataset_name=self.dataset_name,
+                    harm_categories=harm_categories,
+                    description=description,
+                    source=source_url,
+                    authors=authors,
+                    groups=groups,
                 )
-            except TemplateSyntaxError:
-                logger.warning("Skipping BeaverTails prompt due to Jinja2 template syntax error in prompt text")
+            )
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from BeaverTails dataset")
 

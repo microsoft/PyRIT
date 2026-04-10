@@ -5,8 +5,6 @@ import json
 import logging
 from typing import Any
 
-from jinja2 import TemplateSyntaxError
-
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -122,42 +120,26 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["UC San Diego"]
 
-        raw_prefix = "{% raw %}"
-        raw_suffix = "{% endraw %}"
-
         seed_prompts: list[SeedPrompt] = []
         for item in data:
             user_input = item["user_input"]
             harm_categories = self._extract_harm_categories(item)
-            try:
-                prompt = SeedPrompt(
-                    value=user_input,
-                    data_type="text",
-                    dataset_name=self.dataset_name,
-                    description=description,
-                    source=source_url,
-                    authors=authors,
-                    groups=groups,
-                    harm_categories=harm_categories,
-                    metadata={
-                        "toxicity": str(item.get("toxicity", "")),
-                        "jailbreaking": str(item.get("jailbreaking", "")),
-                        "human_annotation": str(item.get("human_annotation", "")),
-                    },
-                )
-
-                # If user_input contains Jinja2 control structures (e.g., {% for %}),
-                # render_template_value_silent may skip rendering and leave the raw wrapper.
-                if prompt.value.startswith(raw_prefix) and prompt.value.endswith(raw_suffix):
-                    prompt.value = prompt.value[len(raw_prefix) : -len(raw_suffix)]
-
-                seed_prompts.append(prompt)
-            except TemplateSyntaxError:
-                conv_id = item.get("conv_id", "unknown")
-                logger.debug(
-                    f"Skipping entry with conv_id={conv_id}: failed to parse as Jinja2 template",
-                    exc_info=True,
-                )
+            prompt = SeedPrompt(
+                value=user_input,
+                data_type="text",
+                dataset_name=self.dataset_name,
+                description=description,
+                source=source_url,
+                authors=authors,
+                groups=groups,
+                harm_categories=harm_categories,
+                metadata={
+                    "toxicity": str(item.get("toxicity", "")),
+                    "jailbreaking": str(item.get("jailbreaking", "")),
+                    "human_annotation": str(item.get("human_annotation", "")),
+                },
+            )
+            seed_prompts.append(prompt)
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from ToxicChat dataset")
 
