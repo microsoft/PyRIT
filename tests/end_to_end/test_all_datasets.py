@@ -13,12 +13,17 @@ handle transient HuggingFace / GitHub rate-limiting and network errors.
 """
 
 import logging
+import os
 
 import pytest
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.remote import _VLSUMultimodalDataset
+from pyrit.datasets.seed_datasets.remote import (
+    _HarmBenchMultimodalDataset,
+    _PromptIntelDataset,
+    _VLSUMultimodalDataset,
+)
 from pyrit.models import SeedDataset
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,10 @@ _TEST_TIMEOUT = 300
 
 # Transient error types that warrant a retry
 _RETRYABLE_ERRORS = (OSError, ConnectionError, TimeoutError)
+
+# Providers that download many remote images; each image fetch may fail
+# due to rate-limiting, so an empty result is expected in some environments.
+_IMAGE_FETCHING_PROVIDERS: set[type] = {_HarmBenchMultimodalDataset, _VLSUMultimodalDataset}
 
 
 def get_dataset_providers():
@@ -65,6 +74,10 @@ class TestAllDatasets:
 
         Retries up to 3 times on transient network errors.
         """
+        # Skip providers that require credentials not available in CI
+        if provider_cls == _PromptIntelDataset and not os.environ.get("PROMPTINTEL_API_KEY"):
+            pytest.skip("PROMPTINTEL_API_KEY not set")
+
         logger.info(f"Testing provider: {name}")
 
         try:
@@ -73,8 +86,15 @@ class TestAllDatasets:
             dataset = await _fetch_with_retry(provider)
 
             assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
-            assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
             assert dataset.dataset_name, f"{name} has no dataset_name"
+
+            # Multimodal providers fetch images one-by-one; if all image fetches
+            # fail (rate-limiting, network), they return an empty dataset.
+            # That is a provider-level concern, not a test infrastructure bug.
+            if provider_cls in _IMAGE_FETCHING_PROVIDERS and len(dataset.seeds) == 0:
+                pytest.skip(f"{name} returned 0 seeds (all image downloads likely failed)")
+
+            assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
 
             # Verify seeds have required fields
             for seed in dataset.seeds:
