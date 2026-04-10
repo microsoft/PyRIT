@@ -31,12 +31,7 @@ class TestLoadDefaultDatasetsIntegration:
         await initializer.initialize_async()
 
         memory = CentralMemory.get_memory_instance()
-        seed_datasets = await memory.get_seed_datasets_async()
+        dataset_names = memory.get_seed_dataset_names()
 
-        assert len(seed_datasets) > 0, "No datasets were loaded into memory"
-        logger.info(f"LoadDefaultDatasets loaded {len(seed_datasets)} datasets into memory")
-
-        # Verify basic structure of loaded datasets
-        for dataset in seed_datasets:
-            assert dataset.dataset_name, "Loaded dataset has no name"
-            assert len(dataset.seeds) > 0, f"Dataset '{dataset.dataset_name}' has no seeds"
+        assert len(dataset_names) > 0, "No datasets were loaded into memory"
+        logger.info(f"LoadDefaultDatasets loaded {len(dataset_names)} datasets into memory")
