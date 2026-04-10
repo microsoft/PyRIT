@@ -484,16 +484,20 @@ def _parse_shell_arguments(*, parts: list[str], arg_specs: list[_ArgSpec]) -> di
         spec = flag_to_spec.get(token)
 
         if spec is None:
-            raise ValueError(f"Unknown argument: {token}")
+            valid = sorted(flag_to_spec.keys())
+            raise ValueError(f"Unknown argument: {token}. Valid arguments: {', '.join(valid)}")
 
         i += 1
 
         if spec.multi_value:
             values: list[Any] = []
-            while i < len(parts) and not parts[i].startswith("--"):
+            # Collect values until the next flag (whether valid or invalid)
+            while i < len(parts) and not (parts[i].startswith("--") or parts[i] in flag_to_spec):
                 item = spec.parser(parts[i]) if spec.parser else parts[i]
                 values.append(item)
                 i += 1
+            if len(values) == 0:
+                raise ValueError(f"{spec.flags[0]} requires at least one value")
             result[spec.result_key] = values
         else:
             if i >= len(parts):

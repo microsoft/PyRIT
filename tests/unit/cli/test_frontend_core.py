@@ -616,16 +616,15 @@ class TestParseShellArguments:
         result = _parse_shell_arguments(parts=["--nums", "1", "2", "3"], arg_specs=[spec])
         assert result["nums"] == [1, 2, 3]
 
-    def test_multi_value_empty_list_when_no_values(self):
-        """Test that multi-value arg with no values produces an empty list."""
+    def test_multi_value_no_values_raises(self):
+        """Test that multi-value arg with no values raises ValueError."""
         items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
         name_spec = _ArgSpec(flags=["--name"], result_key="name")
-        result = _parse_shell_arguments(
-            parts=["--items", "--name", "alice"],
-            arg_specs=[items_spec, name_spec],
-        )
-        assert result["items"] == []
-        assert result["name"] == "alice"
+        with pytest.raises(ValueError, match="--items requires at least one value"):
+            _parse_shell_arguments(
+                parts=["--items", "--name", "alice"],
+                arg_specs=[items_spec, name_spec],
+            )
 
     def test_unknown_flag_raises(self):
         """Test that an unknown flag raises ValueError."""
