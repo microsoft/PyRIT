@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import frontend_core
+from pyrit.cli._cli_args import _ArgSpec, _parse_shell_arguments
 from pyrit.registry import InitializerMetadata, ScenarioMetadata
 
 
@@ -552,6 +553,94 @@ class TestParseInitializerArg:
         """Test that 'name:' with trailing colon but no params returns the name string."""
         result = frontend_core._parse_initializer_arg("target:")
         assert result == "target"
+
+
+class TestParseShellArguments:
+    """Tests for the generic _parse_shell_arguments function."""
+
+    def test_empty_parts_returns_none_defaults(self):
+        """Test that empty input returns None for all result keys."""
+        spec = _ArgSpec(flags=["--foo"], result_key="foo")
+        result = _parse_shell_arguments(parts=[], arg_specs=[spec])
+        assert result == {"foo": None}
+
+    def test_single_value_arg(self):
+        """Test parsing a single-value argument."""
+        spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(parts=["--name", "alice"], arg_specs=[spec])
+        assert result["name"] == "alice"
+
+    def test_single_value_with_parser(self):
+        """Test that single-value parser is applied."""
+        spec = _ArgSpec(flags=["--count"], result_key="count", parser=int)
+        result = _parse_shell_arguments(parts=["--count", "42"], arg_specs=[spec])
+        assert result["count"] == 42
+
+    def test_single_value_missing_raises(self):
+        """Test that missing value for single-value arg raises ValueError."""
+        spec = _ArgSpec(flags=["--name"], result_key="name")
+        with pytest.raises(ValueError, match="--name requires a value"):
+            _parse_shell_arguments(parts=["--name"], arg_specs=[spec])
+
+    def test_multi_value_arg(self):
+        """Test collecting multiple values until next flag."""
+        spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        result = _parse_shell_arguments(parts=["--items", "a", "b", "c"], arg_specs=[spec])
+        assert result["items"] == ["a", "b", "c"]
+
+    def test_multi_value_stops_at_next_flag(self):
+        """Test that multi-value collection stops at the next known flag."""
+        items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        name_spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(
+            parts=["--items", "a", "b", "--name", "alice"],
+            arg_specs=[items_spec, name_spec],
+        )
+        assert result["items"] == ["a", "b"]
+        assert result["name"] == "alice"
+
+    def test_multi_value_stops_at_short_flag_alias(self):
+        """Test that multi-value collection stops at a short flag alias like -s."""
+        long_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        short_spec = _ArgSpec(flags=["-s", "--short"], result_key="short", multi_value=True)
+        result = _parse_shell_arguments(
+            parts=["--items", "a", "b", "-s", "x"],
+            arg_specs=[long_spec, short_spec],
+        )
+        assert result["items"] == ["a", "b"]
+        assert result["short"] == ["x"]
+
+    def test_multi_value_with_parser(self):
+        """Test that parser transforms each collected value."""
+        spec = _ArgSpec(flags=["--nums"], result_key="nums", multi_value=True, parser=int)
+        result = _parse_shell_arguments(parts=["--nums", "1", "2", "3"], arg_specs=[spec])
+        assert result["nums"] == [1, 2, 3]
+
+    def test_multi_value_empty_list_when_no_values(self):
+        """Test that multi-value arg with no values produces an empty list."""
+        items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        name_spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(
+            parts=["--items", "--name", "alice"],
+            arg_specs=[items_spec, name_spec],
+        )
+        assert result["items"] == []
+        assert result["name"] == "alice"
+
+    def test_unknown_flag_raises(self):
+        """Test that an unknown flag raises ValueError."""
+        spec = _ArgSpec(flags=["--known"], result_key="known")
+        with pytest.raises(ValueError, match="Unknown argument: --unknown"):
+            _parse_shell_arguments(parts=["--unknown"], arg_specs=[spec])
+
+    def test_multiple_specs_all_none_when_unused(self):
+        """Test that unused specs default to None."""
+        specs = [
+            _ArgSpec(flags=["--a"], result_key="a"),
+            _ArgSpec(flags=["--b"], result_key="b", multi_value=True),
+        ]
+        result = _parse_shell_arguments(parts=[], arg_specs=specs)
+        assert result == {"a": None, "b": None}
 
 
 class TestParseRunArguments:
