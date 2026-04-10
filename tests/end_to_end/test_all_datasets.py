@@ -81,29 +81,26 @@ class TestAllDatasets:
         logger.info(f"Testing provider: {name}")
 
         try:
-            # Use max_examples for slow providers that fetch many remote images
+            # Limit examples for slow multimodal providers that fetch many remote images
             provider = provider_cls(max_examples=6) if provider_cls == _VLSUMultimodalDataset else provider_cls()
+
             dataset = await _fetch_with_retry(provider)
-
-            assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
-            assert dataset.dataset_name, f"{name} has no dataset_name"
-
-            # Multimodal providers fetch images one-by-one; if all image fetches
-            # fail (rate-limiting, network), they return an empty dataset.
-            # That is a provider-level concern, not a test infrastructure bug.
-            if provider_cls in _IMAGE_FETCHING_PROVIDERS and len(dataset.seeds) == 0:
-                pytest.skip(f"{name} returned 0 seeds (all image downloads likely failed)")
-
-            assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
-
-            # Verify seeds have required fields
-            for seed in dataset.seeds:
-                assert seed.value, f"Seed in {name} has no value"
-                assert seed.dataset_name == dataset.dataset_name, (
-                    f"Seed dataset_name mismatch in {name}: {seed.dataset_name} != {dataset.dataset_name}"
-                )
-
-            logger.info(f"Successfully verified {name} with {len(dataset.seeds)} seeds")
-
         except Exception as e:
-            pytest.fail(f"Failed to fetch dataset from {name}: {str(e)}")
+            # Multimodal providers silently skip failed image downloads. When ALL
+            # images fail the resulting empty seed list triggers "SeedDataset cannot
+            # be empty".  That is a transient environment issue, not a code bug.
+            if provider_cls in _IMAGE_FETCHING_PROVIDERS and "cannot be empty" in str(e):
+                pytest.skip(f"{name}: all image downloads failed ({e})")
+            pytest.fail(f"Failed to fetch dataset from {name}: {e}")
+
+        assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
+        assert dataset.dataset_name, f"{name} has no dataset_name"
+        assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
+
+        for seed in dataset.seeds:
+            assert seed.value, f"Seed in {name} has no value"
+            assert seed.dataset_name == dataset.dataset_name, (
+                f"Seed dataset_name mismatch in {name}: {seed.dataset_name} != {dataset.dataset_name}"
+            )
+
+        logger.info(f"Successfully verified {name} with {len(dataset.seeds)} seeds")
