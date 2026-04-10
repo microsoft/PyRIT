@@ -35,6 +35,7 @@ class SeedObjective(Seed):
         """
         if self.is_general_technique:
             raise ValueError("SeedObjective cannot be a general technique.")
+        # Only trusted templates are rendered through Jinja — see seed_prompt.py for details.
         if self.is_jinja_template:
             self.value = super().render_template_value_silent(**PATHS_DICT)
 
