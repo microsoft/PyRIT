@@ -87,9 +87,7 @@ class TestAttackTechniqueIdentifier:
         assert result.class_module == "pyrit.scenario.core.attack_technique"
 
     def test_attack_child_is_present(self):
-        attack_id = ComponentIdentifier(
-            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
-        )
+        attack_id = ComponentIdentifier(class_name="PromptSendingAttack", class_module="pyrit.executor.attack")
         mock_attack = MagicMock(spec=AttackStrategy)
         mock_attack.get_identifier.return_value = attack_id
         technique = AttackTechnique(attack=mock_attack)

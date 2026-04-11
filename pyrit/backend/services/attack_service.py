@@ -740,7 +740,7 @@ class AttackService:
                     atomic_children = dict(atomic.children)
                     # Navigate into attack_technique child to update the nested attack child.
                     technique = atomic_children.get("attack_technique")
-                    if technique is not None:
+                    if isinstance(technique, ComponentIdentifier):
                         tech_children = dict(technique.children)
                         tech_children["attack"] = new_aid
                         atomic_children["attack_technique"] = ComponentIdentifier(

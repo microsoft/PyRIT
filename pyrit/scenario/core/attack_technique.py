@@ -9,19 +9,23 @@ Represents "how to attack" independently of "what to attack" (the objective).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pyrit.executor.attack import AttackStrategy
 from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
-from pyrit.models import SeedAttackTechniqueGroup
+
+if TYPE_CHECKING:
+    from pyrit.executor.attack import AttackStrategy
+    from pyrit.models import SeedAttackTechniqueGroup
 
 
 class AttackTechnique(Identifiable):
     """
     Bundles an attack strategy with an optional technique seed group.
 
-    This cleanly separates "how to attack" (the strategy + reusable technique seeds)
-    from "what to attack" (the objective, which lives on SeedAttackGroup / AtomicAttack).
+    An AttackTechnique encapsulates the full attack configuration — the strategy
+    (including its target, converters, and scorer) plus any reusable technique seeds
+    (e.g. jailbreak templates). The objectives that define which weaknesses to probe
+    live separately on the SeedAttackGroup / AtomicAttack.
     """
 
     def __init__(
@@ -30,15 +34,18 @@ class AttackTechnique(Identifiable):
         attack: AttackStrategy[Any, Any],
         seed_technique: SeedAttackTechniqueGroup | None = None,
     ) -> None:
+        """Initialize an AttackTechnique."""
         self._attack = attack
         self._seed_technique = seed_technique
 
     @property
     def attack(self) -> AttackStrategy[Any, Any]:
+        """The attack strategy."""
         return self._attack
 
     @property
     def seed_technique(self) -> SeedAttackTechniqueGroup | None:
+        """The optional technique seed group."""
         return self._seed_technique
 
     def _build_identifier(self) -> ComponentIdentifier:
