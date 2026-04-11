@@ -151,16 +151,16 @@ class AddImageTextConverter(PromptConverter):
             size (int): The font size to load.
 
         Returns:
-            FreeTypeFont: The loaded font object. Falls back to the default font on error.
+            FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
         if self._font_load_failed:
-            return cast("FreeTypeFont", ImageFont.load_default())
+            return cast("FreeTypeFont", ImageFont.load_default(size=size))
         try:
             return ImageFont.truetype(self._font_name, size)
         except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
+            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
             self._font_load_failed = True
-            return cast("FreeTypeFont", ImageFont.load_default())
+            return cast("FreeTypeFont", ImageFont.load_default(size=size))
 
     def _wrap_text(self, *, text: str, font: FreeTypeFont, max_width: int) -> list[str]:
         """

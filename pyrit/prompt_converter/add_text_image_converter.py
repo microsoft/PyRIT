@@ -89,19 +89,13 @@ class AddTextImageConverter(PromptConverter):
         Load the font for a given font name and font size.
 
         Returns:
-            ImageFont.FreeTypeFont or ImageFont.ImageFont: The loaded font object. If the specified font
-            cannot be loaded, the default font is returned.
-
-        Raises:
-            OSError: If the font resource cannot be loaded, a warning is logged and the default font is used instead.
+            FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
-        # Try to load the specified font
         try:
-            font = ImageFont.truetype(self._font_name, self._font_size)
+            return ImageFont.truetype(self._font_name, self._font_size)
         except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
-            font = cast("FreeTypeFont", ImageFont.load_default())
-        return font
+            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
+            return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:
         """
