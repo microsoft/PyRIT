@@ -8,6 +8,7 @@ import pytest
 from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     _COMIC_JAILBREAK_QUERY_PROMPT,
     COMIC_JAILBREAK_TEMPLATES,
+    ComicJailbreakTemplateConfig,
     _ComicJailbreakDataset,
 )
 from pyrit.models import SeedDataset
@@ -197,23 +198,25 @@ class TestComicJailbreakTemplates:
         assert set(COMIC_JAILBREAK_TEMPLATES.keys()) == expected
 
     @pytest.mark.parametrize("template_type", ["article", "speech", "instruction", "message", "code"])
-    def test_template_has_coord_and_rotation(self, template_type):
-        template = COMIC_JAILBREAK_TEMPLATES[template_type]
-        assert "coord" in template
-        assert "rotation" in template
+    def test_template_is_config_with_valid_bbox(self, template_type):
+        config = COMIC_JAILBREAK_TEMPLATES[template_type]
+        assert isinstance(config, ComicJailbreakTemplateConfig)
 
-        coord = template["coord"]
-        assert len(coord) == 4
-        x1, y1, x2, y2 = coord
+        x1, y1, x2, y2 = config.bounding_box
         assert x2 > x1
         assert y2 > y1
 
-    def test_template_coords_match_paper(self):
-        assert COMIC_JAILBREAK_TEMPLATES["article"]["coord"] == (1080, 70, 1480, 680)
-        assert COMIC_JAILBREAK_TEMPLATES["article"]["rotation"] == 0
-        assert COMIC_JAILBREAK_TEMPLATES["speech"]["coord"] == (1050, 40, 1500, 240)
-        assert COMIC_JAILBREAK_TEMPLATES["instruction"]["coord"] == (1200, 130, 1420, 500)
-        assert COMIC_JAILBREAK_TEMPLATES["instruction"]["rotation"] == 10
-        assert COMIC_JAILBREAK_TEMPLATES["message"]["coord"] == (1160, 120, 1400, 580)
-        assert COMIC_JAILBREAK_TEMPLATES["message"]["rotation"] == 6
-        assert COMIC_JAILBREAK_TEMPLATES["code"]["coord"] == (1130, 210, 1490, 510)
+    def test_template_configs_match_paper(self):
+        assert COMIC_JAILBREAK_TEMPLATES["article"].bounding_box == (1080, 70, 1480, 680)
+        assert COMIC_JAILBREAK_TEMPLATES["article"].rotation == 0
+        assert COMIC_JAILBREAK_TEMPLATES["speech"].bounding_box == (1050, 40, 1500, 240)
+        assert COMIC_JAILBREAK_TEMPLATES["instruction"].bounding_box == (1200, 130, 1420, 500)
+        assert COMIC_JAILBREAK_TEMPLATES["instruction"].rotation == 10
+        assert COMIC_JAILBREAK_TEMPLATES["message"].bounding_box == (1160, 120, 1400, 580)
+        assert COMIC_JAILBREAK_TEMPLATES["message"].rotation == 6
+        assert COMIC_JAILBREAK_TEMPLATES["code"].bounding_box == (1130, 210, 1490, 510)
+
+    def test_template_config_is_frozen(self):
+        config = COMIC_JAILBREAK_TEMPLATES["article"]
+        with pytest.raises(AttributeError):
+            config.rotation = 99
