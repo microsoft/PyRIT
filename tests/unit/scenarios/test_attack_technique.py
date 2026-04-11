@@ -6,6 +6,7 @@
 from unittest.mock import MagicMock
 
 from pyrit.executor.attack import AttackStrategy
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
@@ -59,3 +60,72 @@ class TestAttackTechniqueProperties:
         technique = AttackTechnique(attack=mock_attack, seed_technique=seed_technique)
 
         assert technique.seed_technique is technique.seed_technique
+
+
+class TestAttackTechniqueIdentifier:
+    """Tests for AttackTechnique.get_identifier() (Identifiable)."""
+
+    def test_get_identifier_returns_component_identifier(self):
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        technique = AttackTechnique(attack=mock_attack)
+
+        result = technique.get_identifier()
+        assert isinstance(result, ComponentIdentifier)
+
+    def test_class_name_and_module(self):
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        technique = AttackTechnique(attack=mock_attack)
+
+        result = technique.get_identifier()
+        assert result.class_name == "AttackTechnique"
+        assert result.class_module == "pyrit.scenario.core.attack_technique"
+
+    def test_attack_child_is_present(self):
+        attack_id = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = attack_id
+        technique = AttackTechnique(attack=mock_attack)
+
+        result = technique.get_identifier()
+        assert result.children["attack"] == attack_id
+
+    def test_no_technique_seeds_when_none(self):
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        technique = AttackTechnique(attack=mock_attack)
+
+        result = technique.get_identifier()
+        assert "technique_seeds" not in result.children
+
+    def test_technique_seeds_present_when_provided(self):
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        seed_technique = _make_technique_seeds()
+        technique = AttackTechnique(attack=mock_attack, seed_technique=seed_technique)
+
+        result = technique.get_identifier()
+        assert "technique_seeds" in result.children
+        assert len(result.children["technique_seeds"]) == 2
+
+    def test_identifier_is_cached(self):
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        technique = AttackTechnique(attack=mock_attack)
+
+        first = technique.get_identifier()
+        second = technique.get_identifier()
+        assert first is second

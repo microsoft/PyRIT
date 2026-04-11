@@ -566,16 +566,18 @@ class TestSeedAttackGroupWithTechnique:
         assert merged.seeds[3].value == "prompt1"
 
     def test_insert_at_zero(self):
-        """Test that insertion_index=0 prepends technique seeds."""
+        """Test insertion_index=0: technique seeds appear right after the objective
+        because SeedAttackGroup always places the objective first."""
         base = self._make_base_group()
         technique = self._make_technique(insertion_index=0)
 
         merged = base.with_technique(technique=technique)
 
         assert len(merged.seeds) == 4
-        assert merged.seeds[0].value == "tech_a"
-        assert merged.seeds[1].value == "tech_b"
-        assert merged.seeds[2].value == "objective"
+        # Objective is re-sorted to front by the constructor's canonical ordering
+        assert merged.seeds[0].value == "objective"
+        assert merged.seeds[1].value == "tech_a"
+        assert merged.seeds[2].value == "tech_b"
         assert merged.seeds[3].value == "prompt1"
 
     def test_insert_beyond_length_appends(self):

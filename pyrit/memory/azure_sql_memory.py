@@ -483,11 +483,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             rows = session.execute(
                 text(
                     """SELECT DISTINCT JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack.class_name') AS cls
+                        '$.children.attack_technique.children.attack.class_name') AS cls
                     FROM "AttackResultEntries"
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack.class_name') IS NOT NULL"""
+                        '$.children.attack_technique.children.attack.class_name') IS NOT NULL"""
                 )
             ).fetchall()
         return sorted(row[0] for row in rows)
@@ -495,7 +495,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def get_unique_converter_class_names(self) -> list[str]:
         """
         Azure SQL implementation: extract unique converter class_name values
-        from the children.attack.children.request_converters array
+        from the children.attack_technique.children.attack.children.request_converters array
         in the atomic_attack_identifier JSON column.
 
         Returns:
@@ -507,7 +507,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     """SELECT DISTINCT JSON_VALUE(c.value, '$.class_name') AS cls
                     FROM "AttackResultEntries"
                     CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
-                        '$.children.attack.children.request_converters')) AS c
+                        '$.children.attack_technique.children.attack.children.request_converters')) AS c
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL"""
                 )

@@ -769,12 +769,13 @@ class TestEnrichAtomicAttackIdentifiers:
         enriched = result.completed_results[0]
         assert enriched.atomic_attack_identifier is not None
         assert enriched.atomic_attack_identifier.class_name == "AtomicAttack"
-        assert "attack" in enriched.atomic_attack_identifier.children
-        assert "seeds" in enriched.atomic_attack_identifier.children
+        assert "attack_technique" in enriched.atomic_attack_identifier.children
+        assert "seed_group" in enriched.atomic_attack_identifier.children
 
     @pytest.mark.asyncio
-    async def test_enrichment_skips_results_without_attack_identifier(self, mock_attack):
-        """Test that enrichment is skipped when result has no attack_identifier."""
+    async def test_enrichment_populates_even_when_result_has_no_prior_identifier(self, mock_attack):
+        """Test that enrichment works even when result has no prior atomic_attack_identifier,
+        since AttackTechnique.get_identifier() is self-contained."""
         seed_groups = [
             SeedAttackGroup(seeds=[SeedObjective(value="obj1"), SeedPrompt(value="p1")]),
         ]
@@ -794,8 +795,10 @@ class TestEnrichAtomicAttackIdentifiers:
             mock_exec.return_value = wrap_results([attack_result])
             result = await atomic.run_async()
 
-        # Should not be enriched (no attack_identifier to build from)
-        assert result.completed_results[0].atomic_attack_identifier is None
+        # Should be enriched — technique provides its own identifier
+        enriched = result.completed_results[0]
+        assert enriched.atomic_attack_identifier is not None
+        assert enriched.atomic_attack_identifier.class_name == "AtomicAttack"
 
     @pytest.mark.asyncio
     async def test_enrichment_skips_out_of_range_index(self, mock_attack):
@@ -863,7 +866,7 @@ class TestEnrichAtomicAttackIdentifiers:
 
         enriched = result.completed_results[0].atomic_attack_identifier
         assert enriched is not None
-        seed_ids = enriched.children["seeds"]
+        seed_ids = enriched.children["seed_group"]
         # All three seeds (objective + technique + non_technique) should be present
         assert len(seed_ids) == 3
         sha_values = [s.params.get("value_sha256") for s in seed_ids]
@@ -915,12 +918,12 @@ class TestEnrichAtomicAttackIdentifiers:
 
         # First result should have hash_a seed
         enriched_0 = result.completed_results[0].atomic_attack_identifier
-        seed_sha_values_0 = [s.params.get("value_sha256") for s in enriched_0.children["seeds"]]
+        seed_sha_values_0 = [s.params.get("value_sha256") for s in enriched_0.children["seed_group"]]
         assert "hash_a" in seed_sha_values_0
 
         # Second result should have hash_b seed
         enriched_1 = result.completed_results[1].atomic_attack_identifier
-        seed_sha_values_1 = [s.params.get("value_sha256") for s in enriched_1.children["seeds"]]
+        seed_sha_values_1 = [s.params.get("value_sha256") for s in enriched_1.children["seed_group"]]
         assert "hash_b" in seed_sha_values_1
 
     @pytest.mark.asyncio

@@ -8,21 +8,22 @@ Builds a composite ComponentIdentifier that uniquely identifies an attack run
 by combining the attack strategy's identity with the seed identifiers from
 the dataset.
 
-The composite identifier has this shape:
-    class_name = "AtomicAttack"
-    children["attack"] = attack strategy's ComponentIdentifier
-    children["technique_seeds"] = list of technique-only seed ComponentIdentifiers (optional)
-    children["seeds"] = list of ALL seed ComponentIdentifiers (for traceability)
+The composite identifier has this shape::
+
+    AtomicAttack
+      ├── attack_technique  (class_name="AttackTechnique")
+      │   ├── attack            (attack strategy's ComponentIdentifier)
+      │   └── technique_seeds   (optional, list of seed ComponentIdentifiers)
+      └── seed_group            (list of ALL seed ComponentIdentifiers, for traceability)
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.identifiers.component_identifier import ComponentIdentifier
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed import Seed
-    from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
     from pyrit.models.seeds.seed_group import SeedGroup
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ logger = logging.getLogger(__name__)
 # Class metadata for the composite identifier
 _ATOMIC_ATTACK_CLASS_NAME = "AtomicAttack"
 _ATOMIC_ATTACK_CLASS_MODULE = "pyrit.scenario.core.atomic_attack"
+
+_ATTACK_TECHNIQUE_CLASS_NAME = "AttackTechnique"
+_ATTACK_TECHNIQUE_CLASS_MODULE = "pyrit.scenario.core.attack_technique"
 
 
 def build_seed_identifier(seed: "Seed") -> ComponentIdentifier:
@@ -62,43 +66,58 @@ def build_seed_identifier(seed: "Seed") -> ComponentIdentifier:
 
 def build_atomic_attack_identifier(
     *,
-    attack_identifier: ComponentIdentifier,
-    seed_group: Optional["SeedGroup"] = None,
-    seed_technique: Optional["SeedAttackTechniqueGroup"] = None,
+    technique_identifier: ComponentIdentifier | None = None,
+    attack_identifier: ComponentIdentifier | None = None,
+    seed_group: "SeedGroup | None" = None,
 ) -> ComponentIdentifier:
     """
     Build a composite ComponentIdentifier for an atomic attack.
 
-    The identifier always includes the attack strategy as ``children["attack"]``
-    and all seeds from the seed group in ``children["seeds"]`` for traceability.
+    The identifier places the attack technique in ``children["attack_technique"]``
+    and all seeds from the seed group in ``children["seed_group"]`` for traceability.
 
-    When ``seed_technique`` is provided, its seeds are also included as
-    ``children["technique_seeds"]``. These represent the reusable "how to attack"
-    portion and are included in eval-hash computation, while ``seeds`` is excluded
-    from the eval hash.
+    Callers that have an ``AttackTechnique`` object should pass
+    ``technique_identifier=attack_technique.get_identifier()``.
+    Callers that only have a raw attack strategy identifier (e.g. legacy
+    backward-compat paths) can pass ``attack_identifier`` instead, which is
+    wrapped in a minimal technique node automatically.
 
     Args:
-        attack_identifier: The attack strategy's identifier.
+        technique_identifier: Pre-built technique identifier from
+            ``AttackTechnique.get_identifier()``. Mutually exclusive with
+            ``attack_identifier``.
+        attack_identifier: Raw attack strategy identifier. Used when no
+            ``AttackTechnique`` instance is available. Mutually exclusive
+            with ``technique_identifier``.
         seed_group: The seed group to extract all seeds from.
-        seed_technique: Optional technique seed group whose seeds are added
-            as a separate ``technique_seeds`` child.
 
     Returns:
         A composite ComponentIdentifier with class_name="AtomicAttack".
+
+    Raises:
+        ValueError: If both or neither of ``technique_identifier`` and
+            ``attack_identifier`` are provided.
     """
+    if technique_identifier is not None and attack_identifier is not None:
+        raise ValueError("Provide technique_identifier or attack_identifier, not both")
+
+    if technique_identifier is None:
+        if attack_identifier is None:
+            raise ValueError("Either technique_identifier or attack_identifier must be provided")
+        technique_identifier = ComponentIdentifier(
+            class_name=_ATTACK_TECHNIQUE_CLASS_NAME,
+            class_module=_ATTACK_TECHNIQUE_CLASS_MODULE,
+            children={"attack": attack_identifier},
+        )
+
     seed_identifiers: list[ComponentIdentifier] = []
     if seed_group is not None:
         seed_identifiers.extend(build_seed_identifier(seed) for seed in seed_group.seeds)
 
     children: dict[str, Any] = {
-        "attack": attack_identifier,
-        "seeds": seed_identifiers,
+        "attack_technique": technique_identifier,
+        "seed_group": seed_identifiers,
     }
-
-    if seed_technique is not None:
-        technique_seed_ids = [build_seed_identifier(seed) for seed in seed_technique.seeds]
-        if technique_seed_ids:
-            children["technique_seeds"] = technique_seed_ids
 
     return ComponentIdentifier(
         class_name=_ATOMIC_ATTACK_CLASS_NAME,

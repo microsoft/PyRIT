@@ -1537,7 +1537,7 @@ class MemoryInterface(abc.ABC):
             conditions.append(
                 self._get_condition_json_property_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
-                    property_path="$.children.attack.class_name",
+                    property_path="$.children.attack_technique.children.attack.class_name",
                     value=attack_class,
                     case_sensitive=True,
                 )
@@ -1549,7 +1549,7 @@ class MemoryInterface(abc.ABC):
             conditions.append(
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
-                    property_path="$.children.attack.children.request_converters",
+                    property_path="$.children.attack_technique.children.attack.children.request_converters",
                     array_element_path="$.class_name",
                     array_to_match=converter_classes,
                 )

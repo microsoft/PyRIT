@@ -258,15 +258,12 @@ class AtomicAttack:
             results: The execution results to enrich.
         """
         memory = CentralMemory.get_memory_instance()
-        seed_technique = self._attack_technique.seed_technique
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
-            attack_strategy_id = result.get_attack_strategy_identifier()
-            if attack_strategy_id and idx < len(self._seed_groups):
+            if idx < len(self._seed_groups):
                 result.atomic_attack_identifier = build_atomic_attack_identifier(
-                    attack_identifier=attack_strategy_id,
+                    technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
-                    seed_technique=seed_technique,
                 )
 
                 # Persist the enriched identifier back to the database.
