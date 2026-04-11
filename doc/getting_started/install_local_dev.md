@@ -192,7 +192,7 @@ If you prefer conda for environment management, you can use it to create a Pytho
 
 2. **Git**: Clone the repository:
     ```bash
-    git clone https://github.com/Azure/PyRIT
+    git clone https://github.com/microsoft/PyRIT
     ```
 
 3. **Node.js and npm**: Required for building the frontend. Download [Node.js](https://nodejs.org/) (version 18+).

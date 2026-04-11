@@ -4,13 +4,18 @@ repos:
     hooks:
       - id: nbstripout
         args: [--keep-output, '--extra-keys=metadata.kernelspec']
-        files: ^doc/*\.(ipynb)$
+        files: ^doc/.*\.ipynb$
 
   - repo: local
     hooks:
       - id: sanitize-notebook-paths
         name: Sanitize Notebook Paths
         entry: python ./build_scripts/sanitize_notebook_paths.py
+        language: python
+        files: ^doc.*\.(ipynb)$
+      - id: strip-notebook-progress-bars
+        name: Strip Notebook Progress Bars
+        entry: python ./build_scripts/strip_notebook_progress_bars.py
         language: python
         files: ^doc.*\.(ipynb)$
       - id: validate-docs

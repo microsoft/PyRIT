@@ -19,6 +19,7 @@ from pyrit.identifiers.evaluation_identifier import (
     ScorerEvaluationIdentifier,
     compute_eval_hash,
 )
+from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
 __all__ = [
     "AtomicAttackEvaluationIdentifier",
@@ -33,4 +34,6 @@ __all__ = [
     "ScorerEvaluationIdentifier",
     "snake_case_to_class_name",
     "config_hash",
+    "IdentifierFilter",
+    "IdentifierType",
 ]

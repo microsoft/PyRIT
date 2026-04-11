@@ -214,6 +214,55 @@ class TestMain:
 
         assert result == 1
 
+    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_main_list_targets_with_initializers(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_print_targets: AsyncMock,
+    ):
+        """Test main with --list-targets and --initializers passes initializers to FrontendCore."""
+        mock_print_targets.return_value = 0
+
+        result = pyrit_scan.main(["--list-targets", "--initializers", "target"])
+
+        assert result == 0
+        mock_frontend_core.assert_called_once()
+        call_kwargs = mock_frontend_core.call_args[1]
+        assert call_kwargs["initializer_names"] == ["target"]
+        mock_print_targets.assert_called_once()
+
+    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.resolve_initialization_scripts")
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_main_list_targets_with_scripts(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_resolve_scripts: MagicMock,
+        mock_print_targets: AsyncMock,
+    ):
+        """Test main with --list-targets and --initialization-scripts passes scripts to FrontendCore."""
+        mock_resolve_scripts.return_value = [Path("/test/script.py")]
+        mock_print_targets.return_value = 0
+
+        result = pyrit_scan.main(["--list-targets", "--initialization-scripts", "script.py"])
+
+        assert result == 0
+        mock_resolve_scripts.assert_called_once_with(script_paths=["script.py"])
+        mock_frontend_core.assert_called_once()
+        call_kwargs = mock_frontend_core.call_args[1]
+        assert call_kwargs["initialization_scripts"] == [Path("/test/script.py")]
+        mock_print_targets.assert_called_once()
+
+    @patch("pyrit.cli.frontend_core.resolve_initialization_scripts")
+    def test_main_list_targets_with_missing_script(self, mock_resolve_scripts: MagicMock):
+        """Test main with --list-targets and missing script file."""
+        mock_resolve_scripts.side_effect = FileNotFoundError("Script not found")
+
+        result = pyrit_scan.main(["--list-targets", "--initialization-scripts", "missing.py"])
+
+        assert result == 1
+
     def test_main_no_scenario_specified(self, capsys):
         """Test main without scenario name."""
         result = pyrit_scan.main([])

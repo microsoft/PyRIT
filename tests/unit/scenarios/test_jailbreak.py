@@ -110,10 +110,10 @@ _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"test question {i}", "answer": f"test 
 
 
 @pytest.fixture(autouse=True)
-def patch_many_shot_http_fetch():
-    """Prevent ManyShotJailbreakAttack from making real HTTP calls during unit tests."""
+def patch_many_shot_load():
+    """Prevent ManyShotJailbreakAttack from loading the full dataset during unit tests."""
     with patch(
-        "pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset",
+        "pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset",
         return_value=_MOCK_MANY_SHOT_EXAMPLES,
     ):
         yield

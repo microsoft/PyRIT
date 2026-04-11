@@ -196,18 +196,20 @@ def main(args: Optional[list[str]] = None) -> int:
         return asyncio.run(frontend_core.print_initializers_list_async(context=context))
 
     if parsed_args.list_targets:
-        # Need initializers to populate target registry
-        context = frontend_core.FrontendCore(
-            config_file=parsed_args.config_file,
-            initializer_names=parsed_args.initializers,
-            log_level=parsed_args.log_level,
-        )
-        return asyncio.run(frontend_core.print_targets_list_async(context=context))
+        # Need initializers or initialization scripts to populate the target registry
+        initialization_scripts = None
+        if parsed_args.initialization_scripts:
+            try:
+                initialization_scripts = frontend_core.resolve_initialization_scripts(
+                    script_paths=parsed_args.initialization_scripts
+                )
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                return 1
 
-    if parsed_args.list_targets:
-        # Need initializers to populate target registry
         context = frontend_core.FrontendCore(
             config_file=parsed_args.config_file,
+            initialization_scripts=initialization_scripts,
             initializer_names=parsed_args.initializers,
             log_level=parsed_args.log_level,
         )

@@ -24,6 +24,7 @@ from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
 
 logger = logging.getLogger(__name__)
 
+
 # Define the type for the file handlers
 FileHandlerRead = Callable[[TextIO], list[dict[str, str]]]
 FileHandlerWrite = Callable[[TextIO, list[dict[str, str]]], None]

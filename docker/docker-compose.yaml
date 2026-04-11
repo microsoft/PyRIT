@@ -15,7 +15,7 @@ services:
     image: pyrit:latest
     container_name: pyrit-jupyter
     ports:
-      - "8888:8888"
+      - "127.0.0.1:8888:8888"
     volumes:
       - notebooks:/app/notebooks
       - data:/app/data
@@ -26,7 +26,7 @@ services:
       - PYRIT_MODE=jupyter
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8888 || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/api/status || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

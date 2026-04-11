@@ -22,7 +22,7 @@ DEFAULT_OPENAI_FRONTEND_ENDPOINT=${AZURE_OPENAI_INTEGRATION_TEST_ENDPOINT}
 DEFAULT_OPENAI_FRONTEND_KEY=${AZURE_OPENAI_INTEGRATION_TEST_KEY}
 DEFAULT_OPENAI_FRONTEND_MODEL=${AZURE_OPENAI_INTEGRATION_TEST_MODEL}
 
-GLOBAL_MEMORY_LABELS={"username": "integration-test", "op_name": "integration-test"}
+GLOBAL_MEMORY_LABELS={"operator": "integration-test", "operation": "integration-test"}
 
 ##############
 # Set optional OPENAI_CHAT_ADDITIONAL_REQUEST_HEADERS to include additional HTTP headers in a dictionary format for API requests, e.g., {'key1': 'value1'}.
