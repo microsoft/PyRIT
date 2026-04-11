@@ -6,14 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
-    _OCR_INJECTION_PROMPT,
-    _PII_LEAKAGE_PROMPT,
     VisualLeakBenchCategory,
     VisualLeakBenchPIIType,
     _VisualLeakBenchDataset,
 )
-from pyrit.memory import SQLiteMemory
-from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import SeedDataset
 
 
@@ -39,16 +35,9 @@ def _make_pii_example(**overrides) -> dict:
     return base
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestVisualLeakBenchDataset:
     """Unit tests for _VisualLeakBenchDataset."""
-
-    @pytest.fixture(autouse=True)
-    def setup_memory(self):
-        """Set up memory instance for image downloads."""
-        memory = SQLiteMemory()
-        CentralMemory.set_memory_instance(memory)
-        yield
-        CentralMemory.set_memory_instance(None)
 
     def test_dataset_name(self):
         """Test that dataset_name property returns correct value."""
@@ -110,7 +99,7 @@ class TestVisualLeakBenchDataset:
         assert image_prompt.prompt_group_id == text_prompt.prompt_group_id
         assert image_prompt.sequence == 0
         assert text_prompt.sequence == 1
-        assert text_prompt.value == _OCR_INJECTION_PROMPT
+        assert text_prompt.value == _VisualLeakBenchDataset.OCR_INJECTION_PROMPT
         assert image_prompt.value == "/fake/ocr.png"
 
     @pytest.mark.asyncio
@@ -127,7 +116,7 @@ class TestVisualLeakBenchDataset:
 
         assert len(dataset.seeds) == 2
         text_prompt = next(s for s in dataset.seeds if s.data_type == "text")
-        assert text_prompt.value == _PII_LEAKAGE_PROMPT
+        assert text_prompt.value == _VisualLeakBenchDataset.PII_LEAKAGE_PROMPT
 
     @pytest.mark.asyncio
     async def test_fetch_dataset_harm_categories_ocr(self):
@@ -248,8 +237,8 @@ class TestVisualLeakBenchDataset:
         assert len(dataset.seeds) <= 4
 
     @pytest.mark.asyncio
-    async def test_failed_image_download_skips_example(self):
-        """Test that an example is skipped when the image download fails."""
+    async def test_all_images_fail_produces_empty_dataset(self):
+        """Test that when all image downloads fail, no prompts are produced and SeedDataset raises."""
         mock_data = [_make_ocr_example()]
         loader = _VisualLeakBenchDataset()
 
@@ -257,6 +246,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", side_effect=Exception("Network error")),
         ):
+            # SeedDataset raises because the loader produces zero prompts
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset(cache=False)
 
@@ -355,9 +345,9 @@ class TestVisualLeakBenchDataset:
     def test_get_query_prompt_ocr(self):
         """Test _get_query_prompt returns OCR prompt for OCR Injection category."""
         loader = _VisualLeakBenchDataset()
-        assert loader._get_query_prompt("OCR Injection") == _OCR_INJECTION_PROMPT
+        assert loader._get_query_prompt("OCR Injection") == _VisualLeakBenchDataset.OCR_INJECTION_PROMPT
 
     def test_get_query_prompt_pii(self):
         """Test _get_query_prompt returns PII prompt for PII Leakage category."""
         loader = _VisualLeakBenchDataset()
-        assert loader._get_query_prompt("PII Leakage") == _PII_LEAKAGE_PROMPT
+        assert loader._get_query_prompt("PII Leakage") == _VisualLeakBenchDataset.PII_LEAKAGE_PROMPT
