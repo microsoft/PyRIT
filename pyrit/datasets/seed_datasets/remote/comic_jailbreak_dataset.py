@@ -4,10 +4,11 @@
 import logging
 from typing import Literal
 
+from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import SeedDataset, SeedObjective, data_serializer_factory
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,19 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     The dataset contains 300 harmful goals with template-specific text for each of
     the five comic template types.
 
-    Reference: https://arxiv.org/abs/2603.21697
+    Reference: [@yu2025comicjailbreak]
+    Paper: https://arxiv.org/abs/2603.21697
     Repository: https://github.com/Social-AI-Studio/ComicJailbreak
     """
 
+    TEMPLATE_BASE_URL: str = (
+        "https://raw.githubusercontent.com/Social-AI-Studio/ComicJailbreak/"
+        "5fca32012ccac34dbd080df247926366249b4fb1/template/"
+    )
+    TEMPLATE_NAMES: tuple[str, ...] = ("article", "speech", "instruction", "message", "code")
+
     # Metadata
-    harm_categories: list[str] = [
+    harm_categories: tuple[str, ...] = (
         "harassment",
         "violence",
         "illegal",
@@ -45,10 +53,10 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         "misinformation",
         "sexual",
         "privacy",
-    ]
-    modalities: list[str] = ["text", "image"]
+    )
+    modalities: tuple[str, ...] = ("text", "image")
     size: str = "large"  # 300 goals × 5 templates
-    tags: set[str] = {"safety", "multimodal"}
+    tags: frozenset[str] = frozenset({"safety", "multimodal"})
 
     def __init__(
         self,
@@ -116,7 +124,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             category = example.get("Category", "").strip()
 
             # Collect non-empty template texts as flat metadata keys
-            template_metadata: dict[str, str | int] = {}
+            template_metadata: dict[str, str] = {}
             for col in template_columns:
                 text = example.get(col, "").strip()
                 if text:
@@ -142,3 +150,37 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             seeds.append(seed)
 
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
+
+    async def fetch_template_async(self, template_name: str) -> str:
+        """
+        Fetch a comic template image from the remote repository with local caching.
+
+        Args:
+            template_name: One of 'article', 'speech', 'instruction', 'message', 'code'.
+
+        Returns:
+            str: Local file path to the cached template image.
+
+        Raises:
+            ValueError: If template_name is not a valid template.
+        """
+        if template_name not in self.TEMPLATE_NAMES:
+            raise ValueError(
+                f"Invalid template name '{template_name}'. Must be one of: {', '.join(self.TEMPLATE_NAMES)}"
+            )
+
+        filename = f"comic_jailbreak_{template_name}.png"
+        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
+
+        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
+        try:
+            if await serializer._memory.results_storage_io.path_exists(serializer.value):
+                return serializer.value
+        except Exception as e:
+            logger.warning(f"[ComicJailbreak] Failed to check cache for template {template_name}: {e}")
+
+        image_url = f"{self.TEMPLATE_BASE_URL}{template_name}.png"
+        response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
+        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
+
+        return str(serializer.value)

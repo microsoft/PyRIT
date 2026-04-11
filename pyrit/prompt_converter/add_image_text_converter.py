@@ -71,10 +71,16 @@ class AddImageTextConverter(PromptConverter):
             min_font_size (int): Minimum font size when auto_font_size is True. Defaults to 10.
 
         Raises:
+            TypeError: If more than one positional argument is passed, or if img_to_add
+                is passed as both positional and keyword argument.
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
                 or bounding_box coordinates are invalid.
         """
         if args:
+            if len(args) > 1:
+                raise TypeError(f"AddImageTextConverter() takes at most 1 positional argument, got {len(args)}")
+            if img_to_add:
+                raise TypeError("Cannot pass img_to_add as both positional and keyword argument")
             warnings.warn(
                 "Passing 'img_to_add' as a positional argument is deprecated. "
                 "Use img_to_add=... as a keyword argument. "
@@ -94,6 +100,7 @@ class AddImageTextConverter(PromptConverter):
         self._img_to_add = img_to_add
         self._font_name = font_name
         self._font_size = font_size
+        self._font_load_failed = False
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos
@@ -146,10 +153,13 @@ class AddImageTextConverter(PromptConverter):
         Returns:
             FreeTypeFont: The loaded font object. Falls back to the default font on error.
         """
+        if self._font_load_failed:
+            return cast("FreeTypeFont", ImageFont.load_default())
         try:
             return ImageFont.truetype(self._font_name, size)
         except OSError:
             logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
+            self._font_load_failed = True
             return cast("FreeTypeFont", ImageFont.load_default())
 
     def _wrap_text(self, *, text: str, font: FreeTypeFont, max_width: int) -> list[str]:
@@ -202,16 +212,14 @@ class AddImageTextConverter(PromptConverter):
         usable_width = int(box_width * 0.95)
         usable_height = int(box_height * 0.95)
 
-        font_cache: dict[int, FreeTypeFont] = {}
         for size in range(self._font_size, self._min_font_size - 1, -1):
-            font = font_cache.get(size) or self._load_font_at_size(size)
-            font_cache[size] = font
+            font = self._load_font_at_size(size)
             lines = self._wrap_text(text=text, font=font, max_width=usable_width)
             line_height = self._get_line_height(font=font)
             if len(lines) * line_height <= usable_height:
                 return font, lines
 
-        min_font = font_cache.get(self._min_font_size) or self._load_font_at_size(self._min_font_size)
+        min_font = self._load_font_at_size(self._min_font_size)
         lines = self._wrap_text(text=text, font=min_font, max_width=usable_width)
         return min_font, lines
 
@@ -225,8 +233,12 @@ class AddImageTextConverter(PromptConverter):
 
         Returns:
             Image.Image: The image with text rendered in the bounding box.
+
+        Raises:
+            RuntimeError: If bounding_box is not set.
         """
-        assert self._bounding_box is not None
+        if self._bounding_box is None:
+            raise RuntimeError("_render_text_in_bounding_box called without bounding_box")
         x1, y1, x2, y2 = self._bounding_box
         box_width = x2 - x1
         box_height = y2 - y1
