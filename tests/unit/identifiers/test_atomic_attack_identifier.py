@@ -407,8 +407,7 @@ class TestAtomicAttackEvaluationIdentifier:
             attack_identifier=attack_id,
         )
         assert (
-            AtomicAttackEvaluationIdentifier(c_with).eval_hash
-            == AtomicAttackEvaluationIdentifier(c_without).eval_hash
+            AtomicAttackEvaluationIdentifier(c_with).eval_hash == AtomicAttackEvaluationIdentifier(c_without).eval_hash
         )
 
     def test_identifier_hash_differs_with_different_seeds(self):

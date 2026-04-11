@@ -205,7 +205,7 @@ class TestJailbreakAttackGeneration:
             atomic_attacks = await scenario._get_atomic_attacks_async()
 
             assert len(atomic_attacks) > 0
-            assert all(hasattr(run, "_attack_technique") for run in atomic_attacks)
+            assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_simple(
@@ -220,7 +220,7 @@ class TestJailbreakAttackGeneration:
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
-                assert isinstance(run._attack_technique.attack, PromptSendingAttack)
+                assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_complex(
@@ -235,7 +235,9 @@ class TestJailbreakAttackGeneration:
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
-                assert isinstance(run._attack_technique.attack, (RolePlayAttack, ManyShotJailbreakAttack, SkeletonKeyAttack))
+                assert isinstance(
+                    run.attack_technique.attack, (RolePlayAttack, ManyShotJailbreakAttack, SkeletonKeyAttack)
+                )
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_manyshot(
@@ -250,7 +252,7 @@ class TestJailbreakAttackGeneration:
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
-                assert isinstance(run._attack_technique.attack, ManyShotJailbreakAttack)
+                assert isinstance(run.attack_technique.attack, ManyShotJailbreakAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_promptsending(
@@ -265,7 +267,7 @@ class TestJailbreakAttackGeneration:
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
-                assert isinstance(run._attack_technique.attack, PromptSendingAttack)
+                assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_skeleton(
@@ -280,7 +282,7 @@ class TestJailbreakAttackGeneration:
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
-                assert isinstance(run._attack_technique.attack, SkeletonKeyAttack)
+                assert isinstance(run.attack_technique.attack, SkeletonKeyAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_roleplay(
@@ -295,7 +297,7 @@ class TestJailbreakAttackGeneration:
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
-                assert isinstance(run._attack_technique.attack, RolePlayAttack)
+                assert isinstance(run.attack_technique.attack, RolePlayAttack)
 
     @pytest.mark.asyncio
     async def test_attack_runs_include_objectives(
@@ -327,7 +329,7 @@ class TestJailbreakAttackGeneration:
             await scenario.initialize_async(objective_target=mock_objective_target)
             atomic_attacks = await scenario._get_atomic_attacks_async()
             assert len(atomic_attacks) > 0
-            assert all(hasattr(run, "_attack_technique") for run in atomic_attacks)
+            assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_get_all_jailbreak_templates(
@@ -485,5 +487,5 @@ class TestJailbreakAdversarialTarget:
             assert len(atomic_attacks) >= 2
 
             # All role-play attacks should share the same adversarial chat target
-            adversarial_targets = [run._attack_technique.attack._adversarial_chat for run in atomic_attacks]
+            adversarial_targets = [run.attack_technique.attack._adversarial_chat for run in atomic_attacks]
             assert all(t is adversarial_targets[0] for t in adversarial_targets)

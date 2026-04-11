@@ -239,4 +239,5 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
         "seeds": ChildEvalRule(exclude=True),
+        # technique_seeds: intentionally omitted — fully included in eval hash.
     }

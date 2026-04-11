@@ -98,7 +98,7 @@ class SeedAttackGroup(SeedGroup):
         assert obj is not None, "SeedAttackGroup should always have an objective"
         return obj
 
-    def with_technique(self, *, technique: "SeedAttackTechniqueGroup") -> "SeedAttackGroup":
+    def with_technique(self, *, technique: SeedAttackTechniqueGroup) -> SeedAttackGroup:
         """
         Return a new SeedAttackGroup with technique seeds merged in.
 
@@ -113,8 +113,13 @@ class SeedAttackGroup(SeedGroup):
         """
         base = list(self.seeds)
         idx = technique.insertion_index
-        if idx is None:
-            merged_seeds = base + list(technique.seeds)
-        else:
-            merged_seeds = base[:idx] + list(technique.seeds) + base[idx:]
+        technique_seeds = list(technique.seeds)
+        merged_seeds = base + technique_seeds if idx is None else base[:idx] + technique_seeds + base[idx:]
+
+        # Clear group IDs so the new group assigns a fresh one.
+        # This mutates the seed objects, but _enforce_consistent_group_id
+        # in the constructor will immediately overwrite with a new UUID.
+        for seed in merged_seeds:
+            seed.prompt_group_id = None
+
         return SeedAttackGroup(seeds=merged_seeds)

@@ -758,7 +758,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -784,7 +786,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=None,
         )
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -808,7 +812,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             # Index 99 is out of range for seed_groups (only 1 element)
@@ -847,7 +853,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -897,7 +905,9 @@ class TestEnrichAtomicAttackIdentifiers:
             ),
         ]
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results(results)
@@ -934,7 +944,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -974,7 +986,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])

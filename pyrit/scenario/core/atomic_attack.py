@@ -44,27 +44,9 @@ class AtomicAttack:
     The AtomicAttack uses SeedAttackGroups as the single source of truth for objectives,
     prepended conversations, and next messages. Each SeedAttackGroup must have an objective set.
 
-    Example:
-        >>> from pyrit.scenario import AtomicAttack
-        >>> from pyrit.attacks import PromptAttack
-        >>> from pyrit.prompt_target import OpenAIChatTarget
-        >>> from pyrit.models import SeedGroup
-        >>>
-        >>> target = OpenAIChatTarget()
-        >>> attack = PromptAttack(objective_target=target)
-        >>>
-        >>> # Create seed groups with objectives
-        >>> seed_groups = SeedAttackGroup.from_yaml_file("seeds.yaml")
-        >>> for sg in seed_groups:
-        ...     sg.set_objective("your objective here")
-        >>>
-        >>> atomic_attack = AtomicAttack(
-        ...     atomic_attack_name="test_attack",
-        ...     attack=attack,
-        ...     seed_groups=seed_groups,
-        ...     memory_labels={"test": "run1"}
-        ... )
-        >>> results = await atomic_attack.run_async(max_concurrency=5)
+    An ``AttackTechnique`` bundles the attack strategy with an optional
+    ``SeedAttackTechniqueGroup``, cleanly separating "how to attack" from
+    "what to attack" (the objective).
     """
 
     def __init__(
