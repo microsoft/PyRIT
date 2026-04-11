@@ -222,7 +222,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         Raises:
             Exception: If the image cannot be fetched.
         """
-        authors = ["Youting Wang"]
+        authors = ["Youting Wang", "Yuan Tang", "Yitian Qian", "Chen Zhao"]
         description = (
             "VisualLeakBench is a benchmark for evaluating Large Vision-Language Models against "
             "visual privacy attacks. It contains 1,000 adversarial images spanning OCR Injection "
