@@ -10,7 +10,7 @@ from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt, data_serializer_factory
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         for template_name in self.templates:
             template_paths[template_name] = await self._fetch_template_async(template_name)
 
-        prompts: list[SeedPrompt] = []
+        seeds: list[SeedObjective | SeedPrompt] = []
         pair_count = 0
 
         for row_idx, example in enumerate(examples):
@@ -193,14 +193,14 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                     example_id=f"{row_idx}_{template_name}",
                 )
 
-                pair = self._build_prompt_pair(
+                pair = self._build_seed_group(
                     image_path=rendered_path,
                     category=category,
                     goal=goal,
                     template_name=template_name,
                     behavior=example.get("Behavior", ""),
                 )
-                prompts.extend(pair)
+                seeds.extend(pair)
                 pair_count += 1
 
                 if self.max_examples is not None and pair_count >= self.max_examples:
@@ -209,10 +209,10 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             if self.max_examples is not None and pair_count >= self.max_examples:
                 break
 
-        logger.info(f"Successfully loaded {len(prompts)} prompts ({pair_count} pairs) from ComicJailbreak dataset")
-        return SeedDataset(seeds=prompts, dataset_name=self.dataset_name)
+        logger.info(f"Successfully loaded {len(seeds)} seeds ({pair_count} groups) from ComicJailbreak dataset")
+        return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
-    def _build_prompt_pair(
+    def _build_seed_group(
         self,
         *,
         image_path: str,
@@ -220,9 +220,12 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         goal: str,
         template_name: str,
         behavior: str,
-    ) -> list[SeedPrompt]:
+    ) -> list[SeedObjective | SeedPrompt]:
         """
-        Build an image+text SeedPrompt pair for a single rendered comic.
+        Build a SeedObjective + image+text SeedPrompt group for a single rendered comic.
+
+        All three seeds share the same prompt_group_id so they form a SeedAttackGroup
+        when grouped by the scenario layer.
 
         Args:
             image_path: Local path to the rendered comic image.
@@ -232,7 +235,8 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             behavior: The behavior label from the dataset.
 
         Returns:
-            list[SeedPrompt]: A two-element list with image (sequence=0) and text (sequence=1).
+            list[SeedObjective | SeedPrompt]: A three-element list with objective,
+                image (sequence=0), and text query (sequence=1).
         """
         group_id = uuid.uuid4()
         harm_cats = [category] if category else []
@@ -241,6 +245,17 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             "template": template_name,
             "behavior": behavior,
         }
+
+        objective = SeedObjective(
+            value=goal,
+            name=f"ComicJailbreak Objective - {template_name}",
+            dataset_name=self.dataset_name,
+            harm_categories=harm_cats,
+            description=_DESCRIPTION,
+            authors=_AUTHORS,
+            source=self.PAPER_URL,
+            prompt_group_id=group_id,
+        )
 
         image_prompt = SeedPrompt(
             value=image_path,
@@ -270,7 +285,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             metadata=metadata,
         )
 
-        return [image_prompt, text_prompt]
+        return [objective, image_prompt, text_prompt]
 
     async def _render_comic_async(
         self,
