@@ -3,9 +3,6 @@
 
 """
 Unit tests for NegationTrapConverter.
-
-This converter was developed based on techniques discovered and validated
-during Crucible CTF red teaming exercises using PyRIT.
 """
 
 import pytest

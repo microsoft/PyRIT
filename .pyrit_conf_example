@@ -4,7 +4,7 @@
 # or specify a custom path when loading via --config-file.
 #
 # For documentation on configuration options, see:
-# https://github.com/Azure/PyRIT/blob/main/doc/setup/configuration.md
+# https://github.com/microsoft/PyRIT/blob/main/doc/setup/configuration.md
 
 # Memory Database Type
 # --------------------
@@ -24,9 +24,10 @@ memory_db_type: sqlite
 # Available initializers:
 # - simple: Basic OpenAI configuration (requires OPENAI_CHAT_* env vars)
 # - airt: AI Red Team setup with Azure OpenAI (requires AZURE_OPENAI_* env vars)
+# - target: Registers available prompt targets into the TargetRegistry
+# - scorer: Registers pre-configured scorers into the ScorerRegistry
 # - load_default_datasets: Loads default datasets for all registered scenarios
 # - objective_list: Sets default objectives for scenarios
-# - openai_objective_target: Sets up OpenAI target for scenarios
 #
 # Each initializer can be specified as:
 # - A simple string (name only)
@@ -45,8 +46,9 @@ memory_db_type: sqlite
 #         - scorer
 initializers:
   - name: simple
-  - name: scorers
-  - name: targets
+  - name: load_default_datasets
+  - name: scorer
+  - name: target
     args:
       tags:
         - default

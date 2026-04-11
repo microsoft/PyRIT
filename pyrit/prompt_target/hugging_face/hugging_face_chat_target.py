@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import Any, Optional, cast
 
 from transformers import (
     AutoModelForCausalLM,
@@ -25,9 +25,6 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    import torch
-
 
 class HuggingFaceChatTarget(PromptChatTarget):
     """
@@ -36,7 +33,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
     """
 
     _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True, supports_editable_history=True
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_system_prompt=True,
     )
 
     # Class-level cache for model and tokenizer
@@ -65,7 +64,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         skip_special_tokens: bool = True,
         trust_remote_code: bool = False,
         device_map: Optional[str] = None,
-        torch_dtype: Optional["torch.dtype"] = None,
+        torch_dtype: Optional[Any] = None,
         attn_implementation: Optional[str] = None,
         max_requests_per_minute: Optional[int] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,

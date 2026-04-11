@@ -70,6 +70,8 @@ class ConfigurationLoader(YamlLoadable):
         env_files: List of environment file paths to load.
             None means "use defaults (.env, .env.local)", [] means "load nothing".
         silent: Whether to suppress initialization messages.
+        operator: Name for the current operator, e.g. a team or username.
+        operation: Name for the current operation.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -231,6 +233,8 @@ class ConfigurationLoader(YamlLoadable):
         default_config_path = DEFAULT_CONFIG_PATH
         if default_config_path.exists():
             try:
+                logger.info(f"Loading default configuration file: {default_config_path}")
+                print(f"Loading default configuration file: {default_config_path}")
                 default_config = ConfigurationLoader.from_yaml_file(default_config_path)
                 config_data["memory_db_type"] = default_config.memory_db_type
                 config_data["initializers"] = [
@@ -252,6 +256,8 @@ class ConfigurationLoader(YamlLoadable):
         if config_file is not None:
             if not config_file.exists():
                 raise FileNotFoundError(f"Configuration file not found: {config_file}")
+            logger.info(f"Loading configuration file: {config_file}")
+            print(f"Loading configuration file: {config_file}")
             explicit_config = ConfigurationLoader.from_yaml_file(config_file)
             config_data["memory_db_type"] = explicit_config.memory_db_type
             config_data["initializers"] = [

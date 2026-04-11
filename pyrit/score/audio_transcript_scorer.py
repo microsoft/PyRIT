@@ -5,7 +5,6 @@ import logging
 import os
 import tempfile
 import uuid
-from abc import ABC
 from typing import Optional
 
 import av
@@ -39,7 +38,7 @@ def _is_compliant_wav(input_path: str, *, sample_rate: int, channels: int) -> bo
             is_pcm_s16 = codec_name == "pcm_s16le"
             is_correct_rate = stream.rate == sample_rate
             is_correct_channels = stream.channels == channels
-            return is_pcm_s16 and is_correct_rate and is_correct_channels
+            return bool(is_pcm_s16 and is_correct_rate and is_correct_channels)
     except Exception:
         return False
 
@@ -88,7 +87,7 @@ def _audio_to_wav(input_path: str, *, sample_rate: int, channels: int) -> str:
     return output_path
 
 
-class AudioTranscriptHelper(ABC):  # noqa: B024
+class AudioTranscriptHelper:  # noqa: B024
     """
     Abstract base class for audio scorers that process audio by transcribing and scoring the text.
 

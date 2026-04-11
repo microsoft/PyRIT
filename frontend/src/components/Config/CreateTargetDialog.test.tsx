@@ -111,9 +111,9 @@ describe("CreateTargetDialog", () => {
     );
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
 
-    // Fill model name
+    // Fill model name — use fireEvent.change for consistency (same reason as endpoint)
     const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, dall-e-3");
-    await user.type(modelInput, "gpt-4");
+    fireEvent.change(modelInput, { target: { value: "gpt-4" } });
 
     // Submit
     await user.click(screen.getByText("Create Target"));

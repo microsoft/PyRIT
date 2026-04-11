@@ -220,7 +220,7 @@ class PromptTarget(Identifiable):
             known = TargetCapabilities.get_known_capabilities(underlying_model)
             if known is not None:
                 return known
-            logger.warning(
+            logger.info(
                 "No known capabilities for model '%s'. Falling back to %s._DEFAULT_CAPABILITIES.",
                 underlying_model,
                 cls.__name__,

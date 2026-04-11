@@ -51,7 +51,7 @@ def extract_url_parameters(url: str) -> dict[str, str]:
         dict[str, str]: Dictionary of query parameters (flattened from lists).
     """
     parsed_url = urlparse(url)
-    url_params = parse_qs(parsed_url.query)
+    url_params = parse_qs(parsed_url.query, keep_blank_values=True)
     # Flatten params (parse_qs returns lists)
     return {k: v[0] if isinstance(v, list) and len(v) > 0 else "" for k, v in url_params.items()}
 

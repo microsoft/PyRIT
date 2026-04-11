@@ -97,14 +97,14 @@ class TestBeaverTailsDataset:
         assert loader.dataset_name == "beaver_tails"
 
     @pytest.mark.asyncio
-    async def test_fetch_dataset_skips_prompt_with_template_syntax_error(self):
-        """Test that prompts causing TemplateSyntaxError are skipped gracefully."""
+    async def test_fetch_dataset_preserves_prompt_with_jinja_syntax(self):
+        """Test that prompts containing Jinja2 syntax are preserved as literal text."""
 
         class MockDataset:
             def __init__(self):
                 self._data = [
                     {
-                        "prompt": "This contains {% endraw %} which breaks Jinja2",
+                        "prompt": "This contains {% endraw %} which is Jinja2 syntax",
                         "response": "response",
                         "category": {"animal_abuse": True},
                         "is_safe": False,
@@ -124,6 +124,7 @@ class TestBeaverTailsDataset:
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=MockDataset())):
             dataset = await loader.fetch_dataset()
-            # The broken prompt should be skipped, only the normal one remains
-            assert len(dataset.seeds) == 1
-            assert dataset.seeds[0].value == "Normal unsafe prompt"
+            # Both prompts should be preserved — untrusted text is never passed through Jinja
+            assert len(dataset.seeds) == 2
+            assert dataset.seeds[0].value == "This contains {% endraw %} which is Jinja2 syntax"
+            assert dataset.seeds[1].value == "Normal unsafe prompt"

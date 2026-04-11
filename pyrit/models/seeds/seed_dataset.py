@@ -15,7 +15,10 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+import yaml
+
 from pyrit.common import utils
+from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_group import SeedGroup
@@ -25,6 +28,7 @@ from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversa
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from pydantic.types import PositiveInt
 
@@ -55,6 +59,31 @@ class SeedDataset(YamlLoadable):
     # Now the actual prompts
     seeds: Sequence[Seed]
 
+    @classmethod
+    def from_yaml_file(cls, file: Union[str, Path]) -> SeedDataset:
+        """
+        Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
+
+        Args:
+            file: The input file path.
+
+        Returns:
+            SeedDataset: The loaded dataset.
+
+        Raises:
+            ValueError: If the YAML file is invalid.
+        """
+        file = verify_and_resolve_path(file)
+        try:
+            yaml_data = yaml.safe_load(file.read_text("utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
+
+        yaml_data["is_jinja_template"] = True
+        if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
+            return cls.from_dict(yaml_data)
+        return cls(**yaml_data)
+
     def __init__(
         self,
         *,
@@ -71,6 +100,7 @@ class SeedDataset(YamlLoadable):
         added_by: Optional[str] = None,
         seed_type: Optional[SeedType] = None,
         is_objective: bool = False,  # Deprecated in 0.13.0: Use seed_type="objective" instead
+        is_jinja_template: bool = False,
     ):
         """
         Initialize the dataset.
@@ -93,6 +123,7 @@ class SeedDataset(YamlLoadable):
             added_by: User who added the dataset.
             seed_type: The type of seeds in this dataset ("prompt", "objective", or "simulated_conversation").
             is_objective: Deprecated in 0.13.0. Use seed_type="objective" instead.
+            is_jinja_template: When True, seed values are Jinja2 templates. Set by from_yaml_file.
 
         Raises:
             ValueError: If seeds are missing or contain invalid/contradictory seed definitions.
@@ -168,6 +199,7 @@ class SeedDataset(YamlLoadable):
                     "added_by": p.get("added_by"),
                     "metadata": p.get("metadata", {}),
                     "prompt_group_id": p.get("prompt_group_id"),
+                    "is_jinja_template": is_jinja_template,
                 }
 
                 if effective_type == "simulated_conversation":

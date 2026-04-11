@@ -4,7 +4,7 @@ project:
   authors:
     - name: Microsoft AI Red Team
   copyright: Copyright 2024, Microsoft AI Red Team
-  github: Azure/PyRIT
+  github: microsoft/PyRIT
   bibliography:
     - references.bib
   exports:
@@ -13,38 +13,55 @@ project:
       output: exports/book.pdf
   toc:
     - file: index.md
-    - file: cookbooks/README.md
+    - file: getting_started/README.md
       children:
-        - file: cookbooks/1_sending_prompts.ipynb
-        - file: cookbooks/2_precomputing_turns.ipynb
-        - file: cookbooks/3_copyright_violations.ipynb
-        - file: cookbooks/4_testing_bias.ipynb
-        - file: cookbooks/5_psychosocial_harms.ipynb
-    - file: setup/1a_install_uv.md
-      children:
-        - file: setup/1b_install_docker.md
-        - file: setup/1c_install_conda.md
-        - file: setup/jupyter_setup.md
-        - file: setup/populating_secrets.md
-        - file: setup/pyrit_conf.md
-        - file: setup/use_azure_sql_db.md
+        - file: getting_started/install.md
+          children:
+            - file: getting_started/install_docker.md
+            - file: getting_started/install_local.md
+            - file: getting_started/install_devcontainers.md
+            - file: getting_started/install_local_dev.md
+        - file: getting_started/configuration.md
+          children:
+            - file: getting_started/populating_secrets.md
+            - file: getting_started/pyrit_conf.md
+        - file: getting_started/troubleshooting/README.md
+          children:
+            - file: getting_started/troubleshooting/installation.md
+              children:
+                - file: getting_started/troubleshooting/docker.md
+                - file: getting_started/troubleshooting/devcontainers.md
+                - file: getting_started/troubleshooting/local_dev.md
+                - file: getting_started/troubleshooting/jupyter_setup.md
+                - file: getting_started/troubleshooting/azure_sql_db.md
+            - file: getting_started/troubleshooting/deployment.md
+              children:
+                - file: getting_started/troubleshooting/deploy_hf_model_aml.ipynb
+                - file: getting_started/troubleshooting/download_and_register_hf_model_aml.ipynb
+                - file: getting_started/troubleshooting/hf_aml_model_endpoint_guide.md
+                - file: getting_started/troubleshooting/score_aml_endpoint.ipynb
+                - file: getting_started/troubleshooting/guide_hf_azureml.md
     - file: contributing/README.md
       children:
-        - file: contributing/1a_install_uv.md
-        - file: contributing/1b_install_devcontainers.md
-        - file: contributing/1c_install_conda.md
-        - file: contributing/2_git.md
-        - file: contributing/3_incorporating_research.md
-        - file: contributing/4_style_guide.md
-        - file: contributing/5_running_tests.md
-        - file: contributing/6_unit_tests.md
-        - file: contributing/7_integration_tests.md
-        - file: contributing/8_notebooks.md
-        - file: contributing/9_pre_commit.md
-        - file: contributing/10_exception.md
-        - file: contributing/11_release_process.md
-    - file: code/architecture.md
-    - file: code/user_guide.md
+        - file: contributing/1_git.md
+        - file: contributing/2_incorporating_research.md
+        - file: contributing/3_style_guide.md
+        - file: contributing/4_running_tests.md
+        - file: contributing/5_unit_tests.md
+        - file: contributing/6_integration_tests.md
+        - file: contributing/7_notebooks.md
+        - file: contributing/8_pre_commit.md
+        - file: contributing/9_exception.md
+        - file: contributing/10_release_process.md
+    - file: gui/0_gui.md
+    - file: scanner/0_scanner.md
+      children:
+        - file: scanner/1_pyrit_scan.ipynb
+        - file: scanner/2_pyrit_shell.md
+        - file: scanner/airt.ipynb
+        - file: scanner/foundry.ipynb
+        - file: scanner/garak.ipynb
+    - file: code/framework.md
       children:
         - file: code/datasets/0_dataset.md
           children:
@@ -52,6 +69,7 @@ project:
             - file: code/datasets/2_seed_programming.ipynb
             - file: code/datasets/3_dataset_writing.md
             - file: code/datasets/4_dataset_coding.ipynb
+            - file: code/datasets/5_simulated_conversation.ipynb
         - file: code/executor/0_executor.md
           children:
             - file: code/executor/attack/0_attack.md
@@ -75,6 +93,7 @@ project:
             - file: code/executor/benchmark/0_benchmark.md
               children:
                 - file: code/executor/benchmark/1_qa_benchmark.ipynb
+                - file: code/executor/benchmark/2_bias_benchmark.ipynb
             - file: code/executor/promptgen/0_promptgen.md
               children:
                 - file: code/executor/promptgen/1_anecdoctor_generator.ipynb
@@ -91,10 +110,10 @@ project:
             - file: code/targets/8_non_llm_targets.ipynb
             - file: code/targets/9_rate_limiting.ipynb
             - file: code/targets/10_http_target.ipynb
-            - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/10_1_playwright_target.ipynb
             - file: code/targets/10_2_playwright_target_copilot.ipynb
             - file: code/targets/10_3_websocket_copilot_target.ipynb
+            - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/open_ai_completions.ipynb
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
@@ -128,7 +147,7 @@ project:
             - file: code/memory/2_basic_memory_programming.ipynb
             - file: code/memory/3_memory_data_types.md
             - file: code/memory/4_manually_working_with_memory.md
-            - file: code/memory/5_memory_labels.ipynb
+            - file: code/memory/5_advanced_memory.ipynb
             - file: code/memory/6_azure_sql_memory.ipynb
             - file: code/memory/7_azure_sql_memory_attacks.ipynb
             - file: code/memory/8_seed_database.ipynb
@@ -146,23 +165,11 @@ project:
             - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
-            - file: code/scenarios/1_configuring_scenarios.ipynb
+            - file: code/scenarios/1_scenario_parameters.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb
             - file: code/registry/2_instance_registry.ipynb
-        - file: code/gui/0_gui.md
-        - file: code/front_end/0_front_end.md
-          children:
-            - file: code/front_end/1_pyrit_scan.ipynb
-            - file: code/front_end/2_pyrit_shell.md
-    - file: deployment/README.md
-      children:
-        - file: deployment/deploy_hf_model_aml.ipynb
-        - file: deployment/download_and_register_hf_model_aml.ipynb
-        - file: deployment/hf_aml_model_endpoint_guide.md
-        - file: deployment/score_aml_endpoint.ipynb
-        - file: deployment/troubleshooting_guide_hf_azureml.md
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
@@ -206,30 +213,14 @@ project:
     - file: bibliography.md
 site:
   nav:
-    - title: Cookbooks
-      url: /cookbooks/readme
-    - title: Setup
-      url: /setup/a-install-uv
-    - title: Contributing
-      url: /contributing/readme
-    - title: User Guide
-      children:
-        - title: Architecture
-          url: /code/architecture
-        - title: Datasets
-          url: /code/datasets/dataset
-        - title: Attacks
-          url: /code/executor/attack/attack
-        - title: Targets
-          url: /code/targets/prompt-targets
-        - title: Converters
-          url: /code/converters/converters
-        - title: Scoring
-          url: /code/scoring/scoring
-        - title: Memory
-          url: /code/memory/memory
-        - title: Scenarios
-          url: /code/scenarios/scenarios
+    - title: Installation
+      url: /getting-started/readme
+    - title: GUI
+      url: /gui/gui
+    - title: Scanner
+      url: /scanner/scanner
+    - title: Framework
+      url: /code/framework
     - title: API Reference
       url: /api/index
     - title: Blog

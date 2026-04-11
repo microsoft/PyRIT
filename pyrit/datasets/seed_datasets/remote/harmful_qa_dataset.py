@@ -79,7 +79,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['question']}{{% endraw %}}",
+                value=item["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["topic"]] if item.get("topic") else [],

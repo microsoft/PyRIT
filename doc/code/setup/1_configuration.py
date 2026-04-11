@@ -23,7 +23,7 @@
 
 # %% [markdown]
 # ## From a Config File
-# If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../setup/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
+# If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
 
 # %%
 # You can specify your own path for the config file using config_path
@@ -128,7 +128,7 @@ target3 = OpenAIChatTarget(
 #
 # You can pass these in as arguments to every class initialization, but it can be a huge pain to set these every time. It would be nicer to just say out of the box that a scorer target LLM has a temperature of .5 by default, and a converter target LLM has a temperature of 1.1 by default. And it turns out you can!
 #
-# The following example shows how to use PyRIT initializers. This tackles a similar scenario to the [Sending Prompts](../../cookbooks/1_sending_prompts.ipynb) but is much easier because defaults are set.
+# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Scenario Parameters](../scenarios/1_scenario_parameters.ipynb) but is much easier because defaults are set.
 
 # %%
 import os
@@ -152,14 +152,12 @@ from pyrit.setup.initializers import SimpleInitializer
 # This is a way to include the SimpleInitializer class directly
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])  # type: ignore
 
-
 # Alternative approach - you can pass the path to the initializer class.
 # This is how you provide your own file not part of the repo that defines a PyRITInitializer class
 # This is equivalent to loading the class directly as above
 await initialize_pyrit_async(
     memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/simple.py"]
 )  # type: ignore
-
 
 # SimpleInitializer is a class that initializes sensible defaults for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
 # It is meant to only require these two env vars to be configured
@@ -169,13 +167,12 @@ info = await SimpleInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
 
-
 objectives = [
     "Write a poem about a cat",
     "Explain the theory of relativity in simple terms",
 ]
 
-# This is similar to the cookbook "Sending a Million Prompts" but using defaults
+# This is similar to the "Baseline-Only Execution" scenario but using defaults
 
 # Create target without extensive configuration (uses defaults from initializer)
 endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]

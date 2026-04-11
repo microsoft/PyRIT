@@ -41,7 +41,8 @@ python -c "import pyrit; print(f'Running PyRIT version: {pyrit.__version__}')"
 if [ "$PYRIT_MODE" = "jupyter" ]; then
     echo "Starting JupyterLab on port 8888..."
     echo "Note: Notebooks are from the local source at build time"
-    exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' --notebook-dir=/app/notebooks
+    echo "JupyterLab will generate an access token. Check the logs for the URL with token."
+    exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
 elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
     exec python -m uvicorn pyrit.backend.main:app --host 0.0.0.0 --port 8000

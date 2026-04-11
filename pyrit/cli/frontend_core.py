@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.cli._cli_args import ARG_HELP as ARG_HELP
@@ -28,6 +27,7 @@ from pyrit.cli._cli_args import _argparse_validator as _argparse_validator
 from pyrit.cli._cli_args import _parse_initializer_arg as _parse_initializer_arg
 from pyrit.cli._cli_args import add_common_arguments as add_common_arguments
 from pyrit.cli._cli_args import non_negative_int as non_negative_int
+from pyrit.cli._cli_args import parse_list_targets_arguments as parse_list_targets_arguments
 from pyrit.cli._cli_args import parse_memory_labels as parse_memory_labels
 from pyrit.cli._cli_args import parse_run_arguments as parse_run_arguments
 from pyrit.cli._cli_args import positive_int as positive_int
@@ -38,7 +38,7 @@ from pyrit.cli._cli_args import validate_database_argparse as validate_database_
 from pyrit.cli._cli_args import validate_integer as validate_integer
 from pyrit.cli._cli_args import validate_log_level as validate_log_level
 from pyrit.cli._cli_args import validate_log_level_argparse as validate_log_level_argparse
-from pyrit.registry import InitializerRegistry, ScenarioRegistry
+from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
@@ -63,6 +63,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from pyrit.models.scenario_result import ScenarioResult
     from pyrit.registry import (
@@ -135,9 +136,6 @@ class FrontendCore:
                 ) from e
             raise
 
-        # Store the merged configuration
-        self._config = config
-
         # Extract values from config for internal use
         # Use canonical mapping from configuration_loader
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
@@ -173,6 +171,8 @@ class FrontendCore:
             initializers=None,
             env_files=self._env_files,
         )
+        # Mark that initial env loading has been printed
+        self._silent_reinit = True
 
         # Load registries (use singleton pattern for shared access)
         self._scenario_registry = ScenarioRegistry.get_registry_singleton()
@@ -184,6 +184,63 @@ class FrontendCore:
         self._initializer_registry = InitializerRegistry()
 
         self._initialized = True
+
+    def with_overrides(
+        self,
+        *,
+        initializer_names: Optional[list[Any]] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
+    ) -> FrontendCore:
+        """
+        Create a derived FrontendCore with per-command overrides.
+
+        Copies inherited state (database, env_files, operator, operation, config)
+        from this instance and applies the given overrides. Shares registries
+        with the parent to avoid redundant re-discovery and skips re-reading
+        config files.
+
+        Args:
+            initializer_names (Optional[list[Any]]): Per-command initializer overrides.
+                Each entry can be a string name or a dict with 'name' and optional 'args'.
+                None keeps the parent's value.
+            initialization_scripts (Optional[list[Path]]): Per-command script overrides.
+                None keeps the parent's value.
+            log_level (Optional[int]): Per-command log level override.
+                None keeps the parent's value.
+
+        Returns:
+            FrontendCore: A new context ready for use, without re-reading config files.
+        """
+        derived = object.__new__(FrontendCore)
+
+        # Inherit from parent
+        derived._database = self._database
+        derived._env_files = self._env_files
+        derived._operator = self._operator
+        derived._operation = self._operation
+
+        # Apply overrides or inherit
+        derived._log_level = log_level if log_level is not None else self._log_level
+
+        if initializer_names is not None:
+            loader = ConfigurationLoader.from_dict({"initializers": initializer_names})
+            derived._initializer_configs = loader._initializer_configs
+        else:
+            derived._initializer_configs = self._initializer_configs
+
+        if initialization_scripts is not None:
+            derived._initialization_scripts = initialization_scripts
+        else:
+            derived._initialization_scripts = self._initialization_scripts
+
+        # Share registries (singletons, no need to re-discover)
+        derived._scenario_registry = self._scenario_registry
+        derived._initializer_registry = self._initializer_registry
+        derived._initialized = True
+        derived._silent_reinit = True
+
+        return derived
 
     @property
     def scenario_registry(self) -> ScenarioRegistry:
@@ -232,31 +289,71 @@ async def list_scenarios_async(*, context: FrontendCore) -> list[ScenarioMetadat
 
 
 async def list_initializers_async(
-    *, context: FrontendCore, discovery_path: Optional[Path] = None
+    *,
+    context: FrontendCore,
 ) -> Sequence[InitializerMetadata]:
     """
     List metadata for all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
-        discovery_path: Optional path to discover initializers from.
 
     Returns:
         Sequence of initializer metadata dictionaries describing each initializer class.
     """
-    if discovery_path:
-        registry = InitializerRegistry(discovery_path=discovery_path)
-        return registry.list_metadata()
-
     if not context._initialized:
         await context.initialize_async()
     return context.initializer_registry.list_metadata()
+
+
+async def list_targets_async(
+    *,
+    context: FrontendCore,
+) -> list[str]:
+    """
+    List available target names from the TargetRegistry.
+
+    Since targets are registered by initializers, this function requires initializers
+    to have been run first. Configure initializers on the FrontendCore context
+    (via initializer_names or initialization_scripts) before calling this function.
+
+    Args:
+        context: PyRIT context with loaded registries.
+
+    Returns:
+        Sorted list of registered target names.
+    """
+    if not context._initialized:
+        await context.initialize_async()
+
+    # Run initializers and/or initialization scripts to populate the target registry
+    if context._initializer_configs or context._initialization_scripts:
+        initializer_instances = []
+        if context._initializer_configs:
+            for config in context._initializer_configs:
+                initializer_class = context.initializer_registry.get_class(config.name)
+                instance = initializer_class()
+                if config.args:
+                    instance.set_params_from_args(args=config.args)
+                initializer_instances.append(instance)
+
+        await initialize_pyrit_async(
+            memory_db_type=context._database,
+            initialization_scripts=context._initialization_scripts,
+            initializers=initializer_instances or None,
+            env_files=context._env_files,
+            silent=getattr(context, "_silent_reinit", False),
+        )
+
+    target_registry = TargetRegistry.get_registry_singleton()
+    return target_registry.get_names()
 
 
 async def run_scenario_async(
     *,
     scenario_name: str,
     context: FrontendCore,
+    target_name: str | None = None,
     scenario_strategies: Optional[list[str]] = None,
     max_concurrency: Optional[int] = None,
     max_retries: Optional[int] = None,
@@ -271,6 +368,9 @@ async def run_scenario_async(
     Args:
         scenario_name: Name of the scenario to run.
         context: PyRIT context with loaded registries.
+        target_name: Name of a registered target from the TargetRegistry to use as the
+            objective target. Targets are registered by initializers (e.g., the 'target'
+            initializer). Use --list-targets to see available names after initializers run.
         scenario_strategies: Optional list of strategy names.
         max_concurrency: Max concurrent operations.
         max_retries: Max retry attempts.
@@ -287,7 +387,7 @@ async def run_scenario_async(
         ScenarioResult: The result of the scenario execution.
 
     Raises:
-        ValueError: If scenario not found or fails to run.
+        ValueError: If scenario not found, target not found, or fails to run.
 
     Note:
         Initializers from PyRITContext will be run before the scenario executes.
@@ -319,7 +419,26 @@ async def run_scenario_async(
         initialization_scripts=context._initialization_scripts,
         initializers=initializer_instances,
         env_files=context._env_files,
+        silent=getattr(context, "_silent_reinit", False),
     )
+
+    # Resolve objective target from TargetRegistry
+    if target_name is not None:
+        target_registry = TargetRegistry.get_registry_singleton()
+        objective_target = target_registry.get_instance_by_name(target_name)
+        if objective_target is None:
+            available_names = target_registry.get_names()
+            if not available_names:
+                raise ValueError(
+                    f"Target '{target_name}' not found. The target registry is empty.\n"
+                    "Targets are registered by initializers. Make sure to include an initializer "
+                    "that registers targets (e.g., --initializers target)."
+                )
+            raise ValueError(
+                f"Target '{target_name}' not found in registry.\nAvailable targets: {', '.join(available_names)}"
+            )
+    else:
+        objective_target = None
 
     # Get scenario class
     scenario_class = context.scenario_registry.get_class(scenario_name)
@@ -330,6 +449,9 @@ async def run_scenario_async(
 
     # Build initialization kwargs (these go to initialize_async, not __init__)
     init_kwargs: dict[str, Any] = {}
+
+    if objective_target is not None:
+        init_kwargs["objective_target"] = objective_target
 
     if scenario_strategies:
         strategy_class = scenario_class.get_strategy_class()
@@ -438,7 +560,7 @@ def format_scenario_metadata(*, scenario_metadata: ScenarioMetadata) -> None:
     Args:
         scenario_metadata: Dataclass containing scenario metadata.
     """
-    _print_header(text=scenario_metadata.snake_class_name)
+    _print_header(text=scenario_metadata.registry_name)
     print(f"    Class: {scenario_metadata.class_name}")
 
     description = scenario_metadata.class_description
@@ -480,7 +602,7 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
     Args:
         initializer_metadata: Dataclass containing initializer metadata.
     """
-    _print_header(text=initializer_metadata.snake_class_name)
+    _print_header(text=initializer_metadata.registry_name)
     print(f"    Class: {initializer_metadata.class_name}")
     print(f"    Name: {initializer_metadata.display_name}")
     print(f"    Execution Order: {initializer_metadata.execution_order}")
@@ -520,17 +642,6 @@ def resolve_initialization_scripts(script_paths: list[str]) -> list[Path]:
     return InitializerRegistry.resolve_script_paths(script_paths=script_paths)
 
 
-def get_default_initializer_discovery_path() -> Path:
-    """
-    Get the default path for discovering initializers.
-
-    Returns:
-        Path to the scenarios initializers directory.
-    """
-    pyrit_path = Path(__file__).parent.parent.resolve()
-    return pyrit_path / "setup" / "initializers" / "scenarios"
-
-
 async def print_scenarios_list_async(*, context: FrontendCore) -> int:
     """
     Print a formatted list of all available scenarios.
@@ -556,18 +667,17 @@ async def print_scenarios_list_async(*, context: FrontendCore) -> int:
     return 0
 
 
-async def print_initializers_list_async(*, context: FrontendCore, discovery_path: Optional[Path] = None) -> int:
+async def print_initializers_list_async(*, context: FrontendCore) -> int:
     """
     Print a formatted list of all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
-        discovery_path: Optional path to discover initializers from.
 
     Returns:
         Exit code (0 for success).
     """
-    initializers = await list_initializers_async(context=context, discovery_path=discovery_path)
+    initializers = await list_initializers_async(context=context)
 
     if not initializers:
         print("No initializers found.")
@@ -579,4 +689,52 @@ async def print_initializers_list_async(*, context: FrontendCore, discovery_path
         format_initializer_metadata(initializer_metadata=initializer_metadata)
     print("\n" + "=" * 80)
     print(f"\nTotal initializers: {len(initializers)}")
+    return 0
+
+
+async def print_targets_list_async(*, context: FrontendCore) -> int:
+    """
+    Print a formatted list of all available targets from the TargetRegistry.
+
+    Targets are registered by initializers, so this requires initializers to run first.
+    If no targets are found, prints a hint about using the 'target' initializer.
+
+    Args:
+        context: PyRIT context with loaded registries.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    target_names = await list_targets_async(context=context)
+
+    if not target_names:
+        print("\nNo targets found in registry.")
+        print(
+            "\nTargets are registered by initializers. Include an initializer that registers "
+            "targets, for example:\n  --initializers target\n"
+        )
+        return 0
+
+    target_registry = TargetRegistry.get_registry_singleton()
+
+    print("\nRegistered Targets:")
+    print("=" * 80)
+    for name in target_names:
+        target = target_registry.get_instance_by_name(name)
+        if target is None:
+            print(f"  {name}")
+            continue
+
+        model = target._underlying_model or target._model_name or ""
+        endpoint = target._endpoint or ""
+        class_name = type(target).__name__
+
+        _print_header(text=name)
+        print(f"    Class: {class_name}")
+        if model:
+            print(f"    Model: {model}")
+        if endpoint:
+            print(f"    Endpoint: {endpoint}")
+    print("\n" + "=" * 80)
+    print(f"\nTotal targets: {len(target_names)}")
     return 0
