@@ -44,4 +44,4 @@ jobs:
 
       - name: Check diff coverage (>=90% on changed lines)
         run: |
-          uv run -m diff_cover coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
+          uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90

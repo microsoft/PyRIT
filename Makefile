@@ -45,7 +45,7 @@ unit-test-cov-xml:
 
 diff-cover:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) $(UNIT_TESTS) --cov-report xml
-	$(CMD) diff_cover coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
+	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
 
 integration-test:
 	$(CMD) pytest $(INTEGRATION_TESTS) --cov=$(PYMODULE) $(INTEGRATION_TESTS) --cov-report xml --junitxml=junit/test-results.xml --doctest-modules
