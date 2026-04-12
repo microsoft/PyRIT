@@ -1,0 +1,47 @@
+# Checks that new/changed lines in PRs have adequate test coverage
+
+name: diff_cover
+
+on:
+  pull_request:
+    branches:
+      - "main"
+      - "release/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  diff-cover:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.17"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install dev extras
+        run: uv sync --extra dev --extra all
+
+      - name: Run unit tests with coverage
+        run: |
+          uv run -m pytest -n 4 --dist=loadfile --cov=pyrit tests/unit --cov-report xml -q --no-header
+
+      - name: Check diff coverage (>=90% on changed lines)
+        run: |
+          uv run -m diff_cover coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90

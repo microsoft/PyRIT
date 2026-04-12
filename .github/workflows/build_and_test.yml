@@ -125,13 +125,6 @@ jobs:
       - name: Run unit tests with code coverage
         run: make unit-test-cov-xml
 
-      - name: Check diff coverage on PR
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          git fetch origin main
-          uv run -m diff_cover coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
-
       - name: Publish Pytest Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: runner.os == 'ubuntu-latest'
