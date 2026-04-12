@@ -123,8 +123,7 @@ jobs:
           fi
 
       - name: Run unit tests
-        run: |
-          uv run -m pytest -n 4 --dist=loadfile tests/unit --junitxml=junit/test-results.xml
+        run: make unit-test-junit
 
       - name: Publish Pytest Results
         uses: EnricoMi/publish-unit-test-result-action@v2

@@ -43,8 +43,7 @@ jobs:
         run: uv sync --extra dev --extra all
 
       - name: Run unit tests with coverage (fail under 78%)
-        run: |
-          uv run -m pytest -n 4 --dist=loadfile --cov=pyrit --cov-fail-under=78 tests/unit --cov-report xml --cov-report term
+        run: make unit-test-cov-xml
 
       - name: Code Coverage Report
         uses: irongut/CodeCoverageSummary@v1.3.0
@@ -64,4 +63,4 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           git fetch origin main
-          uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
+          make diff-cover-only
