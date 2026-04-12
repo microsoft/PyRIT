@@ -35,6 +35,9 @@ docs-api:
 
 # Because of import time, "auto" seemed to actually go slower than just using 4 processes
 unit-test:
+	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS)
+
+unit-test-cov:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS)
 
 unit-test-cov-html:
@@ -44,7 +47,7 @@ unit-test-cov-xml:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml --junitxml=junit/test-results.xml --doctest-modules
 
 diff-cover:
-	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) $(UNIT_TESTS) --cov-report xml
+	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml
 	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
 
 integration-test:
