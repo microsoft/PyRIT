@@ -109,18 +109,14 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         self.max_examples = max_examples
 
         if categories is not None:
-            valid_categories = {cat.value for cat in VisualLeakBenchCategory}
-            invalid = {cat.value if isinstance(cat, VisualLeakBenchCategory) else cat for cat in categories}
-            invalid -= valid_categories
-            if invalid:
-                raise ValueError(f"Invalid VisualLeakBench categories: {', '.join(invalid)}")
+            for cat in categories:
+                if not isinstance(cat, VisualLeakBenchCategory):
+                    raise ValueError(f"Expected VisualLeakBenchCategory, got {type(cat).__name__}: {cat!r}")
 
         if pii_types is not None:
-            valid_pii = {pt.value for pt in VisualLeakBenchPIIType}
-            invalid_pii = {pt.value if isinstance(pt, VisualLeakBenchPIIType) else pt for pt in pii_types}
-            invalid_pii -= valid_pii
-            if invalid_pii:
-                raise ValueError(f"Invalid VisualLeakBench PII types: {', '.join(invalid_pii)}")
+            for pt in pii_types:
+                if not isinstance(pt, VisualLeakBenchPIIType):
+                    raise ValueError(f"Expected VisualLeakBenchPIIType, got {type(pt).__name__}: {pt!r}")
 
     @property
     def dataset_name(self) -> str:
