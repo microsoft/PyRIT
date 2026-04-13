@@ -10,8 +10,8 @@
 #   python docker/build_pyrit_docker.py --source pypi --version 0.10.0
 # ============================================================================
 
-# Use the devcontainer as base (built by build_pyrit_docker.py)
-ARG BASE_IMAGE=pyrit-devcontainer
+# No default — callers must pass --build-arg BASE_IMAGE=... (see infra/README.md).
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS production
 
 LABEL description="Docker container for PyRIT with Jupyter Notebook and GUI support"

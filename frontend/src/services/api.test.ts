@@ -48,25 +48,25 @@ describe("api service", () => {
       expect(typeof requestInterceptor).toBe("function");
     });
 
-    it("request interceptor adds X-Request-ID header", () => {
+    it("request interceptor adds X-Request-ID header", async () => {
       const headers: Record<string, string> & { set: (k: string, v: string) => void } = Object.assign(
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
       const config = { headers };
-      const result = requestInterceptor(config);
+      const result = await requestInterceptor(config);
       expect(result.headers["X-Request-ID"]).toBeDefined();
       expect(typeof result.headers["X-Request-ID"]).toBe("string");
       expect(result.headers["X-Request-ID"].length).toBeGreaterThan(0);
     });
 
-    it("request interceptor generates UUID-like format", () => {
+    it("request interceptor generates UUID-like format", async () => {
       const headers: Record<string, string> & { set: (k: string, v: string) => void } = Object.assign(
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
       const config = { headers };
-      const result = requestInterceptor(config);
+      const result = await requestInterceptor(config);
       // UUID v4 pattern: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
       expect(result.headers["X-Request-ID"]).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
