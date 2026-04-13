@@ -11,10 +11,9 @@ from urllib.parse import urlparse
 
 import aiofiles
 from azure.core.exceptions import ClientAuthenticationError, ResourceNotFoundError
+from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
-
-from pyrit.auth import AzureStorageAuth
 
 logger = logging.getLogger(__name__)
 
@@ -190,17 +189,20 @@ class AzureBlobStorageIO(StorageIO):
 
         If a SAS token is provided via the
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
-        for authentication. Otherwise, a delegation SAS token will be created using Entra ID authentication.
+        for authentication. Otherwise, DefaultAzureCredential will be used directly, which requires
+        the caller to have a data-plane role such as Storage Blob Data Contributor.
         """
-        sas_token = self._sas_token
-        if not self._sas_token:
-            logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
-            sas_token = await AzureStorageAuth.get_sas_token(self._container_url)
-
-        self._client_async = AsyncContainerClient.from_container_url(
-            container_url=self._container_url,
-            credential=sas_token,
-        )
+        if self._sas_token:
+            self._client_async = AsyncContainerClient.from_container_url(
+                container_url=self._container_url,
+                credential=self._sas_token,
+            )
+        else:
+            logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+            self._client_async = AsyncContainerClient.from_container_url(
+                container_url=self._container_url,
+                credential=DefaultAzureCredential(),
+            )
 
     async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
         """
