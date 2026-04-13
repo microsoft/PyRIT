@@ -37,6 +37,15 @@ fi
 echo "Checking PyRIT installation..."
 python -c "import pyrit; print(f'Running PyRIT version: {pyrit.__version__}')"
 
+# Write .env file from PYRIT_ENV_CONTENTS (injected from Key Vault secret)
+if [ -n "$PYRIT_ENV_CONTENTS" ]; then
+    mkdir -p ~/.pyrit
+    echo "$PYRIT_ENV_CONTENTS" > ~/.pyrit/.env
+    echo "Wrote .env file from PYRIT_ENV_CONTENTS ($(wc -l < ~/.pyrit/.env) lines)"
+else
+    echo "No PYRIT_ENV_CONTENTS set — using system environment variables only"
+fi
+
 # Start the appropriate service based on PYRIT_MODE
 if [ "$PYRIT_MODE" = "jupyter" ]; then
     echo "Starting JupyterLab on port 8888..."
@@ -45,7 +54,25 @@ if [ "$PYRIT_MODE" = "jupyter" ]; then
     exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
 elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
-    exec python -m uvicorn pyrit.backend.main:app --host 0.0.0.0 --port 8000
+    # Use Azure SQL if AZURE_SQL_SERVER is set (injected by Bicep), otherwise default to SQLite.
+    # Note: AZURE_SQL_DB_CONNECTION_STRING is in the .env file (loaded by Python dotenv),
+    # but we use AZURE_SQL_SERVER here because it's a direct env var from the Bicep template.
+    # Build CLI arguments
+    BACKEND_ARGS="--host 0.0.0.0 --port 8000"
+
+    if [ -n "$AZURE_SQL_SERVER" ]; then
+        echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)"
+        BACKEND_ARGS="$BACKEND_ARGS --database AzureSQL"
+    else
+        echo "Using SQLite database (AZURE_SQL_SERVER not set)"
+    fi
+
+    if [ -n "$PYRIT_INITIALIZER" ]; then
+        echo "Using initializer: $PYRIT_INITIALIZER"
+        BACKEND_ARGS="$BACKEND_ARGS --initializers $PYRIT_INITIALIZER"
+    fi
+
+    exec python -m pyrit.cli.pyrit_backend $BACKEND_ARGS
 else
     echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter' or 'gui'"
     exit 1
