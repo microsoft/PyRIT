@@ -11,6 +11,7 @@ from pyrit.models.chat_message import (
     ChatMessagesDataset,
 )
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.conversation_stats import ConversationStats
 from pyrit.models.data_type_serializer import (
     AllowedCategories,
     AudioPathDataTypeSerializer,
@@ -70,6 +71,7 @@ __all__ = [
     "ChatMessageRole",
     "ChatMessageListDictContent",
     "ConversationReference",
+    "ConversationStats",
     "ConversationType",
     "construct_response_from_request",
     "DataTypeSerializer",

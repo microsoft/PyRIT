@@ -125,7 +125,7 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         def failing_function():
             nonlocal call_count
             call_count += 1
-            raise EmptyResponseException()
+            raise EmptyResponseException
 
         # Change the env var AFTER the decorator has been applied
         original_value = os.environ.get("RETRY_MAX_NUM_ATTEMPTS")
@@ -156,7 +156,7 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         def failing_function():
             nonlocal call_count
             call_count += 1
-            raise InvalidJsonException()
+            raise InvalidJsonException
 
         # Change the env var AFTER the decorator has been applied
         original_value = os.environ.get("RETRY_MAX_NUM_ATTEMPTS")
@@ -190,7 +190,7 @@ class TestRetryDecoratorsRespectRuntimeEnvVars:
         def failing_function():
             nonlocal call_count
             call_count += 1
-            raise MissingPromptPlaceholderException()
+            raise MissingPromptPlaceholderException
 
         # Change the env var AFTER the decorator has been applied
         original_value = os.environ.get("RETRY_MAX_NUM_ATTEMPTS")

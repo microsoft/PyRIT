@@ -870,8 +870,10 @@ class TestPromptGeneration:
             ('{"generated_question": "Attack"}', "Missing required keys"),
             # Extra keys are not allowed - strict JSON validation prevents unexpected data
             (
-                '{"generated_question": "Attack", "last_response_summary": "Summary", '
-                '"rationale_behind_jailbreak": "Rationale", "extra_key": "value"}',
+                (
+                    '{"generated_question": "Attack", "last_response_summary": "Summary", '
+                    '"rationale_behind_jailbreak": "Rationale", "extra_key": "value"}'
+                ),
                 "Unexpected keys",
             ),
             # Invalid JSON will trigger retry mechanism
@@ -880,8 +882,10 @@ class TestPromptGeneration:
             ('{"wrong_key": "value"}', "Missing required keys"),
             # Empty question is valid - the attack can handle empty strings
             (
-                '{"generated_question": "", "last_response_summary": "Summary", '
-                '"rationale_behind_jailbreak": "Rationale"}',
+                (
+                    '{"generated_question": "", "last_response_summary": "Summary", '
+                    '"rationale_behind_jailbreak": "Rationale"}'
+                ),
                 None,
             ),
         ],
@@ -1363,6 +1367,41 @@ class TestAttackExecution:
         assert basic_context.next_message is None
 
     @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        success_objective_score: Score,
+        no_refusal_score: Score,
+    ):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        basic_context.next_message = Message.from_prompt(prompt="Test message", role="user")
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        with patch.object(attack, "_check_refusal_async", new_callable=AsyncMock, return_value=no_refusal_score):
+            with patch(
+                "pyrit.score.Scorer.score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [success_objective_score], "auxiliary_scores": []},
+            ):
+                result = await attack._perform_async(context=basic_context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
+    @pytest.mark.asyncio
     async def test_perform_attack_with_multi_piece_message_uses_first_piece(
         self,
         mock_objective_target: MagicMock,
@@ -1757,7 +1796,6 @@ class TestAttackLifecycle:
                         mock_perform.return_value = CrescendoAttackResult(
                             conversation_id=basic_context.session.conversation_id,
                             objective=basic_context.objective,
-                            attack_identifier=attack.get_identifier(),
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
@@ -1826,7 +1864,6 @@ class TestAttackLifecycle:
         mock_result = CrescendoAttackResult(
             conversation_id="test-conversation-id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
             last_response=sample_response.get_piece(),

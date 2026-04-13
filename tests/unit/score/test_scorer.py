@@ -829,9 +829,9 @@ async def test_score_response_async_multiple_pieces():
 
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should have all auxiliary scores
-    # assert len(result["auxiliary_scores"]) == 4
-    # for score in aux_scores:
-    #     assert score in result["auxiliary_scores"]
+    # assert len(result["auxiliary_scores"]) == 4  # noqa: ERA001
+    # for score in aux_scores:  # noqa: ERA001
+    #     assert score in result["auxiliary_scores"]  # noqa: ERA001
 
     # Should have only one objective score (first success)
     assert len(result["objective_scores"]) == 1
@@ -909,13 +909,13 @@ async def test_score_response_async_skip_on_error_false():
     assert len(result["auxiliary_scores"]) == 1
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should score both pieces for auxiliary
-    # assert len(result["auxiliary_scores"]) == 2
+    # assert len(result["auxiliary_scores"]) == 2  # noqa: ERA001
 
     # But only one objective score (first success)
     assert len(result["objective_scores"]) == 1
 
     # # Verify both pieces were scored for auxiliary
-    # assert aux_scorer.score_async.call_count == 2
+    # assert aux_scorer.score_async.call_count == 2  # noqa: ERA001
 
 
 @pytest.mark.asyncio

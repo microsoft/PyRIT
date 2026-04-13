@@ -8,6 +8,7 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 # Avoid errors for users who don't have playwright installed
@@ -51,6 +52,16 @@ class PlaywrightTarget(PromptTarget):
 
     # Supported data types
     SUPPORTED_DATA_TYPES = {"text", "image_path"}
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["text", "image_path"]),
+            }
+        ),
+    )
 
     def __init__(
         self,
@@ -58,6 +69,7 @@ class PlaywrightTarget(PromptTarget):
         interaction_func: InteractionFunction,
         page: "Page",
         max_requests_per_minute: Optional[int] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Playwright target.
@@ -68,9 +80,13 @@ class PlaywrightTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
         """
         endpoint = page.url if page else ""
-        super().__init__(max_requests_per_minute=max_requests_per_minute, endpoint=endpoint)
+        super().__init__(
+            max_requests_per_minute=max_requests_per_minute, endpoint=endpoint, custom_capabilities=custom_capabilities
+        )
         self._interaction_func = interaction_func
         self._page = page
 
@@ -104,16 +120,3 @@ class PlaywrightTarget(PromptTarget):
         request_piece = message.message_pieces[0]
         response_entry = construct_response_from_request(request=request_piece, response_text_pieces=[text])
         return [response_entry]
-
-    def _validate_request(self, *, message: Message) -> None:
-        if not message.message_pieces:
-            raise ValueError("This target requires at least one message piece.")
-
-        # Validate that all pieces are supported types
-        for i, piece in enumerate(message.message_pieces):
-            piece_type = piece.converted_value_data_type
-            if piece_type not in self.SUPPORTED_DATA_TYPES:
-                supported_types = ", ".join(self.SUPPORTED_DATA_TYPES)
-                raise ValueError(
-                    f"This target only supports {supported_types} input. Piece {i} has type: {piece_type}."
-                )

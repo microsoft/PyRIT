@@ -31,6 +31,7 @@ def mock_harm_scorer():
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_456"
+    mock_identifier.eval_hash = "test_hash_456"
     mock_identifier.system_prompt_template = "test_system_prompt"
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
     return scorer
@@ -44,6 +45,7 @@ def mock_objective_scorer():
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_123"
+    mock_identifier.eval_hash = "test_hash_123"
     mock_identifier.user_prompt_template = "test_user_prompt"
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
     return scorer
@@ -64,7 +66,7 @@ def test_from_scorer_objective(mock_objective_scorer):
 
 
 @pytest.mark.asyncio
-async def test__run_evaluation_async_harm(mock_harm_scorer):
+async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
     ]
@@ -82,7 +84,7 @@ async def test__run_evaluation_async_harm(mock_harm_scorer):
     entry_values = [MagicMock(get_value=lambda: 0.2), MagicMock(get_value=lambda: 0.4)]
     mock_harm_scorer.score_prompts_batch_async = AsyncMock(return_value=entry_values)
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
-    metrics = await evaluator._run_evaluation_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
+    metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
     assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
     assert isinstance(metrics, HarmScorerMetrics)
     assert metrics.mean_absolute_error == 0.0
@@ -90,7 +92,7 @@ async def test__run_evaluation_async_harm(mock_harm_scorer):
 
 
 @pytest.mark.asyncio
-async def test__run_evaluation_async_objective(mock_objective_scorer):
+async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
     ]
@@ -101,7 +103,7 @@ async def test__run_evaluation_async_objective(mock_objective_scorer):
     # Patch scorer to return fixed scores
     mock_objective_scorer.score_prompts_batch_async = AsyncMock(return_value=[MagicMock(get_value=lambda: False)])
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
-    metrics = await evaluator._run_evaluation_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
+    metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
     assert mock_objective_scorer._memory.add_message_to_memory.call_count == 1
     assert isinstance(metrics, ObjectiveScorerMetrics)
     assert metrics.accuracy == 0.0
@@ -109,8 +111,8 @@ async def test__run_evaluation_async_objective(mock_objective_scorer):
 
 
 @pytest.mark.asyncio
-async def test__run_evaluation_async_objective_returns_metrics(mock_objective_scorer):
-    """Test that _run_evaluation_async returns metrics without side effects."""
+async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_scorer):
+    """Test that evaluate_dataset_async returns metrics without registry or file side effects."""
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
     ]
@@ -122,7 +124,7 @@ async def test__run_evaluation_async_objective_returns_metrics(mock_objective_sc
     mock_objective_scorer.get_identifier = MagicMock(return_value=MagicMock(hash="test_hash"))
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
 
-    metrics = await evaluator._run_evaluation_async(labeled_dataset=mock_dataset, num_scorer_trials=1)
+    metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=1)
 
     # Verify metrics returned without registry writing
     assert metrics is not None
@@ -187,7 +189,7 @@ def test_compute_harm_metrics_partial_agreement(mock_harm_scorer):
     assert np.isclose(metrics.mean_absolute_error, 0.1)
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
 def test_should_skip_evaluation_objective_found(mock_find, mock_objective_scorer, tmp_path):
     """Test skipping evaluation when existing objective metrics have sufficient trials."""
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
@@ -220,11 +222,11 @@ def test_should_skip_evaluation_objective_found(mock_find, mock_objective_scorer
     assert result == expected_metrics
     mock_find.assert_called_once_with(
         file_path=result_file,
-        hash="test_hash_123",
+        eval_hash="test_hash_123",
     )
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
 def test_should_skip_evaluation_objective_not_found(mock_find, mock_objective_scorer, tmp_path):
     """Test when no existing objective metrics are found in registry."""
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
@@ -243,11 +245,11 @@ def test_should_skip_evaluation_objective_not_found(mock_find, mock_objective_sc
     assert result is None
     mock_find.assert_called_once_with(
         file_path=result_file,
-        hash="test_hash_123",
+        eval_hash="test_hash_123",
     )
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
 def test_should_skip_evaluation_version_changed_runs_evaluation(mock_find, mock_objective_scorer, tmp_path):
     """Test that different dataset_version triggers re-evaluation (replace existing)."""
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
@@ -280,7 +282,7 @@ def test_should_skip_evaluation_version_changed_runs_evaluation(mock_find, mock_
     assert result is None
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
 def test_should_skip_evaluation_fewer_trials_requested_skips(mock_find, mock_objective_scorer, tmp_path):
     """Test that requesting fewer trials than existing skips evaluation."""
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
@@ -313,7 +315,7 @@ def test_should_skip_evaluation_fewer_trials_requested_skips(mock_find, mock_obj
     assert result == existing_metrics
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
 def test_should_skip_evaluation_more_trials_requested_runs(mock_find, mock_objective_scorer, tmp_path):
     """Test that requesting more trials than existing triggers re-evaluation."""
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
@@ -346,7 +348,7 @@ def test_should_skip_evaluation_more_trials_requested_runs(mock_find, mock_objec
     assert result is None
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")
 def test_should_skip_evaluation_harm_found(mock_find, mock_harm_scorer, tmp_path):
     """Test skipping evaluation when existing harm metrics have sufficient trials."""
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
@@ -380,12 +382,12 @@ def test_should_skip_evaluation_harm_found(mock_find, mock_harm_scorer, tmp_path
     assert should_skip is True
     assert result == expected_metrics
     mock_find.assert_called_once_with(
-        hash="test_hash_456",
+        eval_hash="test_hash_456",
         harm_category="hate_speech",
     )
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")
 def test_should_skip_evaluation_harm_missing_category(mock_find, mock_harm_scorer, tmp_path):
     """Test that missing harm_category returns should not skip."""
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
@@ -404,7 +406,7 @@ def test_should_skip_evaluation_harm_missing_category(mock_find, mock_harm_score
     mock_find.assert_not_called()
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
 def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_scorer, tmp_path):
     """Test that exceptions are caught and returns (False, None)."""
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
@@ -425,12 +427,13 @@ def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_sco
     mock_find.assert_not_called()
 
     # Restore get_identifier for other tests
-    mock_identifier = MagicMock()
-    mock_identifier.hash = "test_hash_123"
-    mock_objective_scorer.get_identifier = MagicMock(return_value=mock_identifier)
+    mock_id = MagicMock()
+    mock_id.hash = "test_hash_123"
+    mock_id.eval_hash = "test_hash_123"
+    mock_objective_scorer.get_identifier = MagicMock(return_value=mock_id)
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")
 def test_should_skip_evaluation_harm_definition_version_changed_runs_evaluation(mock_find, mock_harm_scorer, tmp_path):
     """Test that harm_definition_version change triggers re-evaluation."""
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
@@ -469,7 +472,7 @@ def test_should_skip_evaluation_harm_definition_version_changed_runs_evaluation(
     assert result is None
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")
 def test_should_skip_evaluation_harm_definition_version_same_skips(mock_find, mock_harm_scorer, tmp_path):
     """Test that matching harm_definition_version allows skip when other conditions met."""
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
@@ -508,7 +511,7 @@ def test_should_skip_evaluation_harm_definition_version_same_skips(mock_find, mo
     assert result == existing_metrics
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")
 def test_should_skip_evaluation_harm_definition_version_none_in_existing_runs_evaluation(
     mock_find, mock_harm_scorer, tmp_path
 ):
@@ -550,7 +553,7 @@ def test_should_skip_evaluation_harm_definition_version_none_in_existing_runs_ev
 
 
 @pytest.mark.asyncio
-async def test__run_evaluation_async_harm_passes_harm_definition_version(mock_harm_scorer):
+async def test_evaluate_dataset_async_harm_passes_harm_definition_version(mock_harm_scorer):
     """Test that harm_definition_version from dataset is passed through to metrics."""
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
@@ -568,7 +571,7 @@ async def test__run_evaluation_async_harm_passes_harm_definition_version(mock_ha
     mock_harm_scorer.score_prompts_batch_async = AsyncMock(return_value=entry_values)
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
 
-    metrics = await evaluator._run_evaluation_async(labeled_dataset=mock_dataset, num_scorer_trials=1)
+    metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=1)
 
     assert isinstance(metrics, HarmScorerMetrics)
     assert metrics.harm_definition == "hate_speech.yaml"
@@ -764,6 +767,52 @@ async def test_run_evaluation_async_raises_on_mismatched_harm_definition_version
     )
 
     with pytest.raises(ValueError, match="All CSVs in a harm evaluation must use the same harm_definition_version"):
+        await evaluator.run_evaluation_async(
+            dataset_files=dataset_files,
+            num_scorer_trials=1,
+            update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE,
+        )
+
+
+@pytest.mark.asyncio
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
+async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition(
+    mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
+):
+    """Test that run_evaluation_async raises when harm CSVs have no harm_definition header."""
+    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+
+    csv1 = tmp_path / "harm" / "file1.csv"
+    (tmp_path / "harm").mkdir(parents=True)
+    csv1.touch()
+
+    mock_evals_path.__truediv__ = lambda self, x: tmp_path / x
+    mock_evals_path.glob = lambda pattern: [csv1]
+
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
+    ]
+    entry = HarmHumanLabeledEntry(responses, [0.2], "violence")
+
+    # Dataset with no harm_definition set
+    mock_from_csv.return_value = HumanLabeledDataset(
+        name="test",
+        metrics_type=MetricsType.HARM,
+        entries=[entry],
+        version="1.0",
+        harm_definition=None,
+        harm_definition_version=None,
+    )
+
+    evaluator = HarmScorerEvaluator(mock_harm_scorer)
+    dataset_files = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["harm/*.csv"],
+        result_file="harm/test_metrics.jsonl",
+        harm_category="violence",
+    )
+
+    with pytest.raises(ValueError, match="No harm_definition found in CSV headers"):
         await evaluator.run_evaluation_async(
             dataset_files=dataset_files,
             num_scorer_trials=1,

@@ -19,6 +19,7 @@ from pyrit.registry.discovery import (
 )
 from pyrit.registry.instance_registries import (
     BaseInstanceRegistry,
+    RegistryEntry,
     ScorerRegistry,
     TargetRegistry,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "discover_subclasses_in_loaded_modules",
     "InitializerMetadata",
     "InitializerRegistry",
+    "RegistryEntry",
     "RegistryProtocol",
     "ScenarioMetadata",
     "ScenarioRegistry",

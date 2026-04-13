@@ -183,7 +183,7 @@ def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_dat
     assert len(identifier.params["system_prompt_template"]) > 100  # GROUNDED prompt is long
 
     # But when serialized via to_dict(), long prompts are truncated
-    # Format: "<first 100 chars>... [sha256:<hash[:16]>]"
+    # Format: "<first 100 chars>... [sha256:<hash[:16]>]"  # noqa: ERA001
     id_dict = identifier.to_dict()
     sys_prompt_in_dict = id_dict.get("params", {}).get("system_prompt_template", "")
     if sys_prompt_in_dict:

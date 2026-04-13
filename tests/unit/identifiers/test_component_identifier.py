@@ -5,7 +5,15 @@
 import pytest
 
 import pyrit
-from pyrit.identifiers import ComponentIdentifier, Identifiable, config_hash
+from pyrit.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash, config_hash
+from pyrit.identifiers.evaluation_identifier import ChildEvalRule, _build_eval_dict
+
+# Test constants mirroring Scorer's ClassVars — keeps tests decoupled from pyrit.score
+_CHILD_EVAL_RULES: dict[str, ChildEvalRule] = {
+    "prompt_target": ChildEvalRule(
+        included_params=frozenset({"model_name", "temperature", "top_p"}),
+    ),
+}
 
 
 class TestComponentIdentifierCreation:
@@ -536,6 +544,100 @@ class TestComponentIdentifierRoundtrip:
         assert isinstance(recon_converters, list)
         assert len(recon_converters) == 2
 
+    def test_roundtrip_preserves_eval_hash(self):
+        """Test that eval_hash is preserved through to_dict -> from_dict round-trip."""
+        expected_eval_hash = "abc123" * 10 + "abcd"  # 64 chars
+        original = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"system_prompt": "Score the response"},
+        ).with_eval_hash(expected_eval_hash)
+        d = original.to_dict()
+        assert d["eval_hash"] == expected_eval_hash
+
+        reconstructed = ComponentIdentifier.from_dict(d)
+        assert reconstructed.eval_hash == expected_eval_hash
+
+    def test_roundtrip_eval_hash_survives_truncation(self):
+        """Regression test: eval_hash computed before truncation is preserved after round-trip.
+
+        This is the core bug fix — long params get truncated in to_dict(), which would
+        cause eval_hash recomputation to produce a wrong hash. By storing eval_hash in
+        the dict, it survives truncation.
+        """
+        long_prompt = "You are a scorer that evaluates responses. " * 20  # >80 chars
+        eval_hash_before_truncation = "correct_eval_hash_" + "0" * 46  # 64 chars
+        original = ComponentIdentifier(
+            class_name="SelfAskTrueFalseScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": long_prompt},
+        ).with_eval_hash(eval_hash_before_truncation)
+
+        # Serialize with truncation (simulates DB storage)
+        truncated_dict = original.to_dict(max_value_length=80)
+        # Params are truncated
+        assert truncated_dict["system_prompt_template"].endswith("...")
+        # But eval_hash is preserved
+        assert truncated_dict["eval_hash"] == eval_hash_before_truncation
+
+        # Deserialize
+        reconstructed = ComponentIdentifier.from_dict(truncated_dict)
+        # eval_hash is available on the reconstructed identifier
+        assert reconstructed.eval_hash == eval_hash_before_truncation
+        # And it's NOT in params (from_dict pops it as a reserved key)
+        assert "eval_hash" not in reconstructed.params
+
+    def test_roundtrip_no_eval_hash_when_not_set(self):
+        """Test that eval_hash is None when not set on the identifier."""
+        original = ComponentIdentifier(
+            class_name="Test",
+            class_module="mod",
+            params={"key": "value"},
+        )
+        d = original.to_dict()
+        assert "eval_hash" not in d
+
+        reconstructed = ComponentIdentifier.from_dict(d)
+        assert reconstructed.eval_hash is None
+
+    def test_to_dict_includes_eval_hash_from_prior_roundtrip(self):
+        """Test that to_dict re-emits eval_hash from a prior round-trip."""
+        eval_hash = "deadbeef" * 8  # 64 chars
+        original = ComponentIdentifier(
+            class_name="Test",
+            class_module="mod",
+        ).with_eval_hash(eval_hash)
+        d1 = original.to_dict()
+        reconstructed = ComponentIdentifier.from_dict(d1)
+
+        # Re-serialize — eval_hash should be emitted
+        d2 = reconstructed.to_dict()
+        assert d2["eval_hash"] == eval_hash
+
+    def test_double_roundtrip_preserves_eval_hash_and_identity_hash(self):
+        """Test that both eval_hash and identity hash survive retrieve → re-store → retrieve."""
+        long_prompt = "Score the response carefully. " * 20
+        original = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"system_prompt": long_prompt},
+        )
+        original_hash = original.hash
+        eval_hash = "eval_" + "a1b2c3d4" * 7 + "a1b2c3"  # 64 chars
+        original = original.with_eval_hash(eval_hash)
+
+        # First round-trip: store with truncation
+        d1 = original.to_dict(max_value_length=80)
+        r1 = ComponentIdentifier.from_dict(d1)
+        assert r1.hash == original_hash
+        assert r1.eval_hash == eval_hash
+
+        # Second round-trip: re-store (simulating retrieve → use → re-store)
+        d2 = r1.to_dict(max_value_length=80)
+        r2 = ComponentIdentifier.from_dict(d2)
+        assert r2.hash == original_hash
+        assert r2.eval_hash == eval_hash
+
 
 class TestComponentIdentifierNormalize:
     """Tests for normalize class method."""
@@ -714,3 +816,520 @@ class TestIdentifiable:
         assert isinstance(identifier, ComponentIdentifier)
         assert identifier.class_name == "MyComponent"
         assert identifier.params["key"] == "val"
+
+
+class TestBuildEvalDict:
+    """Tests for the _build_eval_dict function."""
+
+    def test_basic_identifier_without_params_or_children(self):
+        """Test _build_eval_dict with a simple identifier with no params or children."""
+        identifier = ComponentIdentifier(
+            class_name="SimpleScorer",
+            class_module="pyrit.score",
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert result["class_name"] == "SimpleScorer"
+        assert result["class_module"] == "pyrit.score"
+        assert "children" not in result
+
+    def test_includes_all_non_none_params(self):
+        """Test that all non-None params are included in the eval dict."""
+        identifier = ComponentIdentifier(
+            class_name="ParamScorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5, "template": "prompt_text", "mode": "strict"},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert result["threshold"] == 0.5
+        assert result["template"] == "prompt_text"
+        assert result["mode"] == "strict"
+
+    def test_included_params_filters_params(self):
+        """Test that _included_params restricts which params are included."""
+        identifier = ComponentIdentifier(
+            class_name="FilteredScorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5, "template": "prompt_text", "mode": "strict"},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+            _included_params=frozenset({"threshold", "mode"}),
+        )
+
+        assert result["threshold"] == 0.5
+        assert result["mode"] == "strict"
+        assert "template" not in result
+
+    def test_none_params_are_excluded(self):
+        """Test that None-valued params are excluded from the eval dict."""
+        identifier = ComponentIdentifier(
+            class_name="NoneScorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5, "optional_field": None},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert result["threshold"] == 0.5
+        assert "optional_field" not in result
+
+    def test_target_children_hashed_with_behavioral_params_only(self):
+        """Test that target children are projected to behavioral params only."""
+        child = ComponentIdentifier(
+            class_name="ChildTarget",
+            class_module="pyrit.target",
+            params={
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "max_requests_per_minute": 100,
+                "endpoint": "https://example.com",
+            },
+        )
+        identifier = ComponentIdentifier(
+            class_name="ParentScorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert "children" in result
+        assert isinstance(result["children"]["prompt_target"], str)
+
+    def test_target_children_same_behavioral_different_operational_produce_same_hash(self):
+        """Test that target children differing only in operational params produce the same child hash."""
+        child1 = ComponentIdentifier(
+            class_name="ChildTarget",
+            class_module="pyrit.target",
+            params={
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "endpoint": "https://endpoint-a.com",
+                "max_requests_per_minute": 50,
+            },
+        )
+        child2 = ComponentIdentifier(
+            class_name="ChildTarget",
+            class_module="pyrit.target",
+            params={
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "endpoint": "https://endpoint-b.com",
+                "max_requests_per_minute": 200,
+            },
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child1},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child2},
+        )
+        result1 = _build_eval_dict(id1, child_eval_rules=_CHILD_EVAL_RULES)
+        result2 = _build_eval_dict(id2, child_eval_rules=_CHILD_EVAL_RULES)
+
+        assert result1["children"]["prompt_target"] == result2["children"]["prompt_target"]
+
+    def test_target_children_different_behavioral_produce_different_hash(self):
+        """Test that target children differing in behavioral params produce different child hashes."""
+        child1 = ComponentIdentifier(
+            class_name="ChildTarget",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4", "temperature": 0.7},
+        )
+        child2 = ComponentIdentifier(
+            class_name="ChildTarget",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-3.5-turbo", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child1},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child2},
+        )
+        result1 = _build_eval_dict(id1, child_eval_rules=_CHILD_EVAL_RULES)
+        result2 = _build_eval_dict(id2, child_eval_rules=_CHILD_EVAL_RULES)
+
+        assert result1["children"]["prompt_target"] != result2["children"]["prompt_target"]
+
+    def test_multiple_children_as_list(self):
+        """Test that list-valued children produce a list of hashes."""
+        child_a = ComponentIdentifier(
+            class_name="ChildA",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4"},
+        )
+        child_b = ComponentIdentifier(
+            class_name="ChildB",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-3.5-turbo"},
+        )
+        identifier = ComponentIdentifier(
+            class_name="MultiChildScorer",
+            class_module="pyrit.score",
+            children={"targets": [child_a, child_b]},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert "children" in result
+        assert isinstance(result["children"]["targets"], list)
+        assert len(result["children"]["targets"]) == 2
+
+    def test_single_child_unwrapped(self):
+        """Test that a single child is a scalar hash, not a list."""
+        child = ComponentIdentifier(
+            class_name="OnlyChild",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4"},
+        )
+        identifier = ComponentIdentifier(
+            class_name="SingleChildScorer",
+            class_module="pyrit.score",
+            children={"target": child},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert isinstance(result["children"]["target"], str)
+
+    def test_no_children_key_when_empty(self):
+        """Test that 'children' key is absent when there are no children."""
+        identifier = ComponentIdentifier(
+            class_name="NoChildScorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5},
+        )
+        result = _build_eval_dict(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert "children" not in result
+
+    def test_non_target_children_with_different_params_produce_different_hash(self):
+        """Test that non-target children differing in any param (including operational) produce different hashes."""
+        child1 = ComponentIdentifier(
+            class_name="SubScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": "prompt_a", "endpoint": "https://a.com"},
+        )
+        child2 = ComponentIdentifier(
+            class_name="SubScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": "prompt_a", "endpoint": "https://b.com"},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"sub_scorer": child1},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"sub_scorer": child2},
+        )
+        result1 = _build_eval_dict(id1, child_eval_rules=_CHILD_EVAL_RULES)
+        result2 = _build_eval_dict(id2, child_eval_rules=_CHILD_EVAL_RULES)
+
+        assert result1["children"]["sub_scorer"] != result2["children"]["sub_scorer"]
+
+    def test_target_vs_non_target_children_handled_differently(self):
+        """Test that target children filter params while non-target children keep all params."""
+        child = ComponentIdentifier(
+            class_name="SomeComponent",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4", "endpoint": "https://example.com"},
+        )
+
+        id_as_target = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+        id_as_non_target = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"sub_scorer": child},
+        )
+
+        result_target = _build_eval_dict(id_as_target, child_eval_rules=_CHILD_EVAL_RULES)
+        result_non_target = _build_eval_dict(id_as_non_target, child_eval_rules=_CHILD_EVAL_RULES)
+
+        assert result_target["children"]["prompt_target"] != result_non_target["children"]["sub_scorer"]
+
+
+class TestComputeEvalHash:
+    """Tests for the compute_eval_hash free function."""
+
+    def test_deterministic_for_same_identifier(self):
+        """Test that compute_eval_hash returns the same hash for the same identifier."""
+        identifier = ComponentIdentifier(
+            class_name="StableScorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5},
+        )
+        hash1 = compute_eval_hash(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+        hash2 = compute_eval_hash(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert hash1 == hash2
+
+    def test_returns_hex_string(self):
+        """Test that compute_eval_hash returns a valid hex string."""
+        identifier = ComponentIdentifier(
+            class_name="HexScorer",
+            class_module="pyrit.score",
+        )
+        result = compute_eval_hash(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+
+        assert isinstance(result, str)
+        assert len(result) == 64  # SHA-256 hex digest
+        assert all(c in "0123456789abcdef" for c in result)
+
+    def test_different_class_names_produce_different_hashes(self):
+        """Test that different class names produce different eval hashes."""
+        id1 = ComponentIdentifier(class_name="ScorerA", class_module="pyrit.score")
+        id2 = ComponentIdentifier(class_name="ScorerB", class_module="pyrit.score")
+
+        assert compute_eval_hash(id1, child_eval_rules=_CHILD_EVAL_RULES) != compute_eval_hash(
+            id2, child_eval_rules=_CHILD_EVAL_RULES
+        )
+
+    def test_different_params_produce_different_hashes(self):
+        """Test that different params produce different eval hashes."""
+        id1 = ComponentIdentifier(class_name="Scorer", class_module="pyrit.score", params={"threshold": 0.5})
+        id2 = ComponentIdentifier(class_name="Scorer", class_module="pyrit.score", params={"threshold": 0.8})
+
+        assert compute_eval_hash(id1, child_eval_rules=_CHILD_EVAL_RULES) != compute_eval_hash(
+            id2, child_eval_rules=_CHILD_EVAL_RULES
+        )
+
+    def test_eval_hash_differs_from_component_hash(self):
+        """Test that eval hash differs from component hash when target children have operational params."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4", "endpoint": "https://example.com"},
+        )
+        identifier = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+
+        eval_hash = compute_eval_hash(
+            identifier,
+            child_eval_rules=_CHILD_EVAL_RULES,
+        )
+        assert eval_hash != identifier.hash
+
+    def test_operational_child_params_ignored(self):
+        """Test that operational params on target children don't affect eval hash."""
+        child1 = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "endpoint": "https://endpoint-a.com",
+                "max_requests_per_minute": 50,
+            },
+        )
+        child2 = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={
+                "model_name": "gpt-4",
+                "temperature": 0.7,
+                "endpoint": "https://endpoint-b.com",
+                "max_requests_per_minute": 200,
+            },
+        )
+        id1 = ComponentIdentifier(class_name="Scorer", class_module="pyrit.score", children={"prompt_target": child1})
+        id2 = ComponentIdentifier(class_name="Scorer", class_module="pyrit.score", children={"prompt_target": child2})
+
+        assert compute_eval_hash(id1, child_eval_rules=_CHILD_EVAL_RULES) == compute_eval_hash(
+            id2, child_eval_rules=_CHILD_EVAL_RULES
+        )
+
+    def test_included_child_params_affect_eval_hash(self):
+        """Test that included params on target children do affect eval hash."""
+        child1 = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4", "temperature": 0.7},
+        )
+        child2 = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4", "temperature": 0.0},
+        )
+        id1 = ComponentIdentifier(class_name="Scorer", class_module="pyrit.score", children={"prompt_target": child1})
+        id2 = ComponentIdentifier(class_name="Scorer", class_module="pyrit.score", children={"prompt_target": child2})
+
+        assert compute_eval_hash(id1, child_eval_rules=_CHILD_EVAL_RULES) != compute_eval_hash(
+            id2, child_eval_rules=_CHILD_EVAL_RULES
+        )
+
+    def test_scorer_own_params_all_included(self):
+        """Test that all of the scorer's own params (not just behavioral) are included."""
+        id1 = ComponentIdentifier(
+            class_name="Scorer", class_module="pyrit.score", params={"system_prompt_template": "template_a"}
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer", class_module="pyrit.score", params={"system_prompt_template": "template_b"}
+        )
+
+        assert compute_eval_hash(id1, child_eval_rules=_CHILD_EVAL_RULES) != compute_eval_hash(
+            id2, child_eval_rules=_CHILD_EVAL_RULES
+        )
+
+    def test_empty_rules_returns_component_hash(self):
+        """Test that empty child_eval_rules means no filtering — returns component hash."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4", "endpoint": "https://example.com"},
+        )
+        identifier = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+
+        result = compute_eval_hash(
+            identifier,
+            child_eval_rules={},
+        )
+        assert result == identifier.hash
+
+
+class TestCollectChildEvalHashes:
+    """Tests for ComponentIdentifier._collect_child_eval_hashes."""
+
+    def test_no_children_returns_empty(self):
+        """Test that an identifier with no children returns empty set."""
+        identifier = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+        )
+        assert identifier._collect_child_eval_hashes() == set()
+
+    def test_single_child_with_eval_hash(self):
+        """Test collecting eval_hash from a single child."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            eval_hash="abc123",
+        )
+        parent = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+        assert parent._collect_child_eval_hashes() == {"abc123"}
+
+    def test_child_without_eval_hash_excluded(self):
+        """Test that children without eval_hash are not included."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+        )
+        parent = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+        assert parent._collect_child_eval_hashes() == set()
+
+    def test_list_children_with_eval_hashes(self):
+        """Test collecting eval_hashes from a list of children."""
+        child1 = ComponentIdentifier(
+            class_name="Scorer1",
+            class_module="pyrit.score",
+            eval_hash="hash1",
+        )
+        child2 = ComponentIdentifier(
+            class_name="Scorer2",
+            class_module="pyrit.score",
+            eval_hash="hash2",
+        )
+        parent = ComponentIdentifier(
+            class_name="Composite",
+            class_module="pyrit.score",
+            children={"sub_scorers": [child1, child2]},
+        )
+        assert parent._collect_child_eval_hashes() == {"hash1", "hash2"}
+
+    def test_nested_children_collected_recursively(self):
+        """Test that eval_hashes are collected from deeply nested children."""
+        grandchild = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            eval_hash="deep_hash",
+        )
+        child = ComponentIdentifier(
+            class_name="InnerScorer",
+            class_module="pyrit.score",
+            eval_hash="child_hash",
+            children={"prompt_target": grandchild},
+        )
+        parent = ComponentIdentifier(
+            class_name="OuterScorer",
+            class_module="pyrit.score",
+            children={"sub_scorers": [child]},
+        )
+        assert parent._collect_child_eval_hashes() == {"child_hash", "deep_hash"}
+
+    def test_mixed_children_with_and_without_eval_hash(self):
+        """Test a mix of children where only some have eval_hash."""
+        child_with = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            eval_hash="has_hash",
+        )
+        child_without = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+        )
+        parent = ComponentIdentifier(
+            class_name="Composite",
+            class_module="pyrit.score",
+            children={"sub_scorers": [child_with, child_without]},
+        )
+        assert parent._collect_child_eval_hashes() == {"has_hash"}

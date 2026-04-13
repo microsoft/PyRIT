@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class Score:
         score_type: ScoreType,
         score_rationale: str,
         message_piece_id: str | uuid.UUID,
-        id: Optional[uuid.UUID | str] = None,
+        id: Optional[uuid.UUID | str] = None,  # noqa: A002
         score_category: Optional[list[str]] = None,
         score_metadata: Optional[dict[str, Union[str, int, float]]] = None,
         scorer_class_identifier: Union[ComponentIdentifier, dict[str, Any]],
@@ -90,7 +90,12 @@ class Score:
         from pyrit.identifiers.component_identifier import ComponentIdentifier
 
         self.id = id if id else uuid.uuid4()
-        self.timestamp = timestamp if timestamp else datetime.now()
+        if timestamp is None:
+            self.timestamp = datetime.now(tz=timezone.utc)
+        elif timestamp.tzinfo is None:
+            self.timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            self.timestamp = timestamp
 
         self.validate(score_type, score_value)
 

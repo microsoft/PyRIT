@@ -58,7 +58,7 @@ class BrailleConverter(PromptConverter):
         Returns:
             str: The braille representation of the input text.
         """
-        characterUnicodes = {
+        character_unicodes = {
             "a": "\u2801",
             "b": "\u2803",
             "k": "\u2805",
@@ -111,25 +111,25 @@ class BrailleConverter(PromptConverter):
             "0": "\u281a",
             " ": " ",
         }
-        numberPunctuations = [".", ",", "-", "/", "$"]
-        escapeCharacters = ["\n", "\r", "\t"]
+        number_punctuations = [".", ",", "-", "/", "$"]
+        escape_characters = ["\n", "\r", "\t"]
 
         output = ""
 
+        is_number = False
         for char in text:
-            is_number = False
-            if char in escapeCharacters:
+            if char in escape_characters:
                 output += char
             elif char.isupper():
-                if char.lower() in characterUnicodes:
-                    output += characterUnicodes["caps"]
-                    output += characterUnicodes[char.lower()]
-            elif char in characterUnicodes:
+                if char.lower() in character_unicodes:
+                    output += character_unicodes["caps"]
+                    output += character_unicodes[char.lower()]
+            elif char in character_unicodes:
                 if char.isdigit() and not is_number:
                     is_number = True
-                    output += characterUnicodes["num"]
-                output += characterUnicodes[char]
-            if is_number and char not in numberPunctuations:
+                    output += character_unicodes["num"]
+                output += character_unicodes[char]
+            if is_number and not char.isdigit() and char not in number_punctuations:
                 is_number = False
 
         return output

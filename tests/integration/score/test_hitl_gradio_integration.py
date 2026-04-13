@@ -13,8 +13,16 @@ import pytest
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import MessagePiece, Score
 from pyrit.score import HumanInTheLoopScorerGradio
-from pyrit.ui.rpc import RPCAlreadyRunningException
-from pyrit.ui.rpc_client import RPCClient, RPCClientStoppedException
+
+try:
+    from pyrit.ui.rpc import RPCAlreadyRunningException
+    from pyrit.ui.rpc_client import RPCClient, RPCClientStoppedException
+
+    _rpyc_available = True
+except (ImportError, ModuleNotFoundError):
+    _rpyc_available = False
+
+pytestmark = pytest.mark.skipif(not _rpyc_available, reason="rpyc not installed")
 
 
 def if_gradio_installed():
@@ -35,7 +43,7 @@ def score() -> Score:
 
 
 @pytest.fixture
-def promptOriginal() -> MessagePiece:
+def prompt_original() -> MessagePiece:
     return MessagePiece(
         role="assistant",
         original_value="This is the original value",
@@ -86,7 +94,7 @@ class TestHiTLGradioIntegration:
     @patch("pyrit.ui.rpc.is_app_running")
     @pytest.mark.asyncio
     @pytest.mark.timeout(30)
-    async def test_scorer_can_start(self, mock_is_app_running, promptOriginal: MessagePiece):
+    async def test_scorer_can_start(self, mock_is_app_running, prompt_original: MessagePiece):
         memory = MagicMock(MemoryInterface)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             disconnected_event = Event()
@@ -96,8 +104,8 @@ class TestHiTLGradioIntegration:
                 disconnected_event.set()
 
             def score_callback(prompt: MessagePiece) -> bool:
-                assert prompt.original_value == promptOriginal.original_value
-                assert prompt.converted_value == promptOriginal.converted_value
+                assert prompt.original_value == prompt_original.original_value
+                assert prompt.converted_value == prompt_original.converted_value
                 return True
 
             mock_is_app_running.return_value = True
@@ -106,7 +114,7 @@ class TestHiTLGradioIntegration:
             scorer = HumanInTheLoopScorerGradio()
 
             rpc_client.start()
-            score_result = await scorer.score_async(message=promptOriginal.to_message())
+            score_result = await scorer.score_async(message=prompt_original.to_message())
 
             assert score_result[0].score_value == "true"
             rpc_client.stop()
@@ -120,7 +128,7 @@ class TestHiTLGradioIntegration:
     @patch("pyrit.ui.rpc.is_app_running")
     @pytest.mark.asyncio
     @pytest.mark.timeout(30)
-    async def test_scorer_receive_multiple(self, mock_is_app_running, promptOriginal: MessagePiece):
+    async def test_scorer_receive_multiple(self, mock_is_app_running, prompt_original: MessagePiece):
         memory = MagicMock(MemoryInterface)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             disconnected_event = Event()
@@ -134,8 +142,8 @@ class TestHiTLGradioIntegration:
             def score_callback(prompt: MessagePiece) -> bool:
                 nonlocal i
                 i += 1
-                assert prompt.original_value == promptOriginal.original_value
-                assert prompt.converted_value == promptOriginal.converted_value
+                assert prompt.original_value == prompt_original.original_value
+                assert prompt.converted_value == prompt_original.converted_value
 
                 return i % 2 == 0
 
@@ -146,14 +154,14 @@ class TestHiTLGradioIntegration:
 
             rpc_client.start()
 
-            score_result = await scorer.score_async(message=promptOriginal.to_message())
+            score_result = await scorer.score_async(message=prompt_original.to_message())
             assert score_result[0].score_value == "true"
 
             # Next prompt
-            score_result = await scorer.score_async(message=promptOriginal.to_message())
+            score_result = await scorer.score_async(message=prompt_original.to_message())
             assert score_result[0].score_value == "false"
 
-            score_result = await scorer.score_async(message=promptOriginal.to_message())
+            score_result = await scorer.score_async(message=prompt_original.to_message())
             assert score_result[0].score_value == "true"
 
             rpc_client.stop()

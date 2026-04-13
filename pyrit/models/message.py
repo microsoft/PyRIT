@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.common.utils import combine_dict
@@ -415,7 +415,7 @@ class Message:
 
         """
         new_pieces = copy.deepcopy(self.message_pieces)
-        new_timestamp = datetime.now()
+        new_timestamp = datetime.now(tz=timezone.utc)
         for piece in new_pieces:
             piece.id = uuid.uuid4()
             piece.timestamp = new_timestamp

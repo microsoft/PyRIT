@@ -23,7 +23,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -55,8 +55,8 @@ class Scorer(Identifiable, abc.ABC):
     Abstract base class for scorers.
     """
 
-    # Evaluation configuration - maps input dataset files to a result file
-    # Specifies glob patterns for datasets and a result file name
+    # Evaluation configuration - maps input dataset files to a result file.
+    # Specifies glob patterns for datasets and a result file name.
     evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
 
     _identifier: Optional[ComponentIdentifier] = None
@@ -69,6 +69,22 @@ class Scorer(Identifiable, abc.ABC):
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
         """
         self._validator = validator
+
+    def get_identifier(self) -> ComponentIdentifier:
+        """
+        Get the scorer's identifier with eval_hash always attached.
+
+        Overrides the base ``Identifiable.get_identifier()`` so that
+        ``to_dict()`` always emits the ``eval_hash`` key.
+
+        Returns:
+            ComponentIdentifier: The identity with ``eval_hash`` set.
+        """
+        identifier = super().get_identifier()
+        if identifier.eval_hash is None:
+            identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
+            self._identifier = identifier
+        return identifier
 
     @property
     def scorer_type(self) -> ScoreType:
@@ -223,7 +239,7 @@ class Scorer(Identifiable, abc.ABC):
 
     @abstractmethod
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
         """
@@ -245,7 +261,7 @@ class Scorer(Identifiable, abc.ABC):
         Args:
             scores (list[Score]): The scores to be validated.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     async def evaluate_async(
         self,
@@ -783,17 +799,15 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Create all scoring tasks, note TEMPORARY fix to prevent multi-piece responses from breaking scoring logic
-        tasks = []
-
-        for scorer in scorers:
-            tasks.append(
-                scorer.score_async(
-                    message=response,
-                    objective=objective,
-                    role_filter=role_filter,
-                    skip_on_error_result=skip_on_error_result,
-                )
+        tasks = [
+            scorer.score_async(
+                message=response,
+                objective=objective,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
             )
+            for scorer in scorers
+        ]
 
         if not tasks:
             return []

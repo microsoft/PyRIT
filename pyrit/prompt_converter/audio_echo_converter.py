@@ -117,9 +117,7 @@ class AudioEchoConverter(PromptConverter):
             if data.ndim == 1:
                 echo_data = self._apply_echo(data, sample_rate).astype(original_dtype)
             else:
-                channels = []
-                for ch in range(data.shape[1]):
-                    channels.append(self._apply_echo(data[:, ch], sample_rate))
+                channels = [self._apply_echo(data[:, ch], sample_rate) for ch in range(data.shape[1])]
                 echo_data = np.column_stack(channels).astype(original_dtype)
 
             # Write the processed data as a new WAV file

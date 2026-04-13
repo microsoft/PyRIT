@@ -130,7 +130,7 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 
@@ -175,8 +175,8 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
                 if cancellation_details.reason == speechsdk.CancellationReason.Error:
                     logger.error(f"Error details: {cancellation_details.error_details}")
                 raise RuntimeError(
-                    f"Speech synthesis canceled: {cancellation_details.reason}"
-                    + f"Error details: {cancellation_details.error_details}"
+                    f"Speech synthesis canceled: {cancellation_details.reason}. "
+                    f"Error details: {cancellation_details.error_details}"
                 )
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))

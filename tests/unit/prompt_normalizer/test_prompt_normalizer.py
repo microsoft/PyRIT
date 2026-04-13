@@ -81,7 +81,7 @@ class MockPromptConverter(PromptConverter):
     def __init__(self) -> None:
         pass
 
-    def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:  # type: ignore
+    def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:  # type: ignore[arg-type]
         return ConverterResult(output_text=prompt, output_type="text")
 
     def input_supported(self, input_type: PromptDataType) -> bool:
@@ -245,7 +245,7 @@ async def test_send_prompt_async_mixed_sequence_types(mock_memory_instance):
     piece1 = MessagePiece(role="user", original_value="test1", sequence=1, conversation_id=conv_id)
     piece2 = MessagePiece(role="user", original_value="test2", sequence=1, conversation_id=conv_id)
     # Manually set different sequence to test validation
-    piece2.sequence = None  # type: ignore
+    piece2.sequence = None  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="Inconsistent sequences within the same message entry"):
         Message(message_pieces=[piece1, piece2])

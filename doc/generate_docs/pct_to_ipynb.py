@@ -31,7 +31,7 @@ script_dir = Path(__file__).parent
 doc_dir = script_dir.parent
 pyrit_root = doc_dir.parent
 file_type = ".py"
-included_dirs = {"code", "cookbooks"}
+included_dirs = {"code"}
 cache_dir = os.path.join(pyrit_root, "dbdata")
 kernel_name = "pyrit-dev"
 
@@ -82,7 +82,7 @@ def main():
 
 def find_files(directory, file_extension):
     matches = []
-    # Only search in included directories (code and cookbooks)
+    # Only search in included directories (code)
     for included_dir in included_dirs:
         dir_path = os.path.join(directory, included_dir)
         if not os.path.exists(dir_path):

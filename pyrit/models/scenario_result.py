@@ -67,7 +67,7 @@ class ScenarioResult:
         labels: Optional[dict[str, str]] = None,
         completion_time: Optional[datetime] = None,
         number_tries: int = 0,
-        id: Optional[uuid.UUID] = None,
+        id: Optional[uuid.UUID] = None,  # noqa: A002
         # Deprecated parameter - will be removed in 0.13.0
         objective_scorer: Optional["Scorer"] = None,
     ) -> None:
@@ -151,8 +151,7 @@ class ScenarioResult:
                 strategies_to_process = []
 
         for results in strategies_to_process:
-            for result in results:
-                objectives.append(result.objective)
+            objectives.extend(result.objective for result in results)
 
         return list(set(objectives))
 
@@ -224,15 +223,14 @@ class ScenarioResult:
 
         """
         # import here to avoid circular imports
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_hash,
+            find_objective_metrics_by_eval_hash,
         )
 
         if not self.objective_scorer_identifier:
             return None
 
-        scorer_hash = self.objective_scorer_identifier.hash
-        if not scorer_hash:
-            return None
+        eval_hash = ScorerEvaluationIdentifier(self.objective_scorer_identifier).eval_hash
 
-        return find_objective_metrics_by_hash(hash=scorer_hash)
+        return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)

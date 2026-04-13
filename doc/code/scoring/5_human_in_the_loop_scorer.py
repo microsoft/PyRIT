@@ -11,7 +11,7 @@
 
 # %% [markdown]
 # > ⚠️ **Deprecated:** The `HumanInTheLoopScorerGradio` is deprecated and will be removed in PyRIT v0.13.0.
-# > Use the React-based GUI (CoPyRIT) instead. See the [GUI documentation](../gui/0_gui.md) for details.
+# > Use the React-based GUI (CoPyRIT) instead. See the [GUI documentation](../../gui/0_gui.md) for details.
 #
 # # 5. Human in the Loop Scoring with Gradio
 # This example shows how to use the Gradio UI to perform human-in-the-loop scoring. This is in beta but will be extended.
@@ -30,7 +30,6 @@ from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece
 
 memory = CentralMemory.get_memory_instance()
-
 
 # This cell can be run multiple times to simulate multiple scoring requests.
 prompt = MessagePiece(

@@ -5,6 +5,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any, Optional
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -17,6 +18,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -142,7 +144,6 @@ class Cyber(Scenario):
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
         super().__init__(
-            name="Cyber",
             version=self.VERSION,
             strategy_class=CyberStrategy,
             objective_scorer=objective_scorer,
@@ -166,10 +167,11 @@ class Cyber(Scenario):
         Returns:
             TrueFalseCompositeScorer: Default objective scorer with backstop and malware evaluation.
         """
+        endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         presence_of_malware = SelfAskTrueFalseScorer(
             chat_target=OpenAIChatTarget(
-                endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+                endpoint=endpoint,
+                api_key=get_azure_openai_auth(endpoint),
                 model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             ),
             true_false_question_path=SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml",
@@ -178,8 +180,8 @@ class Cyber(Scenario):
         backstop = TrueFalseInverterScorer(
             scorer=SelfAskRefusalScorer(
                 chat_target=OpenAIChatTarget(
-                    endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                    api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+                    endpoint=endpoint,
+                    api_key=get_azure_openai_auth(endpoint),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 )
             )
@@ -196,9 +198,10 @@ class Cyber(Scenario):
         Returns:
             OpenAIChatTarget: Default adversarial target, using an unfiltered endpoint.
         """
+        endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
-            endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-            api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+            endpoint=endpoint,
+            api_key=get_azure_openai_auth(endpoint),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
@@ -271,7 +274,7 @@ class Cyber(Scenario):
 
         return AtomicAttack(
             atomic_attack_name=f"cyber_{strategy}",
-            attack=attack_strategy,
+            attack_technique=AttackTechnique(attack=attack_strategy),
             seed_groups=self._seed_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._scorer_config.objective_scorer,
@@ -288,11 +291,8 @@ class Cyber(Scenario):
         # Resolve seed groups from deprecated objectives or dataset config
         self._seed_groups = self._resolve_seed_groups()
 
-        atomic_attacks: list[AtomicAttack] = []
         strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
             composites=self._scenario_composites, strategy_type=CyberStrategy
         )
 
-        for strategy in strategies:
-            atomic_attacks.append(self._get_atomic_attack_from_strategy(strategy))
-        return atomic_attacks
+        return [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]

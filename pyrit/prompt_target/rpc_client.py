@@ -79,7 +79,7 @@ class RPCClient:
         self._prompt_received_sem.acquire()
         if self._is_running:
             return self._prompt_received
-        raise RPCClientStoppedException()
+        raise RPCClientStoppedException
 
     def send_message(self, response: bool) -> None:
         """

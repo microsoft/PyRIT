@@ -113,6 +113,7 @@ class TestExecutionContext:
         target_id = ComponentIdentifier(
             class_name="OpenAIChatTarget",
             class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={"endpoint": "https://api.openai.com", "model_name": "gpt-4o"},
         )
         context = ExecutionContext(
             component_role=ComponentRole.OBJECTIVE_TARGET,
@@ -129,6 +130,8 @@ class TestExecutionContext:
         assert "Objective target conversation ID: conv-456" in result
         assert "Attack identifier:" in result
         assert "objective_target identifier:" in result
+        assert "Model: gpt-4o" in result
+        assert "Endpoint: https://api.openai.com" in result
 
     def test_get_exception_details_objective_truncation(self):
         """Test that long objectives are truncated to 120 characters."""

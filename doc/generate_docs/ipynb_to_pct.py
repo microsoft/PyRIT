@@ -28,9 +28,7 @@ def find_files(directory, file_extension):
         for dir in excluded_dir:
             if dir in dirs:
                 dirs.remove(dir)
-        for file in files:
-            if file.endswith(file_extension):
-                matches.append(os.path.join(root, file))
+        matches.extend(os.path.join(root, file) for file in files if file.endswith(file_extension))
     return matches
 
 

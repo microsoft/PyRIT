@@ -20,7 +20,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
     This dataset contains adversarial prompts designed to test LLM safety
     across 44 categories with 21 different prompt styles (base + 20 linguistic mutations).
 
-    Reference: https://arxiv.org/abs/2406.14598
+    Reference: [@xie2024sorrybench]
     """
 
     VALID_CATEGORIES = [

@@ -5,7 +5,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.0
+#       jupytext_version: 1.18.1
+#   kernelspec:
+#     display_name: Python (pyrit-copilot)
+#     language: python
+#     name: pyrit-copilot
 # ---
 
 # %% [markdown]
@@ -13,7 +17,6 @@
 #
 # In this demo, we show an example of the `OpenAIResponseTarget`. [Responses](https://platform.openai.com/docs/api-reference/responses) is a newer protocol than chat completions and provides additional functionality with a somewhat modified API. The allowed input types include text, image, web search, file search, functions, reasoning, and computer use.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 #
 # ## OpenAI Configuration
@@ -25,21 +28,21 @@
 # - model_name: The model to use (`OPENAI_RESPONSES_MODEL` environment variable). For OpenAI, these are any available model name and are listed here: "https://platform.openai.com/docs/models".
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-target = OpenAIResponseTarget()
-# For Azure OpenAI with Entra ID authentication enabled, use the following command instead. Make sure to run `az login` first.
-# from pyrit.auth import get_azure_openai_auth
-# endpoint = "https://your-endpoint.openai.azure.com"
-# target = OpenAIResponseTarget(
-#     endpoint=endpoint,
-#     api_key=get_azure_openai_auth(endpoint),
-#     model_name="your-deployment-name"
-# )
+# For Azure OpenAI with Entra ID authentication (no API key needed, run `az login` first):
+endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
+target = OpenAIResponseTarget(
+    endpoint=endpoint,
+    api_key=get_azure_openai_auth(endpoint),
+)
 
 attack = PromptSendingAttack(objective_target=target)
 
@@ -57,13 +60,19 @@ await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # ty
 # For more information, see the [OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
+endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
 target = OpenAIResponseTarget(
+    endpoint=endpoint,
+    api_key=get_azure_openai_auth(endpoint),
     reasoning_effort="high",
     reasoning_summary="detailed",
 )
@@ -81,9 +90,11 @@ await ConsoleAttackResultPrinter().print_conversation_async(result=result, inclu
 
 # %%
 import json
+import os
 
 import jsonschema
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -115,7 +126,11 @@ message_piece = MessagePiece(
 message = Message(message_pieces=[message_piece])
 
 # Create the OpenAI Responses target
-target = OpenAIResponseTarget()
+endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
+target = OpenAIResponseTarget(
+    endpoint=endpoint,
+    api_key=get_azure_openai_auth(endpoint),
+)
 
 # Send the prompt, requesting JSON output
 response = await target.send_prompt_async(message=message)  # type: ignore
@@ -142,7 +157,11 @@ jsonschema.validate(instance=response_json, schema=person_schema)
 # This showcases how agentic function execution works with PyRIT + OpenAI Responses API.
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -174,8 +193,11 @@ function_tool = {
     "strict": True,
 }
 
+endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
 # Let the model auto-select tools
 target = OpenAIResponseTarget(
+    endpoint=endpoint,
+    api_key=get_azure_openai_auth(endpoint),
     custom_functions={"get_current_weather": get_current_weather},
     extra_body_parameters={
         "tools": [function_tool],
@@ -214,6 +236,7 @@ for response_msg in response:
 # %%
 import os
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common.tool_configs import web_search_tool
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
@@ -222,9 +245,10 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 # Note: web search is only supported on a limited set of models.
+responses_endpoint = os.getenv("AZURE_OPENAI_GPT41_RESPONSES_ENDPOINT")
 target = OpenAIResponseTarget(
-    endpoint=os.getenv("AZURE_OPENAI_GPT41_RESPONSES_ENDPOINT"),
-    api_key=os.getenv("AZURE_OPENAI_GPT41_RESPONSES_KEY"),
+    endpoint=responses_endpoint,
+    api_key=get_azure_openai_auth(responses_endpoint),
     model_name=os.getenv("AZURE_OPENAI_GPT41_RESPONSES_MODEL"),
     extra_body_parameters={
         "tools": [web_search_tool()],
@@ -241,74 +265,5 @@ message = Message(message_pieces=[message_piece])
 response = await target.send_prompt_async(message=message)  # type: ignore
 
 for response_msg in response:
-    for idx, piece in enumerate(response_msg.message_pieces):
-        print(f"{idx} | {piece.api_role}: {piece.original_value}")
-
-# %% [markdown]
-# ## Grammar-Constrained Generation
-#
-# OpenAI models also support constrained generation in the [Responses API](https://platform.openai.com/docs/guides/function-calling#context-free-grammars). This forces the LLM to produce output which conforms to the given grammar, which is useful when specific syntax is required in the output.
-#
-# In this example, we will define a simple Lark grammar which prevents the model from giving a correct answer to a simple question, and compare that to the unconstrained model.
-#
-# Note that as of October 2025, this is only supported by OpenAI (not Azure) on "gpt-5"
-
-# %%
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
-
-message_piece = MessagePiece(
-    role="user",
-    original_value="What is the capital of Italy?",
-    original_value_data_type="text",
-)
-message = Message(message_pieces=[message_piece])
-
-# Define a grammar that prevents "Rome" from being generated
-lark_grammar = r"""
-start: "I think that it is " SHORTTEXT
-SHORTTEXT: /[^RrOoMmEe]{1,8}/
-"""
-
-grammar_tool = {
-    "type": "custom",
-    "name": "CitiesGrammar",
-    "description": "Constrains generation.",
-    "format": {
-        "type": "grammar",
-        "syntax": "lark",
-        "definition": lark_grammar,
-    },
-}
-
-target = OpenAIResponseTarget(
-    endpoint=os.getenv("AZURE_OPENAI_GPT5_RESPONSES_ENDPOINT"),
-    api_key=os.getenv("AZURE_OPENAI_GPT5_KEY"),
-    model_name=os.getenv("AZURE_OPENAI_GPT5_MODEL"),
-    extra_body_parameters={"tools": [grammar_tool], "tool_choice": "required"},
-    temperature=1.0,
-)
-
-unconstrained_target = OpenAIResponseTarget(
-    endpoint=os.getenv("AZURE_OPENAI_GPT5_RESPONSES_ENDPOINT"),
-    api_key=os.getenv("AZURE_OPENAI_GPT5_KEY"),
-    model_name=os.getenv("AZURE_OPENAI_GPT5_MODEL"),
-    temperature=1.0,
-)
-
-unconstrained_result = await unconstrained_target.send_prompt_async(message=message)  # type: ignore
-
-result = await target.send_prompt_async(message=message)  # type: ignore
-
-print("Unconstrained Response:")
-for response_msg in unconstrained_result:
-    for idx, piece in enumerate(response_msg.message_pieces):
-        print(f"{idx} | {piece.api_role}: {piece.original_value}")
-
-print()
-
-print("Constrained Response:")
-for response_msg in result:
     for idx, piece in enumerate(response_msg.message_pieces):
         print(f"{idx} | {piece.api_role}: {piece.original_value}")

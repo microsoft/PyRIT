@@ -26,15 +26,14 @@ class TargetInstance(BaseModel):
     Also used as the create-target response (same shape as GET).
     """
 
-    target_unique_name: str = Field(
-        ..., description="Unique target instance identifier (ComponentIdentifier.unique_name)"
-    )
+    target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     endpoint: Optional[str] = Field(None, description="Target endpoint URL")
     model_name: Optional[str] = Field(None, description="Model or deployment name")
     temperature: Optional[float] = Field(None, description="Temperature parameter for generation")
     top_p: Optional[float] = Field(None, description="Top-p parameter for generation")
     max_requests_per_minute: Optional[int] = Field(None, description="Maximum requests per minute")
+    supports_multi_turn: bool = Field(True, description="Whether the target supports multi-turn conversation history")
     target_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional target-specific parameters")
 
 

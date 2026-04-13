@@ -76,6 +76,32 @@ class TestListConverters:
         assert result.items[0].converter_specific_params == {"param1": "value1", "param2": 42}
 
 
+class TestListConverterCatalog:
+    """Tests for ConverterService.list_converter_catalog_async method."""
+
+    @pytest.mark.asyncio
+    async def test_list_converter_catalog_returns_known_converter_types(self) -> None:
+        """Test that the converter catalog exposes available converter classes."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        converter_types = [item.converter_type for item in result.items]
+        assert "Base64Converter" in converter_types
+        assert "CaesarConverter" in converter_types
+
+    @pytest.mark.asyncio
+    async def test_list_converter_catalog_includes_supported_types(self) -> None:
+        """Test that catalog entries include supported input and output types."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        base64_entry = next(item for item in result.items if item.converter_type == "Base64Converter")
+        assert "text" in base64_entry.supported_input_types
+        assert "text" in base64_entry.supported_output_types
+
+
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
 
@@ -306,7 +332,7 @@ class TestPreviewConversion:
 
         assert result.converted_value == "step2_output"
         assert len(result.steps) == 2
-        mock_converter2.convert_async.assert_called_with(prompt="step1_output")
+        mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
 
 
 class TestGetConverterObjectsForIds:
@@ -390,14 +416,14 @@ def _try_instantiate_converter(converter_name: str):
 
     # Converters requiring external credentials or resources that can't be mocked
     # at the constructor level — these validate env vars / files in __init__ body
-    _SKIP_CONVERTERS = {
+    skip_converters = {
         "AzureSpeechAudioToTextConverter",  # requires AZURE_SPEECH_REGION env var
         "AzureSpeechTextToAudioConverter",  # requires AZURE_SPEECH_REGION env var
         "TransparencyAttackConverter",  # requires a real JPEG image file on disk
     }
 
     # Converter-specific overrides for params with validation
-    _OVERRIDES: dict = {
+    overrides: dict = {
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
@@ -407,7 +433,7 @@ def _try_instantiate_converter(converter_name: str):
     if converter_cls is None:
         return None, f"Converter {converter_name} not found in prompt_converter module"
 
-    if converter_name in _SKIP_CONVERTERS:
+    if converter_name in skip_converters:
         return None, None  # Signal to skip without failure
 
     # Build minimal kwargs based on constructor signature
@@ -426,8 +452,8 @@ def _try_instantiate_converter(converter_name: str):
             continue  # Has a real default — skip
 
         # Check overrides first
-        if converter_name in _OVERRIDES and pname in _OVERRIDES[converter_name]:
-            kwargs[pname] = _OVERRIDES[converter_name][pname]
+        if converter_name in overrides and pname in overrides[converter_name]:
+            kwargs[pname] = overrides[converter_name][pname]
             continue
 
         ann = param.annotation

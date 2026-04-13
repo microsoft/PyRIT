@@ -21,6 +21,7 @@ import os
 import random
 from pathlib import Path
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -91,9 +92,10 @@ initial_prompt = (
     "to win this.\n"
 )
 
+adversary_endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
 adversary_llm = OpenAIChatTarget(
-    endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-    api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+    endpoint=adversary_endpoint,
+    api_key=get_azure_openai_auth(adversary_endpoint),
     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
 )
 adversarial_config = AttackAdversarialConfig(
@@ -103,9 +105,10 @@ adversarial_config = AttackAdversarialConfig(
 )
 
 # Set the target LLM, here using Azure OpenAI's GPT-4 chat model
+target_endpoint = os.environ.get("AZURE_OPENAI_GPT4_CHAT_ENDPOINT")
 target_llm = OpenAIChatTarget(
-    endpoint=os.environ.get("AZURE_OPENAI_GPT4_CHAT_ENDPOINT"),
-    api_key=os.environ.get("AZURE_OPENAI_GPT4_CHAT_KEY"),
+    endpoint=target_endpoint,
+    api_key=get_azure_openai_auth(target_endpoint),
     model_name=os.environ.get("AZURE_OPENAI_GPT4_CHAT_MODEL"),
 )
 

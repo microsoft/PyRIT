@@ -19,7 +19,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
         - U+E007F (end control tag)
 
     Replicates the functionality detailed in the following blog post:
-    https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/
+    [@embracethered2024unicode]
     """
 
     def __init__(self, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False):

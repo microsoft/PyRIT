@@ -29,8 +29,8 @@ from pyrit.score.scorer_evaluation.scorer_metrics import (
     ScorerMetrics,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-    find_harm_metrics_by_hash,
-    find_objective_metrics_by_hash,
+    find_harm_metrics_by_eval_hash,
+    find_objective_metrics_by_eval_hash,
     replace_evaluation_results,
 )
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -108,9 +108,9 @@ class ScorerEvaluator(abc.ABC):
         if not metrics_type:
             metrics_type = MetricsType.OBJECTIVE if isinstance(scorer, TrueFalseScorer) else MetricsType.HARM
 
-        _EVALUATOR_MAP = {MetricsType.HARM: HarmScorerEvaluator, MetricsType.OBJECTIVE: ObjectiveScorerEvaluator}
+        evaluator_map = {MetricsType.HARM: HarmScorerEvaluator, MetricsType.OBJECTIVE: ObjectiveScorerEvaluator}
 
-        evaluator = _EVALUATOR_MAP.get(metrics_type, HarmScorerEvaluator)
+        evaluator = evaluator_map.get(metrics_type, HarmScorerEvaluator)
         return evaluator(scorer=scorer)
 
     async def run_evaluation_async(
@@ -171,6 +171,7 @@ class ScorerEvaluator(abc.ABC):
         all_entries = []
         dataset_versions = []
         harm_definition_versions = set()
+        harm_definitions = set()
         for csv_file in csv_files:
             dataset = HumanLabeledDataset.from_csv(
                 csv_path=csv_file,
@@ -180,6 +181,8 @@ class ScorerEvaluator(abc.ABC):
             dataset_versions.append(dataset.version)
             if dataset.harm_definition_version:
                 harm_definition_versions.add(dataset.harm_definition_version)
+            if dataset.harm_definition:
+                harm_definitions.add(dataset.harm_definition)
 
         # Concatenate all dataset versions (including duplicates) for full traceability
         # e.g., combining 3 CSVs all at v1.0 yields "1.0_1.0_1.0"
@@ -195,8 +198,23 @@ class ScorerEvaluator(abc.ABC):
             )
         combined_harm_definition_version = next(iter(harm_definition_versions)) if harm_definition_versions else None
 
-        # Derive harm_definition from harm_category for harm datasets
-        harm_definition = f"{dataset_files.harm_category}.yaml" if dataset_files.harm_category else None
+        # Use harm_definition from CSV headers (e.g., "fairness_bias.yaml").
+        # The CSV header is authoritative since the harm_category name may differ from
+        # the YAML filename (e.g., harm_category="bias" but file is "fairness_bias.yaml").
+        if len(harm_definitions) > 1:
+            raise ValueError(
+                f"All CSVs in a harm evaluation must reference the same harm_definition, "
+                f"but found multiple: {sorted(harm_definitions)}."
+            )
+        if harm_definitions:
+            harm_definition = next(iter(harm_definitions))
+        elif metrics_type == MetricsType.HARM:
+            raise ValueError(
+                f"No harm_definition found in CSV headers for harm category '{dataset_files.harm_category}'. "
+                f"Add a '# harm_definition=<filename>.yaml' comment line to your CSV files."
+            )
+        else:
+            harm_definition = None
 
         # Build dataset name from input CSV files
         dataset_name = "_".join(sorted(csv_file.name for csv_file in csv_files))
@@ -228,7 +246,7 @@ class ScorerEvaluator(abc.ABC):
                 return existing_metrics
 
         # Run evaluation
-        metrics = await self._run_evaluation_async(
+        metrics = await self.evaluate_dataset_async(
             labeled_dataset=combined_dataset,
             num_scorer_trials=num_scorer_trials,
             max_concurrency=max_concurrency,
@@ -275,7 +293,7 @@ class ScorerEvaluator(abc.ABC):
                 - (False, None) if should run evaluation
         """
         try:
-            scorer_hash = self.scorer.get_identifier().hash
+            scorer_hash = self.scorer.get_identifier().eval_hash
 
             # Determine if this is a harm or objective evaluation
             metrics_type = MetricsType.OBJECTIVE if isinstance(self.scorer, TrueFalseScorer) else MetricsType.HARM
@@ -285,14 +303,14 @@ class ScorerEvaluator(abc.ABC):
                 if harm_category is None:
                     logger.warning("harm_category must be provided for harm scorer evaluations")
                     return (False, None)
-                existing = find_harm_metrics_by_hash(
-                    hash=scorer_hash,
+                existing = find_harm_metrics_by_eval_hash(
+                    eval_hash=scorer_hash,
                     harm_category=harm_category,
                 )
             else:
-                existing = find_objective_metrics_by_hash(
+                existing = find_objective_metrics_by_eval_hash(
                     file_path=result_file_path,
-                    hash=scorer_hash,
+                    eval_hash=scorer_hash,
                 )
 
             if not existing:
@@ -338,7 +356,7 @@ class ScorerEvaluator(abc.ABC):
             logger.warning(f"Error checking for existing metrics: {e}")
             return (False, None)
 
-    async def _run_evaluation_async(
+    async def evaluate_dataset_async(
         self,
         labeled_dataset: HumanLabeledDataset,
         num_scorer_trials: int = 1,
@@ -348,6 +366,8 @@ class ScorerEvaluator(abc.ABC):
         Run the evaluation for the scorer/policy combination on the passed in HumanLabeledDataset.
 
         This method performs pure computation without side effects (no file writing).
+        It can be called directly with an in-memory HumanLabeledDataset for experiments
+        that don't use file-based datasets (e.g., iterative rubric tuning with custom splits).
 
         Args:
             labeled_dataset (HumanLabeledDataset): The HumanLabeledDataset to evaluate the scorer against.
@@ -487,6 +507,7 @@ class ScorerEvaluator(abc.ABC):
             replace_evaluation_results(
                 file_path=result_file_path,
                 scorer_identifier=self.scorer.get_identifier(),
+                eval_hash=self.scorer.get_identifier().eval_hash,
                 metrics=metrics,
             )
         except Exception as e:
@@ -547,10 +568,10 @@ class HarmScorerEvaluator(ScorerEvaluator):
         harm_definition_version: Optional[str] = None,
     ) -> HarmScorerMetrics:
         reliability_data = np.concatenate((all_human_scores, all_model_scores))
-        # Calculate the mean of human scores for each response, which is considered the gold label
-        gold_scores = np.mean(all_human_scores, axis=0)
-        mean_model_scores = np.mean(all_model_scores, axis=0)
-        diff = mean_model_scores - gold_scores
+        # Calculate the median of human scores for each response, which is considered the gold label
+        gold_scores = np.median(all_human_scores, axis=0)
+        median_model_scores = np.median(all_model_scores, axis=0)
+        diff = median_model_scores - gold_scores
 
         # Zero out tiny floating point noise
         diff[np.abs(diff) < 1e-10] = 0.0
@@ -650,8 +671,8 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
     ) -> ObjectiveScorerMetrics:
         # Calculate the majority vote of human scores for each response, which is considered the gold label.
         # If the vote is split, the resulting gold score will be 0 (i.e. False). Same logic is applied to model trials.
-        gold_scores = np.round(np.mean(all_human_scores, axis=0))
-        majority_model_scores = np.round(np.mean(all_model_scores, axis=0))
+        gold_scores = np.round(np.median(all_human_scores, axis=0))
+        majority_model_scores = np.round(np.median(all_model_scores, axis=0))
 
         true_positive = np.sum((gold_scores == 1) & (majority_model_scores == 1))
         false_positive = np.sum((gold_scores == 0) & (majority_model_scores == 1))

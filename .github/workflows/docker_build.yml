@@ -12,6 +12,9 @@ on:
       - "release/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -153,6 +156,8 @@ jobs:
     name: Test Import (local)
     runs-on: ubuntu-latest
     needs: build-production-local
+    permissions:
+      contents: read
     steps:
       - name: Download production image
         uses: actions/download-artifact@v4
@@ -170,6 +175,8 @@ jobs:
     name: Test GUI (local)
     runs-on: ubuntu-latest
     needs: build-production-local
+    permissions:
+      contents: read
     steps:
       - name: Download production image
         uses: actions/download-artifact@v4
@@ -207,6 +214,8 @@ jobs:
     name: Test Jupyter (local)
     runs-on: ubuntu-latest
     needs: build-production-local
+    permissions:
+      contents: read
     steps:
       - name: Download production image
         uses: actions/download-artifact@v4
@@ -239,6 +248,8 @@ jobs:
     name: Test Import (PyPI)
     runs-on: ubuntu-latest
     needs: build-production-pypi
+    permissions:
+      contents: read
     steps:
       - name: Download production image
         uses: actions/download-artifact@v4
@@ -256,6 +267,8 @@ jobs:
     name: Test GUI (PyPI)
     runs-on: ubuntu-latest
     needs: build-production-pypi
+    permissions:
+      contents: read
     steps:
       - name: Download production image
         uses: actions/download-artifact@v4
@@ -291,6 +304,8 @@ jobs:
     name: Test Jupyter (PyPI)
     runs-on: ubuntu-latest
     needs: build-production-pypi
+    permissions:
+      contents: read
     steps:
       - name: Download production image
         uses: actions/download-artifact@v4

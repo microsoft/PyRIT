@@ -150,7 +150,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 
@@ -219,7 +219,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 

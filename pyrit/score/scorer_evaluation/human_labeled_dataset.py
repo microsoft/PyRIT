@@ -233,24 +233,28 @@ class HumanLabeledDataset:
         parsed_version = None
         parsed_harm_definition = None
         parsed_harm_definition_version = None
-        with open(csv_path, encoding="utf-8") as f:
-            first_line = f.readline().strip()
-            if first_line.startswith("#"):
-                # Parse key=value pairs from the comment line
-                # Format: # dataset_version=x.y, harm_definition=path/to/file.yaml, harm_definition_version=x.y
-                content = first_line[1:].strip()  # Remove leading #
-                for part in content.split(","):
-                    part = part.strip()
-                    if "=" in part:
-                        key, value = part.split("=", 1)
-                        key = key.strip()
-                        value = value.strip()
-                        if key == "dataset_version":
-                            parsed_version = value
-                        elif key == "harm_definition":
-                            parsed_harm_definition = value
-                        elif key == "harm_definition_version":
-                            parsed_harm_definition_version = value
+        try:
+            with open(csv_path, encoding="utf-8") as f:
+                first_line = f.readline().strip()
+        except UnicodeDecodeError:
+            with open(csv_path, encoding="latin-1") as f:
+                first_line = f.readline().strip()
+        if first_line.startswith("#"):
+            # Parse key=value pairs from the comment line
+            # Format: # dataset_version=x.y, harm_definition=path/to/file.yaml, harm_definition_version=x.y
+            content = first_line[1:].strip()  # Remove leading #
+            for part in content.split(","):
+                part = part.strip()
+                if "=" in part:
+                    key, value = part.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if key == "dataset_version":
+                        parsed_version = value
+                    elif key == "harm_definition":
+                        parsed_harm_definition = value
+                    elif key == "harm_definition_version":
+                        parsed_harm_definition_version = value
 
         # Use provided values or fall back to parsed values
         if not version:
@@ -270,6 +274,9 @@ class HumanLabeledDataset:
             eval_df = pd.read_csv(csv_path, comment="#", encoding="utf-8")
         except UnicodeDecodeError:
             eval_df = pd.read_csv(csv_path, comment="#", encoding="latin-1")
+
+        # Drop rows where every column is NaN (e.g. trailing blank lines in the CSV)
+        eval_df = eval_df.dropna(how="all")
 
         # Validate required columns exist and have no NaN values
         cls._validate_csv_columns(eval_df=eval_df, metrics_type=metrics_type)
@@ -430,10 +437,14 @@ class HumanLabeledDataset:
                 f"Expected at least one column starting with '{STANDARD_HUMAN_LABEL_COL}'."
             )
 
-        # Validate human score columns don't have NaN
+        # Validate human score columns don't have any NaN values.
         for col in human_score_cols:
             if eval_df[col].isna().any():
-                raise ValueError(f"Human score column '{col}' contains NaN values.")
+                nan_count = eval_df[col].isna().sum()
+                raise ValueError(
+                    f"Human score column '{col}' contains {nan_count} NaN value(s). "
+                    f"All human score cells must be filled."
+                )
 
     @staticmethod
     def _construct_harm_entry(*, messages: list[Message], harm: str, human_scores: list[Any]) -> HarmHumanLabeledEntry:

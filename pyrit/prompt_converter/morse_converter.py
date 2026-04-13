@@ -165,9 +165,9 @@ class MorseConverter(PromptConverter):
             "Ź": "--..-.",
             "Ż": "--..-",
         }
-        EXTENDED_CHAR_SUPPORT = True
+        extended_char_support = True
         supported_charset = "".join(morse_mapping.keys())
-        if EXTENDED_CHAR_SUPPORT:
+        if extended_char_support:
             supported_charset += "".join(extended_mapping.keys())
             morse_mapping = {**morse_mapping, **extended_mapping}
         error_char = "........"

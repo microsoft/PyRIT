@@ -33,6 +33,8 @@ class TrueFalseQuestionPaths(enum.Enum):
     GANDALF = Path(TRUE_FALSE_QUESTIONS_PATH, "gandalf.yaml").resolve()
     YES_NO = Path(TRUE_FALSE_QUESTIONS_PATH, "yes_no_answer.yaml").resolve()
     TASK_ACHIEVED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved.yaml").resolve()
+    # This is an LLM-powered refinement of the TASK_ACHIEVED rubric
+    TASK_ACHIEVED_REFINED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved_refined.yaml").resolve()
 
 
 class TrueFalseQuestion:

@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from __future__ import annotations
-
 """
 Base class for scenario attack strategies with group-based aggregation.
 
@@ -13,8 +11,12 @@ and automatically expanded during scenario initialization.
 It also provides ScenarioCompositeStrategy for representing composed attack strategies.
 """
 
-from enum import Enum
-from typing import TYPE_CHECKING, TypeVar
+from __future__ import annotations
+
+from enum import Enum, EnumMeta
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,7 +25,34 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound="ScenarioStrategy")
 
 
-class ScenarioStrategy(Enum):
+class _DeprecatedEnumMeta(EnumMeta):
+    """
+    Custom Enum metaclass that supports deprecated member aliases.
+
+    Subclasses of ScenarioStrategy can define deprecated member name mappings
+    by setting ``__deprecated_members__`` on the class after definition.
+    Each entry maps the old name to a ``(new_name, removed_in)`` tuple::
+
+        MyStrategy.__deprecated_members__ = {"OLD_NAME": ("NewName", "0.13.0")}
+
+    Accessing ``MyStrategy.OLD_NAME`` will emit a DeprecationWarning and return
+    the same enum member as ``MyStrategy.NewName``.
+    """
+
+    def __getattr__(cls, name: str) -> Any:
+        deprecated = cls.__dict__.get("__deprecated_members__")
+        if deprecated and name in deprecated:
+            new_name, removed_in = deprecated[name]
+            print_deprecation_message(
+                old_item=f"{cls.__name__}.{name}",
+                new_item=f"{cls.__name__}.{new_name}",
+                removed_in=removed_in,
+            )
+            return cls[new_name]
+        raise AttributeError(name)
+
+
+class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
     """
     Base class for attack strategies with tag-based categorization and aggregation.
 
@@ -556,8 +585,9 @@ class ScenarioCompositeStrategy:
                 aggregate = aggregates_in_composition[0]
                 expanded = strategy_type.normalize_strategies({aggregate})
                 # Each expanded strategy becomes its own composition
-                for strategy in expanded:
-                    normalized_compositions.append(ScenarioCompositeStrategy(strategies=[strategy]))
+                normalized_compositions.extend(
+                    ScenarioCompositeStrategy(strategies=[strategy]) for strategy in expanded
+                )
             else:
                 # Concrete composition - validate and preserve as-is
                 strategy_type.validate_composition(typed_strategies)

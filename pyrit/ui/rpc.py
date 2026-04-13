@@ -96,7 +96,7 @@ class AppRPCServer:
 
         def send_score_prompt(self, prompt: MessagePiece, task: Optional[str] = None) -> None:
             if not self.is_client_ready():
-                raise RPCClientNotReadyException()
+                raise RPCClientNotReadyException
             self._callback_score_prompt(prompt, task)
 
         def is_ping_missed(self) -> bool:
@@ -129,7 +129,7 @@ class AppRPCServer:
         # Check if the server is already running by checking if the port is already in use.
         # If the port is already in use, throw an exception.
         if self._is_instance_running():
-            raise RPCAlreadyRunningException()
+            raise RPCAlreadyRunningException
 
         self._score_received_semaphore = Semaphore(0)
         self._client_ready_semaphore = Semaphore(0)
@@ -211,7 +211,7 @@ class AppRPCServer:
 
         self._score_received_semaphore.acquire()
         if not self._server_is_running:
-            raise RPCServerStoppedException()
+            raise RPCServerStoppedException
 
         score_ref = self._rpc_service.pop_score_received()
         self._client_ready_semaphore.release()
@@ -243,7 +243,7 @@ class AppRPCServer:
         self._client_ready_semaphore.acquire()
 
         if not self._server_is_running:
-            raise RPCServerStoppedException()
+            raise RPCServerStoppedException
 
         logger.info("Client is ready")
 

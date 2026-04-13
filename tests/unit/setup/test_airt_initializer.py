@@ -3,11 +3,22 @@
 
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
+import yaml
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.setup.initializers import AIRTInitializer
+
+
+@pytest.fixture
+def patch_pyrit_conf(tmp_path):
+    """Create a temporary .pyrit_conf file and patch DEFAULT_CONFIG_PATH to point to it."""
+    conf_file = tmp_path / ".pyrit_conf"
+    conf_file.write_text(yaml.dump({"operator": "test_user", "operation": "test_op"}))
+    with patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file):
+        yield
 
 
 class TestAIRTInitializer:
@@ -36,13 +47,15 @@ class TestAIRTInitializerInitialize:
         reset_default_values()
         # Set up required env vars for AIRT
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"] = "https://test-converter.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "test_converter_key"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"] = "gpt-4"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"] = "https://test-scorer.openai.azure.com"
-        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"] = "test_scorer_key"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"] = "gpt-4"
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test-safety.cognitiveservices.azure.com"
-        os.environ["AZURE_CONTENT_SAFETY_API_KEY"] = "test_safety_key"
+        os.environ["AZURE_SQL_DB_CONNECTION_STRING"] = "Server=test.database.windows.net;Database=testdb"
+        os.environ["AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL"] = "https://teststorage.blob.core.windows.net/data"
+        os.environ["GLOBAL_MEMORY_LABELS"] = (
+            '{"operation": "test_op", "operator": "test_user", "email": "test@test.com"}'
+        )
         # Clean up globals
         for attr in [
             "default_converter_target",
@@ -59,13 +72,13 @@ class TestAIRTInitializerInitialize:
         # Clean up env vars
         for var in [
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
             "AZURE_CONTENT_SAFETY_API_ENDPOINT",
-            "AZURE_CONTENT_SAFETY_API_KEY",
+            "AZURE_SQL_DB_CONNECTION_STRING",
+            "AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL",
+            "GLOBAL_MEMORY_LABELS",
         ]:
             if var in os.environ:
                 del os.environ[var]
@@ -80,19 +93,51 @@ class TestAIRTInitializerInitialize:
                 delattr(sys.modules["__main__"], attr)
 
     @pytest.mark.asyncio
-    async def test_initialize_runs_without_error(self):
-        """Test that initialize runs without errors."""
+    async def test_initialize_runs_without_error(self, patch_pyrit_conf):
+        """Test that initialize runs without errors when no API keys are set (Entra auth fallback)."""
         init = AIRTInitializer()
-        # Should not raise any errors
-        await init.initialize_async()
+        with (
+            patch("pyrit.setup.initializers.airt.get_azure_openai_auth", return_value="mock_token"),
+            patch("pyrit.setup.initializers.airt.get_azure_token_provider", return_value="mock_token_provider"),
+        ):
+            await init.initialize_async()
 
     @pytest.mark.asyncio
-    async def test_get_info_after_initialize_has_populated_data(self):
+    async def test_initialize_uses_api_keys_when_set(self, patch_pyrit_conf):
+        """Test that initialize uses API keys from env vars when they are set."""
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "converter-key"
+        os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"] = "scorer-key"
+        os.environ["AZURE_CONTENT_SAFETY_API_KEY"] = "safety-key"
+        try:
+            init = AIRTInitializer()
+            with (
+                patch("pyrit.setup.initializers.airt.get_azure_openai_auth") as mock_auth,
+                patch("pyrit.setup.initializers.airt.get_azure_token_provider") as mock_token,
+            ):
+                await init.initialize_async()
+                # Entra auth should NOT be called when API keys are set
+                mock_auth.assert_not_called()
+                mock_token.assert_not_called()
+        finally:
+            for var in [
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY",
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2",
+                "AZURE_CONTENT_SAFETY_API_KEY",
+            ]:
+                if var in os.environ:
+                    del os.environ[var]
+
+    @pytest.mark.asyncio
+    async def test_get_info_after_initialize_has_populated_data(self, patch_pyrit_conf):
         """Test that get_info_async() returns populated data after initialization."""
         init = AIRTInitializer()
-        await init.initialize_async()
-
-        info = await AIRTInitializer.get_info_async()
+        with (
+            patch("pyrit.setup.initializers.airt.get_azure_openai_auth", return_value="mock_token"),
+            patch("pyrit.setup.initializers.airt.get_azure_token_provider", return_value="mock_token_provider"),
+        ):
+            await init.initialize_async()
+            # get_info_async re-runs initialize_async internally, so patches must still be active
+            info = await AIRTInitializer.get_info_async()
 
         # Verify basic structure
         assert isinstance(info, dict)
@@ -137,7 +182,7 @@ class TestAIRTInitializerInitialize:
         """Test that validate raises error listing all missing env vars."""
         # Remove multiple required env vars
         del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"]
+        del os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"]
 
         init = AIRTInitializer()
         with pytest.raises(ValueError) as exc_info:
@@ -145,7 +190,39 @@ class TestAIRTInitializerInitialize:
 
         error_message = str(exc_info.value)
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in error_message
-        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY" in error_message
+        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL" in error_message
+
+    def test_validate_missing_operator_raises_error(self, tmp_path):
+        """Test that _validate_operation_fields raises error when operator is missing from .pyrit_conf."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operation": "test_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            pytest.raises(ValueError, match="operator"),
+        ):
+            init._validate_operation_fields()
+
+    def test_validate_missing_operation_raises_error(self, tmp_path):
+        """Test that _validate_operation_fields raises error when operation is missing from .pyrit_conf."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "test_user"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            pytest.raises(ValueError, match="operation"),
+        ):
+            init._validate_operation_fields()
+
+    def test_validate_db_connection_raises_error(self):
+        """Test that validate raises error when AZURE_SQL_DB_CONNECTION_STRING is missing."""
+        del os.environ["AZURE_SQL_DB_CONNECTION_STRING"]
+        init = AIRTInitializer()
+        with pytest.raises(ValueError) as exc_info:
+            init.validate()
+
+        error_message = str(exc_info.value)
+        assert "AZURE_SQL_DB_CONNECTION_STRING" in error_message
 
 
 class TestAIRTInitializerGetInfo:
@@ -160,11 +237,8 @@ class TestAIRTInitializerGetInfo:
         assert info["class"] == "AIRTInitializer"
         assert "required_env_vars" in info
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in info["required_env_vars"]
-        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY" in info["required_env_vars"]
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2" in info["required_env_vars"]
-        assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2" in info["required_env_vars"]
         assert "AZURE_CONTENT_SAFETY_API_ENDPOINT" in info["required_env_vars"]
-        assert "AZURE_CONTENT_SAFETY_API_KEY" in info["required_env_vars"]
 
     async def test_get_info_includes_description(self):
         """Test that get_info_async includes the description field."""

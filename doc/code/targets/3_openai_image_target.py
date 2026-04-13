@@ -21,6 +21,9 @@
 # This example shows how to use the image target to create an image from a text prompt.
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import (
     AttackExecutor,
     AttackScoringConfig,
@@ -28,15 +31,41 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-img_prompt_target = OpenAIImageTarget(output_format="jpeg")
+image_endpoint = os.environ["OPENAI_IMAGE_ENDPOINT"]
+img_prompt_target = OpenAIImageTarget(
+    endpoint=image_endpoint,
+    api_key=get_azure_openai_auth(image_endpoint),
+    output_format="jpeg",
+    # Override default capabilities to enable multi-turn, JSON output, and multi-modal input for this attack-with-scoring example.
+    custom_capabilities=TargetCapabilities(
+        supports_multi_turn=True,
+        supports_json_output=True,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset({frozenset({"text", "image_path"}), frozenset({"image_path"}), frozenset({"text"})}),
+    ),
+)
 
+chat_endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
 image_scorer = SelfAskTrueFalseScorer(
-    chat_target=OpenAIChatTarget(),
+    chat_target=OpenAIChatTarget(
+        endpoint=chat_endpoint,
+        api_key=get_azure_openai_auth(chat_endpoint),
+        # The scorer needs to evaluate image responses; override capabilities to support image input modalities.
+        custom_capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {frozenset({"text", "image_path"}), frozenset({"image_path"}), frozenset({"text"})}
+            ),
+        ),
+    ),
     true_false_question=TrueFalseQuestion(true_description="The response matches the objective {{objective}}"),
 )
 
@@ -68,6 +97,12 @@ for result in results:
 # %%
 from pyrit.models import SeedGroup, SeedPrompt
 
+# Reuse the same image target for editing (requires gpt-image-1 or newer).
+edit_attack = PromptSendingAttack(
+    objective_target=img_prompt_target,
+    attack_scoring_config=scoring_config,
+)
+
 # use the previously generated images as seeds
 image_seeds = [
     SeedPrompt(
@@ -87,7 +122,7 @@ all_seeds = [
 
 seed_group = SeedGroup(seeds=all_seeds)
 
-result = await attack.execute_async(
+result = await edit_attack.execute_async(
     objective=seed_group.prompts[0].value,
     next_message=seed_group.next_message,
 )  # type: ignore

@@ -233,7 +233,7 @@ class CopilotAuthenticator(Authenticator):
                 minutes_left = (expiry_time - current_time).total_seconds() / 60
                 logger.info(f"Cached token is valid for another {minutes_left:.2f} minutes")
 
-            return token_data  # type: ignore
+            return token_data  # type: ignore[no-any-return]
 
         except Exception as e:
             error_name = type(e).__name__
@@ -450,7 +450,7 @@ class CopilotAuthenticator(Authenticator):
                 else:
                     logger.error(f"Failed to retrieve bearer token within {self._token_capture_timeout} seconds.")
 
-                return bearer_token  # type: ignore
+                return bearer_token  # type: ignore[no-any-return]
             except Exception as e:
                 logger.error("Failed to retrieve access token using Playwright.")
 

@@ -17,6 +17,11 @@ async def health_check_async() -> dict[str, str]:
     """
     Check the health status of the backend service.
 
+    This endpoint must remain lightweight, auth-free, and database-free.
+    The frontend connection health monitor polls it every 60 seconds with a
+    5-second timeout to detect backend availability. Adding authentication,
+    database queries, or heavy computation here will break that contract.
+
     Returns:
         dict: Health status information including timestamp.
     """

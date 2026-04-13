@@ -84,8 +84,18 @@
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "ms-playwright.playwright",
-        "orta.vscode-jest"
+        "orta.vscode-jest",
+        "github.copilot",
+        "github.copilot-chat"
       ]
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/azure-cli:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/copilot-cli:1": {
+      "version": "latest"
     }
   },
   "postCreateCommand": "/bin/bash -i .devcontainer/devcontainer_setup.sh",

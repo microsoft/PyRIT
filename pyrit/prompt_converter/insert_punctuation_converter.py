@@ -70,7 +70,7 @@ class InsertPunctuationConverter(PromptConverter):
         Returns:
             bool: valid list and valid punctuations
         """
-        return all(str in string.punctuation for str in punctuation_list)
+        return all(char in string.punctuation for char in punctuation_list)
 
     async def convert_async(
         self, *, prompt: str, input_type: PromptDataType = "text", punctuation_list: Optional[list[str]] = None
@@ -150,10 +150,10 @@ class InsertPunctuationConverter(PromptConverter):
         """
         insert_indices = random.sample(word_indices, num_insertions)
         # Randomly choose num_insertions indices from actual word indices.
-        INSERT_BEFORE = 0
-        INSERT_AFTER = 1
+        insert_before = 0
+        insert_after = 1
         for index in insert_indices:
-            if random.randint(INSERT_BEFORE, INSERT_AFTER) == INSERT_AFTER:
+            if random.randint(insert_before, insert_after) == insert_after:
                 words[index] += random.choice(punctuation_list)
             else:
                 words[index] = random.choice(punctuation_list) + words[index]

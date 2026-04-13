@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -177,7 +178,8 @@ class AddImageVideoConverter(PromptConverter):
             # Release everything
             cap.release()
             output_video.release()
-            cv2.destroyAllWindows()
+            with contextlib.suppress(cv2.error):
+                cv2.destroyAllWindows()  # Not available in headless OpenCV builds
             if azure_storage_flag:
                 os.remove(local_temp_path)
 

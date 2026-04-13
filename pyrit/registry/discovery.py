@@ -114,7 +114,9 @@ def discover_in_package(
         Tuples of (registry_name, class) for each discovered subclass.
     """
     if name_builder is None:
-        name_builder = lambda prefix, name: name if not prefix else f"{prefix}.{name}"
+
+        def name_builder(prefix: str, name: str) -> str:
+            return name if not prefix else f"{prefix}.{name}"
 
     for _, module_name, is_pkg in pkgutil.iter_modules([str(package_path)]):
         if module_name.startswith("_"):

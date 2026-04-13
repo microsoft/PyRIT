@@ -519,7 +519,7 @@ class FuzzerGenerator(
 
     Paper Reference:
         GPTFUZZER - Red Teaming Large Language Models with Auto-Generated Jailbreak Prompts
-        Link: https://arxiv.org/pdf/2309.10253
+        Link: [@yu2023gptfuzzer]
         Authors: Jiahao Yu, Xingwei Lin, Zheng Yu, Xinyu Xing
         GitHub: https://github.com/sherdencooper/GPTFuzz
     """
@@ -832,7 +832,7 @@ class FuzzerGenerator(
             raise
 
         # Create template node for tracking
-        target_template = SeedPrompt(value=target_seed, data_type="text", parameters=["prompt"])
+        target_template = SeedPrompt(value=target_seed, data_type="text", parameters=["prompt"], is_jinja_template=True)
         target_template_node = _PromptNode(template=target_seed, parent=None)
 
         # Generate prompts from template
@@ -957,14 +957,13 @@ class FuzzerGenerator(
         Returns:
             List of template strings.
         """
-        other_templates = []
         node_ids_on_path = {node.id for node in context.mcts_selected_path}
 
-        for prompt_node in context.initial_prompt_nodes + context.new_prompt_nodes:
-            if prompt_node.id not in node_ids_on_path:
-                other_templates.append(prompt_node.template)
-
-        return other_templates
+        return [
+            prompt_node.template
+            for prompt_node in context.initial_prompt_nodes + context.new_prompt_nodes
+            if prompt_node.id not in node_ids_on_path
+        ]
 
     def _generate_prompts_from_template(self, *, template: SeedPrompt, prompts: list[str]) -> list[str]:
         """

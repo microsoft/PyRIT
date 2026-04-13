@@ -319,7 +319,7 @@ class TestSkeletonKeyFailureResult:
         assert result.executed_turns == 1
         assert result.last_response is None
         assert result.last_score is None
-        assert result.attack_identifier == attack.get_identifier()
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -347,7 +347,6 @@ class TestSkeletonKeyAttackExecution:
                 mock_parent.return_value = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    attack_identifier=attack.get_identifier(),
                     last_response=sample_response,
                     last_score=success_score,
                     outcome=AttackOutcome.SUCCESS,
@@ -379,7 +378,6 @@ class TestSkeletonKeyAttackExecution:
                 expected_result = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    attack_identifier=attack.get_identifier(),
                     outcome=AttackOutcome.FAILURE,
                     outcome_reason="Skeleton key prompt was filtered or failed",
                     executed_turns=1,
@@ -416,7 +414,6 @@ class TestSkeletonKeyAttackExecution:
                 mock_parent.return_value = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    attack_identifier=attack.get_identifier(),
                     last_response=sample_response,
                     last_score=failure_score,
                     outcome=AttackOutcome.FAILURE,

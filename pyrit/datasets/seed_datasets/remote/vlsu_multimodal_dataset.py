@@ -47,7 +47,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     Note: The first call may be slow as images need to be downloaded from remote URLs.
     Subsequent calls will be faster since images are cached locally.
 
-    Reference: https://arxiv.org/abs/2501.01151
+    Reference: [@palaskar2025vlsu]
     """
 
     def __init__(
@@ -254,7 +254,11 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
         # Add browser-like headers for better success rate
         headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+                " AppleWebKit/537.36 (KHTML, like Gecko)"
+                " Chrome/120.0.0.0 Safari/537.36"
+            ),
             "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",

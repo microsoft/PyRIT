@@ -21,6 +21,8 @@ from pyrit.models import (
     construct_response_from_request,
     data_serializer_factory,
 )
+from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -55,7 +57,7 @@ class RealtimeTargetResult:
         return "".join(self.transcripts)
 
 
-class RealtimeTarget(OpenAITarget):
+class RealtimeTarget(OpenAITarget, PromptChatTarget):
     """
     A prompt target for Azure OpenAI Realtime API.
 
@@ -66,11 +68,31 @@ class RealtimeTarget(OpenAITarget):
     and https://platform.openai.com/docs/guides/realtime-websocket
     """
 
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        supports_system_prompt=True,
+        input_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["text", "audio_path"]),
+            }
+        ),
+        output_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["audio_path"]),
+                frozenset(["text", "audio_path"]),
+            }
+        ),
+    )
+
     def __init__(
         self,
         *,
         voice: Optional[RealTimeVoice] = None,
         existing_convo: Optional[dict[str, Any]] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -92,11 +114,13 @@ class RealtimeTarget(OpenAITarget):
             voice (literal str, Optional): The voice to use. Defaults to None.
                 the only supported voices by the AzureOpenAI Realtime API are "alloy", "echo", and "shimmer".
             existing_convo (dict[str, websockets.WebSocketClientProtocol], Optional): Existing conversations.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(**kwargs)
+        super().__init__(custom_capabilities=custom_capabilities, **kwargs)
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
@@ -461,7 +485,7 @@ class RealtimeTarget(OpenAITarget):
 
         result = RealtimeTargetResult()
         audio_done_received = False
-        GRACE_PERIOD_SEC = 1.0  # Wait 1 second after audio.done before soft-finishing
+        grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
 
         try:
             # Create event iterator
@@ -470,7 +494,7 @@ class RealtimeTarget(OpenAITarget):
             while True:
                 # If we've seen audio.done, wait with a short timeout for response.done
                 # Otherwise, wait indefinitely for events
-                timeout = GRACE_PERIOD_SEC if audio_done_received else None
+                timeout = grace_period_sec if audio_done_received else None
 
                 try:
                     event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
@@ -478,7 +502,7 @@ class RealtimeTarget(OpenAITarget):
                     # Soft-finish: audio.done was received but no response.done after grace period
                     if audio_done_received:
                         logger.warning(
-                            f"Soft-finishing: No response.done {GRACE_PERIOD_SEC}s after audio.done. "
+                            f"Soft-finishing: No response.done {grace_period_sec}s after audio.done. "
                             f"Audio bytes: {len(result.audio_bytes)}"
                         )
                         break
@@ -519,7 +543,7 @@ class RealtimeTarget(OpenAITarget):
                     logger.debug(f"Decoded {len(audio_data)} bytes of audio data")
 
                 elif event_type in ["response.audio.done", "response.output_audio.done"]:
-                    logger.debug(f"Received audio.done - will soft-finish in {GRACE_PERIOD_SEC}s if no response.done")
+                    logger.debug(f"Received audio.done - will soft-finish in {grace_period_sec}s if no response.done")
                     audio_done_received = True
 
                 elif event_type in ["response.audio_transcript.delta", "response.output_audio_transcript.delta"]:
@@ -767,32 +791,3 @@ class RealtimeTarget(OpenAITarget):
         This implementation exists to satisfy the abstract base class requirement.
         """
         raise NotImplementedError("RealtimeTarget uses receive_events for message construction")
-
-    def _validate_request(self, *, message: Message) -> None:
-        """
-        Validate the structure and content of a message for compatibility of this target.
-
-        Args:
-            message (Message): The message object.
-
-        Raises:
-            ValueError: If more than two message pieces are provided.
-            ValueError: If any of the message pieces have a data type other than 'text' or 'audio_path'.
-        """
-        # Check the number of message pieces
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports one message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type not in ["text", "audio_path"]:
-            raise ValueError(f"This target only supports text and audio_path prompt input. Received: {piece_type}.")
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

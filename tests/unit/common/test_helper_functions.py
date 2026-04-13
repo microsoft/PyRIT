@@ -358,4 +358,4 @@ class TestVerifyAndResolvePath:
     def test_verify_and_resolve_path_invalid_type(self) -> None:
         """Test that the function raises ValueError for invalid types."""
         with pytest.raises(ValueError, match="Path must be a string or Path object"):
-            verify_and_resolve_path(123)  # type: ignore
+            verify_and_resolve_path(123)  # type: ignore[arg-type]

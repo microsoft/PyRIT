@@ -8,10 +8,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 import pyrit
+from pyrit.memory import CentralMemory
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,12 @@ class VersionResponse(BaseModel):
     commit: Optional[str] = None
     modified: Optional[bool] = None
     display: str
+    database_info: Optional[str] = None
+    default_labels: Optional[dict[str, str]] = None
 
 
 @router.get("", response_model=VersionResponse)
-async def get_version_async() -> VersionResponse:
+async def get_version_async(request: Request) -> VersionResponse:
     """
     Get version information for the PyRIT installation.
 
@@ -58,4 +61,27 @@ async def get_version_async() -> VersionResponse:
         except Exception as e:
             logger.warning(f"Failed to load build info: {e}")
 
-    return VersionResponse(version=version, source=source, commit=commit, modified=modified, display=display)
+    # Detect current database backend
+    database_info: Optional[str] = None
+    try:
+        memory = CentralMemory.get_memory_instance()
+        db_type = type(memory).__name__
+        db_name = None
+        if memory.engine.url.database:
+            db_name = memory.engine.url.database.split("?")[0]
+        database_info = f"{db_type} ({db_name})" if db_name else f"{db_type} (None)"
+    except Exception as e:
+        logger.debug(f"Could not detect database info: {e}")
+
+    # Read default labels from app state (set by pyrit_backend CLI)
+    default_labels: Optional[dict[str, str]] = getattr(request.app.state, "default_labels", None) or None
+
+    return VersionResponse(
+        version=version,
+        source=source,
+        commit=commit,
+        modified=modified,
+        display=display,
+        database_info=database_info,
+        default_labels=default_labels,
+    )

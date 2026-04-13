@@ -59,4 +59,13 @@ export default [
       },
     },
   },
+  // E2E test files (Playwright, run in Node.js)
+  {
+    files: ["e2e/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 ];

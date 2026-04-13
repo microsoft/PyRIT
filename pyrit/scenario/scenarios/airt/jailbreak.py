@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
+    AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
 )
@@ -20,12 +22,11 @@ from pyrit.prompt_converter import TextJailbreakConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.score import (
-    SelfAskRefusalScorer,
-    TrueFalseInverterScorer,
     TrueFalseScorer,
 )
 
@@ -151,12 +152,13 @@ class Jailbreak(Scenario):
             jailbreak_names = []
         if jailbreak_names and num_templates:
             raise ValueError(
-                "Please provide only one of `num_templates` (random selection) or `jailbreak_names` (specific selection)."
+                "Please provide only one of `num_templates` (random selection)"
+                " or `jailbreak_names` (specific selection)."
             )
 
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
 
         self._num_templates = num_templates
         self._num_attempts = num_attempts
@@ -179,37 +181,15 @@ class Jailbreak(Scenario):
         self._jailbreaks = jailbreak_names if jailbreak_names else all_templates
 
         super().__init__(
-            name="Jailbreak",
             version=self.VERSION,
             strategy_class=JailbreakStrategy,
-            objective_scorer=objective_scorer,
+            objective_scorer=self._objective_scorer,
             include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
-
-    def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        """
-        Retrieve the default objective scorer.
-
-        The scoring mechanism detects non-refusal: if the target model refuses to
-        comply with the jailbreak attempt, we want that to register as a negative score.
-        A successful jailbreak (non-refusal) scores as True.
-
-        Returns:
-            TrueFalseScorer: A scorer that returns True when the model does NOT refuse.
-        """
-        return TrueFalseInverterScorer(
-            scorer=SelfAskRefusalScorer(
-                chat_target=OpenAIChatTarget(
-                    endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                    api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
-                    model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                )
-            )
-        )
 
     def _create_adversarial_target(self) -> OpenAIChatTarget:
         """
@@ -218,9 +198,10 @@ class Jailbreak(Scenario):
         Returns:
             OpenAIChatTarget: A fresh adversarial target using an unfiltered endpoint.
         """
+        endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
-            endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-            api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+            endpoint=endpoint,
+            api_key=get_azure_openai_auth(endpoint),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
@@ -289,7 +270,7 @@ class Jailbreak(Scenario):
         attack: Optional[Union[ManyShotJailbreakAttack, PromptSendingAttack, RolePlayAttack, SkeletonKeyAttack]] = None
         args = {
             "objective_target": self._objective_target,
-            "attack_scoring_config": self._scorer_config,
+            "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),
             "attack_converter_config": converter_config,
         }
         match strategy:
@@ -300,7 +281,9 @@ class Jailbreak(Scenario):
             case "skeleton":
                 attack = SkeletonKeyAttack(**args)
             case "role_play":
-                args["adversarial_chat"] = self._get_or_create_adversarial_target()
+                args["attack_adversarial_config"] = AttackAdversarialConfig(
+                    target=self._get_or_create_adversarial_target()
+                )
                 args["role_play_definition_path"] = RolePlayPaths.PERSUASION_SCRIPT.value
                 attack = RolePlayAttack(**args)
             case _:
@@ -313,7 +296,9 @@ class Jailbreak(Scenario):
         template_name = Path(jailbreak_template_name).stem
 
         return AtomicAttack(
-            atomic_attack_name=f"jailbreak_{template_name}", attack=attack, seed_groups=self._seed_groups
+            atomic_attack_name=f"jailbreak_{template_name}",
+            attack_technique=AttackTechnique(attack=attack),
+            seed_groups=self._seed_groups,
         )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:

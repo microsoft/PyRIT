@@ -2,10 +2,11 @@
 # Licensed under the MIT license.
 
 import base64
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Optional
 
-from azure.ai.contentsafety import ContentSafetyClient
+from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
     AnalyzeImageOptions,
     AnalyzeImageResult,
@@ -16,7 +17,7 @@ from azure.ai.contentsafety.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from pyrit.auth import TokenProviderCredential
+from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
+
+logger = logging.getLogger(__name__)
 
 
 class AzureContentFilterScorer(FloatScaleScorer):
@@ -104,16 +107,17 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
             api_key (Optional[str | Callable[[], str | Awaitable[str]] | None]):
                 The API key for accessing the Azure Content Safety service,
-                or a callable that returns an access token. For Azure endpoints with Entra authentication,
-                pass a token provider from pyrit.auth
-                (e.g., get_azure_token_provider('https://cognitiveservices.azure.com/.default')).
+                or a callable that returns an access token. Both synchronous and asynchronous
+                token providers are supported. Sync providers are automatically wrapped for
+                async compatibility. If not provided (via parameter or environment variable),
+                Entra ID authentication is used automatically.
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
             harm_categories (Optional[list[TextCategory]]): The harm categories you want to query for as
                 defined in azure.ai.contentsafety.models.TextCategory. If not provided, defaults to all categories.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
 
         Raises:
-            ValueError: If neither API key nor endpoint is provided, or if both are missing.
+            ValueError: If no endpoint is provided.
         """
         if harm_categories:
             self._harm_categories = harm_categories
@@ -124,22 +128,32 @@ class AzureContentFilterScorer(FloatScaleScorer):
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint or ""
         )
 
-        # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(
-            env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
-        )
+        # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
+        resolved_api_key: str | Callable[[], str | Awaitable[str]]
+        if api_key is not None and callable(api_key):
+            resolved_api_key = api_key
+        else:
+            api_key_value = default_values.get_non_required_value(
+                env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
+            )
+            resolved_api_key = api_key_value or get_azure_async_token_provider(
+                "https://cognitiveservices.azure.com/.default"
+            )
+
+        # Ensure api_key is async-compatible (wrap sync token providers if needed)
+        self._api_key = ensure_async_token_provider(resolved_api_key)
 
         # Create ContentSafetyClient with appropriate credential
-        if self._api_key is not None and self._endpoint is not None:
+        if self._endpoint is not None:
             if callable(self._api_key):
-                # Token provider - create a TokenCredential wrapper
-                credential = TokenProviderCredential(self._api_key)
+                # Token provider - create an AsyncTokenCredential wrapper
+                credential = AsyncTokenProviderCredential(self._api_key)
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
             else:
                 # String API key
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._api_key))
         else:
-            raise ValueError("Please provide the Azure Content Safety endpoint and api_key")
+            raise ValueError("Please provide the Azure Content Safety endpoint")
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
@@ -266,7 +280,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     categories=self._category_values,
                     output_type="EightSeverityLevels",
                 )
-                text_result = self._azure_cf_client.analyze_text(text_request_options)
+                text_result = await self._azure_cf_client.analyze_text(text_request_options)
                 filter_results.append(text_result)
 
         elif message_piece.converted_value_data_type == "image_path":
@@ -276,7 +290,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             image_request_options = AnalyzeImageOptions(
                 image=image_data, categories=self._category_values, output_type="FourSeverityLevels"
             )
-            image_result = self._azure_cf_client.analyze_image(image_request_options)
+            image_result = await self._azure_cf_client.analyze_image(image_request_options)
             filter_results.append(image_result)
 
         # Collect all scores from all chunks/images

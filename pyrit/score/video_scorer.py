@@ -6,7 +6,6 @@ import os
 import random
 import tempfile
 import uuid
-from abc import ABC
 from typing import Optional
 
 from pyrit.memory import CentralMemory
@@ -17,13 +16,13 @@ from pyrit.score.scorer import Scorer
 logger = logging.getLogger(__name__)
 
 
-class _BaseVideoScorer(ABC):  # noqa: B024
+class VideoHelper:
     """
-    Abstract base class for video scorers that process videos by extracting frames and scoring them.
+    Helper class for video scorers that process videos by extracting frames and scoring them.
 
     This class provides common functionality for extracting frames from videos and delegating
-    scoring to an image-capable scorer. Concrete implementations handle aggregation logic
-    specific to their scoring type (true/false or float scale).
+    scoring to an image-capable scorer. Used via composition by VideoTrueFalseScorer and
+    VideoFloatScaleScorer.
     """
 
     _DEFAULT_VIDEO_FRAMES_SAMPLING_NUM = 5

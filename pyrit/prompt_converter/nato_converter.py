@@ -90,9 +90,6 @@ class NatoConverter(PromptConverter):
         Returns:
             str: The NATO phonetic alphabet representation, with code words separated by spaces.
         """
-        output = []
-        for char in text.upper():
-            if char in self._NATO_MAP:
-                output.append(self._NATO_MAP[char])
+        output = [self._NATO_MAP[char] for char in text.upper() if char in self._NATO_MAP]
 
         return " ".join(output)

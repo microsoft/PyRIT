@@ -37,7 +37,7 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -777,9 +777,22 @@ class _TreeOfAttacksNode:
         )
 
         # Duplicate the conversations to preserve history
-        duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
-            conversation_id=self.objective_target_conversation_id
-        )
+        # For single-turn targets, duplicate only the system messages (e.g., system prompt
+        # from prepended conversation) so the target retains its configuration without
+        # carrying over attack turn history that would cause validation errors.
+        if self._objective_target.capabilities.supports_multi_turn:
+            duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
+                conversation_id=self.objective_target_conversation_id
+            )
+        else:
+            messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+            system_messages = [m for m in messages if m.api_role == "system"]
+            if system_messages:
+                new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
+                self._memory.add_message_pieces_to_memory(message_pieces=pieces)
+                duplicate_node.objective_target_conversation_id = new_id
+            else:
+                duplicate_node.objective_target_conversation_id = str(uuid.uuid4())
 
         duplicate_node.adversarial_chat_conversation_id = self._memory.duplicate_conversation(
             conversation_id=self.adversarial_chat_conversation_id
@@ -1218,7 +1231,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     References:
         Tree of Attacks: Jailbreaking Black-Box LLMs Automatically
-        https://arxiv.org/abs/2312.02119
+        [@mehrotra2023tap]
 
     Returns:
         AttackResult: The result of the TAP attack execution.
@@ -2060,7 +2073,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         # Create the result with basic information
         result = TAPAttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.best_conversation_id or "",
             objective=context.objective,
             outcome=outcome,

@@ -286,61 +286,56 @@ class PDFConverter(PromptConverter):
             raise ValueError("Existing PDF and injection items are required for modification.")
 
         reader = PdfReader(self._existing_pdf_bytes)
-        writer = PdfWriter()
+        # clone_from attaches all pages to the writer up-front, avoiding
+        # the deprecated PageObject.replace_contents() call on unattached pages.
+        writer = PdfWriter(clone_from=reader)
 
         # Keep a list of overlay buffers to close them after final write
         overlay_buffers = []
 
-        for page_number, page in enumerate(reader.pages):
-            # We know page_number is valid because enumerate() only provides indices in range(total_pages).
-            # Therefore, no extra check needed here.
+        try:
+            for page_number, page in enumerate(writer.pages):
+                logger.info(f"Processing page {page_number} with {len(self._injection_items)} injection items.")
 
-            logger.info(f"Processing page {page_number} with {len(self._injection_items)} injection items.")
+                # Extract page dimensions for early coordinate checks
+                page_width = float(page.mediabox[2] - page.mediabox[0])
+                page_height = float(page.mediabox[3] - page.mediabox[1])
 
-            # Extract page dimensions for early coordinate checks
-            page_width = float(page.mediabox[2] - page.mediabox[0])
-            page_height = float(page.mediabox[3] - page.mediabox[1])
+                # For each item that belongs on this page, create and merge an overlay
+                for item in self._injection_items:
+                    if item.get("page", 0) == page_number:
+                        # Default to a small offset (10 points) from the top-left corner if no coordinates are provided.
+                        # This prevents injected text from starting at (0,0) and potentially running off the edges.
+                        x = item.get("x", 10)
+                        y = item.get("y", 10)
+                        text = item.get("text", "")
+                        font = item.get("font", self._font_type)
+                        font_size = item.get("font_size", self._font_size)
+                        font_color = item.get("font_color", self._font_color)
 
-            # For each item that belongs on this page, create and merge an overlay
-            for item in self._injection_items:
-                if item.get("page", 0) == page_number:
-                    # Default to a small offset (10 points) from the top-left corner if no coordinates are provided.
-                    # This prevents injected text from starting at (0,0) and potentially running off the edges.
-                    x = item.get("x", 10)
-                    y = item.get("y", 10)
-                    text = item.get("text", "")
-                    font = item.get("font", self._font_type)
-                    font_size = item.get("font_size", self._font_size)
-                    font_color = item.get("font_color", self._font_color)
+                        # Coordinate validation before calling _inject_text_into_page
+                        if not (0 <= x <= page_width and 0 <= y <= page_height):
+                            raise ValueError(f"Coordinates x={x}, y={y} out of bounds for page {page_number}.")
 
-                    # Coordinate validation before calling _inject_text_into_page
-                    if not (0 <= x <= page_width and 0 <= y <= page_height):
-                        raise ValueError(f"Coordinates x={x}, y={y} out of bounds for page {page_number}.")
+                        # (1) Build the overlay PageObject + buffer
+                        overlay_page, overlay_buffer = self._inject_text_into_page(
+                            page, x, y, text, font, font_size, font_color
+                        )
 
-                    # (1) Build the overlay PageObject + buffer
-                    overlay_page, overlay_buffer = self._inject_text_into_page(
-                        page, x, y, text, font, font_size, font_color
-                    )
+                        # (2) Merge onto the page (already attached to writer)
+                        page.merge_page(overlay_page)
 
-                    # (2) Merge onto the page
-                    page.merge_page(overlay_page)
+                        # (3) Store overlay buffer to close later
+                        overlay_buffers.append(overlay_buffer)
 
-                    # (3) Store overlay buffer to close later
-                    overlay_buffers.append(overlay_buffer)
-
-            # Add the modified page to the writer
-            writer.add_page(page)
-
-        # Finalize the PDF
-        output_pdf = BytesIO()
-        writer.write(output_pdf)
-        output_pdf.seek(0)
-
-        # Safe to close all overlays AFTER writing is finished
-        for buf in overlay_buffers:
-            buf.close()
-
-        return output_pdf.getvalue()
+            # Finalize the PDF
+            output_pdf = BytesIO()
+            writer.write(output_pdf)
+            output_pdf.seek(0)
+            return output_pdf.getvalue()
+        finally:
+            for buf in overlay_buffers:
+                buf.close()
 
     def _inject_text_into_page(
         self,

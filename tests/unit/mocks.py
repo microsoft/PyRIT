@@ -122,7 +122,7 @@ class MockHttpPostSync:
 class MockPromptTarget(PromptChatTarget):
     prompt_sent: list[str]
 
-    def __init__(self, id=None, rpm=None) -> None:
+    def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
         super().__init__(max_requests_per_minute=rpm)
         self.id = id
         self.prompt_sent = []
@@ -166,9 +166,6 @@ class MockPromptTarget(PromptChatTarget):
         """
         Validates the provided message
         """
-
-    def is_json_response_supported(self) -> bool:
-        return False
 
 
 def get_azure_sql_memory() -> Generator[AzureSQLMemory, None, None]:

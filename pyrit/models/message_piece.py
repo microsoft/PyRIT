@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
@@ -34,7 +34,7 @@ class MessagePiece:
         original_value_sha256: Optional[str] = None,
         converted_value: Optional[str] = None,
         converted_value_sha256: Optional[str] = None,
-        id: Optional[uuid.UUID | str] = None,
+        id: Optional[uuid.UUID | str] = None,  # noqa: A002
         conversation_id: Optional[str] = None,
         sequence: int = -1,
         labels: Optional[dict[str, str]] = None,
@@ -91,7 +91,7 @@ class MessagePiece:
         """
         self.id = id if id else uuid4()
 
-        if role not in ChatMessageRole.__args__:  # type: ignore
+        if role not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
             raise ValueError(f"Role {role} is not a valid role.")
 
         self._role: ChatMessageRole = role
@@ -108,7 +108,12 @@ class MessagePiece:
         self.conversation_id = conversation_id if conversation_id else str(uuid4())
         self.sequence = sequence
 
-        self.timestamp = timestamp if timestamp else datetime.now()
+        if timestamp is None:
+            self.timestamp = datetime.now(tz=timezone.utc)
+        elif timestamp.tzinfo is None:
+            self.timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            self.timestamp = timestamp
         self.labels = labels or {}
         self.prompt_metadata = prompt_metadata or {}
 
@@ -251,14 +256,20 @@ class MessagePiece:
             ValueError: If the role is not a valid ChatMessageRole.
 
         """
-        if value not in ChatMessageRole.__args__:  # type: ignore
+        if value not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
             raise ValueError(f"Role {value} is not a valid role.")
         self._role = value
 
-    def to_message(self) -> Message:  # type: ignore # noqa F821
+    def to_message(self) -> Message:  # type: ignore[name-defined] # noqa: F821
+        """
+        Convert this message piece into a Message.
+
+        Returns:
+            Message: A Message containing this piece.
+        """
         from pyrit.models.message import Message
 
-        return Message([self])  # noqa F821
+        return Message([self])  # noqa: F821
 
     def has_error(self) -> bool:
         """

@@ -4,7 +4,7 @@
 
 import uuid
 from collections.abc import MutableSequence, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
     Message,
@@ -702,7 +703,7 @@ def test_insert_prompt_memories_not_inserts_embedding(
 
 
 def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
-    labels = {"op_name": "op1", "user_name": "name1", "harm_category": "dummy1"}
+    labels = {"operation": "op1", "operator": "name1", "harm_category": "dummy1"}
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
@@ -732,8 +733,8 @@ def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
 
     assert len(retrieved_entries) == 2  # Two entries should have the specific memory labels
     for retrieved_entry in retrieved_entries:
-        assert "op_name" in retrieved_entry.labels
-        assert "user_name" in retrieved_entry.labels
+        assert "operation" in retrieved_entry.labels
+        assert "operator" in retrieved_entry.labels
         assert "harm_category" in retrieved_entry.labels
 
 
@@ -866,12 +867,12 @@ def test_get_message_pieces_sent_after(sqlite_instance: MemoryInterface):
         ),
     ]
 
-    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0)
-    entries[1].timestamp = datetime(2022, 12, 25, 15, 30, 0)
+    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
+    entries[1].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
 
     sqlite_instance._insert_entries(entries=entries)
 
-    retrieved_entries = sqlite_instance.get_message_pieces(sent_after=datetime(2024, 1, 1))
+    retrieved_entries = sqlite_instance.get_message_pieces(sent_after=datetime(2024, 1, 1, tzinfo=timezone.utc))
 
     assert len(retrieved_entries) == 1
     assert "Hello 3" in retrieved_entries[0].original_value
@@ -899,12 +900,12 @@ def test_get_message_pieces_sent_before(sqlite_instance: MemoryInterface):
         ),
     ]
 
-    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0)
-    entries[1].timestamp = datetime(2021, 12, 25, 15, 30, 0)
+    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
+    entries[1].timestamp = datetime(2021, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
 
     sqlite_instance._insert_entries(entries=entries)
 
-    retrieved_entries = sqlite_instance.get_message_pieces(sent_before=datetime(2024, 1, 1))
+    retrieved_entries = sqlite_instance.get_message_pieces(sent_before=datetime(2024, 1, 1, tzinfo=timezone.utc))
 
     assert len(retrieved_entries) == 2
     assert_original_value_in_list("Hello 1", retrieved_entries)
@@ -970,7 +971,7 @@ def test_get_message_pieces_by_hash(sqlite_instance: MemoryInterface):
 
 def test_get_message_pieces_with_non_matching_memory_labels(sqlite_instance: MemoryInterface):
     attack = PromptSendingAttack(objective_target=get_mock_target())
-    labels = {"op_name": "op1", "user_name": "name1", "harm_category": "dummy1"}
+    labels = {"operation": "op1", "operator": "name1", "harm_category": "dummy1"}
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
@@ -1248,3 +1249,205 @@ def test_get_request_from_response_raises_error_for_sequence_less_than_one(sqlit
 
     with pytest.raises(ValueError, match="The provided request does not have a preceding request \\(sequence < 1\\)."):
         sqlite_instance.get_request_from_response(response=response_without_request)
+
+
+def test_get_message_pieces_by_attack_identifier_filter(sqlite_instance: MemoryInterface):
+    attack1 = PromptSendingAttack(objective_target=get_mock_target())
+    attack2 = PromptSendingAttack(objective_target=get_mock_target("Target2"))
+
+    entries = [
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="user",
+                original_value="Hello 1",
+                attack_identifier=attack1.get_identifier(),
+            )
+        ),
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="assistant",
+                original_value="Hello 2",
+                attack_identifier=attack2.get_identifier(),
+            )
+        ),
+    ]
+
+    sqlite_instance._insert_entries(entries=entries)
+
+    # Filter by exact attack hash
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.ATTACK,
+                property_path="$.hash",
+                value=attack1.get_identifier().hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].original_value == "Hello 1"
+
+    # No match
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.ATTACK,
+                property_path="$.hash",
+                value="nonexistent_hash",
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 0
+
+
+def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryInterface):
+    target_id_1 = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
+    )
+    target_id_2 = ComponentIdentifier(
+        class_name="AzureChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://azure.com", "model_name": "gpt-3.5"},
+    )
+
+    entries = [
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="user",
+                original_value="Hello OpenAI",
+                prompt_target_identifier=target_id_1,
+            )
+        ),
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="user",
+                original_value="Hello Azure",
+                prompt_target_identifier=target_id_2,
+            )
+        ),
+    ]
+
+    sqlite_instance._insert_entries(entries=entries)
+
+    # Filter by target hash
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.hash",
+                value=target_id_1.hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].original_value == "Hello OpenAI"
+
+    # Filter by endpoint partial match
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.endpoint",
+                value="openai",
+                partial_match=True,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].original_value == "Hello OpenAI"
+
+    # No match
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.hash",
+                value="nonexistent",
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 0
+
+
+def test_get_message_pieces_by_converter_identifier_filter_with_array_element_path(sqlite_instance: MemoryInterface):
+    converter_a = ComponentIdentifier(
+        class_name="Base64Converter",
+        class_module="pyrit.prompt_converter",
+    )
+    converter_b = ComponentIdentifier(
+        class_name="ROT13Converter",
+        class_module="pyrit.prompt_converter",
+    )
+
+    entries = [
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="user",
+                original_value="With Base64",
+                converter_identifiers=[converter_a],
+            )
+        ),
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="user",
+                original_value="With both converters",
+                converter_identifiers=[converter_a, converter_b],
+            )
+        ),
+        PromptMemoryEntry(
+            entry=MessagePiece(
+                role="user",
+                original_value="No converters",
+            )
+        ),
+    ]
+
+    sqlite_instance._insert_entries(entries=entries)
+
+    # Filter by converter class_name using array_element_path (array element matching)
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.CONVERTER,
+                property_path="$",
+                array_element_path="$.class_name",
+                value="Base64Converter",
+            )
+        ],
+    )
+    assert len(results) == 2
+    original_values = {r.original_value for r in results}
+    assert original_values == {"With Base64", "With both converters"}
+
+    # Filter by ROT13Converter — only the entry with both converters
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.CONVERTER,
+                property_path="$",
+                array_element_path="$.class_name",
+                value="ROT13Converter",
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].original_value == "With both converters"
+
+    # No match
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.CONVERTER,
+                property_path="$",
+                array_element_path="$.class_name",
+                value="NonexistentConverter",
+            )
+        ],
+    )
+    assert len(results) == 0

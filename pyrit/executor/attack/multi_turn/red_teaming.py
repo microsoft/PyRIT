@@ -26,6 +26,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -53,7 +54,6 @@ class RTASystemPromptPaths(enum.Enum):
     IMAGE_GENERATION = Path(EXECUTOR_RED_TEAM_PATH, "image_generation.yaml").resolve()
     NAIVE_CRESCENDO = Path(EXECUTOR_RED_TEAM_PATH, "naive_crescendo.yaml").resolve()
     VIOLENT_DURIAN = Path(EXECUTOR_RED_TEAM_PATH, "violent_durian.yaml").resolve()
-    CRUCIBLE = Path(EXECUTOR_RED_TEAM_PATH, "crucible.yaml").resolve()
 
 
 class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], AttackResult]):
@@ -314,7 +314,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         # Prepare the result
         return AttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -524,6 +524,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """
         logger.info(f"Sending prompt to target: {message.get_value()[:50]}...")
 
+        # For single-turn targets, rotate conversation_id so each turn starts fresh
+        self._rotate_conversation_for_single_turn_target(context=context)
+
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
@@ -601,7 +604,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             ValueError: If the seed prompt is not a string or SeedPrompt object.
         """
         if isinstance(seed_prompt, str):
-            self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text")
+            self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text", is_jinja_template=True)
         elif isinstance(seed_prompt, SeedPrompt):
             self._adversarial_chat_seed_prompt = seed_prompt
         else:

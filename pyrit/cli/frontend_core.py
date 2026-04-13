@@ -15,13 +15,33 @@ Both pyrit_scan and pyrit_shell use these functions.
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from pyrit.setup import ConfigurationLoader
+from pyrit.cli._cli_args import ARG_HELP as ARG_HELP
+from pyrit.cli._cli_args import AZURE_SQL as AZURE_SQL
+from pyrit.cli._cli_args import IN_MEMORY as IN_MEMORY
+from pyrit.cli._cli_args import SQLITE as SQLITE
+from pyrit.cli._cli_args import _argparse_validator as _argparse_validator
+from pyrit.cli._cli_args import _parse_initializer_arg as _parse_initializer_arg
+from pyrit.cli._cli_args import add_common_arguments as add_common_arguments
+from pyrit.cli._cli_args import non_negative_int as non_negative_int
+from pyrit.cli._cli_args import parse_list_targets_arguments as parse_list_targets_arguments
+from pyrit.cli._cli_args import parse_memory_labels as parse_memory_labels
+from pyrit.cli._cli_args import parse_run_arguments as parse_run_arguments
+from pyrit.cli._cli_args import positive_int as positive_int
+from pyrit.cli._cli_args import resolve_env_files as resolve_env_files
+from pyrit.cli._cli_args import resolve_env_files_argparse as resolve_env_files_argparse
+from pyrit.cli._cli_args import validate_database as validate_database
+from pyrit.cli._cli_args import validate_database_argparse as validate_database_argparse
+from pyrit.cli._cli_args import validate_integer as validate_integer
+from pyrit.cli._cli_args import validate_log_level as validate_log_level
+from pyrit.cli._cli_args import validate_log_level_argparse as validate_log_level_argparse
+from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
+from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
 from pyrit.setup.configuration_loader import _MEMORY_DB_TYPE_MAP
 
 try:
@@ -32,32 +52,26 @@ except ImportError:
     HAS_TERMCOLOR = False
 
     # Create a dummy termcolor module for fallback
-    class termcolor:  # type: ignore
+    class termcolor:  # type: ignore[no-redef]  # noqa: N801
         """Dummy termcolor fallback for colored printing if termcolor is not installed."""
 
         @staticmethod
-        def cprint(text: str, color: str = None, attrs: list = None) -> None:  # type: ignore
+        def cprint(text: str, color: str = None, attrs: list = None) -> None:  # type: ignore[type-arg]
             """Print text without color."""
             print(text)
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
+    from pathlib import Path
 
     from pyrit.models.scenario_result import ScenarioResult
     from pyrit.registry import (
         InitializerMetadata,
-        InitializerRegistry,
         ScenarioMetadata,
-        ScenarioRegistry,
     )
 
 logger = logging.getLogger(__name__)
-
-# Database type constants
-IN_MEMORY = "InMemory"
-SQLITE = "SQLite"
-AZURE_SQL = "AzureSQL"
 
 
 class FrontendCore:
@@ -74,7 +88,7 @@ class FrontendCore:
         config_file: Optional[Path] = None,
         database: Optional[str] = None,
         initialization_scripts: Optional[list[Path]] = None,
-        initializer_names: Optional[list[str]] = None,
+        initializer_names: Optional[list[Any]] = None,
         env_files: Optional[list[Path]] = None,
         log_level: Optional[int] = None,
     ):
@@ -91,7 +105,9 @@ class FrontendCore:
                 The file uses .pyrit_conf extension but is YAML format.
             database: Database type (InMemory, SQLite, or AzureSQL).
             initialization_scripts: Optional list of initialization script paths.
-            initializer_names: Optional list of built-in initializer names to run.
+            initializer_names: Optional list of initializer entries. Each entry can be
+                a string name (e.g., "simple") or a dict with 'name' and optional 'args'
+                (e.g., {"name": "target", "args": {"tags": "default,scorer"}}).
             env_files: Optional list of environment file paths to load in order.
             log_level: Logging level constant (e.g., logging.WARNING). Defaults to logging.WARNING.
 
@@ -120,17 +136,14 @@ class FrontendCore:
                 ) from e
             raise
 
-        # Store the merged configuration
-        self._config = config
-
         # Extract values from config for internal use
         # Use canonical mapping from configuration_loader
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
         self._initialization_scripts = config._resolve_initialization_scripts()
-        self._initializer_names = (
-            [ic.name for ic in config._initializer_configs] if config._initializer_configs else None
-        )
+        self._initializer_configs = config._initializer_configs if config._initializer_configs else None
         self._env_files = config._resolve_env_files()
+        self._operator = config.operator
+        self._operation = config.operation
 
         # Lazy-loaded registries
         self._scenario_registry: Optional[ScenarioRegistry] = None
@@ -141,20 +154,25 @@ class FrontendCore:
         logging.basicConfig(level=self._log_level)
 
     async def initialize_async(self) -> None:
-        """Initialize PyRIT and load registries (heavy operation)."""
+        """
+        Initialize PyRIT and load registries (heavy operation).
+
+        Sets up memory and loads scenario/initializer registries.
+        Initializers are NOT run here — they are run separately
+        (per-scenario in pyrit_scan, or up-front in pyrit_backend).
+        """
         if self._initialized:
             return
 
-        from pyrit.registry import InitializerRegistry, ScenarioRegistry
-        from pyrit.setup import initialize_pyrit_async
-
-        # Initialize PyRIT without initializers (they run per-scenario)
+        # Initialize PyRIT without initializers (they run separately)
         await initialize_pyrit_async(
             memory_db_type=self._database,
             initialization_scripts=None,
             initializers=None,
             env_files=self._env_files,
         )
+        # Mark that initial env loading has been printed
+        self._silent_reinit = True
 
         # Load registries (use singleton pattern for shared access)
         self._scenario_registry = ScenarioRegistry.get_registry_singleton()
@@ -166,6 +184,63 @@ class FrontendCore:
         self._initializer_registry = InitializerRegistry()
 
         self._initialized = True
+
+    def with_overrides(
+        self,
+        *,
+        initializer_names: Optional[list[Any]] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
+    ) -> FrontendCore:
+        """
+        Create a derived FrontendCore with per-command overrides.
+
+        Copies inherited state (database, env_files, operator, operation, config)
+        from this instance and applies the given overrides. Shares registries
+        with the parent to avoid redundant re-discovery and skips re-reading
+        config files.
+
+        Args:
+            initializer_names (Optional[list[Any]]): Per-command initializer overrides.
+                Each entry can be a string name or a dict with 'name' and optional 'args'.
+                None keeps the parent's value.
+            initialization_scripts (Optional[list[Path]]): Per-command script overrides.
+                None keeps the parent's value.
+            log_level (Optional[int]): Per-command log level override.
+                None keeps the parent's value.
+
+        Returns:
+            FrontendCore: A new context ready for use, without re-reading config files.
+        """
+        derived = object.__new__(FrontendCore)
+
+        # Inherit from parent
+        derived._database = self._database
+        derived._env_files = self._env_files
+        derived._operator = self._operator
+        derived._operation = self._operation
+
+        # Apply overrides or inherit
+        derived._log_level = log_level if log_level is not None else self._log_level
+
+        if initializer_names is not None:
+            loader = ConfigurationLoader.from_dict({"initializers": initializer_names})
+            derived._initializer_configs = loader._initializer_configs
+        else:
+            derived._initializer_configs = self._initializer_configs
+
+        if initialization_scripts is not None:
+            derived._initialization_scripts = initialization_scripts
+        else:
+            derived._initialization_scripts = self._initialization_scripts
+
+        # Share registries (singletons, no need to re-discover)
+        derived._scenario_registry = self._scenario_registry
+        derived._initializer_registry = self._initializer_registry
+        derived._initialized = True
+        derived._silent_reinit = True
+
+        return derived
 
     @property
     def scenario_registry(self) -> ScenarioRegistry:
@@ -214,33 +289,71 @@ async def list_scenarios_async(*, context: FrontendCore) -> list[ScenarioMetadat
 
 
 async def list_initializers_async(
-    *, context: FrontendCore, discovery_path: Optional[Path] = None
+    *,
+    context: FrontendCore,
 ) -> Sequence[InitializerMetadata]:
     """
     List metadata for all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
-        discovery_path: Optional path to discover initializers from.
 
     Returns:
         Sequence of initializer metadata dictionaries describing each initializer class.
     """
-    if discovery_path:
-        from pyrit.registry import InitializerRegistry
-
-        registry = InitializerRegistry(discovery_path=discovery_path)
-        return registry.list_metadata()
-
     if not context._initialized:
         await context.initialize_async()
     return context.initializer_registry.list_metadata()
+
+
+async def list_targets_async(
+    *,
+    context: FrontendCore,
+) -> list[str]:
+    """
+    List available target names from the TargetRegistry.
+
+    Since targets are registered by initializers, this function requires initializers
+    to have been run first. Configure initializers on the FrontendCore context
+    (via initializer_names or initialization_scripts) before calling this function.
+
+    Args:
+        context: PyRIT context with loaded registries.
+
+    Returns:
+        Sorted list of registered target names.
+    """
+    if not context._initialized:
+        await context.initialize_async()
+
+    # Run initializers and/or initialization scripts to populate the target registry
+    if context._initializer_configs or context._initialization_scripts:
+        initializer_instances = []
+        if context._initializer_configs:
+            for config in context._initializer_configs:
+                initializer_class = context.initializer_registry.get_class(config.name)
+                instance = initializer_class()
+                if config.args:
+                    instance.set_params_from_args(args=config.args)
+                initializer_instances.append(instance)
+
+        await initialize_pyrit_async(
+            memory_db_type=context._database,
+            initialization_scripts=context._initialization_scripts,
+            initializers=initializer_instances or None,
+            env_files=context._env_files,
+            silent=getattr(context, "_silent_reinit", False),
+        )
+
+    target_registry = TargetRegistry.get_registry_singleton()
+    return target_registry.get_names()
 
 
 async def run_scenario_async(
     *,
     scenario_name: str,
     context: FrontendCore,
+    target_name: str | None = None,
     scenario_strategies: Optional[list[str]] = None,
     max_concurrency: Optional[int] = None,
     max_retries: Optional[int] = None,
@@ -255,6 +368,9 @@ async def run_scenario_async(
     Args:
         scenario_name: Name of the scenario to run.
         context: PyRIT context with loaded registries.
+        target_name: Name of a registered target from the TargetRegistry to use as the
+            objective target. Targets are registered by initializers (e.g., the 'target'
+            initializer). Use --list-targets to see available names after initializers run.
         scenario_strategies: Optional list of strategy names.
         max_concurrency: Max concurrent operations.
         max_retries: Max retry attempts.
@@ -271,14 +387,11 @@ async def run_scenario_async(
         ScenarioResult: The result of the scenario execution.
 
     Raises:
-        ValueError: If scenario not found or fails to run.
+        ValueError: If scenario not found, target not found, or fails to run.
 
     Note:
         Initializers from PyRITContext will be run before the scenario executes.
     """
-    from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
-    from pyrit.setup import initialize_pyrit_async
-
     # Ensure context is initialized first (loads registries)
     # This must happen BEFORE we run initializers to avoid double-initialization
     if not context._initialized:
@@ -286,15 +399,18 @@ async def run_scenario_async(
 
     # Run initializers before scenario
     initializer_instances = None
-    if context._initializer_names:
-        print(f"Running {len(context._initializer_names)} initializer(s)...")
+    if context._initializer_configs:
+        print(f"Running {len(context._initializer_configs)} initializer(s)...")
         sys.stdout.flush()
 
         initializer_instances = []
 
-        for name in context._initializer_names:
-            initializer_class = context.initializer_registry.get_class(name)
-            initializer_instances.append(initializer_class())
+        for config in context._initializer_configs:
+            initializer_class = context.initializer_registry.get_class(config.name)
+            instance = initializer_class()
+            if config.args:
+                instance.set_params_from_args(args=config.args)
+            initializer_instances.append(instance)
 
     # Re-initialize PyRIT with the scenario-specific initializers
     # This resets memory and applies initializer defaults
@@ -303,7 +419,26 @@ async def run_scenario_async(
         initialization_scripts=context._initialization_scripts,
         initializers=initializer_instances,
         env_files=context._env_files,
+        silent=getattr(context, "_silent_reinit", False),
     )
+
+    # Resolve objective target from TargetRegistry
+    if target_name is not None:
+        target_registry = TargetRegistry.get_registry_singleton()
+        objective_target = target_registry.get_instance_by_name(target_name)
+        if objective_target is None:
+            available_names = target_registry.get_names()
+            if not available_names:
+                raise ValueError(
+                    f"Target '{target_name}' not found. The target registry is empty.\n"
+                    "Targets are registered by initializers. Make sure to include an initializer "
+                    "that registers targets (e.g., --initializers target)."
+                )
+            raise ValueError(
+                f"Target '{target_name}' not found in registry.\nAvailable targets: {', '.join(available_names)}"
+            )
+    else:
+        objective_target = None
 
     # Get scenario class
     scenario_class = context.scenario_registry.get_class(scenario_name)
@@ -314,6 +449,9 @@ async def run_scenario_async(
 
     # Build initialization kwargs (these go to initialize_async, not __init__)
     init_kwargs: dict[str, Any] = {}
+
+    if objective_target is not None:
+        init_kwargs["objective_target"] = objective_target
 
     if scenario_strategies:
         strategy_class = scenario_class.get_strategy_class()
@@ -343,8 +481,6 @@ async def run_scenario_async(
     # - max_dataset_size only: default datasets with overridden limit
     if dataset_names:
         # User specified dataset names - create new config (fetches all unless max_dataset_size set)
-        from pyrit.scenario import DatasetConfiguration
-
         init_kwargs["dataset_config"] = DatasetConfiguration(
             dataset_names=dataset_names,
             max_dataset_size=max_dataset_size,
@@ -424,7 +560,7 @@ def format_scenario_metadata(*, scenario_metadata: ScenarioMetadata) -> None:
     Args:
         scenario_metadata: Dataclass containing scenario metadata.
     """
-    _print_header(text=scenario_metadata.snake_class_name)
+    _print_header(text=scenario_metadata.registry_name)
     print(f"    Class: {scenario_metadata.class_name}")
 
     description = scenario_metadata.class_description
@@ -466,7 +602,7 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
     Args:
         initializer_metadata: Dataclass containing initializer metadata.
     """
-    _print_header(text=initializer_metadata.snake_class_name)
+    _print_header(text=initializer_metadata.registry_name)
     print(f"    Class: {initializer_metadata.class_name}")
     print(f"    Name: {initializer_metadata.display_name}")
     print(f"    Execution Order: {initializer_metadata.execution_order}")
@@ -478,149 +614,16 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
     else:
         print("    Required Environment Variables: None")
 
+    if initializer_metadata.supported_parameters:
+        print("    Supported Parameters:")
+        for param_name, param_desc, param_required, param_default in initializer_metadata.supported_parameters:
+            req_str = " (required)" if param_required else ""
+            default_str = f" [default: {param_default}]" if param_default else ""
+            print(f"      - {param_name}{req_str}{default_str}: {param_desc}")
+
     if initializer_metadata.class_description:
         print("    Description:")
         print(_format_wrapped_text(text=initializer_metadata.class_description, indent="      "))
-
-
-def validate_database(*, database: str) -> str:
-    """
-    Validate database type.
-
-    Args:
-        database: Database type string.
-
-    Returns:
-        Validated database type.
-
-    Raises:
-        ValueError: If database type is invalid.
-    """
-    valid_databases = [IN_MEMORY, SQLITE, AZURE_SQL]
-    if database not in valid_databases:
-        raise ValueError(f"Invalid database type: {database}. Must be one of: {', '.join(valid_databases)}")
-    return database
-
-
-def validate_log_level(*, log_level: str) -> int:
-    """
-    Validate log level and convert to logging constant.
-
-    Args:
-        log_level: Log level string (case-insensitive).
-
-    Returns:
-        Validated log level as logging constant (e.g., logging.WARNING).
-
-    Raises:
-        ValueError: If log level is invalid.
-    """
-    valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-    level_upper = log_level.upper()
-    if level_upper not in valid_levels:
-        raise ValueError(f"Invalid log level: {log_level}. Must be one of: {', '.join(valid_levels)}")
-    level_value: int = getattr(logging, level_upper)
-    return level_value
-
-
-def validate_integer(value: str, *, name: str = "value", min_value: Optional[int] = None) -> int:
-    """
-    Validate and parse an integer value.
-
-    Note: The 'value' parameter is positional (not keyword-only) to allow use with
-    argparse lambdas like: lambda v: validate_integer(v, min_value=1).
-    This is an exception to the PyRIT style guide for argparse compatibility.
-
-    Args:
-        value: String value to parse.
-        name: Parameter name for error messages. Defaults to "value".
-        min_value: Optional minimum value constraint.
-
-    Returns:
-        Parsed integer.
-
-    Raises:
-        ValueError: If value is not a valid integer or violates constraints.
-    """
-    # Reject boolean types explicitly (int(True) == 1, int(False) == 0)
-    if isinstance(value, bool):
-        raise ValueError(f"{name} must be an integer string, got boolean: {value}")
-
-    # Ensure value is a string
-    if not isinstance(value, str):
-        raise ValueError(f"{name} must be a string, got {type(value).__name__}: {value}")
-
-    # Strip whitespace and validate it looks like an integer
-    value = value.strip()
-    if not value:
-        raise ValueError(f"{name} cannot be empty")
-
-    try:
-        int_value = int(value)
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"{name} must be an integer, got: {value}") from e
-
-    if min_value is not None and int_value < min_value:
-        raise ValueError(f"{name} must be at least {min_value}, got: {int_value}")
-
-    return int_value
-
-
-def _argparse_validator(validator_func: Callable[..., Any]) -> Callable[[Any], Any]:
-    """
-    Adapt a validator to argparse by converting ValueError to ArgumentTypeError.
-
-    This decorator adapts our keyword-only validators for use with argparse's type= parameter.
-    It handles two challenges:
-
-    1. Exception Translation: argparse expects ArgumentTypeError, but our validators raise
-       ValueError. This decorator catches ValueError and re-raises as ArgumentTypeError.
-
-    2. Keyword-Only Parameters: PyRIT validators use keyword-only parameters (e.g.,
-       validate_database(*, database: str)), but argparse's type= passes a positional argument.
-       This decorator inspects the function signature and calls the validator with the correct
-       keyword argument name.
-
-    This pattern allows us to:
-    - Keep validators as pure functions with proper type hints
-    - Follow PyRIT style guide (keyword-only parameters)
-    - Reuse the same validation logic in both argparse and non-argparse contexts
-
-    Args:
-        validator_func: Function that raises ValueError on invalid input.
-            Must have at least one parameter (can be keyword-only).
-
-    Returns:
-        Wrapped function that:
-        - Accepts a single positional argument (for argparse compatibility)
-        - Calls validator_func with the correct keyword argument
-        - Raises ArgumentTypeError instead of ValueError
-
-    Raises:
-        ValueError: If validator_func has no parameters.
-    """
-    import inspect
-
-    # Get the first parameter name from the function signature
-    sig = inspect.signature(validator_func)
-    params = list(sig.parameters.keys())
-    if not params:
-        raise ValueError(f"Validator function {validator_func.__name__} must have at least one parameter")
-    first_param = params[0]
-
-    def wrapper(value: Any) -> Any:
-        import argparse as ap
-
-        try:
-            # Call with keyword argument to support keyword-only parameters
-            return validator_func(**{first_param: value})
-        except ValueError as e:
-            raise ap.ArgumentTypeError(str(e)) from e
-
-    # Preserve function metadata for better debugging
-    wrapper.__name__ = getattr(validator_func, "__name__", "argparse_validator")
-    wrapper.__doc__ = getattr(validator_func, "__doc__", None)
-    return wrapper
 
 
 def resolve_initialization_scripts(script_paths: list[str]) -> list[Path]:
@@ -636,90 +639,7 @@ def resolve_initialization_scripts(script_paths: list[str]) -> list[Path]:
     Raises:
         FileNotFoundError: If a script path does not exist.
     """
-    from pyrit.registry import InitializerRegistry
-
     return InitializerRegistry.resolve_script_paths(script_paths=script_paths)
-
-
-def resolve_env_files(*, env_file_paths: list[str]) -> list[Path]:
-    """
-    Resolve environment file paths to absolute Path objects.
-
-    Args:
-        env_file_paths: List of environment file path strings.
-
-    Returns:
-        List of resolved Path objects.
-
-    Raises:
-        ValueError: If any path does not exist.
-    """
-    resolved_paths = []
-    for path_str in env_file_paths:
-        path = Path(path_str).resolve()
-        if not path.exists():
-            raise ValueError(f"Environment file not found: {path}")
-        resolved_paths.append(path)
-    return resolved_paths
-
-
-# Argparse-compatible validators
-#
-# These wrappers adapt our core validators (which use keyword-only parameters and raise
-# ValueError) for use with argparse's type= parameter (which passes positional arguments
-# and expects ArgumentTypeError).
-#
-# Pattern:
-#   - Use core validators (validate_database, validate_log_level, etc.) in regular code
-#   - Use these _argparse versions ONLY in parser.add_argument(..., type=...)
-#
-# The lambda wrappers for validate_integer are necessary because we need to partially
-# apply the min_value parameter while still allowing the decorator to work correctly.
-validate_database_argparse = _argparse_validator(validate_database)
-validate_log_level_argparse = _argparse_validator(validate_log_level)
-positive_int = _argparse_validator(lambda v: validate_integer(v, min_value=1))
-non_negative_int = _argparse_validator(lambda v: validate_integer(v, min_value=0))
-resolve_env_files_argparse = _argparse_validator(resolve_env_files)
-
-
-def parse_memory_labels(json_string: str) -> dict[str, str]:
-    """
-    Parse memory labels from a JSON string.
-
-    Args:
-        json_string: JSON string containing label key-value pairs.
-
-    Returns:
-        Dictionary of labels.
-
-    Raises:
-        ValueError: If JSON is invalid or contains non-string values.
-    """
-    try:
-        labels = json.loads(json_string)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON for memory labels: {e}") from e
-
-    if not isinstance(labels, dict):
-        raise ValueError("Memory labels must be a JSON object (dictionary)")
-
-    # Validate all keys and values are strings
-    for key, value in labels.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
-
-    return labels
-
-
-def get_default_initializer_discovery_path() -> Path:
-    """
-    Get the default path for discovering initializers.
-
-    Returns:
-        Path to the scenarios initializers directory.
-    """
-    PYRIT_PATH = Path(__file__).parent.parent.resolve()
-    return PYRIT_PATH / "setup" / "initializers" / "scenarios"
 
 
 async def print_scenarios_list_async(*, context: FrontendCore) -> int:
@@ -747,18 +667,17 @@ async def print_scenarios_list_async(*, context: FrontendCore) -> int:
     return 0
 
 
-async def print_initializers_list_async(*, context: FrontendCore, discovery_path: Optional[Path] = None) -> int:
+async def print_initializers_list_async(*, context: FrontendCore) -> int:
     """
     Print a formatted list of all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
-        discovery_path: Optional path to discover initializers from.
 
     Returns:
         Exit code (0 for success).
     """
-    initializers = await list_initializers_async(context=context, discovery_path=discovery_path)
+    initializers = await list_initializers_async(context=context)
 
     if not initializers:
         print("No initializers found.")
@@ -773,149 +692,49 @@ async def print_initializers_list_async(*, context: FrontendCore, discovery_path
     return 0
 
 
-# Shared argument help text
-ARG_HELP = {
-    "config_file": (
-        "Path to a YAML configuration file. Allows specifying database, initializers (with args), "
-        "initialization scripts, and env files. CLI arguments override config file values. "
-        "If not specified, ~/.pyrit/.pyrit_conf is loaded if it exists."
-    ),
-    "initializers": "Built-in initializer names to run before the scenario (e.g., openai_objective_target)",
-    "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
-    "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
-    "override earlier ones.",
-    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13)",
-    "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
-    "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
-    "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
-    "database": "Database type to use for memory storage",
-    "log_level": "Logging level",
-    "dataset_names": "List of dataset names to use instead of scenario defaults (e.g., harmbench advbench). "
-    "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
-    "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
-    "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
-}
-
-
-def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
+async def print_targets_list_async(*, context: FrontendCore) -> int:
     """
-    Parse run command arguments from a string (for shell mode).
+    Print a formatted list of all available targets from the TargetRegistry.
+
+    Targets are registered by initializers, so this requires initializers to run first.
+    If no targets are found, prints a hint about using the 'target' initializer.
 
     Args:
-        args_string: Space-separated argument string (e.g., "scenario_name --initializers foo --strategies bar").
+        context: PyRIT context with loaded registries.
 
     Returns:
-        Dictionary with parsed arguments:
-            - scenario_name: str
-            - initializers: Optional[list[str]]
-            - initialization_scripts: Optional[list[str]]
-            - scenario_strategies: Optional[list[str]]
-            - max_concurrency: Optional[int]
-            - max_retries: Optional[int]
-            - memory_labels: Optional[dict[str, str]]
-            - database: Optional[str]
-            - log_level: Optional[int]
-            - dataset_names: Optional[list[str]]
-            - max_dataset_size: Optional[int]
-
-    Raises:
-        ValueError: If parsing or validation fails.
+        Exit code (0 for success).
     """
-    parts = args_string.split()
+    target_names = await list_targets_async(context=context)
 
-    if not parts:
-        raise ValueError("No scenario name provided")
+    if not target_names:
+        print("\nNo targets found in registry.")
+        print(
+            "\nTargets are registered by initializers. Include an initializer that registers "
+            "targets, for example:\n  --initializers target\n"
+        )
+        return 0
 
-    result: dict[str, Any] = {
-        "scenario_name": parts[0],
-        "initializers": None,
-        "initialization_scripts": None,
-        "env_files": None,
-        "scenario_strategies": None,
-        "max_concurrency": None,
-        "max_retries": None,
-        "memory_labels": None,
-        "database": None,
-        "log_level": None,
-        "dataset_names": None,
-        "max_dataset_size": None,
-    }
+    target_registry = TargetRegistry.get_registry_singleton()
 
-    i = 1
-    while i < len(parts):
-        if parts[i] == "--initializers":
-            # Collect initializers until next flag
-            result["initializers"] = []
-            i += 1
-            while i < len(parts) and not parts[i].startswith("--"):
-                result["initializers"].append(parts[i])
-                i += 1
-        elif parts[i] == "--initialization-scripts":
-            # Collect script paths until next flag
-            result["initialization_scripts"] = []
-            i += 1
-            while i < len(parts) and not parts[i].startswith("--"):
-                result["initialization_scripts"].append(parts[i])
-                i += 1
-        elif parts[i] == "--env-files":
-            # Collect env file paths until next flag
-            result["env_files"] = []
-            i += 1
-            while i < len(parts) and not parts[i].startswith("--"):
-                result["env_files"].append(parts[i])
-                i += 1
-        elif parts[i] in ("--strategies", "-s"):
-            # Collect strategies until next flag
-            result["scenario_strategies"] = []
-            i += 1
-            while i < len(parts) and not parts[i].startswith("--") and parts[i] != "-s":
-                result["scenario_strategies"].append(parts[i])
-                i += 1
-        elif parts[i] == "--max-concurrency":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--max-concurrency requires a value")
-            result["max_concurrency"] = validate_integer(parts[i], name="--max-concurrency", min_value=1)
-            i += 1
-        elif parts[i] == "--max-retries":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--max-retries requires a value")
-            result["max_retries"] = validate_integer(parts[i], name="--max-retries", min_value=0)
-            i += 1
-        elif parts[i] == "--memory-labels":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--memory-labels requires a value")
-            result["memory_labels"] = parse_memory_labels(parts[i])
-            i += 1
-        elif parts[i] == "--database":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--database requires a value")
-            result["database"] = validate_database(database=parts[i])
-            i += 1
-        elif parts[i] == "--log-level":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--log-level requires a value")
-            result["log_level"] = validate_log_level(log_level=parts[i])
-            i += 1
-        elif parts[i] == "--dataset-names":
-            # Collect dataset names until next flag
-            result["dataset_names"] = []
-            i += 1
-            while i < len(parts) and not parts[i].startswith("--"):
-                result["dataset_names"].append(parts[i])
-                i += 1
-        elif parts[i] == "--max-dataset-size":
-            i += 1
-            if i >= len(parts):
-                raise ValueError("--max-dataset-size requires a value")
-            result["max_dataset_size"] = validate_integer(parts[i], name="--max-dataset-size", min_value=1)
-            i += 1
-        else:
-            logger.warning(f"Unknown argument: {parts[i]}")
-            i += 1
+    print("\nRegistered Targets:")
+    print("=" * 80)
+    for name in target_names:
+        target = target_registry.get_instance_by_name(name)
+        if target is None:
+            print(f"  {name}")
+            continue
 
-    return result
+        model = target._underlying_model or target._model_name or ""
+        endpoint = target._endpoint or ""
+        class_name = type(target).__name__
+
+        _print_header(text=name)
+        print(f"    Class: {class_name}")
+        if model:
+            print(f"    Model: {model}")
+        if endpoint:
+            print(f"    Endpoint: {endpoint}")
+    print("\n" + "=" * 80)
+    print(f"\nTotal targets: {len(target_names)}")
+    return 0

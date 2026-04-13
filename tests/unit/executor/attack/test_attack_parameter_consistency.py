@@ -912,9 +912,9 @@ def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) 
 
     text_values = []
     for msg in conversation:
-        for piece in msg.message_pieces:
-            if piece.original_value_data_type == "text":
-                text_values.append(piece.original_value)
+        text_values.extend(
+            piece.original_value for piece in msg.message_pieces if piece.original_value_data_type == "text"
+        )
 
     return text_values
 

@@ -19,7 +19,6 @@
 #
 # The following example demonstrates this by manually entering prompts into the database and then scoring them.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../memory/0_memory.md).
 
@@ -45,9 +44,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 # Get prompt IDs of the prompts sent by evaluating results
-conversation_ids = []
-for result in results:
-    conversation_ids.append(result.conversation_id)
+conversation_ids = [result.conversation_id for result in results]
 
 memory = CentralMemory.get_memory_instance()
 
@@ -57,8 +54,7 @@ for id in conversation_ids:
         conversation_id=id,
     )
 
-    for piece in pieces:
-        prompt_ids.append(piece.id)
+    prompt_ids.extend(piece.id for piece in pieces)
 
 # %% [markdown]
 # Once the prompts are in the database (which again, is often automatic) we can use `BatchScorer` to score them with whatever scorers we want. It works in parallel with batches.
@@ -96,7 +92,7 @@ for score in scores:
 #
 # This allows users to score response to prompts based on a number of filters (including memory labels, which are shown in this next example).
 #
-# Remember that `GLOBAL_MEMORY_LABELS`, which will be assigned to every prompt sent through an attack, can be set as an environment variable (.env or env.local), and any additional custom memory labels can be passed in the `PromptSendingAttack` `execute_async` function. (Custom memory labels passed in will have precedence over `GLOBAL_MEMORY_LABELS` in case of collisions.) For more information on memory labels, see the [Memory Labels Guide](../memory/5_memory_labels.ipynb).
+# Remember that `GLOBAL_MEMORY_LABELS`, which will be assigned to every prompt sent through an attack, can be set as an environment variable (.env or env.local), and any additional custom memory labels can be passed in the `PromptSendingAttack` `execute_async` function. (Custom memory labels passed in will have precedence over `GLOBAL_MEMORY_LABELS` in case of collisions.) For more information on memory labels, see the [Advanced Memory Guide](../memory/5_advanced_memory.ipynb).
 #
 # All filters include:
 # - Attack ID
@@ -112,7 +108,6 @@ for score in scores:
 # - Converted Value SHA256
 
 # %%
-import uuid
 
 from pyrit.memory import CentralMemory
 from pyrit.prompt_target import OpenAIChatTarget
@@ -129,9 +124,9 @@ from pyrit.score import (  # noqa: F401
 prompt_target = OpenAIChatTarget()
 
 # These labels can be set as an environment variable (or via run_attacks_async as shown below), which will be associated with each prompt and assist in retrieving or scoring later.
-test_op_name = str(uuid.uuid4())
-test_user_name = str(uuid.uuid4())
-memory_labels = {"op_name": test_op_name, "username": test_user_name}
+operation = "op_trash_panda"
+operator = "roakey"
+memory_labels = {"operation": operation, "operator": operator}
 
 attack = PromptSendingAttack(objective_target=prompt_target)
 

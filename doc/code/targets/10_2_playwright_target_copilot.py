@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # Playwright Copilot Target - optional
+# # 10.2 Playwright Copilot Target - optional
 #
 # Similar to the more generic `PlaywrightTarget`, `PlaywrightCopilotTarget` uses Playwright for browser automation.
 # It is built specifically for testing Microsoft's Copilots (currently supports M365 and Consumer Copilot).

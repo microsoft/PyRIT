@@ -6,7 +6,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import MutableSequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from unit.mocks import MockPromptTarget, get_mock_target, get_sample_conversations
@@ -40,7 +40,7 @@ def test_id_set():
 
 
 def test_datetime_set():
-    now = datetime.now()
+    now = datetime.now(tz=timezone.utc)
     time.sleep(0.1)
     entry = MessagePiece(
         role="user",
@@ -153,7 +153,7 @@ def test_hashes_generated_files_unknown_type():
         MessagePiece(
             role="user",
             original_value="Hello1",
-            original_value_data_type="new_unknown_type",  # type: ignore
+            original_value_data_type="new_unknown_type",  # type: ignore[arg-type]
         )
 
 
@@ -363,7 +363,7 @@ def test_message_piece_no_roles():
         Message(
             message_pieces=[
                 MessagePiece(
-                    role="",  # type: ignore
+                    role="",  # type: ignore[arg-type]
                     converted_value_data_type="text",
                     original_value="Hello",
                     converted_value="Hello",
@@ -402,7 +402,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id="prompt-1",
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now() - timedelta(seconds=10),
+            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
             sequence=2,
         ),
         MessagePiece(
@@ -410,7 +410,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id="prompt-2",
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now() - timedelta(seconds=10),
+            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
             sequence=1,
         ),
         MessagePiece(
@@ -418,7 +418,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id="prompt-3",
             original_value="Hello 3",
             conversation_id="conv1",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(tz=timezone.utc),
             sequence=3,
         ),
     ]
@@ -460,7 +460,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 4",
             conversation_id="conv2",
-            timestamp=datetime.now() - timedelta(seconds=5),
+            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=5),
             sequence=2,
             id="4",
         ),
@@ -468,7 +468,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now() - timedelta(seconds=15),
+            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=15),
             sequence=1,
             id="1",
         ),
@@ -476,7 +476,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 3",
             conversation_id="conv2",
-            timestamp=datetime.now() - timedelta(seconds=10),
+            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
             sequence=1,
             id="3",
         ),
@@ -484,7 +484,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now() - timedelta(seconds=10),
+            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
             sequence=2,
             id="2",
         ),
@@ -529,7 +529,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
 
 
 def test_order_message_pieces_by_conversation_same_timestamp():
-    timestamp = datetime.now()
+    timestamp = datetime.now(tz=timezone.utc)
 
     pieces = [
         MessagePiece(
@@ -601,8 +601,8 @@ def test_order_message_pieces_by_conversation_same_timestamp():
         ),
     ]
 
-    sorted = sort_message_pieces(pieces)
-    assert sorted == expected
+    sorted_pieces = sort_message_pieces(pieces)
+    assert sorted_pieces == expected
 
 
 def test_order_message_pieces_by_conversation_empty_list():
@@ -621,10 +621,20 @@ def test_order_message_pieces_by_conversation_single_message():
 def test_order_message_pieces_by_conversation_same_timestamp_different_sequences():
     pieces = [
         MessagePiece(
-            role="user", original_value="Hello 2", conversation_id="conv1", timestamp=datetime.now(), sequence=2, id="2"
+            role="user",
+            original_value="Hello 2",
+            conversation_id="conv1",
+            timestamp=datetime.now(tz=timezone.utc),
+            sequence=2,
+            id="2",
         ),
         MessagePiece(
-            role="user", original_value="Hello 1", conversation_id="conv1", timestamp=datetime.now(), sequence=1, id="1"
+            role="user",
+            original_value="Hello 1",
+            conversation_id="conv1",
+            timestamp=datetime.now(tz=timezone.utc),
+            sequence=1,
+            id="1",
         ),
     ]
     for i, piece in enumerate(pieces):
@@ -685,7 +695,7 @@ def test_message_piece_to_dict():
         response_error="none",
         originator="undefined",
         original_prompt_id=uuid.uuid4(),
-        timestamp=datetime.now(),
+        timestamp=datetime.now(tz=timezone.utc),
         scores=[
             Score(
                 id=str(uuid.uuid4()),
@@ -700,7 +710,7 @@ def test_message_piece_to_dict():
                     class_module="pyrit.score",
                 ),
                 message_piece_id=str(uuid.uuid4()),
-                timestamp=datetime.now(),
+                timestamp=datetime.now(tz=timezone.utc),
                 objective="Task1",
             )
         ],

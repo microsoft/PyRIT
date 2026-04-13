@@ -684,6 +684,24 @@ class TestAttackExecution:
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
 
+    @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
+
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(return_value=sample_response)
+        attack._evaluate_response_async = AsyncMock(return_value=None)
+
+        result = await attack._perform_async(context=basic_context)
+
+        # Verify atomic_attack_identifier is set and has the correct AtomicAttack format
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConverterIntegration:
@@ -945,7 +963,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
         attack._perform_async = AsyncMock(return_value=mock_result)
@@ -1025,7 +1042,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id="test-id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
             last_response=sample_response.get_piece(),
         )

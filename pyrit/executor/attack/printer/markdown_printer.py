@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
@@ -89,8 +89,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             rationale_lines = score.score_rationale.split("\n")
             if len(rationale_lines) > 1:
                 lines.append(f"{indent}- **Rationale:**")
-                for line in rationale_lines:
-                    lines.append(f"{indent}  {line}")
+                lines.extend(f"{indent}  {line}" for line in rationale_lines)
             else:
                 lines.append(f"{indent}- **Rationale:** {score.score_rationale}")
 
@@ -171,7 +170,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         # Footer
         markdown_lines.append("\n---")
-        markdown_lines.append(f"*Report generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
         self._render_markdown(markdown_lines)
 
@@ -273,8 +273,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             List[str]: List of markdown strings representing the system message.
         """
         lines = ["\n### System Message\n"]
-        for piece in message.message_pieces:
-            lines.append(f"{piece.converted_value}\n")
+        lines.extend(f"{piece.converted_value}\n" for piece in message.message_pieces)
         return lines
 
     async def _format_user_message_async(self, *, message: Message, turn_number: int) -> list[str]:
@@ -461,8 +460,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
             if scores:
                 lines.append("\n##### Scores\n")
-                for score in scores:
-                    lines.append(self._format_score(score, indent=""))
+                lines.extend(self._format_score(score, indent="") for score in scores)
                 lines.append("")
         return lines
 
@@ -489,7 +487,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         markdown_lines.append("|-------|-------|")
         markdown_lines.append(f"| **Objective** | {result.objective} |")
 
-        attack_type = result.attack_identifier.class_name if result.attack_identifier else "Unknown"
+        attack_type = (
+            result.get_attack_strategy_identifier().class_name if result.get_attack_strategy_identifier() else "Unknown"
+        )
 
         markdown_lines.append(f"| **Attack Type** | `{attack_type}` |")
         markdown_lines.append(f"| **Conversation ID** | `{result.conversation_id}` |")
@@ -572,8 +572,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
                 scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
                 if scores:
                     markdown_lines.append("\n**Score:**\n")
-                    for score in scores:
-                        markdown_lines.append(self._format_score(score, indent=""))
+                    markdown_lines.extend(self._format_score(score, indent="") for score in scores)
 
         return markdown_lines
 

@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import Any, Optional, cast
 
 from transformers import (
     AutoModelForCausalLM,
@@ -20,12 +20,10 @@ from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    import torch
 
 
 class HuggingFaceChatTarget(PromptChatTarget):
@@ -33,6 +31,12 @@ class HuggingFaceChatTarget(PromptChatTarget):
     The HuggingFaceChatTarget interacts with HuggingFace models, specifically for conducting red teaming activities.
     Inherits from PromptTarget to comply with the current design standards.
     """
+
+    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_system_prompt=True,
+    )
 
     # Class-level cache for model and tokenizer
     _cached_model = None
@@ -60,9 +64,10 @@ class HuggingFaceChatTarget(PromptChatTarget):
         skip_special_tokens: bool = True,
         trust_remote_code: bool = False,
         device_map: Optional[str] = None,
-        torch_dtype: Optional["torch.dtype"] = None,
+        torch_dtype: Optional[Any] = None,
         attn_implementation: Optional[str] = None,
         max_requests_per_minute: Optional[int] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the HuggingFaceChatTarget.
@@ -83,6 +88,8 @@ class HuggingFaceChatTarget(PromptChatTarget):
             torch_dtype (Optional[torch.dtype]): Torch data type for model weights.
             attn_implementation (Optional[str]): Attention implementation type.
             max_requests_per_minute (Optional[int]): The maximum number of requests per minute. Defaults to None.
+            custom_capabilities (Optional[TargetCapabilities]): Override the default capabilities for this target
+            instance. Defaults to None
 
         Raises:
             ValueError: If neither or both of `model_id` and `model_path` are provided.
@@ -90,7 +97,11 @@ class HuggingFaceChatTarget(PromptChatTarget):
         """
         model_name = model_id if model_id else model_path if model_path else ""
 
-        super().__init__(max_requests_per_minute=max_requests_per_minute, model_name=model_name)
+        super().__init__(
+            max_requests_per_minute=max_requests_per_minute,
+            model_name=model_name,
+            custom_capabilities=custom_capabilities,
+        )
 
         if not model_id and not model_path:
             raise ValueError("Either `model_id` or `model_path` must be provided.")
@@ -336,7 +347,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             ).strip()
 
             if not assistant_response:
-                raise EmptyResponseException()
+                raise EmptyResponseException
 
             logger.info(f"Assistant's response: {assistant_response}")
 
@@ -388,25 +399,6 @@ class HuggingFaceChatTarget(PromptChatTarget):
         logger.error(error_message)
         raise ValueError(error_message)
 
-    def _validate_request(self, *, message: Message) -> None:
-        """
-        Validate the provided message.
-
-        Args:
-            message: The message to validate.
-
-        Raises:
-            ValueError: If the message does not contain exactly one text piece.
-            ValueError: If the message piece is not of type text.
-        """
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
     def is_json_response_supported(self) -> bool:
         """
         Check if the target supports JSON as a response format.
@@ -414,7 +406,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         Returns:
             bool: True if JSON response is supported, False otherwise.
         """
-        return False
+        return self.capabilities.supports_json_output
 
     @classmethod
     def enable_cache(cls) -> None:

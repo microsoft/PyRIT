@@ -9,7 +9,7 @@ This is the new, cleaner design that leverages the params_type architecture.
 
 import asyncio
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -56,6 +56,13 @@ class AttackExecutorResult(Generic[AttackResultT]):
 
     completed_results: list[AttackResultT]
     incomplete_objectives: list[tuple[str, BaseException]]
+    input_indices: list[int] = field(default_factory=list)
+    """Maps each completed result to its position in the original input sequence.
+
+    ``input_indices[i]`` is the index in the original objectives/seed_groups/params
+    list that produced ``completed_results[i]``.  When some inputs fail, this lets
+    callers correlate results back to the specific input that produced them.
+    """
 
     def __iter__(self) -> Iterator[AttackResultT]:
         """
@@ -331,16 +338,19 @@ class AttackExecutor:
         """
         completed: list[AttackStrategyResultT] = []
         incomplete: list[tuple[str, BaseException]] = []
+        completed_indices: list[int] = []
 
-        for objective, result in zip(objectives, results_or_exceptions, strict=False):
+        for i, (objective, result) in enumerate(zip(objectives, results_or_exceptions, strict=False)):
             if isinstance(result, BaseException):
                 incomplete.append((objective, result))
             else:
                 completed.append(result)
+                completed_indices.append(i)
 
         executor_result: AttackExecutorResult[AttackStrategyResultT] = AttackExecutorResult(
             completed_results=completed,
             incomplete_objectives=incomplete,
+            input_indices=completed_indices,
         )
 
         if not return_partial_on_failure:

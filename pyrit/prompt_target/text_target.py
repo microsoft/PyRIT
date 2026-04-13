@@ -5,10 +5,11 @@ import csv
 import json
 import sys
 from pathlib import Path
-from typing import IO
+from typing import IO, Optional
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 
 
 class TextTarget(PromptTarget):
@@ -24,14 +25,17 @@ class TextTarget(PromptTarget):
         self,
         *,
         text_stream: IO[str] = sys.stdout,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the TextTarget.
 
         Args:
             text_stream (IO[str]): The text stream to write prompts to. Defaults to sys.stdout.
+            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+                this target instance. Defaults to None.
         """
-        super().__init__()
+        super().__init__(custom_capabilities=custom_capabilities)
         self._text_stream = text_stream
 
     async def send_prompt_async(self, *, message: Message) -> list[Message]:
@@ -72,13 +76,13 @@ class TextTarget(PromptTarget):
                 labels = json.loads(labels_str) if labels_str else None
 
                 message_piece = MessagePiece(
-                    role=row["role"],  # type: ignore
+                    role=row["role"],  # type: ignore[arg-type]
                     original_value=row["value"],
-                    original_value_data_type=row.get["data_type", None],  # type: ignore
+                    original_value_data_type=row.get("data_type", None),  # type: ignore[arg-type]
                     conversation_id=row.get("conversation_id", None),
                     sequence=int(sequence_str) if sequence_str else None,
                     labels=labels,
-                    response_error=row.get("response_error", None),  # type: ignore
+                    response_error=row.get("response_error", None),  # type: ignore[arg-type]
                     prompt_target_identifier=self.get_identifier(),
                 )
                 message_pieces.append(message_piece)

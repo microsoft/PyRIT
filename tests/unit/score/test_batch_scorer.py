@@ -127,7 +127,7 @@ class TestBatchScorerScoreResponsesByFilters:
             with pytest.raises(ValueError, match="No entries match the provided filters. Please check your filters."):
                 await batch_scorer.score_responses_by_filters_async(
                     scorer=MagicMock(),
-                    labels={"op_name": "nonexistent_op", "user_name": "nonexistent_user"},
+                    labels={"operation": "nonexistent_op", "operator": "nonexistent_user"},
                 )
 
 

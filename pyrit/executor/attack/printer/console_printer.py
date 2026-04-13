@@ -3,7 +3,7 @@
 
 import json
 import textwrap
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from colorama import Back, Fore, Style
@@ -285,10 +285,11 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         self._print_colored(f"{self._indent}📋 Basic Information", Style.BRIGHT)
         self._print_colored(f"{self._indent * 2}• Objective: {result.objective}", Fore.CYAN)
 
-        # Extract attack type name from attack_identifier
+        # Extract attack type name from atomic_attack_identifier
         attack_type = "Unknown"
-        if result.attack_identifier:
-            attack_type = result.attack_identifier.class_name
+        attack_strategy_id = result.get_attack_strategy_identifier()
+        if attack_strategy_id:
+            attack_type = attack_strategy_id.class_name
 
         self._print_colored(f"{self._indent * 2}• Attack Type: {attack_type}", Fore.CYAN)
         self._print_colored(f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN)
@@ -345,10 +346,10 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
 
         Displays the current timestamp when the report was generated.
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print()
         self._print_colored("─" * self._width, Style.DIM, Fore.WHITE)
-        footer_text = f"Report generated at: {timestamp}"
+        footer_text = f"Report generated at: {timestamp} UTC"
         self._print_colored(footer_text.center(self._width), Style.DIM, Fore.WHITE)
 
     def _print_section_header(self, title: str) -> None:
