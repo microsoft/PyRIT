@@ -222,7 +222,7 @@ class TextJailBreak:
             ValueError: If no jailbreak templates are found in the jailbreak directory.
             ValueError: If n is larger than the number of templates that exist.
         """
-        jailbreak_template_names = [str(f.stem) + ".yaml" for f in JAILBREAK_TEMPLATES_PATH.glob("*.yaml")]
+        jailbreak_template_names = sorted(cls._get_template_cache().keys())
         if not jailbreak_template_names:
             raise ValueError("No jailbreak templates found in the jailbreak directory")
 
@@ -232,7 +232,7 @@ class TextJailBreak:
                     f"Attempted to pull {num_templates} jailbreaks from a dataset"
                     f" with only {len(jailbreak_template_names)} jailbreaks!"
                 )
-            jailbreak_template_names = random.choices(jailbreak_template_names, k=num_templates)
+            jailbreak_template_names = random.sample(jailbreak_template_names, k=num_templates)
         return jailbreak_template_names
 
     def get_jailbreak_system_prompt(self) -> str:
