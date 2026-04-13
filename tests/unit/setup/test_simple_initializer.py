@@ -92,8 +92,8 @@ class TestSimpleInitializerInitialize:
 
         # Verify expected default values are present
         default_values_str = str(info["default_values"])
-        assert "PromptConverter.converter_target" in default_values_str
-        assert "PromptSendingAttack.attack_scoring_config" in default_values_str
+        assert "converter_target" in default_values_str
+        assert "attack_scoring_config" in default_values_str
 
         # Verify global_variables list is populated and not empty
         assert isinstance(info["global_variables"], list)

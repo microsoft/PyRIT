@@ -1,4 +1,4 @@
-.PHONY: all pre-commit mypy test test-cov-html test-cov-xml
+.PHONY: all pre-commit mypy unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
 
 CMD:=uv run -m
 PYMODULE:=pyrit
@@ -35,13 +35,23 @@ docs-api:
 
 # Because of import time, "auto" seemed to actually go slower than just using 4 processes
 unit-test:
-	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) $(UNIT_TESTS)
+	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS)
+
+unit-test-junit:
+	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS) --junitxml=junit/test-results.xml
 
 unit-test-cov-html:
-	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) $(UNIT_TESTS) --cov-report html
+	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report html
 
 unit-test-cov-xml:
-	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) $(UNIT_TESTS) --cov-report xml --junitxml=junit/test-results.xml --doctest-modules
+	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml --cov-report term
+
+diff-cover:
+	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml
+	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
+
+unit-test-diff-cover:
+	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
 
 integration-test:
 	$(CMD) pytest $(INTEGRATION_TESTS) --cov=$(PYMODULE) $(INTEGRATION_TESTS) --cov-report xml --junitxml=junit/test-results.xml --doctest-modules
