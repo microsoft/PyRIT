@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
 from io import StringIO
 
 from pyrit.common.csv_helper import read_csv, write_csv
@@ -42,3 +43,17 @@ def test_write_then_read_roundtrip():
     buf.seek(0)
     result = read_csv(buf)
     assert result == examples
+
+
+def test_write_csv_empty_examples_writes_nothing():
+    file = io.StringIO()
+    write_csv(file, [])
+    assert file.getvalue() == ""
+
+
+def test_write_csv_writes_header_and_rows():
+    file = io.StringIO()
+    write_csv(file, [{"name": "alice", "role": "admin"}])
+    lines = file.getvalue().strip().splitlines()
+    assert lines[0] == "name,role"
+    assert lines[1] == "alice,admin"

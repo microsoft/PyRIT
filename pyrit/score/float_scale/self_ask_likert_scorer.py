@@ -140,6 +140,18 @@ class LikertScalePaths(enum.Enum):
         Path(HARM_DEFINITION_PATH, "phishing.yaml").resolve(),
         None,
     )
+    AI_SUPPLY_CHAIN_SCALE = (
+        Path(HARM_DEFINITION_PATH, "ai_supply_chain.yaml").resolve(),
+        None,
+    )
+    AI_SYSTEM_TRANSPARENCY_SCALE = (
+        Path(HARM_DEFINITION_PATH, "ai_system_transparency.yaml").resolve(),
+        None,
+    )
+    AI_GOVERNANCE_FAILURE_SCALE = (
+        Path(HARM_DEFINITION_PATH, "ai_governance_failure.yaml").resolve(),
+        None,
+    )
 
     @property
     def path(self) -> Path:
