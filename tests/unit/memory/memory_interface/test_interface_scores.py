@@ -12,6 +12,7 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
     MessagePiece,
@@ -227,3 +228,89 @@ async def test_get_seeds_no_filters(sqlite_instance: MemoryInterface):
     assert len(result) == 2
     assert result[0].value == "prompt1"
     assert result[1].value == "prompt2"
+
+
+def test_get_scores_by_scorer_identifier_filter(
+    sqlite_instance: MemoryInterface,
+    sample_conversation_entries: Sequence[PromptMemoryEntry],
+):
+    prompt_id = sample_conversation_entries[0].id
+    sqlite_instance._insert_entries(entries=sample_conversation_entries)
+
+    score_a = Score(
+        score_value="0.9",
+        score_value_description="High",
+        score_type="float_scale",
+        score_category=["cat_a"],
+        score_rationale="Rationale A",
+        score_metadata={},
+        scorer_class_identifier=_test_scorer_id("ScorerAlpha"),
+        message_piece_id=prompt_id,
+    )
+    score_b = Score(
+        score_value="0.1",
+        score_value_description="Low",
+        score_type="float_scale",
+        score_category=["cat_b"],
+        score_rationale="Rationale B",
+        score_metadata={},
+        scorer_class_identifier=_test_scorer_id("ScorerBeta"),
+        message_piece_id=prompt_id,
+    )
+
+    sqlite_instance.add_scores_to_memory(scores=[score_a, score_b])
+
+    # Filter by exact class_name match
+    results = sqlite_instance.get_scores(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.SCORER,
+                property_path="$.class_name",
+                value="ScorerAlpha",
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].score_value == "0.9"
+
+    # Filter by partial class_name match
+    results = sqlite_instance.get_scores(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.SCORER,
+                property_path="$.class_name",
+                value="Scorer",
+                partial_match=True,
+            )
+        ],
+    )
+    assert len(results) == 2
+
+    # Filter by hash
+    scorer_hash = score_a.scorer_class_identifier.hash
+    results = sqlite_instance.get_scores(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.SCORER,
+                property_path="$.hash",
+                value=scorer_hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].score_value == "0.9"
+
+    # No match
+    results = sqlite_instance.get_scores(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.SCORER,
+                property_path="$.class_name",
+                value="NonExistent",
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 0

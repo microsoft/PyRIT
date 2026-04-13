@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "0.12.1.dev0"
+version = "0.13.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },

@@ -91,7 +91,7 @@ class TestManyShotJailbreakAttackInitialization:
     """Tests for ManyShotJailbreakAttack initialization"""
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     def test_init_with_default_parameters(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template, sample_many_shot_examples
     ):
@@ -115,7 +115,7 @@ class TestManyShotJailbreakAttackInitialization:
         mock_fetch_dataset.assert_called_once()
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     def test_init_with_custom_example_count(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template, sample_many_shot_examples
     ):
@@ -169,7 +169,7 @@ class TestManyShotJailbreakAttackInitialization:
         assert attack._examples == custom_examples
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     def test_init_raises_error_with_empty_examples(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template
     ):
@@ -194,7 +194,7 @@ class TestManyShotJailbreakAttackParamsType:
     """Tests for params_type in ManyShotJailbreakAttack"""
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     def test_params_type_excludes_next_message(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template, sample_many_shot_examples
     ):
@@ -209,7 +209,7 @@ class TestManyShotJailbreakAttackParamsType:
         assert "next_message" not in fields
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     def test_params_type_excludes_prepended_conversation(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template, sample_many_shot_examples
     ):
@@ -224,7 +224,7 @@ class TestManyShotJailbreakAttackParamsType:
         assert "prepended_conversation" not in fields
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     def test_params_type_includes_objective(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template, sample_many_shot_examples
     ):
@@ -244,7 +244,7 @@ class TestManyShotJailbreakAttackExecution:
     """Tests for attack execution"""
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     @pytest.mark.asyncio
     async def test_perform_attack_renders_template_correctly(
         self,
@@ -292,7 +292,7 @@ class TestManyShotJailbreakAttackExecution:
             assert result == mock_result
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     @pytest.mark.asyncio
     async def test_perform_attack_with_custom_examples(
         self, mock_fetch_dataset, mock_from_yaml, mock_objective_target, mock_template, basic_context
@@ -331,7 +331,7 @@ class TestManyShotJailbreakAttackLifecycle:
     """Tests for the complete attack lifecycle"""
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     @pytest.mark.asyncio
     async def test_execute_async_successful_lifecycle(
         self,
@@ -375,7 +375,7 @@ class TestManyShotJailbreakAttackWithConverters:
     """Tests for attack with converters"""
 
     @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.SeedPrompt.from_yaml_file")
-    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.fetch_many_shot_jailbreaking_dataset")
+    @patch("pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset")
     @pytest.mark.asyncio
     async def test_attack_with_request_converters(
         self,

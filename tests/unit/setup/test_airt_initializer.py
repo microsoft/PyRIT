@@ -6,9 +6,19 @@ import sys
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.setup.initializers import AIRTInitializer
+
+
+@pytest.fixture
+def patch_pyrit_conf(tmp_path):
+    """Create a temporary .pyrit_conf file and patch DEFAULT_CONFIG_PATH to point to it."""
+    conf_file = tmp_path / ".pyrit_conf"
+    conf_file.write_text(yaml.dump({"operator": "test_user", "operation": "test_op"}))
+    with patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file):
+        yield
 
 
 class TestAIRTInitializer:
@@ -41,6 +51,11 @@ class TestAIRTInitializerInitialize:
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"] = "https://test-scorer.openai.azure.com"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"] = "gpt-4"
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test-safety.cognitiveservices.azure.com"
+        os.environ["AZURE_SQL_DB_CONNECTION_STRING"] = "Server=test.database.windows.net;Database=testdb"
+        os.environ["AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL"] = "https://teststorage.blob.core.windows.net/data"
+        os.environ["GLOBAL_MEMORY_LABELS"] = (
+            '{"operation": "test_op", "operator": "test_user", "email": "test@test.com"}'
+        )
         # Clean up globals
         for attr in [
             "default_converter_target",
@@ -61,6 +76,9 @@ class TestAIRTInitializerInitialize:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
             "AZURE_CONTENT_SAFETY_API_ENDPOINT",
+            "AZURE_SQL_DB_CONNECTION_STRING",
+            "AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL",
+            "GLOBAL_MEMORY_LABELS",
         ]:
             if var in os.environ:
                 del os.environ[var]
@@ -75,7 +93,7 @@ class TestAIRTInitializerInitialize:
                 delattr(sys.modules["__main__"], attr)
 
     @pytest.mark.asyncio
-    async def test_initialize_runs_without_error(self):
+    async def test_initialize_runs_without_error(self, patch_pyrit_conf):
         """Test that initialize runs without errors when no API keys are set (Entra auth fallback)."""
         init = AIRTInitializer()
         with (
@@ -85,7 +103,7 @@ class TestAIRTInitializerInitialize:
             await init.initialize_async()
 
     @pytest.mark.asyncio
-    async def test_initialize_uses_api_keys_when_set(self):
+    async def test_initialize_uses_api_keys_when_set(self, patch_pyrit_conf):
         """Test that initialize uses API keys from env vars when they are set."""
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "converter-key"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"] = "scorer-key"
@@ -110,7 +128,7 @@ class TestAIRTInitializerInitialize:
                     del os.environ[var]
 
     @pytest.mark.asyncio
-    async def test_get_info_after_initialize_has_populated_data(self):
+    async def test_get_info_after_initialize_has_populated_data(self, patch_pyrit_conf):
         """Test that get_info_async() returns populated data after initialization."""
         init = AIRTInitializer()
         with (
@@ -173,6 +191,38 @@ class TestAIRTInitializerInitialize:
         error_message = str(exc_info.value)
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in error_message
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL" in error_message
+
+    def test_validate_missing_operator_raises_error(self, tmp_path):
+        """Test that _validate_operation_fields raises error when operator is missing from .pyrit_conf."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operation": "test_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            pytest.raises(ValueError, match="operator"),
+        ):
+            init._validate_operation_fields()
+
+    def test_validate_missing_operation_raises_error(self, tmp_path):
+        """Test that _validate_operation_fields raises error when operation is missing from .pyrit_conf."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "test_user"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            pytest.raises(ValueError, match="operation"),
+        ):
+            init._validate_operation_fields()
+
+    def test_validate_db_connection_raises_error(self):
+        """Test that validate raises error when AZURE_SQL_DB_CONNECTION_STRING is missing."""
+        del os.environ["AZURE_SQL_DB_CONNECTION_STRING"]
+        init = AIRTInitializer()
+        with pytest.raises(ValueError) as exc_info:
+            init.validate()
+
+        error_message = str(exc_info.value)
+        assert "AZURE_SQL_DB_CONNECTION_STRING" in error_message
 
 
 class TestAIRTInitializerGetInfo:

@@ -55,7 +55,12 @@ class SeedPrompt(Seed):
             ValueError: If file-based data type cannot be inferred from extension.
 
         """
-        self.value = self.render_template_value_silent(**PATHS_DICT)
+        # Only trusted templates (is_jinja_template=True, e.g. from YAML files) are rendered
+        # through Jinja. Untrusted text (e.g. from remote datasets) must NOT be rendered — a
+        # crafted payload containing "{% endraw %}" can escape the raw wrapper and execute
+        # arbitrary Jinja expressions. See seed_objective.py for the same pattern.
+        if self.is_jinja_template:
+            self.value = self.render_template_value_silent(**PATHS_DICT)
 
         if not self.data_type:
             # If data_type is not provided, infer it from the value

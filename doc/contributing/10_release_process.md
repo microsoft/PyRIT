@@ -222,3 +222,91 @@ However, important bug fixes, new features, and breaking changes are good candid
 If you are unsure about whether to include certain changes please consult with your fellow
 maintainers.
 When you're done, hit "Publish release" and mark it as the latest release.
+
+## Appendix: Patch Releases (Cherry-Pick Process)
+
+A patch release (e.g., `0.12.0` → `0.12.1`) ships a targeted fix — typically a security
+patch or critical bug fix — without including other in-flight changes from `main`.
+The process follows the same steps as a regular release with a few key differences.
+
+### When to use a patch release
+
+- A security vulnerability fix needs to be shipped urgently.
+- A critical bug was found in the latest release that blocks users.
+- The fix is already merged to `main`, but `main` also contains other changes
+  that are not ready for release.
+
+### Abbreviated steps
+
+**1. Create a release branch from the previous tag, not from `main`:**
+
+```bash
+git fetch origin
+git checkout -b release/vx.y.z vx.y.(z-1)
+```
+
+For example, to create `0.12.1` from `0.12.0`:
+
+```bash
+git checkout -b release/v0.12.1 v0.12.0
+```
+
+**2. Cherry-pick the fix from `main`:**
+
+Identify the merge commit SHA on `main` (e.g., from the merged PR) and cherry-pick it:
+
+```bash
+git cherry-pick <commit-sha>
+```
+
+If the cherry-pick has conflicts, resolve them manually. Since this is a patch release
+the fix should apply cleanly in most cases.
+
+**3. Bump the version:**
+
+Update the version in all three files (`pyproject.toml`, `pyrit/__init__.py`, `frontend/package.json`)
+to the new patch version (e.g., `0.12.1`). Also update any version-pinned links in `README.md`
+(e.g., image URLs pointing to `releases/v0.12.0` → `releases/v0.12.1`).
+
+Commit the version bump:
+
+```bash
+git add pyproject.toml pyrit/__init__.py frontend/package.json README.md
+git commit -m "Bump version to x.y.z"
+```
+
+**4. Push and tag:**
+
+Push the release branch with the `releases/` prefix and create the tag:
+
+```bash
+git push origin release/vx.y.z:releases/vx.y.z
+git tag -a vx.y.z -m "vx.y.z release"
+git push origin vx.y.z
+```
+
+**5. Follow the regular release process from step 6 onward:**
+
+- Build the package (step 6)
+- Test the built package in a clean environment (step 7)
+- Run integration tests (step 7)
+- Publish to PyPI (step 8)
+- Update `main` with the next dev version (step 9) — for a patch release after `x.y.z`,
+  the next version on `main` may be either `x.y.(z+1).dev0` or `x.(y+1).0.dev0`
+  depending on what the next planned release is.
+- Create the GitHub release (step 10) — for patch releases the release notes should
+  clearly state the reason for the patch (e.g., "Security fix for …" or "Critical bug fix
+  for …"). Because a patch release contains only cherry-picked changes, the "What's
+  changed?" summary and the full changelog will be much shorter than a regular release.
+  Make sure to call out the specific issue or vulnerability that prompted the patch so
+  users can quickly assess whether they need to upgrade.
+
+### Key differences from a regular release
+
+| Aspect | Regular release | Patch release |
+|---|---|---|
+| Branch base | `main` | Previous release tag (e.g., `v0.12.0`) |
+| Changes included | Everything on `main` | Only cherry-picked fix(es) |
+| Deprecated code removal | Yes (if minor bump) | No |
+| Integration test scope | Full | Focused on affected areas |
+| Release notes | Full changelog with curated summary | Short, focused on the reason for the patch |

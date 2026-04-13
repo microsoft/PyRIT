@@ -13,13 +13,6 @@ project:
       output: exports/book.pdf
   toc:
     - file: index.md
-    - file: cookbooks/README.md
-      children:
-        - file: cookbooks/1_sending_prompts.ipynb
-        - file: cookbooks/2_precomputing_turns.ipynb
-        - file: cookbooks/3_copyright_violations.ipynb
-        - file: cookbooks/4_testing_bias.ipynb
-        - file: cookbooks/5_psychosocial_harms.ipynb
     - file: getting_started/README.md
       children:
         - file: getting_started/install.md
@@ -60,8 +53,15 @@ project:
         - file: contributing/8_pre_commit.md
         - file: contributing/9_exception.md
         - file: contributing/10_release_process.md
-    - file: code/architecture.md
-    - file: code/user_guide.md
+    - file: gui/0_gui.md
+    - file: scanner/0_scanner.md
+      children:
+        - file: scanner/1_pyrit_scan.ipynb
+        - file: scanner/2_pyrit_shell.md
+        - file: scanner/airt.ipynb
+        - file: scanner/foundry.ipynb
+        - file: scanner/garak.ipynb
+    - file: code/framework.md
       children:
         - file: code/datasets/0_dataset.md
           children:
@@ -110,10 +110,10 @@ project:
             - file: code/targets/8_non_llm_targets.ipynb
             - file: code/targets/9_rate_limiting.ipynb
             - file: code/targets/10_http_target.ipynb
-            - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/10_1_playwright_target.ipynb
             - file: code/targets/10_2_playwright_target_copilot.ipynb
             - file: code/targets/10_3_websocket_copilot_target.ipynb
+            - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/open_ai_completions.ipynb
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
@@ -147,7 +147,7 @@ project:
             - file: code/memory/2_basic_memory_programming.ipynb
             - file: code/memory/3_memory_data_types.md
             - file: code/memory/4_manually_working_with_memory.md
-            - file: code/memory/5_memory_labels.ipynb
+            - file: code/memory/5_advanced_memory.ipynb
             - file: code/memory/6_azure_sql_memory.ipynb
             - file: code/memory/7_azure_sql_memory_attacks.ipynb
             - file: code/memory/8_seed_database.ipynb
@@ -165,24 +165,11 @@ project:
             - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
-            - file: code/scenarios/1_red_team_agent.ipynb
-            - file: code/scenarios/2_content_harms.ipynb
-            - file: code/scenarios/3_psychosocial.ipynb
-            - file: code/scenarios/4_cyber.ipynb
-            - file: code/scenarios/5_jailbreak.ipynb
-            - file: code/scenarios/6_leakage.ipynb
-            - file: code/scenarios/7_scam.ipynb
-            - file: code/scenarios/8_garak_encoding.ipynb
-            - file: code/scenarios/9_baseline_only.ipynb
+            - file: code/scenarios/1_scenario_parameters.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb
             - file: code/registry/2_instance_registry.ipynb
-        - file: code/gui/0_gui.md
-        - file: code/front_end/0_front_end.md
-          children:
-            - file: code/front_end/1_pyrit_scan.ipynb
-            - file: code/front_end/2_pyrit_shell.md
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
@@ -226,37 +213,14 @@ project:
     - file: bibliography.md
 site:
   nav:
-    - title: Cookbooks
-      url: /cookbooks/readme
-    - title: Getting Started
+    - title: Installation
       url: /getting-started/readme
-    - title: Contributing
-      url: /contributing/readme
-    - title: User Guide
-      url: /code/user-guide
-      children:
-        - title: Datasets
-          url: /code/datasets/dataset
-        - title: Executor
-          url: /code/executor/executor
-        - title: Prompt Targets
-          url: /code/targets/prompt-targets
-        - title: Converters
-          url: /code/converters/converters
-        - title: Scoring
-          url: /code/scoring/scoring
-        - title: Memory
-          url: /code/memory/memory
-        - title: Setup
-          url: /code/setup/setup
-        - title: Scenarios
-          url: /code/scenarios/scenarios
-        - title: Registry
-          url: /code/registry/registry
-        - title: GUI
-          url: /code/gui/gui
-        - title: CLI
-          url: /code/front-end/front-end
+    - title: GUI
+      url: /gui/gui
+    - title: Scanner
+      url: /scanner/scanner
+    - title: Framework
+      url: /code/framework
     - title: API Reference
       url: /api/index
     - title: Blog

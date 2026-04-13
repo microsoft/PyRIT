@@ -5,7 +5,99 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityHandlingPolicy,
+    CapabilityName,
+    TargetCapabilities,
+    UnsupportedCapabilityBehavior,
+)
+
+
+class TestCapabilityHandlingPolicy:
+    """Test behavior and defaults of capability handling policy classes."""
+
+    def test_capability_name_values(self):
+        assert CapabilityName.MULTI_TURN.value == "supports_multi_turn"
+        assert CapabilityName.MULTI_MESSAGE_PIECES.value == "supports_multi_message_pieces"
+        assert CapabilityName.JSON_SCHEMA.value == "supports_json_schema"
+        assert CapabilityName.JSON_OUTPUT.value == "supports_json_output"
+        assert CapabilityName.EDITABLE_HISTORY.value == "supports_editable_history"
+        assert CapabilityName.SYSTEM_PROMPT.value == "supports_system_prompt"
+
+    def test_unsupported_capability_behavior_values(self):
+        assert UnsupportedCapabilityBehavior.ADAPT.value == "adapt"
+        assert UnsupportedCapabilityBehavior.RAISE.value == "raise"
+
+    def test_capability_handling_policy_defaults(self):
+        policy = CapabilityHandlingPolicy()
+        assert policy.behaviors == {
+            CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+            CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+        }
+
+    def test_capability_handling_policy_custom_values(self):
+        policy = CapabilityHandlingPolicy(
+            behaviors={
+                CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT,
+                CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+                CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.RAISE,
+                CapabilityName.JSON_OUTPUT: UnsupportedCapabilityBehavior.RAISE,
+            }
+        )
+
+        assert policy.behaviors[CapabilityName.MULTI_TURN] is UnsupportedCapabilityBehavior.ADAPT
+        assert policy.behaviors[CapabilityName.SYSTEM_PROMPT] is UnsupportedCapabilityBehavior.RAISE
+
+    def test_capability_handling_policy_get_behavior(self):
+        policy = CapabilityHandlingPolicy()
+
+        assert policy.get_behavior(capability=CapabilityName.MULTI_TURN) is UnsupportedCapabilityBehavior.RAISE
+        assert policy.get_behavior(capability=CapabilityName.SYSTEM_PROMPT) is UnsupportedCapabilityBehavior.RAISE
+
+    def test_capability_handling_policy_get_behavior_for_all_default_keys(self):
+        policy = CapabilityHandlingPolicy()
+        for cap in policy.behaviors:
+            assert policy.get_behavior(capability=cap) is UnsupportedCapabilityBehavior.RAISE
+
+    def test_capability_handling_policy_rejects_capability_without_policy(self):
+        policy = CapabilityHandlingPolicy()
+
+        with pytest.raises(KeyError, match="No policy for capability 'supports_editable_history'"):
+            policy.get_behavior(capability=CapabilityName.EDITABLE_HISTORY)
+
+        with pytest.raises(AttributeError, match="supports_editable_history"):
+            _ = policy.supports_editable_history
+
+    def test_capability_handling_policy_rejects_unknown_attribute(self):
+        policy = CapabilityHandlingPolicy()
+
+        with pytest.raises(AttributeError, match="totally_unknown_attribute"):
+            _ = policy.totally_unknown_attribute
+
+    def test_normalizable_capabilities(self):
+        assert (
+            frozenset(
+                {
+                    CapabilityName.MULTI_TURN,
+                    CapabilityName.SYSTEM_PROMPT,
+                }
+            )
+            == NORMALIZABLE_CAPABILITIES
+        )
+
+    def test_target_capabilities_includes_helper(self):
+        capabilities = TargetCapabilities(
+            supports_multi_turn=True,
+            supports_system_prompt=False,
+            supports_json_output=True,
+        )
+
+        assert capabilities.includes(capability=CapabilityName.MULTI_TURN) is True
+        assert capabilities.includes(capability=CapabilityName.SYSTEM_PROMPT) is False
+        assert capabilities.includes(capability=CapabilityName.JSON_OUTPUT) is True
+        assert capabilities.includes(capability=CapabilityName.EDITABLE_HISTORY) is False
+
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 # Clear them so that targets use _DEFAULT_CAPABILITIES instead of _KNOWN_CAPABILITIES.

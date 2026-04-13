@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload, sessionmaker
+from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import TextClause
 
@@ -250,22 +250,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         condition = text(conditions).bindparams(**{key: str(value) for key, value in memory_labels.items()})
         return [condition]
 
-    def _get_message_pieces_attack_conditions(self, *, attack_id: str) -> Any:
-        """
-        Generate SQL condition for filtering message pieces by attack ID.
-
-        Uses JSON_VALUE() function specific to SQL Azure to query the attack identifier.
-
-        Args:
-            attack_id (str): The attack identifier to filter by.
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text("ISJSON(attack_identifier) = 1 AND JSON_VALUE(attack_identifier, '$.hash') = :json_id").bindparams(
-            json_id=str(attack_id)
-        )
-
     def _get_metadata_conditions(self, *, prompt_metadata: dict[str, Union[str, int]]) -> list[TextClause]:
         """
         Generate SQL conditions for filtering by prompt metadata.
@@ -320,6 +304,105 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Any: SQLAlchemy text condition with bound parameters.
         """
         return self._get_metadata_conditions(prompt_metadata=metadata)[0]
+
+    def _get_condition_json_property_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        value: str,
+        partial_match: bool = False,
+        case_sensitive: bool = False,
+    ) -> Any:
+        """
+        Return an Azure SQL DB condition for matching a value at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
+            property_path (str): The JSON path for the property to match.
+            value (str): The string value that must match the extracted JSON property value.
+            partial_match (bool): Whether to perform a substring match.
+            case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
+
+        Returns:
+            Any: A SQLAlchemy condition for the backend-specific JSON query.
+        """
+        uid = self._uid()
+        table_name = json_column.class_.__tablename__
+        column_name = json_column.key
+        pp_param = f"pp_{uid}"
+        mv_param = f"mv_{uid}"
+        json_func = "JSON_VALUE" if case_sensitive else "LOWER(JSON_VALUE)"
+        operator = "LIKE" if partial_match else "="
+        target = value if case_sensitive else value.lower()
+        if partial_match:
+            escaped = target.replace("%", "\\%").replace("_", "\\_")
+            target = f"%{escaped}%"
+
+        escape_clause = " ESCAPE '\\'" if partial_match else ""
+        return text(
+            f"""ISJSON("{table_name}".{column_name}) = 1
+                AND {json_func}("{table_name}".{column_name}, :{pp_param}) {operator} :{mv_param}{escape_clause}"""
+        ).bindparams(
+            **{
+                pp_param: property_path,
+                mv_param: target,
+            }
+        )
+
+    def _get_condition_json_array_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        array_element_path: str | None = None,
+        array_to_match: Sequence[str],
+    ) -> Any:
+        """
+        Return an Azure SQL DB condition for matching an array at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
+            property_path (str): The JSON path for the target array.
+            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
+                For a match, ALL values in this array must be present in the JSON array.
+                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+
+        Returns:
+            Any: A database-specific SQLAlchemy condition.
+        """
+        uid = self._uid()
+        table_name = json_column.class_.__tablename__
+        column_name = json_column.key
+        pp_param = f"pp_{uid}"
+        sp_param = f"sp_{uid}"
+
+        if len(array_to_match) == 0:
+            return text(
+                f"""("{table_name}".{column_name} IS NULL
+                OR JSON_QUERY("{table_name}".{column_name}, :{pp_param}) IS NULL
+                OR JSON_QUERY("{table_name}".{column_name}, :{pp_param}) = '[]')"""
+            ).bindparams(**{pp_param: property_path})
+
+        value_expression = f"LOWER(JSON_VALUE(value, :{sp_param}))" if array_element_path else "LOWER(value)"
+
+        conditions = []
+        bindparams_dict: dict[str, str] = {pp_param: property_path}
+        if array_element_path:
+            bindparams_dict[sp_param] = array_element_path
+
+        for index, match_value in enumerate(array_to_match):
+            mv_param = f"mv_{uid}_{index}"
+            conditions.append(
+                f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("{table_name}".{column_name},
+                    :{pp_param}))
+                    WHERE {value_expression} = :{mv_param})"""
+            )
+            bindparams_dict[mv_param] = match_value.lower()
+
+        combined = " AND ".join(conditions)
+        return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND {combined}""").bindparams(**bindparams_dict)
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """
@@ -386,67 +469,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 PromptMemoryEntry.labels.isnot(None),
                 text(f"ISJSON(labels) = 1 AND {combined_conditions}").bindparams(**bindparams_dict),
             )
-        )
-
-    def _get_attack_result_attack_class_condition(self, *, attack_class: str) -> Any:
-        """
-        Azure SQL implementation for filtering AttackResults by attack class.
-        Uses JSON_VALUE() on the atomic_attack_identifier JSON column.
-
-        Args:
-            attack_class (str): Exact attack class name to match.
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text(
-            """ISJSON("AttackResultEntries".atomic_attack_identifier) = 1
-            AND JSON_VALUE("AttackResultEntries".atomic_attack_identifier,
-                '$.children.attack.class_name') = :attack_class"""
-        ).bindparams(attack_class=attack_class)
-
-    def _get_attack_result_converter_classes_condition(self, *, converter_classes: Sequence[str]) -> Any:
-        """
-        Azure SQL implementation for filtering AttackResults by converter classes.
-
-        Uses JSON_VALUE()/JSON_QUERY()/OPENJSON() on the atomic_attack_identifier
-        JSON column.
-
-        When converter_classes is empty, matches attacks with no converters.
-        When non-empty, uses OPENJSON() to check all specified classes are present
-        (AND logic, case-insensitive).
-
-        Args:
-            converter_classes (Sequence[str]): List of converter class names. Empty list means no converters.
-
-        Returns:
-            Any: SQLAlchemy combined condition with bound parameters.
-        """
-        if len(converter_classes) == 0:
-            # Explicitly "no converters": match attacks where the converter list
-            # is absent, null, or empty in the stored JSON.
-            return text(
-                """("AttackResultEntries".atomic_attack_identifier IS NULL
-                OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.children.request_converters') IS NULL
-                OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.children.request_converters') = '[]')"""
-            )
-
-        conditions = []
-        bindparams_dict: dict[str, str] = {}
-        for i, cls in enumerate(converter_classes):
-            param_name = f"conv_cls_{i}"
-            conditions.append(
-                f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.children.request_converters'))
-                    WHERE LOWER(JSON_VALUE(value, '$.class_name')) = :{param_name})"""
-            )
-            bindparams_dict[param_name] = cls.lower()
-
-        combined = " AND ".join(conditions)
-        return text(f"""ISJSON("AttackResultEntries".atomic_attack_identifier) = 1 AND {combined}""").bindparams(
-            **bindparams_dict
         )
 
     def get_unique_attack_class_names(self) -> list[str]:
@@ -593,44 +615,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def _get_scenario_result_target_endpoint_condition(self, *, endpoint: str) -> TextClause:
-        """
-        Get the SQL Azure implementation for filtering ScenarioResults by target endpoint.
-
-        Uses JSON_VALUE() function specific to SQL Azure.
-
-        Args:
-            endpoint (str): The endpoint URL substring to filter by (case-insensitive).
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text(
-            """ISJSON(objective_target_identifier) = 1
-            AND LOWER(JSON_VALUE(objective_target_identifier, '$.endpoint')) LIKE :endpoint"""
-        ).bindparams(endpoint=f"%{endpoint.lower()}%")
-
-    def _get_scenario_result_target_model_condition(self, *, model_name: str) -> TextClause:
-        """
-        Get the SQL Azure implementation for filtering ScenarioResults by target model name.
-
-        Uses JSON_VALUE() function specific to SQL Azure.
-
-        Args:
-            model_name (str): The model name substring to filter by (case-insensitive).
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text(
-            """ISJSON(objective_target_identifier) = 1
-            AND LOWER(JSON_VALUE(objective_target_identifier, '$.model_name')) LIKE :model_name"""
-        ).bindparams(model_name=f"%{model_name.lower()}%")
-
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
+        Args:
+            message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
         """
         self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 

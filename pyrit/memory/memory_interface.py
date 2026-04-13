@@ -19,6 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 from pyrit.common.path import DB_DATA_PATH
+from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory.memory_embedding import (
     MemoryEmbedding,
     default_memory_embedding_factory,
@@ -74,6 +75,11 @@ class MemoryInterface(abc.ABC):
     results_path: str = None
     engine: Engine = None
 
+    @staticmethod
+    def _uid() -> str:
+        """Return a short unique suffix for bind-param deduplication."""
+        return uuid.uuid4().hex[:8]
+
     def __init__(self, embedding_model: Optional[Any] = None) -> None:
         """
         Initialize the MemoryInterface.
@@ -112,6 +118,146 @@ class MemoryInterface(abc.ABC):
         Sets the memory_embedding attribute to None, disabling any embedding operations.
         """
         self.memory_embedding = None
+
+    def _build_identifier_filter_conditions(
+        self,
+        *,
+        identifier_filters: Sequence[IdentifierFilter],
+        identifier_column_map: dict[IdentifierType, Any],
+        caller: str,
+    ) -> list[Any]:
+        """
+        Build SQLAlchemy conditions from a sequence of IdentifierFilters.
+
+        Args:
+            identifier_filters (Sequence[IdentifierFilter]): The filters to convert to conditions.
+            identifier_column_map (dict[IdentifierType, Any]): Mapping from IdentifierType to the
+                JSON-backed SQLAlchemy column that should be queried for that type.
+            caller (str): Name of the calling method, used in error messages.
+
+        Returns:
+            list[Any]: A list of SQLAlchemy conditions.
+
+        Raises:
+            ValueError: If a filter uses an IdentifierType not in identifier_column_map.
+        """
+        conditions: list[Any] = []
+        for identifier_filter in identifier_filters:
+            column = identifier_column_map.get(identifier_filter.identifier_type)
+            if column is None:
+                supported = ", ".join(t.name for t in identifier_column_map)
+                raise ValueError(
+                    f"{caller} does not support identifier type "
+                    f"{identifier_filter.identifier_type!r}. Supported: {supported}"
+                )
+            conditions.append(
+                self._get_condition_json_match(
+                    json_column=column,
+                    property_path=identifier_filter.property_path,
+                    array_element_path=identifier_filter.array_element_path,
+                    value=identifier_filter.value,
+                    partial_match=identifier_filter.partial_match,
+                    case_sensitive=identifier_filter.case_sensitive,
+                )
+            )
+        return conditions
+
+    def _get_condition_json_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        array_element_path: str | None = None,
+        value: str,
+        partial_match: bool = False,
+        case_sensitive: bool = False,
+    ) -> Any:
+        """
+        Return a database-specific condition for matching a value at a given path within a JSON object
+        or within items of a JSON array if array_element_path is provided.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
+            property_path (str): The JSON path for the property to match.
+            array_element_path (str | None): An optional JSON path that indicates property at property_path is an array
+                and the condition should resolve if any element in that array matches the value.
+                Cannot be used with partial_match.
+            value (str): The string value that must match the extracted JSON property value.
+            partial_match (bool): Whether to perform a substring match.
+            case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
+
+        Returns:
+            Any: A SQLAlchemy condition for the backend-specific JSON query.
+
+        Raises:
+            ValueError: If array_element_path is provided together with partial_match or case_sensitive
+        """
+        if array_element_path and (partial_match or case_sensitive):
+            raise ValueError("Cannot use array_element_path with partial_match or case_sensitive")
+        if partial_match and case_sensitive:
+            raise ValueError("case_sensitive is not reliably supported with partial_match across all backends")
+        if array_element_path:
+            return self._get_condition_json_array_match(
+                json_column=json_column,
+                property_path=property_path,
+                array_element_path=array_element_path,
+                array_to_match=[value],
+            )
+        return self._get_condition_json_property_match(
+            json_column=json_column,
+            property_path=property_path,
+            value=value,
+            partial_match=partial_match,
+            case_sensitive=case_sensitive,
+        )
+
+    @abc.abstractmethod
+    def _get_condition_json_property_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        value: str,
+        partial_match: bool = False,
+        case_sensitive: bool = False,
+    ) -> Any:
+        """
+        Return a database-specific condition for matching a value at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
+            property_path (str): The JSON path for the property to match.
+            value (str): The string value that must match the extracted JSON property value.
+            partial_match (bool): Whether to perform a substring match.
+            case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
+
+        Returns:
+            Any: A SQLAlchemy condition for the backend-specific JSON query.
+        """
+
+    @abc.abstractmethod
+    def _get_condition_json_array_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        array_element_path: str | None = None,
+        array_to_match: Sequence[str],
+    ) -> Any:
+        """
+        Return a database-specific condition for matching an array at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
+            property_path (str): The JSON path for the target array.
+            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
+                For a match, ALL values in this array must be present in the JSON array.
+                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+
+        Returns:
+            Any: A database-specific SQLAlchemy condition.
+        """
 
     @abc.abstractmethod
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
@@ -153,12 +299,6 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             list: A list of conditions for filtering memory entries based on prompt metadata.
-        """
-
-    @abc.abstractmethod
-    def _get_message_pieces_attack_conditions(self, *, attack_id: str) -> Any:
-        """
-        Return a condition to retrieve based on attack ID.
         """
 
     @abc.abstractmethod
@@ -290,40 +430,6 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_attack_result_attack_class_condition(self, *, attack_class: str) -> Any:
-        """
-        Return a database-specific condition for filtering AttackResults by attack class
-        (class_name in the attack_identifier JSON column).
-
-        Args:
-            attack_class: Exact attack class name to match.
-
-        Returns:
-            Database-specific SQLAlchemy condition.
-        """
-
-    @abc.abstractmethod
-    def _get_attack_result_converter_classes_condition(self, *, converter_classes: Sequence[str]) -> Any:
-        """
-        Return a database-specific condition for filtering AttackResults by converter classes
-        in the request_converter_identifiers array within attack_identifier JSON column.
-
-        This method is only called when converter filtering is requested (converter_classes
-        is not None). The caller handles the None-vs-list distinction:
-
-        - ``len(converter_classes) == 0``: return a condition matching attacks with NO converters.
-        - ``len(converter_classes) > 0``: return a condition requiring ALL specified converter
-          class names to be present (AND logic, case-insensitive).
-
-        Args:
-            converter_classes: Converter class names to require. An empty sequence means
-                "match only attacks that have no converters".
-
-        Returns:
-            Database-specific SQLAlchemy condition.
-        """
-
-    @abc.abstractmethod
     def get_unique_attack_class_names(self) -> list[str]:
         """
         Return sorted unique attack class names from all stored attack results.
@@ -377,30 +483,6 @@ class MemoryInterface(abc.ABC):
             Database-specific SQLAlchemy condition.
         """
 
-    @abc.abstractmethod
-    def _get_scenario_result_target_endpoint_condition(self, *, endpoint: str) -> Any:
-        """
-        Return a database-specific condition for filtering ScenarioResults by target endpoint.
-
-        Args:
-            endpoint: Endpoint substring to search for (case-insensitive).
-
-        Returns:
-            Database-specific SQLAlchemy condition.
-        """
-
-    @abc.abstractmethod
-    def _get_scenario_result_target_model_condition(self, *, model_name: str) -> Any:
-        """
-        Return a database-specific condition for filtering ScenarioResults by target model name.
-
-        Args:
-            model_name: Model name substring to search for (case-insensitive).
-
-        Returns:
-            Database-specific SQLAlchemy condition.
-        """
-
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
         Insert a list of scores into the memory storage.
@@ -425,6 +507,7 @@ class MemoryInterface(abc.ABC):
         score_category: Optional[str] = None,
         sent_after: Optional[datetime] = None,
         sent_before: Optional[datetime] = None,
+        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
     ) -> Sequence[Score]:
         """
         Retrieve a list of Score objects based on the specified filters.
@@ -435,6 +518,8 @@ class MemoryInterface(abc.ABC):
             score_category (Optional[str]): The category of the score to filter by.
             sent_after (Optional[datetime]): Filter for scores sent after this datetime.
             sent_before (Optional[datetime]): Filter for scores sent before this datetime.
+            identifier_filters (Optional[Sequence[IdentifierFilter]]): A sequence of IdentifierFilter objects that
+                allows filtering by various scorer identifier JSON properties. Defaults to None.
 
         Returns:
             Sequence[Score]: A list of Score objects that match the specified filters.
@@ -451,6 +536,14 @@ class MemoryInterface(abc.ABC):
             conditions.append(ScoreEntry.timestamp >= sent_after)
         if sent_before:
             conditions.append(ScoreEntry.timestamp <= sent_before)
+        if identifier_filters:
+            conditions.extend(
+                self._build_identifier_filter_conditions(
+                    identifier_filters=identifier_filters,
+                    identifier_column_map={IdentifierType.SCORER: ScoreEntry.scorer_class_identifier},
+                    caller="get_scores",
+                )
+            )
 
         if not conditions:
             return []
@@ -581,6 +674,7 @@ class MemoryInterface(abc.ABC):
         data_type: Optional[str] = None,
         not_data_type: Optional[str] = None,
         converted_value_sha256: Optional[Sequence[str]] = None,
+        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
@@ -602,6 +696,9 @@ class MemoryInterface(abc.ABC):
             not_data_type (Optional[str], optional): The data type to exclude. Defaults to None.
             converted_value_sha256 (Optional[Sequence[str]], optional): A list of SHA256 hashes of converted values.
                 Defaults to None.
+            identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
+                A sequence of IdentifierFilter objects that
+                allow filtering by various identifier JSON properties. Defaults to None.
 
         Returns:
             Sequence[MessagePiece]: A list of MessagePiece objects that match the specified filters.
@@ -612,7 +709,13 @@ class MemoryInterface(abc.ABC):
         """
         conditions = []
         if attack_id:
-            conditions.append(self._get_message_pieces_attack_conditions(attack_id=str(attack_id)))
+            conditions.append(
+                self._get_condition_json_property_match(
+                    json_column=PromptMemoryEntry.attack_identifier,
+                    property_path="$.hash",
+                    value=str(attack_id),
+                )
+            )
         if role:
             conditions.append(PromptMemoryEntry.role == role)
         if conversation_id:
@@ -638,7 +741,18 @@ class MemoryInterface(abc.ABC):
             conditions.append(PromptMemoryEntry.converted_value_data_type != not_data_type)
         if converted_value_sha256:
             conditions.append(PromptMemoryEntry.converted_value_sha256.in_(converted_value_sha256))
-
+        if identifier_filters:
+            conditions.extend(
+                self._build_identifier_filter_conditions(
+                    identifier_filters=identifier_filters,
+                    identifier_column_map={
+                        IdentifierType.ATTACK: PromptMemoryEntry.attack_identifier,
+                        IdentifierType.TARGET: PromptMemoryEntry.prompt_target_identifier,
+                        IdentifierType.CONVERTER: PromptMemoryEntry.converter_identifiers,
+                    },
+                    caller="get_message_pieces",
+                )
+            )
         try:
             memory_entries: Sequence[PromptMemoryEntry] = self._query_entries(
                 PromptMemoryEntry, conditions=and_(*conditions) if conditions else None, join_scores=True
@@ -1366,6 +1480,7 @@ class MemoryInterface(abc.ABC):
         converter_classes: Optional[Sequence[str]] = None,
         targeted_harm_categories: Optional[Sequence[str]] = None,
         labels: Optional[dict[str, str]] = None,
+        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -1393,6 +1508,9 @@ class MemoryInterface(abc.ABC):
             labels (Optional[dict[str, str]], optional): A dictionary of memory labels to filter results by.
                 These labels are associated with the prompts themselves, used for custom tagging and tracking.
                 Defaults to None.
+            identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
+                A sequence of IdentifierFilter objects that allows filtering by various attack identifier
+                JSON properties. Defaults to None.
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -1416,12 +1534,26 @@ class MemoryInterface(abc.ABC):
 
         if attack_class:
             # Use database-specific JSON query method
-            conditions.append(self._get_attack_result_attack_class_condition(attack_class=attack_class))
+            conditions.append(
+                self._get_condition_json_property_match(
+                    json_column=AttackResultEntry.atomic_attack_identifier,
+                    property_path="$.children.attack.class_name",
+                    value=attack_class,
+                    case_sensitive=True,
+                )
+            )
 
         if converter_classes is not None:
             # converter_classes=[] means "only attacks with no converters"
             # converter_classes=["A","B"] means "must have all listed converters"
-            conditions.append(self._get_attack_result_converter_classes_condition(converter_classes=converter_classes))
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=AttackResultEntry.atomic_attack_identifier,
+                    property_path="$.children.attack.children.request_converters",
+                    array_element_path="$.class_name",
+                    array_to_match=converter_classes,
+                )
+            )
 
         if targeted_harm_categories:
             # Use database-specific JSON query method
@@ -1432,6 +1564,15 @@ class MemoryInterface(abc.ABC):
         if labels:
             # Use database-specific JSON query method
             conditions.append(self._get_attack_result_label_condition(labels=labels))
+
+        if identifier_filters:
+            conditions.extend(
+                self._build_identifier_filter_conditions(
+                    identifier_filters=identifier_filters,
+                    identifier_column_map={IdentifierType.ATTACK: AttackResultEntry.atomic_attack_identifier},
+                    caller="get_attack_results",
+                )
+            )
 
         try:
             entries: Sequence[AttackResultEntry] = self._query_entries(
@@ -1613,6 +1754,7 @@ class MemoryInterface(abc.ABC):
         labels: Optional[dict[str, str]] = None,
         objective_target_endpoint: Optional[str] = None,
         objective_target_model_name: Optional[str] = None,
+        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
     ) -> Sequence[ScenarioResult]:
         """
         Retrieve a list of ScenarioResult objects based on the specified filters.
@@ -1635,6 +1777,9 @@ class MemoryInterface(abc.ABC):
                 Defaults to None.
             objective_target_model_name (Optional[str], optional): Filter for scenarios where the
                 objective_target_identifier has a model_name attribute containing this value (case-insensitive).
+                Defaults to None.
+            identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
+                A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
 
         Returns:
@@ -1673,11 +1818,37 @@ class MemoryInterface(abc.ABC):
 
         if objective_target_endpoint:
             # Use database-specific JSON query method
-            conditions.append(self._get_scenario_result_target_endpoint_condition(endpoint=objective_target_endpoint))
+            conditions.append(
+                self._get_condition_json_property_match(
+                    json_column=ScenarioResultEntry.objective_target_identifier,
+                    property_path="$.endpoint",
+                    value=objective_target_endpoint,
+                    partial_match=True,
+                )
+            )
 
         if objective_target_model_name:
             # Use database-specific JSON query method
-            conditions.append(self._get_scenario_result_target_model_condition(model_name=objective_target_model_name))
+            conditions.append(
+                self._get_condition_json_property_match(
+                    json_column=ScenarioResultEntry.objective_target_identifier,
+                    property_path="$.model_name",
+                    value=objective_target_model_name,
+                    partial_match=True,
+                )
+            )
+
+        if identifier_filters:
+            conditions.extend(
+                self._build_identifier_filter_conditions(
+                    identifier_filters=identifier_filters,
+                    identifier_column_map={
+                        IdentifierType.SCORER: ScenarioResultEntry.objective_scorer_identifier,
+                        IdentifierType.TARGET: ScenarioResultEntry.objective_target_identifier,
+                    },
+                    caller="get_scenario_results",
+                )
+            )
 
         try:
             entries: Sequence[ScenarioResultEntry] = self._query_entries(

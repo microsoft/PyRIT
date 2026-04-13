@@ -255,7 +255,7 @@ def _build_static_banner() -> StaticBannerData:
         "Commands:",
         "  • list-scenarios        - See all available scenarios",
         "  • list-initializers     - See all available initializers",
-        "  • list-targets          - See all available targets in the registry",
+        "  • list-targets [opts]   - See all available targets in the registry",
         "  • run <scenario> [opts] - Execute a security scenario",
         "  • scenario-history      - View your session history",
         "  • print-scenario [N]    - Display detailed results",
