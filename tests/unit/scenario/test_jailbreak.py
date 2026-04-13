@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
+from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.role_play import RolePlayAttack
@@ -177,6 +179,19 @@ class TestJailbreakInitialization:
 
         with pytest.raises(ValueError):
             Jailbreak(num_templates=mock_random_num_templates, jailbreak_names=mock_templates)
+
+    def test_init_accepts_subdirectory_jailbreak_names(self, mock_objective_scorer, mock_memory_seed_groups):
+        """Test that explicit jailbreak names can reference templates stored in subdirectories."""
+        # Pick a template that lives in a subdirectory (not top-level)
+        all_templates = TextJailBreak.get_jailbreak_templates()
+        top_level_names = {f.name for f in JAILBREAK_TEMPLATES_PATH.glob("*.yaml")}
+        subdir_templates = [t for t in all_templates if t not in top_level_names]
+        assert subdir_templates, "Expected at least one subdirectory template to exist"
+        subdir_name = subdir_templates[0]
+
+        with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, jailbreak_names=[subdir_name])
+            assert scenario._jailbreaks == [subdir_name]
 
     @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
