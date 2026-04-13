@@ -37,6 +37,7 @@ async def test_fetch_dataset_empty_raises():
     empty_data = [{"Behavior": "", "Category": ""}]
 
     with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=empty_data)):
+        # Source wraps ValueError in generic Exception (see jbb_behaviors_dataset.py:122-124)
         with pytest.raises(Exception, match="Error loading JBB-Behaviors dataset"):
             await loader.fetch_dataset()
 
