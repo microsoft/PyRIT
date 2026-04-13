@@ -59,13 +59,13 @@ class TestVisualLeakBenchDataset:
 
     def test_init_with_invalid_categories_raises(self):
         """Test that invalid categories raise ValueError."""
-        with pytest.raises(ValueError, match="Expected VisualLeakBenchCategory"):
+        with pytest.raises(ValueError, match="Invalid category"):
             _VisualLeakBenchDataset(categories=["not_a_real_category"])
 
-    def test_init_rejects_raw_string_matching_enum_value_for_categories(self):
-        """Test that raw strings matching enum values are rejected for categories."""
-        with pytest.raises(ValueError, match="Expected VisualLeakBenchCategory"):
-            _VisualLeakBenchDataset(categories=["PII Leakage"])
+    def test_init_accepts_raw_string_matching_enum_value_for_categories(self):
+        """Test that raw strings matching enum values are coerced to enums."""
+        dataset = _VisualLeakBenchDataset(categories=["PII Leakage"])
+        assert dataset.categories == [VisualLeakBenchCategory.PII_LEAKAGE]
 
     def test_init_with_pii_types(self):
         """Test initialization with PII type filtering."""
@@ -75,13 +75,13 @@ class TestVisualLeakBenchDataset:
 
     def test_init_with_invalid_pii_types_raises(self):
         """Test that invalid PII types raise ValueError."""
-        with pytest.raises(ValueError, match="Expected VisualLeakBenchPIIType"):
+        with pytest.raises(ValueError, match="Invalid PII type"):
             _VisualLeakBenchDataset(pii_types=["InvalidType"])
 
-    def test_init_rejects_raw_string_matching_enum_value_for_pii_types(self):
-        """Test that raw strings matching enum values are rejected for PII types."""
-        with pytest.raises(ValueError, match="Expected VisualLeakBenchPIIType"):
-            _VisualLeakBenchDataset(pii_types=["Email"])
+    def test_init_accepts_raw_string_matching_enum_value_for_pii_types(self):
+        """Test that raw strings matching enum values are coerced to enums."""
+        dataset = _VisualLeakBenchDataset(pii_types=["Email"])
+        assert dataset.pii_types == [VisualLeakBenchPIIType.EMAIL]
 
     def test_init_with_max_examples(self):
         """Test initialization with max_examples."""
