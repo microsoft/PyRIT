@@ -24,6 +24,9 @@ def write_csv(file: IO[Any], examples: list[dict[str, str]]) -> None:
         file: A file-like object opened for writing CSV data.
         examples (List[Dict[str, str]]): List of dictionaries to write as CSV rows.
     """
+    if not examples:
+        return
+
     writer = csv.DictWriter(file, fieldnames=examples[0].keys())
     writer.writeheader()
     writer.writerows(examples)
