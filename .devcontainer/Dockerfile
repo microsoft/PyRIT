@@ -54,7 +54,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libpulse0
 
 # Install uv system-wide and create pyrit-dev venv
-COPY --from=ghcr.io/astral-sh/uv:0.10.8 /uv /uvx /bin/
+RUN curl -LsSf https://astral.sh/uv/0.10.8/install.sh | sh \
+ && mv /root/.local/bin/uv /bin/uv \
+ && mv /root/.local/bin/uvx /bin/uvx
 RUN uv venv /opt/venv --python 3.11 --prompt pyrit-dev \
  && chown -R vscode:vscode /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
