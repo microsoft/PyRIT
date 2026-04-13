@@ -63,6 +63,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -441,7 +442,7 @@ class RedTeamAgent(Scenario):
 
         return AtomicAttack(
             atomic_attack_name=composite_strategy.name,
-            attack=attack,
+            attack_technique=AttackTechnique(attack=attack),
             seed_groups=self._seed_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._attack_scoring_config.objective_scorer,

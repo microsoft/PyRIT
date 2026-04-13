@@ -1388,7 +1388,7 @@ def test_get_attack_results_by_attack_identifier_filter_class_name(sqlite_instan
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.ATTACK,
-                property_path="$.children.attack.class_name",
+                property_path="$.children.attack_technique.children.attack.class_name",
                 value="Crescendo",
                 partial_match=True,
             )

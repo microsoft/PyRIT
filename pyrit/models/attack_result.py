@@ -113,15 +113,23 @@ class AttackResult(StrategyResult):
         Return the attack strategy identifier from the composite atomic identifier.
 
         This is the non-deprecated replacement for the ``attack_identifier`` property.
-        Extracts and returns the ``"attack"`` child from ``atomic_attack_identifier``.
+        Extracts the ``"attack"`` child from the nested ``"attack_technique"`` child
+        of ``atomic_attack_identifier``.
+
+        Falls back to ``children["attack"]`` for rows created before the nested
+        structure was introduced.
 
         Returns:
             Optional[ComponentIdentifier]: The attack strategy identifier, or ``None`` if
-                ``atomic_attack_identifier`` is not set.
+                ``atomic_attack_identifier`` is not set or the expected children are missing.
 
         """
         if self.atomic_attack_identifier is None:
             return None
+        technique = self.atomic_attack_identifier.get_child("attack_technique")
+        if technique is not None:
+            return technique.get_child("attack")
+        # Fallback for pre-nesting rows that had children["attack"] directly.
         return self.atomic_attack_identifier.get_child("attack")
 
     def get_conversations_by_type(self, conversation_type: ConversationType) -> list[ConversationReference]:

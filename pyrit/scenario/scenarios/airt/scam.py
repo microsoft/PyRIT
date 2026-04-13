@@ -25,6 +25,7 @@ from pyrit.executor.attack.core.attack_config import (
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -294,9 +295,9 @@ class Scam(Scenario):
         elif strategy == "role_play":
             attack_strategy = RolePlayAttack(
                 objective_target=self._objective_target,
-                adversarial_chat=self._adversarial_chat,
                 role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT_WRITTEN.value,
                 attack_scoring_config=self._scorer_config,
+                attack_adversarial_config=self._adversarial_config,
             )
         elif strategy == "context_compliance":
             # Set system prompt to default
@@ -312,7 +313,7 @@ class Scam(Scenario):
 
         return AtomicAttack(
             atomic_attack_name=f"scam_{strategy}",
-            attack=attack_strategy,
+            attack_technique=AttackTechnique(attack=attack_strategy),
             seed_groups=self._seed_groups,
             memory_labels=self._memory_labels,
         )

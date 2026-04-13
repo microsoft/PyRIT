@@ -225,7 +225,7 @@ class TestScamAttackGeneration:
             atomic_attacks = await scenario._get_atomic_attacks_async()
 
             assert len(atomic_attacks) > 0
-            assert all(hasattr(run, "_attack") for run in atomic_attacks)
+            assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_singleturn_async(
@@ -249,7 +249,7 @@ class TestScamAttackGeneration:
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
         for run in atomic_attacks:
-            assert isinstance(run._attack, (ContextComplianceAttack, RolePlayAttack))
+            assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_multiturn_async(
@@ -268,7 +268,7 @@ class TestScamAttackGeneration:
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
         for run in atomic_attacks:
-            assert isinstance(run._attack, RedTeamingAttack)
+            assert isinstance(run.attack_technique.attack, RedTeamingAttack)
 
     @pytest.mark.asyncio
     async def test_attack_runs_include_objectives_async(
@@ -308,7 +308,7 @@ class TestScamAttackGeneration:
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
         atomic_attacks = await scenario._get_atomic_attacks_async()
         assert len(atomic_attacks) > 0
-        assert all(hasattr(run, "_attack") for run in atomic_attacks)
+        assert all(run.attack_technique is not None for run in atomic_attacks)
 
 
 @pytest.mark.usefixtures(*FIXTURES)
