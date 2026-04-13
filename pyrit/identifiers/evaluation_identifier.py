@@ -220,7 +220,7 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
 
     Per-child rules:
 
-    * ``seed_group`` — excluded entirely (present for traceability only).
+    * ``seed_identifiers`` — excluded entirely (present for traceability only).
     * ``attack_technique`` — not listed, so fully included by default.
       Its nested children (``objective_target``, ``adversarial_chat``,
       ``objective_scorer``, ``technique_seeds``) are processed recursively
@@ -241,7 +241,7 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
             included_params=frozenset({"model_name", "temperature", "top_p"}),
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
-        "seed_group": ChildEvalRule(exclude=True),
-        # attack_technique: intentionally omitted — fully included in eval hash.
-        # technique_seeds (inside attack_technique): also omitted — fully included.
+        "seed_identifiers": ChildEvalRule(exclude=True),
+        # attack_technique: not listed in rules — fully included in eval hash.
+        # technique_seeds (nested inside attack_technique): also not listed — fully included.
     }

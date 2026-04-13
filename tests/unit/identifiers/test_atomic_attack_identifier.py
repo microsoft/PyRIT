@@ -129,13 +129,13 @@ class TestBuildAtomicAttackIdentifier:
         assert technique.class_name == "AttackTechnique"
         assert technique.children["attack"] == attack_id
 
-    def test_no_seed_group_empty_seed_group(self):
+    def test_no_seed_group_empty_seed_identifiers(self):
         result = build_atomic_attack_identifier(attack_identifier=_make_attack())
-        assert result.children["seed_group"] == []
+        assert result.children["seed_identifiers"] == []
 
-    def test_empty_seed_group_empty_seed_group(self):
+    def test_empty_seed_group_empty_seed_identifiers(self):
         result = build_atomic_attack_identifier(attack_identifier=_make_attack(), seed_group=_FakeSeedGroup(seeds=[]))
-        assert result.children["seed_group"] == []
+        assert result.children["seed_identifiers"] == []
 
     def test_includes_all_seeds(self):
         general_seed = SeedPrompt(value="technique", value_sha256="abc", is_general_technique=True)
@@ -144,7 +144,7 @@ class TestBuildAtomicAttackIdentifier:
             attack_identifier=_make_attack(),
             seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_seed]),
         )
-        seed_ids = result.children["seed_group"]
+        seed_ids = result.children["seed_identifiers"]
         assert len(seed_ids) == 2
         assert seed_ids[0].params.get("value_sha256") == "abc"
         assert seed_ids[0].params.get("is_general_technique") is True
@@ -158,7 +158,7 @@ class TestBuildAtomicAttackIdentifier:
             attack_identifier=_make_attack(),
             seed_group=_FakeSeedGroup(seeds=[seed1, seed2]),
         )
-        assert len(result.children["seed_group"]) == 2
+        assert len(result.children["seed_identifiers"]) == 2
 
     def test_deterministic_hash(self):
         attack_id = _make_attack()
@@ -219,8 +219,8 @@ class TestAtomicAttackEvaluationIdentifier:
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["objective_scorer"]
         assert rule.exclude is True
 
-    def test_seed_group_rule(self):
-        rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["seed_group"]
+    def test_seed_identifiers_rule(self):
+        rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["seed_identifiers"]
         assert rule.exclude is True
 
     # -- Basic properties --------------------------------------------------

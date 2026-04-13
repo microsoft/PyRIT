@@ -14,7 +14,7 @@ The composite identifier has this shape::
       ├── attack_technique  (class_name="AttackTechnique")
       │   ├── attack            (attack strategy's ComponentIdentifier)
       │   └── technique_seeds   (optional, list of seed ComponentIdentifiers)
-      └── seed_group            (list of ALL seed ComponentIdentifiers, for traceability)
+      └── seed_identifiers      (list of ALL seed ComponentIdentifiers, for traceability)
 """
 
 import logging
@@ -74,7 +74,7 @@ def build_atomic_attack_identifier(
     Build a composite ComponentIdentifier for an atomic attack.
 
     The identifier places the attack technique in ``children["attack_technique"]``
-    and all seeds from the seed group in ``children["seed_group"]`` for traceability.
+    and all seeds from the seed group in ``children["seed_identifiers"]`` for traceability.
 
     Callers that have an ``AttackTechnique`` object should pass
     ``technique_identifier=attack_technique.get_identifier()``.
@@ -116,7 +116,7 @@ def build_atomic_attack_identifier(
 
     children: dict[str, Any] = {
         "attack_technique": technique_identifier,
-        "seed_group": seed_identifiers,
+        "seed_identifiers": seed_identifiers,
     }
 
     return ComponentIdentifier(
