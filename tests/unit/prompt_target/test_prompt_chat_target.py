@@ -22,10 +22,10 @@ def test_init_default_capabilities():
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_custom_capabilities():
-    custom = TargetCapabilities(supports_multi_turn=False)
+    custom = TargetCapabilities(supports_multi_turn=True)
     target = MockPromptTarget()
     target._capabilities = custom
-    assert target.capabilities.supports_multi_turn is False
+    assert target.capabilities.supports_multi_turn is True
 
 
 @pytest.mark.usefixtures("patch_central_database")

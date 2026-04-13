@@ -42,18 +42,21 @@ def test_get_chunks_batch_size_larger_than_list():
 
 
 def test_validate_rate_limit_no_target():
+    # Should not raise when no target is provided
     _validate_rate_limit_parameters(prompt_target=None, batch_size=5)
 
 
 def test_validate_rate_limit_no_rpm():
     target = MagicMock()
     target._max_requests_per_minute = None
+    # Should not raise when target has no RPM limit
     _validate_rate_limit_parameters(prompt_target=target, batch_size=5)
 
 
 def test_validate_rate_limit_rpm_with_batch_1():
     target = MagicMock()
     target._max_requests_per_minute = 10
+    # Should not raise when batch_size is 1 (compatible with RPM limiting)
     _validate_rate_limit_parameters(prompt_target=target, batch_size=1)
 
 
