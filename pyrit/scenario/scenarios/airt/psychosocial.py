@@ -480,9 +480,9 @@ class Psychosocial(Scenario):
         )
         role_play = RolePlayAttack(
             objective_target=self._objective_target,
-            adversarial_chat=self._adversarial_chat,
             role_play_definition_path=RolePlayPaths.MOVIE_SCRIPT.value,
             attack_scoring_config=scoring_config,
+            attack_adversarial_config=AttackAdversarialConfig(target=self._adversarial_chat),
         )
         attacks.append(
             AtomicAttack(

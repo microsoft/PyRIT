@@ -294,9 +294,9 @@ class Scam(Scenario):
         elif strategy == "role_play":
             attack_strategy = RolePlayAttack(
                 objective_target=self._objective_target,
-                adversarial_chat=self._adversarial_chat,
                 role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT_WRITTEN.value,
                 attack_scoring_config=self._scorer_config,
+                attack_adversarial_config=self._adversarial_config,
             )
         elif strategy == "context_compliance":
             # Set system prompt to default

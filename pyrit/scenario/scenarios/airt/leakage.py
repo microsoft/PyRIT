@@ -361,9 +361,9 @@ class Leakage(Scenario):
         """
         return RolePlayAttack(
             objective_target=self._objective_target,
-            adversarial_chat=self._adversarial_chat,
             role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT.value,
             attack_scoring_config=self._scorer_config,
+            attack_adversarial_config=self._adversarial_config,
         )
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
