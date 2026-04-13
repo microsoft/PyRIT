@@ -8,7 +8,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, Optional, TypeVar, Union, cast
 
 from sqlalchemy import and_, create_engine, func, or_, text
 from sqlalchemy.engine.base import Engine
@@ -33,6 +33,14 @@ from pyrit.models import ConversationStats, DiskStorageIO, MessagePiece
 logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
+
+
+class _ExportableConversationPiece:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._data
 
 
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
@@ -474,6 +482,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         Returns:
             Path: The path to the exported file.
+
+        Raises:
+            ValueError: If the specified export format is not supported.
         """
         # Import here to avoid circular import issues
         from pyrit.memory.memory_exporter import MemoryExporter
@@ -522,9 +533,20 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             piece_data["scores"] = [score.to_dict() for score in piece_scores]
             merged_data.append(piece_data)
 
-        # Export to JSON manually since the exporter expects objects but we have dicts
-        with open(file_path, "w") as f:
-            json.dump(merged_data, f, indent=4)
+        if not merged_data:
+            if export_type == "json":
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(merged_data, f, indent=4)
+            elif export_type in self.exporter.export_strategies:
+                file_path.write_text("", encoding="utf-8")
+            else:
+                raise ValueError(f"Unsupported export format: {export_type}")
+            return file_path
+
+        exportable_pieces = [_ExportableConversationPiece(data=piece_data) for piece_data in merged_data]
+        self.exporter.export_data(
+            cast("list[MessagePiece]", exportable_pieces), file_path=file_path, export_type=export_type
+        )
         return file_path
 
     def print_schema(self) -> None:

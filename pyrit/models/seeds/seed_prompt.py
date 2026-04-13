@@ -172,7 +172,7 @@ class SeedPrompt(Seed):
         current_sequence = starting_sequence
 
         for message in messages:
-            role: ChatMessageRole = "assistant" if message.api_role == "assistant" else "user"
+            role: ChatMessageRole = message.api_role
 
             for piece in message.message_pieces:
                 seed_prompt = SeedPrompt(
