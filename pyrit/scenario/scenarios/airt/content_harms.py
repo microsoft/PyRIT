@@ -303,7 +303,7 @@ class ContentHarms(Scenario):
 
         role_play_attack = RolePlayAttack(
             objective_target=self._objective_target,
-            adversarial_chat=self._adversarial_chat,
+            attack_adversarial_config=AttackAdversarialConfig(target=self._adversarial_chat),
             role_play_definition_path=RolePlayPaths.MOVIE_SCRIPT.value,
         )
 

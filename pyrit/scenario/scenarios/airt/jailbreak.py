@@ -9,6 +9,7 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
+    AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
 )
@@ -279,7 +280,9 @@ class Jailbreak(Scenario):
             case "skeleton":
                 attack = SkeletonKeyAttack(**args)
             case "role_play":
-                args["adversarial_chat"] = self._get_or_create_adversarial_target()
+                args["attack_adversarial_config"] = AttackAdversarialConfig(
+                    target=self._get_or_create_adversarial_target()
+                )
                 args["role_play_definition_path"] = RolePlayPaths.PERSUASION_SCRIPT.value
                 attack = RolePlayAttack(**args)
             case _:
