@@ -57,7 +57,7 @@ def test_from_converters_multiple():
     assert result[2].converters == [c3]
 
 
-def test_from_converters_each_config_has_defaults():
+def test_from_converters_each_config_defaults_none():
     c1 = _make_mock_converter()
     c2 = _make_mock_converter()
     result = PromptConverterConfiguration.from_converters(converters=[c1, c2])
