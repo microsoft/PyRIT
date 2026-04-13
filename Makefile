@@ -1,4 +1,4 @@
-.PHONY: all pre-commit mypy unit-test unit-test-junit unit-test-cov unit-test-cov-html unit-test-cov-xml diff-cover
+.PHONY: all pre-commit mypy unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
 
 CMD:=uv run -m
 PYMODULE:=pyrit
@@ -40,9 +40,6 @@ unit-test:
 unit-test-junit:
 	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS) --junitxml=junit/test-results.xml
 
-unit-test-cov:
-	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS)
-
 unit-test-cov-html:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report html
 
@@ -53,7 +50,7 @@ diff-cover:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml
 	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
 
-diff-cover-only:
+unit-test-diff-cover:
 	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
 
 integration-test:
