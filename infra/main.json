@@ -1,0 +1,579 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "16381559389474872325"
+    }
+  },
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "defaultValue": "pyrit-gui",
+      "metadata": {
+        "description": "Name for the Container App and related resources"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources"
+      }
+    },
+    "containerImage": {
+      "type": "string",
+      "metadata": {
+        "example": "myacr.azurecr.io/pyrit:a1b2c3d or myacr.azurecr.io/pyrit@sha256:...",
+        "description": "Container image — must use a unique tag (commit SHA) or digest, never :latest. Enforce in CI pipeline."
+      }
+    },
+    "entraTenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra ID tenant ID"
+      }
+    },
+    "entraClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra ID app registration client ID (no secrets needed)"
+      }
+    },
+    "allowedGroupObjectIds": {
+      "type": "string",
+      "metadata": {
+        "description": "Object ID of the Entra security group allowed to access the GUI"
+      }
+    },
+    "allowedCidr": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed."
+      }
+    },
+    "allowedCidrDescription": {
+      "type": "string",
+      "defaultValue": "Allowed IP range",
+      "metadata": {
+        "description": "Human-readable description for the IP restriction rule"
+      }
+    },
+    "sqlServerFqdn": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure SQL server FQDN (e.g., myserver.database.windows.net)"
+      }
+    },
+    "sqlDatabaseName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure SQL database name"
+      }
+    },
+    "pyritInitializer": {
+      "type": "string",
+      "defaultValue": "target airt",
+      "metadata": {
+        "description": "PyRIT initializer to run. Default \"target airt\" registers target configs + attack defaults."
+      }
+    },
+    "envSecretName": {
+      "type": "string",
+      "defaultValue": "env-global",
+      "metadata": {
+        "description": "Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup."
+      }
+    },
+    "cpuCores": {
+      "type": "string",
+      "defaultValue": "1.0",
+      "metadata": {
+        "description": "Container CPU cores"
+      }
+    },
+    "memoryGb": {
+      "type": "string",
+      "defaultValue": "2.0",
+      "metadata": {
+        "description": "Container memory in GB"
+      }
+    },
+    "minReplicas": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Minimum number of replicas"
+      }
+    },
+    "maxReplicas": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Maximum number of replicas"
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Azure Container Registry name (for managed identity pull). Used if acrResourceId is not provided."
+      }
+    },
+    "enablePrivateEndpoint": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable Private Endpoint for the ACA environment. When false, uses public access with IP restrictions."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/16",
+      "metadata": {
+        "description": "VNet address prefix (used only when creating a new VNet)"
+      }
+    },
+    "subnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/24",
+      "metadata": {
+        "description": "Subnet address prefix for the Private Endpoint (used only when creating a new subnet)"
+      }
+    },
+    "infrastructureSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "example": "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>",
+        "description": "Resource ID of an existing subnet for the Private Endpoint. If empty, a new VNet + subnet is created."
+      }
+    },
+    "logRetentionDays": {
+      "type": "int",
+      "defaultValue": 90,
+      "metadata": {
+        "description": "Log Analytics retention in days (used only when creating a new workspace)"
+      }
+    },
+    "logAnalyticsWorkspaceId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Resource ID of an existing Log Analytics workspace. If provided, you must also provide logAnalyticsCustomerId. Recommended for orgs with a central governance workspace."
+      }
+    },
+    "logAnalyticsCustomerId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Customer ID of an existing Log Analytics workspace (required if logAnalyticsWorkspaceId is provided)"
+      }
+    },
+    "logAnalyticsSharedKey": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Shared key of an existing Log Analytics workspace (required if logAnalyticsWorkspaceId is provided). This is used only for ACA log ingestion config."
+      }
+    },
+    "keyVaultResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of an existing Key Vault (required). Use your org's governed vault to avoid soft-delete/purge-protection issues on redeployment."
+      }
+    },
+    "acrResourceId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Resource ID of the Azure Container Registry (for AcrPull role assignment). Recommended over acrName for IaC-managed access."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "Service": "pyrit-gui",
+        "Owner": "<your-team>",
+        "DataClass": "<your-data-classification>"
+      },
+      "metadata": {
+        "description": "Resource tags applied to all resources (ownership + data classification)"
+      }
+    },
+    "enableOtel": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Enable OpenTelemetry managed agent for audit logging. Creates Application Insights and wires the ACA managed OTel collector."
+      }
+    }
+  },
+  "variables": {
+    "imageUsesLatest": "[endsWith(parameters('containerImage'), ':latest')]",
+    "createLogAnalytics": "[equals(parameters('logAnalyticsWorkspaceId'), '')]",
+    "createVnet": "[and(parameters('enablePrivateEndpoint'), equals(parameters('infrastructureSubnetId'), ''))]",
+    "createAcr": "[and(equals(parameters('acrResourceId'), ''), equals(parameters('acrName'), ''))]",
+    "effectiveAcrName": "[if(variables('createAcr'), format('{0}acr', replace(parameters('appName'), '-', '')), if(not(equals(parameters('acrName'), '')), parameters('acrName'), last(split(parameters('acrResourceId'), '/'))))]",
+    "effectiveAcrServer": "[format('{0}.azurecr.io', variables('effectiveAcrName'))]",
+    "keyVaultName": "[last(split(parameters('keyVaultResourceId'), '/'))]"
+  },
+  "resources": [
+    {
+      "condition": "[variables('createVnet')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}-vnet', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[format('{0}-pe-subnet', parameters('appName'))]",
+            "properties": {
+              "addressPrefix": "[parameters('subnetAddressPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[variables('createAcr')]",
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-08-01-preview",
+      "name": "[format('{0}acr', replace(parameters('appName'), '-', ''))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "adminUserEnabled": false
+      }
+    },
+    {
+      "condition": "[variables('createLogAnalytics')]",
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}-logs', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": "[parameters('logRetentionDays')]"
+      }
+    },
+    {
+      "condition": "[parameters('enableOtel')]",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[format('{0}-ai', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[if(variables('createLogAnalytics'), resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('appName'))), parameters('logAnalyticsWorkspaceId'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('appName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}-identity', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-10-02-preview",
+      "name": "[format('{0}-env', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[if(variables('createLogAnalytics'), reference(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('appName'))), '2023-09-01').customerId, parameters('logAnalyticsCustomerId'))]",
+            "sharedKey": "[if(variables('createLogAnalytics'), listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('appName'))), '2023-09-01').primarySharedKey, parameters('logAnalyticsSharedKey'))]"
+          }
+        },
+        "publicNetworkAccess": "[if(parameters('enablePrivateEndpoint'), 'Disabled', 'Enabled')]",
+        "workloadProfiles": [
+          {
+            "name": "Consumption",
+            "workloadProfileType": "Consumption"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('appName')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateEndpoint')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}-pe', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[if(variables('createVnet'), reference(resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('appName'))), '2023-11-01').subnets[0].id, parameters('infrastructureSubnetId'))]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "[format('{0}-pe-connection', parameters('appName'))]",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName')))]",
+              "groupIds": [
+                "managedEnvironments"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('appName')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateEndpoint')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "[format('privatelink.{0}.azurecontainerapps.io', parameters('location'))]",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[parameters('enablePrivateEndpoint')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', format('privatelink.{0}.azurecontainerapps.io', parameters('location')), format('{0}-dns-link', parameters('appName')))]",
+      "location": "global",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "virtualNetwork": {
+          "id": "[if(variables('createVnet'), resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('appName'))), join(take(split(parameters('infrastructureSubnetId'), '/'), 9), '/'))]"
+        },
+        "registrationEnabled": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.{0}.azurecontainerapps.io', parameters('location')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('{0}-vnet', parameters('appName')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateEndpoint')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', format('{0}-pe', parameters('appName')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "aca-dns-config",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.{0}.azurecontainerapps.io', parameters('location')))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.{0}.azurecontainerapps.io', parameters('location')))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-pe', parameters('appName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('appName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))))]": {}
+        }
+      },
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName')))]",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 8000,
+            "transport": "http",
+            "allowInsecure": false,
+            "ipSecurityRestrictions": "[if(not(equals(parameters('allowedCidr'), '')), createArray(createObject('name', 'allowed-cidr', 'description', parameters('allowedCidrDescription'), 'ipAddressRange', parameters('allowedCidr'), 'action', 'Allow')), createArray())]"
+          },
+          "registries": [
+            {
+              "server": "[variables('effectiveAcrServer')]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
+            }
+          ],
+          "secrets": [
+            {
+              "name": "env-file",
+              "keyVaultUrl": "[format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('envSecretName'))]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "pyrit-gui",
+              "image": "[parameters('containerImage')]",
+              "resources": {
+                "cpu": "[json(parameters('cpuCores'))]",
+                "memory": "[format('{0}Gi', parameters('memoryGb'))]"
+              },
+              "env": [
+                {
+                  "name": "PYRIT_MODE",
+                  "value": "gui"
+                },
+                {
+                  "name": "AZURE_SQL_SERVER",
+                  "value": "[parameters('sqlServerFqdn')]"
+                },
+                {
+                  "name": "AZURE_SQL_DATABASE",
+                  "value": "[parameters('sqlDatabaseName')]"
+                },
+                {
+                  "name": "PYRIT_INITIALIZER",
+                  "value": "[parameters('pyritInitializer')]"
+                },
+                {
+                  "name": "PYRIT_ENV_CONTENTS",
+                  "secretRef": "env-file"
+                },
+                {
+                  "name": "ENTRA_CLIENT_ID",
+                  "value": "[parameters('entraClientId')]"
+                },
+                {
+                  "name": "ENTRA_TENANT_ID",
+                  "value": "[parameters('entraTenantId')]"
+                },
+                {
+                  "name": "ENTRA_ALLOWED_GROUP_IDS",
+                  "value": "[parameters('allowedGroupObjectIds')]"
+                },
+                {
+                  "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                  "value": "[if(parameters('enableOtel'), 'http://localhost:4318', '')]"
+                },
+                {
+                  "name": "OTEL_SERVICE_NAME",
+                  "value": "[parameters('appName')]"
+                },
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').clientId]"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": "[parameters('minReplicas')]",
+            "maxReplicas": "[parameters('maxReplicas')]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName')))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]",
+        "[resourceId('Microsoft.ContainerRegistry/registries', format('{0}acr', replace(parameters('appName'), '-', '')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "appFqdn": {
+      "type": "string",
+      "metadata": {
+        "description": "The FQDN of the deployed Container App"
+      },
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('appName')), '2024-03-01').configuration.ingress.fqdn]"
+    },
+    "environmentDefaultDomain": {
+      "type": "string",
+      "metadata": {
+        "description": "The default domain of the ACA environment"
+      },
+      "value": "[reference(resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName'))), '2024-10-02-preview').defaultDomain]"
+    },
+    "privateEndpointId": {
+      "type": "string",
+      "metadata": {
+        "description": "Private Endpoint resource ID (empty when PE is disabled)"
+      },
+      "value": "[if(parameters('enablePrivateEndpoint'), resourceId('Microsoft.Network/privateEndpoints', format('{0}-pe', parameters('appName'))), '')]"
+    },
+    "managedIdentityPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "The principal ID of the user-assigned managed identity — grant this Cognitive Services OpenAI User on your AOAI instances and db_datareader/db_datawriter on Azure SQL"
+      },
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').principalId]"
+    },
+    "managedIdentityResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "The resource ID of the user-assigned managed identity"
+      },
+      "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
+    },
+    "sqlAadSetupRequired": {
+      "type": "string",
+      "metadata": {
+        "description": "IMPORTANT: Create an Azure AD contained user in the target database for this managed identity. See README post-deployment steps."
+      },
+      "value": "[format('Run CREATE USER [{0}-identity] FROM EXTERNAL PROVIDER on database {1}', parameters('appName'), parameters('sqlDatabaseName'))]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Key Vault name (existing)"
+      },
+      "value": "[variables('keyVaultName')]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "metadata": {
+        "description": "ACR login server"
+      },
+      "value": "[variables('effectiveAcrServer')]"
+    },
+    "vnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "VNet name (if created by this template)"
+      },
+      "value": "[if(variables('createVnet'), format('{0}-vnet', parameters('appName')), 'N/A (existing VNet used)')]"
+    },
+    "appInsightsConnectionString": {
+      "type": "string",
+      "metadata": {
+        "description": "Application Insights connection string (if OTel enabled)"
+      },
+      "value": "[if(parameters('enableOtel'), reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('appName'))), '2020-02-02').ConnectionString, 'N/A (OTel disabled)')]"
+    }
+  }
+}
