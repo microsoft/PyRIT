@@ -89,6 +89,19 @@ def test_parse_raw_http_request_preserves_relative_url_case(sqlite_instance):
     assert version == "HTTP/1.1"
 
 
+def test_parse_raw_http_request_preserves_body_trailing_whitespace(sqlite_instance):
+    request = "POST /submit HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\nhello  \n"
+    target = HTTPTarget(http_request=request)
+
+    headers, body, url, method, version = target.parse_raw_http_request(request)
+
+    assert url == "https://example.com/submit"
+    assert method == "POST"
+    assert headers == {"host": "example.com", "content-type": "text/plain"}
+    assert body == "hello  \n"
+    assert version == "HTTP/1.1"
+
+
 def test_parse_regex_response_no_match():
     mock_response = MagicMock()
     mock_response.content = b"<html><body>No match here</body></html>"

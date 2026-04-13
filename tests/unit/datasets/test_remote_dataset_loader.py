@@ -72,3 +72,13 @@ class TestRemoteDatasetLoader:
         loader._write_cache(cache_file=cache_file, examples=data, file_type="json")
 
         assert cache_file.exists()
+
+    def test_write_cache_csv_allows_empty_examples(self, tmp_path):
+        loader = ConcreteRemoteLoader()
+        cache_file = tmp_path / "empty.csv"
+
+        loader._write_cache(cache_file=cache_file, examples=[], file_type="csv")
+
+        assert cache_file.exists()
+        assert cache_file.read_text(encoding="utf-8") == ""
+        assert loader._read_cache(cache_file=cache_file, file_type="csv") == []

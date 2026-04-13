@@ -151,6 +151,15 @@ class TestPyRITShell:
         captured = capsys.readouterr()
         assert "Error listing scenarios" in captured.out
 
+    def test_do_list_scenarios_rejects_args(self, shell, capsys):
+        """Test do_list_scenarios rejects unexpected arguments."""
+        s, ctx, _ = shell
+
+        s.do_list_scenarios("--unknown foo")
+
+        captured = capsys.readouterr()
+        assert "does not accept arguments" in captured.out
+
     @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
     def test_do_list_initializers(self, mock_print_initializers: AsyncMock, shell):
         """Test do_list_initializers command."""
@@ -170,6 +179,67 @@ class TestPyRITShell:
 
         captured = capsys.readouterr()
         assert "Error listing initializers" in captured.out
+
+    def test_do_list_initializers_rejects_args(self, shell, capsys):
+        """Test do_list_initializers rejects unexpected arguments."""
+        s, ctx, _ = shell
+
+        s.do_list_initializers("--unknown foo")
+
+        captured = capsys.readouterr()
+        assert "does not accept arguments" in captured.out
+
+    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
+    def test_do_list_targets_no_args(self, mock_print_targets: AsyncMock, shell):
+        """Test do_list_targets with no arguments uses the default context."""
+        s, ctx, _ = shell
+
+        s.do_list_targets("")
+
+        mock_print_targets.assert_called_once_with(context=ctx)
+
+    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.parse_list_targets_arguments")
+    def test_do_list_targets_with_initializers(
+        self,
+        mock_parse: MagicMock,
+        mock_print_targets: AsyncMock,
+        shell,
+    ):
+        """Test do_list_targets with --initializers uses context.with_overrides."""
+        s, ctx, _ = shell
+        mock_parse.return_value = {"initializers": ["target"], "initialization_scripts": None}
+        mock_derived = MagicMock()
+        ctx.with_overrides = MagicMock(return_value=mock_derived)
+
+        s.do_list_targets("--initializers target")
+
+        mock_parse.assert_called_once_with(args_string="--initializers target")
+        ctx.with_overrides.assert_called_once_with(
+            initialization_scripts=None,
+            initializer_names=["target"],
+        )
+        mock_print_targets.assert_called_once_with(context=mock_derived)
+
+    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
+    def test_do_list_targets_with_exception(self, mock_print_targets: AsyncMock, shell, capsys):
+        """Test do_list_targets handles exceptions."""
+        s, ctx, _ = shell
+        mock_print_targets.side_effect = RuntimeError("Test error")
+
+        s.do_list_targets("")
+
+        captured = capsys.readouterr()
+        assert "Error listing targets" in captured.out
+
+    def test_do_list_targets_parse_error(self, shell, capsys):
+        """Test do_list_targets shows error for invalid args."""
+        s, ctx, _ = shell
+
+        s.do_list_targets("--unknown-flag")
+
+        captured = capsys.readouterr()
+        assert "Error" in captured.out
 
     def test_do_run_empty_line(self, shell, capsys):
         """Test do_run with empty line."""
@@ -380,6 +450,15 @@ class TestPyRITShell:
         captured = capsys.readouterr()
         assert "No scenario runs in history" in captured.out
 
+    def test_do_scenario_history_rejects_args(self, shell, capsys):
+        """Test do_scenario_history rejects unexpected arguments."""
+        s, ctx, _ = shell
+
+        s.do_scenario_history("--unknown foo")
+
+        captured = capsys.readouterr()
+        assert "does not accept arguments" in captured.out
+
     def test_do_scenario_history_with_runs(self, shell, capsys):
         """Test do_scenario_history with scenario runs."""
         s, ctx, _ = shell
@@ -501,6 +580,14 @@ class TestPyRITShell:
         with patch("cmd.Cmd.do_help") as mock_parent_help:
             s.do_help("run")
             mock_parent_help.assert_called_with("run")
+
+    def test_do_help_with_hyphenated_arg(self, shell):
+        """Test do_help converts hyphens to underscores for command lookup."""
+        s, ctx, _ = shell
+
+        with patch("cmd.Cmd.do_help") as mock_parent_help:
+            s.do_help("list-targets")
+            mock_parent_help.assert_called_with("list_targets")
 
     @patch.object(cmd.Cmd, "cmdloop")
     @patch.object(banner, "play_animation")
