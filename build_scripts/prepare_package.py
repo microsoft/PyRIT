@@ -48,7 +48,7 @@ def build_frontend(frontend_dir: Path) -> bool:
     print("\nInstalling frontend dependencies...")
     try:
         subprocess.run(
-            [npm, "install"],
+            ["npm", "install", "--legacy-peer-deps"],
             cwd=frontend_dir,
             check=True,
             stdout=subprocess.PIPE,
