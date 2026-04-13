@@ -11,6 +11,9 @@ initialized with their required parameters (e.g., chat_target).
 For registries that store classes (Type[T]), see class_registries/.
 """
 
+from pyrit.registry.instance_registries.attack_technique_registry import (
+    AttackTechniqueRegistry,
+)
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
     RegistryEntry,
@@ -30,6 +33,7 @@ __all__ = [
     "BaseInstanceRegistry",
     "RegistryEntry",
     # Concrete registries
+    "AttackTechniqueRegistry",
     "ConverterRegistry",
     "ScorerRegistry",
     "TargetRegistry",

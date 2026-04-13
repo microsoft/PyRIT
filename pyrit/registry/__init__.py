@@ -18,6 +18,7 @@ from pyrit.registry.discovery import (
     discover_subclasses_in_loaded_modules,
 )
 from pyrit.registry.instance_registries import (
+    AttackTechniqueRegistry,
     BaseInstanceRegistry,
     RegistryEntry,
     ScorerRegistry,
@@ -25,6 +26,7 @@ from pyrit.registry.instance_registries import (
 )
 
 __all__ = [
+    "AttackTechniqueRegistry",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
     "ClassEntry",
