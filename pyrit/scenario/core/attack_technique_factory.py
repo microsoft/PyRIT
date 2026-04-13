@@ -59,7 +59,8 @@ class AttackTechniqueFactory(Identifiable):
             seed_technique: Optional technique seed group to attach to created techniques.
 
         Raises:
-            TypeError: If any kwarg name is not a valid constructor parameter.
+            TypeError: If any kwarg name is not a valid constructor parameter,
+                or if the attack class constructor uses ``**kwargs``.
             ValueError: If ``objective_target`` is included in attack_kwargs.
         """
         self._attack_class = attack_class
@@ -76,7 +77,9 @@ class AttackTechniqueFactory(Identifiable):
         the ``@apply_defaults`` decorator (it uses ``functools.wraps``).
 
         Raises:
-            TypeError: If any kwarg name is not a valid constructor parameter.
+            TypeError: If any kwarg name is not a valid constructor parameter,
+                or if the constructor uses ``**kwargs`` (all parameters must be
+                explicitly named).
             ValueError: If ``objective_target`` is included in attack_kwargs.
         """
         if "objective_target" in self._attack_kwargs:
@@ -86,6 +89,18 @@ class AttackTechniqueFactory(Identifiable):
             )
 
         sig = inspect.signature(self._attack_class.__init__)
+
+        # Reject constructors that accept **kwargs — we require explicitly named
+        # parameters so that validation is meaningful.
+        has_var_keyword = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()
+        )
+        if has_var_keyword:
+            raise TypeError(
+                f"{self._attack_class.__name__}.__init__ accepts **kwargs, which prevents "
+                f"parameter validation. All attack constructor parameters must be explicitly named."
+            )
+
         valid_params = {
             name
             for name, param in sig.parameters.items()
@@ -153,21 +168,43 @@ class AttackTechniqueFactory(Identifiable):
         attack = self._attack_class(**kwargs)
         return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
 
+    @staticmethod
+    def _serialize_value(value: Any) -> Any:
+        """
+        Convert a value to a JSON-safe representation for identifier hashing.
+
+        Primitives are included directly. Identifiable objects contribute their
+        hash. Collections are serialized recursively. Other types fall back to
+        their qualified class name.
+
+        Returns:
+            Any: A JSON-serializable representation of the value.
+        """
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, (list, tuple)):
+            return [AttackTechniqueFactory._serialize_value(v) for v in value]
+        if isinstance(value, dict):
+            return {str(k): AttackTechniqueFactory._serialize_value(v) for k, v in sorted(value.items())}
+        if isinstance(value, Identifiable):
+            return value.get_identifier().hash
+        return f"<{type(value).__qualname__}>"
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the behavioral identity for this factory.
 
-        Includes the attack class name and the sorted kwarg keys so that
-        factories with different configurations are distinguishable.
+        Includes the attack class name and kwargs with their serialized values
+        so that factories with different configurations produce different hashes.
 
         Returns:
             ComponentIdentifier: The frozen identity snapshot.
         """
-        kwargs_summary = sorted(self._attack_kwargs.keys())
+        kwargs_for_id = {k: self._serialize_value(v) for k, v in sorted(self._attack_kwargs.items())}
         return ComponentIdentifier.of(
             self,
             params={
                 "attack_class": self._attack_class.__name__,
-                "kwargs_keys": kwargs_summary,
+                "kwargs": kwargs_for_id,
             },
         )

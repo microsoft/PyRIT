@@ -125,15 +125,6 @@ class TestAttackTechniqueRegistryCreateTechnique:
         assert technique.attack.objective_target is target
 
     def test_create_technique_passes_scoring_config(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
-        self.registry.register_technique(name="stub", factory=factory)
-        target = MagicMock(spec=PromptTarget)
-        scoring = MagicMock(spec=AttackScoringConfig)
-
-        # _StubAttack doesn't have scoring config, but factory passes it through
-        # The real constructor would use it; here we verify the flow doesn't error
-        # when using a stub that doesn't accept it. Let's use a factory that does.
-
         class _ScoringStub:
             def __init__(self, *, objective_target, attack_scoring_config=None):
                 self.objective_target = objective_target
@@ -142,8 +133,10 @@ class TestAttackTechniqueRegistryCreateTechnique:
             def get_identifier(self):
                 return ComponentIdentifier(class_name="_ScoringStub", class_module="test")
 
-        factory2 = AttackTechniqueFactory(attack_class=_ScoringStub)
-        self.registry.register_technique(name="scoring_stub", factory=factory2)
+        factory = AttackTechniqueFactory(attack_class=_ScoringStub)
+        self.registry.register_technique(name="scoring_stub", factory=factory)
+        target = MagicMock(spec=PromptTarget)
+        scoring = MagicMock(spec=AttackScoringConfig)
 
         technique = self.registry.create_technique(
             "scoring_stub", objective_target=target, attack_scoring_config=scoring

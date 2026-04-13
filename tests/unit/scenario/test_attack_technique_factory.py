@@ -8,7 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -99,6 +100,46 @@ class TestFactoryInit:
             AttackTechniqueFactory(
                 attack_class=_StubAttack,
                 attack_kwargs={"bad_param_1": 1, "bad_param_2": 2},
+            )
+
+    def test_validate_kwargs_rejects_var_keyword_constructor(self):
+        """Constructors with **kwargs prevent parameter validation and should be rejected."""
+
+        class _KwargsAttack:
+            def __init__(self, **kwargs):
+                pass
+
+        with pytest.raises(TypeError, match="accepts \\*\\*kwargs.*parameter validation"):
+            AttackTechniqueFactory(attack_class=_KwargsAttack)
+
+    def test_validate_kwargs_rejects_var_keyword_even_with_named_params(self):
+        """Mixed named params + **kwargs should still be rejected."""
+
+        class _MixedAttack:
+            def __init__(self, *, objective_target, max_turns: int = 5, **extra):
+                pass
+
+        with pytest.raises(TypeError, match="accepts \\*\\*kwargs"):
+            AttackTechniqueFactory(
+                attack_class=_MixedAttack,
+                attack_kwargs={"max_turns": 10},
+            )
+
+    def test_validate_kwargs_works_with_real_attack_class(self):
+        """
+        Validate that inspect.signature correctly sees through @apply_defaults
+        and functools.wraps on a real AttackStrategy subclass.
+        """
+        # PromptSendingAttack uses @apply_defaults — factory should see its real params
+        factory = AttackTechniqueFactory(attack_class=PromptSendingAttack)
+        assert factory.attack_class is PromptSendingAttack
+
+    def test_validate_kwargs_rejects_invalid_param_on_real_attack_class(self):
+        """A typo kwarg should be caught even through @apply_defaults."""
+        with pytest.raises(TypeError, match="Invalid kwargs.*nonexistent_param"):
+            AttackTechniqueFactory(
+                attack_class=PromptSendingAttack,
+                attack_kwargs={"nonexistent_param": 42},
             )
 
 
@@ -206,24 +247,33 @@ class TestFactoryCreate:
         assert technique2.attack.items == [1, 2, 3]
 
     def test_create_without_optional_configs_omits_them(self):
-        """When optional configs are None, they should not be in kwargs."""
-        call_kwargs: dict = {}
+        """When optional configs are None, they should not be passed to the constructor."""
+        unset = object()
 
-        class _SpyAttack:
-            def __init__(self, **kwargs):
-                call_kwargs.update(kwargs)
+        class _SentinelAttack:
+            def __init__(
+                self,
+                *,
+                objective_target,
+                attack_scoring_config=unset,
+                attack_adversarial_config=unset,
+                attack_converter_config=unset,
+            ):
+                self.objective_target = objective_target
+                self.scoring_was_passed = attack_scoring_config is not unset
+                self.adversarial_was_passed = attack_adversarial_config is not unset
+                self.converter_was_passed = attack_converter_config is not unset
 
             def get_identifier(self):
-                return ComponentIdentifier(class_name="_SpyAttack", class_module="test")
+                return ComponentIdentifier(class_name="_SentinelAttack", class_module="test")
 
-        factory = AttackTechniqueFactory(attack_class=_SpyAttack)
+        factory = AttackTechniqueFactory(attack_class=_SentinelAttack)
         target = MagicMock(spec=PromptTarget)
-        factory.create(objective_target=target)
+        technique = factory.create(objective_target=target)
 
-        assert "objective_target" in call_kwargs
-        assert "attack_scoring_config" not in call_kwargs
-        assert "attack_adversarial_config" not in call_kwargs
-        assert "attack_converter_config" not in call_kwargs
+        assert not technique.attack.scoring_was_passed
+        assert not technique.attack.adversarial_was_passed
+        assert not technique.attack.converter_was_passed
 
 
 class TestFactoryIdentifier:
@@ -238,7 +288,7 @@ class TestFactoryIdentifier:
         assert identifier.class_name == "AttackTechniqueFactory"
         assert identifier.params["attack_class"] == "_StubAttack"
 
-    def test_identifier_includes_kwargs_keys(self):
+    def test_identifier_includes_kwargs_with_values(self):
         factory = AttackTechniqueFactory(
             attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10, "attack_scoring_config": None},
@@ -246,16 +296,29 @@ class TestFactoryIdentifier:
 
         identifier = factory.get_identifier()
 
-        assert sorted(identifier.params["kwargs_keys"]) == ["attack_scoring_config", "max_turns"]
+        assert identifier.params["kwargs"] == {"attack_scoring_config": None, "max_turns": 10}
 
-    def test_identifier_empty_kwargs_keys(self):
+    def test_identifier_empty_kwargs(self):
         factory = AttackTechniqueFactory(attack_class=_StubAttack)
 
         identifier = factory.get_identifier()
 
-        assert identifier.params["kwargs_keys"] == []
+        assert identifier.params["kwargs"] == {}
 
-    def test_different_kwargs_produce_different_hashes(self):
+    def test_same_keys_different_values_produce_different_hashes(self):
+        """Two factories with max_turns=5 vs max_turns=50 must have different hashes."""
+        factory1 = AttackTechniqueFactory(
+            attack_class=_StubAttack,
+            attack_kwargs={"max_turns": 5},
+        )
+        factory2 = AttackTechniqueFactory(
+            attack_class=_StubAttack,
+            attack_kwargs={"max_turns": 50},
+        )
+
+        assert factory1.get_identifier().hash != factory2.get_identifier().hash
+
+    def test_different_kwargs_keys_produce_different_hashes(self):
         factory1 = AttackTechniqueFactory(
             attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10},
@@ -266,6 +329,34 @@ class TestFactoryIdentifier:
         )
 
         assert factory1.get_identifier().hash != factory2.get_identifier().hash
+
+    def test_identifier_serializes_identifiable_values(self):
+        """Identifiable objects in kwargs should contribute their hash to the identifier."""
+        expected_id = ComponentIdentifier(
+            class_name="MockConfig",
+            class_module="test",
+            params={"key": "value"},
+        )
+        mock_identifiable = MagicMock(spec=Identifiable)
+        mock_identifiable.get_identifier.return_value = expected_id
+
+        class _IdentifiableParamAttack:
+            def __init__(self, *, objective_target, config=None):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_IdentifiableParamAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            attack_class=_IdentifiableParamAttack,
+            attack_kwargs={"config": mock_identifiable},
+        )
+
+        identifier = factory.get_identifier()
+        config_value = identifier.params["kwargs"]["config"]
+        # Should be the hash string from the identifiable, not the object itself
+        assert isinstance(config_value, str)
+        assert config_value == expected_id.hash
 
     def test_identifier_is_cached(self):
         factory = AttackTechniqueFactory(attack_class=_StubAttack)
