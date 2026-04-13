@@ -353,6 +353,35 @@ def test_get_condition_json_property_match_bind_params(
     assert list(mv_params.values())[0] == expected_value
 
 
+@pytest.mark.parametrize(
+    "case_sensitive, partial_match, expected_sql_fragment",
+    [
+        (False, False, "LOWER(JSON_VALUE("),
+        (True, False, "JSON_VALUE("),
+        (False, True, "LOWER(JSON_VALUE("),
+    ],
+    ids=["case_insensitive_exact", "case_sensitive_exact", "case_insensitive_partial"],
+)
+def test_get_condition_json_property_match_sql_text(
+    memory_interface: AzureSQLMemory,
+    case_sensitive: bool,
+    partial_match: bool,
+    expected_sql_fragment: str,
+):
+    condition = memory_interface._get_condition_json_property_match(
+        json_column=PromptMemoryEntry.labels,
+        property_path="$.key",
+        value="TestValue",
+        partial_match=partial_match,
+        case_sensitive=case_sensitive,
+    )
+    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    assert expected_sql_fragment in sql_text
+    # When case_sensitive=False, LOWER must wrap the entire JSON_VALUE(...) call
+    if not case_sensitive:
+        assert "LOWER(JSON_VALUE)" not in sql_text.replace("LOWER(JSON_VALUE(", "")
+
+
 def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
