@@ -65,7 +65,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory", Com
         name: str,
         *,
         objective_target: PromptTarget,
-        attack_scoring_config: AttackScoringConfig | None = None,
+        attack_scoring_config: AttackScoringConfig,
         attack_adversarial_config: AttackAdversarialConfig | None = None,
         attack_converter_config: AttackConverterConfig | None = None,
     ) -> AttackTechnique:
@@ -75,7 +75,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory", Com
         Args:
             name: The registry name of the technique.
             objective_target: The target to attack.
-            attack_scoring_config: Optional scoring configuration override.
+            attack_scoring_config: Scoring configuration for the attack.
             attack_adversarial_config: Optional adversarial configuration override.
             attack_converter_config: Optional converter configuration override.
 

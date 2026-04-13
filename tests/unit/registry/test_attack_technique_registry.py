@@ -18,8 +18,9 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 class _StubAttack:
     """Minimal stub for testing the registry without real AttackStrategy weight."""
 
-    def __init__(self, *, objective_target, max_turns: int = 5):
+    def __init__(self, *, objective_target, attack_scoring_config=None, max_turns: int = 5):
         self.objective_target = objective_target
+        self.attack_scoring_config = attack_scoring_config
         self.max_turns = max_turns
 
     def get_identifier(self):
@@ -117,8 +118,9 @@ class TestAttackTechniqueRegistryCreateTechnique:
         factory = AttackTechniqueFactory(attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
         target = MagicMock(spec=PromptTarget)
+        scoring = MagicMock(spec=AttackScoringConfig)
 
-        technique = self.registry.create_technique("stub", objective_target=target)
+        technique = self.registry.create_technique("stub", objective_target=target, attack_scoring_config=scoring)
 
         assert isinstance(technique, AttackTechnique)
         assert isinstance(technique.attack, _StubAttack)
@@ -149,6 +151,7 @@ class TestAttackTechniqueRegistryCreateTechnique:
             self.registry.create_technique(
                 "nonexistent",
                 objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=MagicMock(spec=AttackScoringConfig),
             )
 
     def test_create_technique_preserves_frozen_kwargs(self):
@@ -159,7 +162,9 @@ class TestAttackTechniqueRegistryCreateTechnique:
         self.registry.register_technique(name="custom", factory=factory)
         target = MagicMock(spec=PromptTarget)
 
-        technique = self.registry.create_technique("custom", objective_target=target)
+        technique = self.registry.create_technique(
+            "custom", objective_target=target, attack_scoring_config=MagicMock(spec=AttackScoringConfig)
+        )
 
         assert technique.attack.max_turns == 42
 

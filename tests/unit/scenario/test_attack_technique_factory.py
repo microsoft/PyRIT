@@ -146,11 +146,14 @@ class TestFactoryInit:
 class TestFactoryCreate:
     """Tests for AttackTechniqueFactory.create()."""
 
+    def _scoring(self) -> AttackScoringConfig:
+        return MagicMock(spec=AttackScoringConfig)
+
     def test_create_produces_attack_technique(self):
         factory = AttackTechniqueFactory(attack_class=_StubAttack)
         target = MagicMock(spec=PromptTarget)
 
-        technique = factory.create(objective_target=target)
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert isinstance(technique, AttackTechnique)
         assert isinstance(technique.attack, _StubAttack)
@@ -163,7 +166,7 @@ class TestFactoryCreate:
         )
         target = MagicMock(spec=PromptTarget)
 
-        technique = factory.create(objective_target=target)
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert technique.attack.max_turns == 42
 
@@ -196,7 +199,7 @@ class TestFactoryCreate:
         factory = AttackTechniqueFactory(attack_class=_StubAttack, seed_technique=seeds)
         target = MagicMock(spec=PromptTarget)
 
-        technique = factory.create(objective_target=target)
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert technique.seed_technique is seeds
 
@@ -208,9 +211,10 @@ class TestFactoryCreate:
         )
         target1 = MagicMock(spec=PromptTarget)
         target2 = MagicMock(spec=PromptTarget)
+        scoring = self._scoring()
 
-        technique1 = factory.create(objective_target=target1)
-        technique2 = factory.create(objective_target=target2)
+        technique1 = factory.create(objective_target=target1, attack_scoring_config=scoring)
+        technique2 = factory.create(objective_target=target2, attack_scoring_config=scoring)
 
         assert technique1.attack is not technique2.attack
         assert technique1.attack.objective_target is target1
@@ -220,9 +224,8 @@ class TestFactoryCreate:
         """Mutating the original kwargs dict should not affect future creates."""
         mutable_list = [1, 2, 3]
 
-        # Use a class that accepts a list param to test deepcopy
         class _ListAttack:
-            def __init__(self, *, objective_target, items: list | None = None):
+            def __init__(self, *, objective_target, attack_scoring_config=None, items: list | None = None):
                 self.objective_target = objective_target
                 self.items = items
 
@@ -235,11 +238,11 @@ class TestFactoryCreate:
         )
         target = MagicMock(spec=PromptTarget)
 
-        technique1 = factory.create(objective_target=target)
+        technique1 = factory.create(objective_target=target, attack_scoring_config=self._scoring())
         # Mutate the source list
         mutable_list.append(999)
 
-        technique2 = factory.create(objective_target=target)
+        technique2 = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         # First create should have the original snapshot
         assert technique1.attack.items == [1, 2, 3]
@@ -247,7 +250,7 @@ class TestFactoryCreate:
         assert technique2.attack.items == [1, 2, 3]
 
     def test_create_without_optional_configs_omits_them(self):
-        """When optional configs are None, they should not be passed to the constructor."""
+        """When optional configs are None, adversarial and converter should not be passed."""
         unset = object()
 
         class _SentinelAttack:
@@ -255,12 +258,11 @@ class TestFactoryCreate:
                 self,
                 *,
                 objective_target,
-                attack_scoring_config=unset,
+                attack_scoring_config,
                 attack_adversarial_config=unset,
                 attack_converter_config=unset,
             ):
                 self.objective_target = objective_target
-                self.scoring_was_passed = attack_scoring_config is not unset
                 self.adversarial_was_passed = attack_adversarial_config is not unset
                 self.converter_was_passed = attack_converter_config is not unset
 
@@ -269,9 +271,8 @@ class TestFactoryCreate:
 
         factory = AttackTechniqueFactory(attack_class=_SentinelAttack)
         target = MagicMock(spec=PromptTarget)
-        technique = factory.create(objective_target=target)
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
-        assert not technique.attack.scoring_was_passed
         assert not technique.attack.adversarial_was_passed
         assert not technique.attack.converter_was_passed
 

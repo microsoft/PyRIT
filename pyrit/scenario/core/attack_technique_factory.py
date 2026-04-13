@@ -133,7 +133,7 @@ class AttackTechniqueFactory(Identifiable):
         self,
         *,
         objective_target: PromptTarget,
-        attack_scoring_config: AttackScoringConfig | None = None,
+        attack_scoring_config: AttackScoringConfig,
         attack_adversarial_config: AttackAdversarialConfig | None = None,
         attack_converter_config: AttackConverterConfig | None = None,
     ) -> AttackTechnique:
@@ -146,8 +146,7 @@ class AttackTechniqueFactory(Identifiable):
 
         Args:
             objective_target: The target to attack.
-            attack_scoring_config: Optional scoring configuration.
-                Overrides any scoring config in the frozen kwargs.
+            attack_scoring_config: Scoring configuration for the attack.
             attack_adversarial_config: Optional adversarial configuration.
                 Overrides any adversarial config in the frozen kwargs.
             attack_converter_config: Optional converter configuration.
@@ -158,8 +157,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         kwargs = copy.deepcopy(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
-        if attack_scoring_config is not None:
-            kwargs["attack_scoring_config"] = attack_scoring_config
+        kwargs["attack_scoring_config"] = attack_scoring_config
         if attack_adversarial_config is not None:
             kwargs["attack_adversarial_config"] = attack_adversarial_config
         if attack_converter_config is not None:
