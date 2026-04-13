@@ -85,14 +85,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         self.unsafe_grades = unsafe_grades
         self.max_examples = max_examples
 
-        # Validate categories if provided
         if categories is not None:
-            valid_categories = {category.value for category in VLSUCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, VLSUCategory) else cat for cat in categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(f"Invalid VLSU categories: {', '.join(invalid_categories)}")
+            self._validate_enums(categories, VLSUCategory, "VLSU category")
 
     @property
     def dataset_name(self) -> str:

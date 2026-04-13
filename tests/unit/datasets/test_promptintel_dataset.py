@@ -104,12 +104,22 @@ class TestPromptIntelDatasetInit:
             assert loader._api_key is None
 
     def test_init_invalid_severity_raises(self, api_key):
-        with pytest.raises(ValueError, match="Invalid severity"):
+        with pytest.raises(ValueError, match="Expected PromptIntelSeverity"):
             _PromptIntelDataset(api_key=api_key, severity="extreme")
 
+    def test_init_rejects_raw_string_for_severity(self, api_key):
+        """Test that raw strings matching enum values are rejected for severity."""
+        with pytest.raises(ValueError, match="Expected PromptIntelSeverity"):
+            _PromptIntelDataset(api_key=api_key, severity="high")
+
     def test_init_invalid_category_raises(self, api_key):
-        with pytest.raises(ValueError, match="Invalid categories"):
+        with pytest.raises(ValueError, match="Expected PromptIntelCategory"):
             _PromptIntelDataset(api_key=api_key, categories=["invalid_cat"])
+
+    def test_init_rejects_raw_string_for_categories(self, api_key):
+        """Test that raw strings matching enum values are rejected for categories."""
+        with pytest.raises(ValueError, match="Expected PromptIntelCategory"):
+            _PromptIntelDataset(api_key=api_key, categories=["manipulation"])
 
     def test_init_multiple_categories_accepted(self, api_key):
         loader = _PromptIntelDataset(

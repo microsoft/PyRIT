@@ -3,9 +3,8 @@
 
 import logging
 import uuid
-from collections.abc import Sequence
 from enum import Enum
-from typing import Literal, Optional, Union
+from typing import Literal, Optional
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -80,8 +79,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         *,
         source: str = METADATA_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[Union[VisualLeakBenchCategory, str]]] = None,
-        pii_types: Optional[list[Union[VisualLeakBenchPIIType, str]]] = None,
+        categories: Optional[list[VisualLeakBenchCategory]] = None,
+        pii_types: Optional[list[VisualLeakBenchPIIType]] = None,
         max_examples: Optional[int] = None,
     ) -> None:
         """
@@ -91,12 +90,11 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             source: URL or file path to the metadata CSV file. Defaults to the official
                 GitHub repository.
             source_type: The type of source ('public_url' or 'file').
-            categories: List of attack categories to include. Accepts enum values or their
-                string equivalents (e.g. VisualLeakBenchCategory.OCR_INJECTION or "OCR Injection").
-                If None, all categories are included.
+            categories: List of attack categories to include. If None, all categories are
+                included. Possible values: VisualLeakBenchCategory.OCR_INJECTION,
+                VisualLeakBenchCategory.PII_LEAKAGE.
             pii_types: List of PII types to include (only relevant for PII_LEAKAGE category).
-                Accepts enum values or their string equivalents (e.g. VisualLeakBenchPIIType.EMAIL
-                or "Email"). If None, all PII types are included.
+                If None, all PII types are included.
             max_examples: Maximum number of examples to fetch. Each example produces 2 prompts
                 (image + text). If None, fetches all examples. Useful for testing or quick
                 validations.
@@ -106,45 +104,15 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         """
         self.source = source
         self.source_type: Literal["public_url", "file"] = source_type
-        self.categories = (
-            self._normalize_enums(categories, VisualLeakBenchCategory, "category") if categories is not None else None
-        )
-        self.pii_types = (
-            self._normalize_enums(pii_types, VisualLeakBenchPIIType, "PII type") if pii_types is not None else None
-        )
+        self.categories = categories
+        self.pii_types = pii_types
         self.max_examples = max_examples
 
-    @staticmethod
-    def _normalize_enums(
-        values: Sequence[Union[Enum, str]],
-        enum_cls: type[Enum],
-        label: str,
-    ) -> list[Enum]:
-        """
-        Normalize a list of enum instances or string values to enum instances.
+        if categories is not None:
+            self._validate_enums(categories, VisualLeakBenchCategory, "category")
 
-        Args:
-            values: List of enum instances or their string values.
-            enum_cls: The enum class to normalize to.
-            label: Human-readable label for error messages.
-
-        Returns:
-            list[Enum]: List of normalized enum instances.
-
-        Raises:
-            ValueError: If a value cannot be resolved to a valid enum member.
-        """
-        value_map = {member.value: member for member in enum_cls}
-        result = []
-        for v in values:
-            if isinstance(v, enum_cls):
-                result.append(v)
-            elif isinstance(v, str) and v in value_map:
-                result.append(value_map[v])
-            else:
-                valid = ", ".join(f"'{m.value}'" for m in enum_cls)
-                raise ValueError(f"Invalid {label}: {v!r}. Valid values: {valid}")
-        return result
+        if pii_types is not None:
+            self._validate_enums(pii_types, VisualLeakBenchPIIType, "PII type")
 
     @property
     def dataset_name(self) -> str:
