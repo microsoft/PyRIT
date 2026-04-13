@@ -67,16 +67,6 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
     Scenarios are identified by their dotted name (e.g., "garak.encoding", "foundry.red_team_agent").
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> ScenarioRegistry:
-        """
-        Get the singleton instance of the ScenarioRegistry.
-
-        Returns:
-            The singleton ScenarioRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
         Initialize the scenario registry.

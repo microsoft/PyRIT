@@ -34,16 +34,6 @@ class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentif
     with their required parameters.
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> ConverterRegistry:
-        """
-        Get the singleton instance of the ConverterRegistry.
-
-        Returns:
-            The singleton ConverterRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def register_instance(
         self,
         converter: PromptConverter,

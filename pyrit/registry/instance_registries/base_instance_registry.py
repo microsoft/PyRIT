@@ -24,6 +24,7 @@ from pyrit.registry.base import RegistryProtocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Self
 
 T = TypeVar("T")  # The type of instances stored
 MetadataT = TypeVar("MetadataT", bound=ComponentIdentifier)
@@ -68,7 +69,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
     _instances: dict[type, BaseInstanceRegistry[Any, Any]] = {}
 
     @classmethod
-    def get_registry_singleton(cls) -> BaseInstanceRegistry[T, MetadataT]:
+    def get_registry_singleton(cls) -> Self:
         """
         Get the singleton instance of this registry.
 
@@ -79,7 +80,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()
-        return cls._instances[cls]
+        return cls._instances[cls]  # type: ignore[return-value]
 
     @classmethod
     def reset_instance(cls) -> None:

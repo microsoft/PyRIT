@@ -8,9 +8,14 @@ This module contains types shared between class registries (which store Type[T])
 and instance registries (which store T instances).
 """
 
-from collections.abc import Iterator
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Optional, Protocol, TypeVar, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import Self
 
 # Type variable for metadata (invariant for Protocol compatibility)
 MetadataT = TypeVar("MetadataT")
@@ -52,7 +57,7 @@ class RegistryProtocol(Protocol[MetadataT]):
     """
 
     @classmethod
-    def get_registry_singleton(cls) -> "RegistryProtocol[MetadataT]":
+    def get_registry_singleton(cls) -> Self:
         """Get the singleton instance of this registry."""
         ...
 

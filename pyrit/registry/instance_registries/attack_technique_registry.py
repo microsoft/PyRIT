@@ -41,16 +41,6 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory", Com
     which calls the factory with the scenario's objective target and scorer.
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> AttackTechniqueRegistry:
-        """
-        Get the singleton instance of the AttackTechniqueRegistry.
-
-        Returns:
-            The singleton AttackTechniqueRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def register_technique(
         self,
         *,

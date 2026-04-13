@@ -35,16 +35,6 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
     or a custom name provided during registration.
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> TargetRegistry:
-        """
-        Get the singleton instance of the TargetRegistry.
-
-        Returns:
-            The singleton TargetRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def register_instance(
         self,
         target: PromptTarget,

@@ -35,16 +35,6 @@ class ScorerRegistry(BaseInstanceRegistry["Scorer", ComponentIdentifier]):
     or a custom name provided during registration.
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> ScorerRegistry:
-        """
-        Get the singleton instance of the ScorerRegistry.
-
-        Returns:
-            The singleton ScorerRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def register_instance(
         self,
         scorer: Scorer,
