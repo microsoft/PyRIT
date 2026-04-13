@@ -644,7 +644,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         with closing(self.get_session()) as session:
             class_name_expr = func.json_extract(
-                AttackResultEntry.atomic_attack_identifier, "$.children.attack.class_name"
+                AttackResultEntry.atomic_attack_identifier,
+                "$.children.attack_technique.children.attack.class_name",
             )
             rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
         return sorted(row[0] for row in rows)
@@ -652,8 +653,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
-        from the children.attack.children.request_converters array in the
-        atomic_attack_identifier JSON column.
+        from the children.attack_technique.children.attack.children.request_converters
+        array in the atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -665,7 +666,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     FROM "AttackResultEntries",
                     json_each(
                         json_extract("AttackResultEntries".atomic_attack_identifier,
-                            '$.children.attack.children.request_converters')
+                            '$.children.attack_technique.children.attack.children.request_converters')
                     ) AS j
                     WHERE cls IS NOT NULL"""
                 )

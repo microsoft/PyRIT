@@ -746,7 +746,7 @@ class TestContentHarmsAttackGroups:
         attacks = scenario._get_single_turn_attacks(strategy="hate", seed_groups=seed_groups)
 
         assert len(attacks) == 2
-        attack_types = [type(a._attack) for a in attacks]
+        attack_types = [type(a.attack_technique.attack) for a in attacks]
         assert PromptSendingAttack in attack_types
         assert RolePlayAttack in attack_types
 
@@ -778,7 +778,7 @@ class TestContentHarmsAttackGroups:
         attacks = scenario._get_multi_turn_attacks(strategy="hate", seed_groups=seed_groups)
 
         assert len(attacks) == 2
-        attack_types = [type(a._attack) for a in attacks]
+        attack_types = [type(a.attack_technique.attack) for a in attacks]
         assert ManyShotJailbreakAttack in attack_types
         assert TreeOfAttacksWithPruningAttack in attack_types
 
@@ -816,7 +816,7 @@ class TestContentHarmsAttackGroups:
 
         # 2 single-turn + 2 multi-turn = 4
         assert len(attacks) == 4
-        attack_types = [type(a._attack) for a in attacks]
+        attack_types = [type(a.attack_technique.attack) for a in attacks]
         assert PromptSendingAttack in attack_types
         assert RolePlayAttack in attack_types
         assert ManyShotJailbreakAttack in attack_types

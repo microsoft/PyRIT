@@ -9,6 +9,7 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
+    AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
 )
@@ -21,6 +22,7 @@ from pyrit.prompt_converter import TextJailbreakConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
@@ -279,7 +281,9 @@ class Jailbreak(Scenario):
             case "skeleton":
                 attack = SkeletonKeyAttack(**args)
             case "role_play":
-                args["adversarial_chat"] = self._get_or_create_adversarial_target()
+                args["attack_adversarial_config"] = AttackAdversarialConfig(
+                    target=self._get_or_create_adversarial_target()
+                )
                 args["role_play_definition_path"] = RolePlayPaths.PERSUASION_SCRIPT.value
                 attack = RolePlayAttack(**args)
             case _:
@@ -292,7 +296,9 @@ class Jailbreak(Scenario):
         template_name = Path(jailbreak_template_name).stem
 
         return AtomicAttack(
-            atomic_attack_name=f"jailbreak_{template_name}", attack=attack, seed_groups=self._seed_groups
+            atomic_attack_name=f"jailbreak_{template_name}",
+            attack_technique=AttackTechnique(attack=attack),
+            seed_groups=self._seed_groups,
         )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
