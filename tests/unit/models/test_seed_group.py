@@ -9,6 +9,7 @@ import pytest
 
 from pyrit.models.seeds import (
     SeedAttackGroup,
+    SeedAttackTechniqueGroup,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
@@ -511,3 +512,102 @@ class TestSeedAttackGroupRepr:
 
         repr_str = repr(group)
         assert "simulated" in repr_str
+
+
+# =============================================================================
+# SeedAttackGroup.with_technique Tests
+# =============================================================================
+
+
+class TestSeedAttackGroupWithTechnique:
+    """Tests for SeedAttackGroup.with_technique() method."""
+
+    def _make_base_group(self) -> SeedAttackGroup:
+        return SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="prompt1", data_type="text"),
+            ]
+        )
+
+    def _make_technique(self, *, insertion_index: int | None = None) -> SeedAttackTechniqueGroup:
+        return SeedAttackTechniqueGroup(
+            seeds=[
+                SeedPrompt(value="tech_a", data_type="text", is_general_technique=True),
+                SeedPrompt(value="tech_b", data_type="text", is_general_technique=True),
+            ],
+            insertion_index=insertion_index,
+        )
+
+    def test_append_when_insertion_index_none(self):
+        """Test that technique seeds are appended when insertion_index is None."""
+        base = self._make_base_group()
+        technique = self._make_technique(insertion_index=None)
+
+        merged = base.with_technique(technique=technique)
+
+        assert len(merged.seeds) == 4
+        assert merged.seeds[0].value == "objective"
+        assert merged.seeds[1].value == "prompt1"
+        assert merged.seeds[2].value == "tech_a"
+        assert merged.seeds[3].value == "tech_b"
+
+    def test_insert_at_position(self):
+        """Test that technique seeds are inserted at the specified position."""
+        base = self._make_base_group()
+        technique = self._make_technique(insertion_index=1)
+
+        merged = base.with_technique(technique=technique)
+
+        assert len(merged.seeds) == 4
+        assert merged.seeds[0].value == "objective"
+        assert merged.seeds[1].value == "tech_a"
+        assert merged.seeds[2].value == "tech_b"
+        assert merged.seeds[3].value == "prompt1"
+
+    def test_insert_at_zero(self):
+        """Test insertion_index=0: technique seeds appear right after the objective
+        because SeedAttackGroup always places the objective first."""
+        base = self._make_base_group()
+        technique = self._make_technique(insertion_index=0)
+
+        merged = base.with_technique(technique=technique)
+
+        assert len(merged.seeds) == 4
+        # Objective is re-sorted to front by the constructor's canonical ordering
+        assert merged.seeds[0].value == "objective"
+        assert merged.seeds[1].value == "tech_a"
+        assert merged.seeds[2].value == "tech_b"
+        assert merged.seeds[3].value == "prompt1"
+
+    def test_insert_beyond_length_appends(self):
+        """Test that an insertion_index beyond the list length effectively appends."""
+        base = self._make_base_group()
+        technique = self._make_technique(insertion_index=999)
+
+        merged = base.with_technique(technique=technique)
+
+        assert len(merged.seeds) == 4
+        assert merged.seeds[2].value == "tech_a"
+        assert merged.seeds[3].value == "tech_b"
+
+    def test_does_not_mutate_original(self):
+        """Test that with_technique returns a new group without mutating the original."""
+        base = self._make_base_group()
+        technique = self._make_technique()
+
+        merged = base.with_technique(technique=technique)
+
+        assert len(base.seeds) == 2
+        assert len(merged.seeds) == 4
+        assert merged is not base
+
+    def test_merged_group_is_valid_seed_attack_group(self):
+        """Test that the returned group passes SeedAttackGroup validation."""
+        base = self._make_base_group()
+        technique = self._make_technique()
+
+        merged = base.with_technique(technique=technique)
+
+        assert isinstance(merged, SeedAttackGroup)
+        merged.validate()  # should not raise

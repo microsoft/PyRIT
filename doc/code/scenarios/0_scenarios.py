@@ -40,7 +40,9 @@
 #
 # ## How to Run Scenarios
 #
-# Scenarios should take almost no effort to run with default values. [pyrit_scan](../front_end/1_pyrit_scan.ipynb) and [pyrit_shell](../front_end/2_pyrit_shell.md) both use scenarios to execute.
+# Scenarios should take almost no effort to run with default values. The [PyRIT Scanner](../../scanner/0_scanner.md) provides two CLIs for running scenarios: [pyrit_scan](../../scanner/1_pyrit_scan.ipynb) for automated execution and [pyrit_shell](../../scanner/2_pyrit_shell.md) for interactive exploration.
+#
+# For programmatic configuration — customizing datasets, strategies, scorers, and baseline mode — see [Scenario Parameters](./1_scenario_parameters.ipynb).
 #
 # ## How It Works
 #
@@ -110,7 +112,7 @@ class MyStrategy(ScenarioStrategy):
 class MyScenario(Scenario):
     version: int = 1
 
-    # A strategy defintion helps callers define how to run your scenario (e.g. from the front_end)
+    # A strategy definition helps callers define how to run your scenario (e.g. from the scanner CLI)
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         return MyStrategy
@@ -188,6 +190,18 @@ class MyScenario(Scenario):
 from pyrit.cli.frontend_core import FrontendCore, print_scenarios_list_async
 
 await print_scenarios_list_async(context=FrontendCore())  # type: ignore
+
+# %% [markdown]
+#
+# ## Baseline Execution
+#
+# Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
+# each objective directly to the target without any converters or multi-turn techniques. This is
+# controlled by the `include_default_baseline` parameter (default: `True` for most scenarios).
+#
+# To run *only* the baseline (no attack strategies), pass `scenario_strategies=[]` programmatically.
+# This is useful for establishing a refusal rate before applying attacks. See
+# [Scenario Parameters](./1_scenario_parameters.ipynb) for a working example.
 
 # %% [markdown]
 #

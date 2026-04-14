@@ -1,4 +1,4 @@
-# Getting Started
+# Installation
 
 Welcome to PyRIT! Getting up and running takes two steps: **install** the package, then **configure** your AI endpoints.
 
@@ -28,4 +28,4 @@ Once you're set up:
 
 - 🔌 [Targets](../code/targets/0_prompt_targets.md) — Connect to different AI systems
 - 📦 [Scenarios](../code/scenarios/0_scenarios.ipynb) — Run standardized evaluation scenarios
-- 🖥️ [CLI & Shell](../code/front_end/1_pyrit_scan.ipynb) — Use `pyrit_scan` for automated assessments
+- 🖥️ [Scanner](../scanner/0_scanner.md) — Use `pyrit_scan` for automated assessments

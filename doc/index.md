@@ -145,3 +145,30 @@ Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenA
 Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and scenarios.
 ::::
 :::::
+
+### Step 3: Use It!
+
+:::::{grid} 1 1 3 3
+:gutter: 3
+
+::::{card} 🔍 PyRIT Scanner
+:link: scanner/0_scanner
+**Automated Red Teaming**
+
+Run security assessments from the command line with `pyrit_scan` or the interactive `pyrit_shell`. Execute built-in scenarios against your AI targets.
+::::
+
+::::{card} 🖥️ PyRIT GUI
+:link: gui/0_gui
+**Human-Led Red Teaming**
+
+Use CoPyRIT's graphical interface for interactive red teaming. Chat with AI systems, track findings, and collaborate with your team.
+::::
+
+::::{card} 🧩 Framework
+:link: code/framework
+**Build Your Own**
+
+Dive into PyRIT's modular components — targets, converters, scorers, memory, and more. Create custom attacks and extend the framework.
+::::
+:::::

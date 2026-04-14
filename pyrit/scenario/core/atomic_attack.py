@@ -14,6 +14,7 @@ have a common interface for scenarios.
 """
 
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
@@ -23,6 +24,7 @@ from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdenti
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
 from pyrit.models import AttackResult, SeedAttackGroup
+from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptChatTarget
@@ -42,34 +44,17 @@ class AtomicAttack:
     The AtomicAttack uses SeedAttackGroups as the single source of truth for objectives,
     prepended conversations, and next messages. Each SeedAttackGroup must have an objective set.
 
-    Example:
-        >>> from pyrit.scenario import AtomicAttack
-        >>> from pyrit.attacks import PromptAttack
-        >>> from pyrit.prompt_target import OpenAIChatTarget
-        >>> from pyrit.models import SeedGroup
-        >>>
-        >>> target = OpenAIChatTarget()
-        >>> attack = PromptAttack(objective_target=target)
-        >>>
-        >>> # Create seed groups with objectives
-        >>> seed_groups = SeedAttackGroup.from_yaml_file("seeds.yaml")
-        >>> for sg in seed_groups:
-        ...     sg.set_objective("your objective here")
-        >>>
-        >>> atomic_attack = AtomicAttack(
-        ...     atomic_attack_name="test_attack",
-        ...     attack=attack,
-        ...     seed_groups=seed_groups,
-        ...     memory_labels={"test": "run1"}
-        ... )
-        >>> results = await atomic_attack.run_async(max_concurrency=5)
+    An ``AttackTechnique`` bundles the attack strategy with an optional
+    ``SeedAttackTechniqueGroup``, cleanly separating "how to attack" from
+    "what to attack" (the objective).
     """
 
     def __init__(
         self,
         *,
         atomic_attack_name: str,
-        attack: AttackStrategy[Any, Any],
+        attack_technique: AttackTechnique | None = None,
+        attack: AttackStrategy[Any, Any] | None = None,
         seed_groups: list[SeedAttackGroup],
         adversarial_chat: Optional["PromptChatTarget"] = None,
         objective_scorer: Optional["TrueFalseScorer"] = None,
@@ -80,28 +65,42 @@ class AtomicAttack:
         Initialize an atomic attack with an attack strategy and seed groups.
 
         Args:
-            atomic_attack_name (str): Used to group an AtomicAttack with related attacks for a
+            atomic_attack_name: Used to group an AtomicAttack with related attacks for a
                 strategy.
-            attack (AttackStrategy): The configured attack strategy to execute.
-            seed_groups (List[SeedAttackGroup]): List of seed attack groups. Each seed group must
-                have an objective set. The seed groups serve as the single source of truth for
-                objectives, prepended conversations, and next messages.
-            adversarial_chat (Optional[PromptChatTarget]): Optional chat target for generating
-                adversarial prompts or simulated conversations. Required when seed groups contain
-                SeedSimulatedConversation configurations.
-            objective_scorer (Optional[TrueFalseScorer]): Optional scorer for evaluating simulated
-                conversations. Required when seed groups contain SeedSimulatedConversation
-                configurations.
-            memory_labels (Optional[Dict[str, str]]): Additional labels to apply to prompts.
-                These labels help track and categorize the atomic attack in memory.
-            **attack_execute_params (Any): Additional parameters to pass to the attack
-                execution method (e.g., batch_size).
+            attack_technique: An AttackTechnique bundling the attack strategy and optional
+                technique seeds. Preferred over the deprecated ``attack`` parameter.
+            attack: Deprecated. The configured attack strategy to execute. Use
+                ``attack_technique`` instead.
+            seed_groups: List of seed attack groups. Each seed group must
+                have an objective set.
+            adversarial_chat: Optional chat target for generating
+                adversarial prompts or simulated conversations.
+            objective_scorer: Optional scorer for evaluating simulated
+                conversations.
+            memory_labels: Additional labels to apply to prompts.
+            **attack_execute_params: Additional parameters to pass to the attack
+                execution method.
 
         Raises:
             ValueError: If seed_groups list is empty or any seed group is missing an objective.
+            ValueError: If neither attack_technique nor attack is provided, or both are provided.
         """
         self.atomic_attack_name = atomic_attack_name
-        self._attack = attack
+
+        if attack_technique is not None and attack is not None:
+            raise ValueError("Provide either attack_technique or attack, not both.")
+
+        if attack_technique is not None:
+            self._attack_technique = attack_technique
+        elif attack is not None:
+            warnings.warn(
+                "The 'attack' parameter is deprecated. Use 'attack_technique=AttackTechnique(attack=...)' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self._attack_technique = AttackTechnique(attack=attack)
+        else:
+            raise ValueError("Either attack_technique or attack must be provided.")
 
         # Validate seed_groups
         if not seed_groups:
@@ -118,8 +117,14 @@ class AtomicAttack:
         self._attack_execute_params = attack_execute_params
 
         logger.info(
-            f"Initialized atomic attack with {len(self._seed_groups)} seed groups, attack type: {type(attack).__name__}"
+            f"Initialized atomic attack with {len(self._seed_groups)} seed groups, "
+            f"attack type: {type(self._attack_technique.attack).__name__}"
         )
+
+    @property
+    def attack_technique(self) -> AttackTechnique:
+        """Get the attack technique for this atomic attack."""
+        return self._attack_technique
 
     @property
     def objectives(self) -> list[str]:
@@ -199,9 +204,19 @@ class AtomicAttack:
         )
 
         try:
+            # If the technique has seeds, merge them into each seed group for execution.
+            # The original seed_groups are not mutated.
+            technique = self._attack_technique
+            if technique.seed_technique is not None:
+                execution_seed_groups = [
+                    sg.with_technique(technique=technique.seed_technique) for sg in self._seed_groups
+                ]
+            else:
+                execution_seed_groups = self._seed_groups
+
             results = await executor.execute_attack_from_seed_groups_async(
-                attack=self._attack,
-                seed_groups=self._seed_groups,
+                attack=technique.attack,
+                seed_groups=execution_seed_groups,
                 adversarial_chat=self._adversarial_chat,
                 objective_scorer=self._objective_scorer,
                 memory_labels=self._memory_labels,
@@ -231,24 +246,23 @@ class AtomicAttack:
 
     def _enrich_atomic_attack_identifiers(self, *, results: AttackExecutorResult[AttackResult]) -> None:
         """
-        Enrich each AttackResult's atomic_attack_identifier with seed group information
-        and persist the update to the database.
+        Enrich each AttackResult's atomic_attack_identifier with seed group and
+        technique information, then persist the update to the database.
 
         Uses ``results.input_indices`` to map each completed result back to its
         originating seed group by index, then rebuilds the atomic_attack_identifier
-        to include the seed identifiers from the seed group. The enriched identifier
-        is then flushed back to the corresponding ``AttackResultEntry`` row.
+        to include the seed identifiers and any technique seeds. The enriched
+        identifier is then flushed back to the corresponding ``AttackResultEntry`` row.
 
         Args:
-            results (AttackExecutorResult[AttackResult]): The execution results to enrich.
+            results: The execution results to enrich.
         """
         memory = CentralMemory.get_memory_instance()
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
-            attack_strategy_id = result.get_attack_strategy_identifier()
-            if attack_strategy_id and idx < len(self._seed_groups):
+            if idx < len(self._seed_groups):
                 result.atomic_attack_identifier = build_atomic_attack_identifier(
-                    attack_identifier=attack_strategy_id,
+                    technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
                 )
 

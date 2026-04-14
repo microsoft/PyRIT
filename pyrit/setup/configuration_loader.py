@@ -70,6 +70,8 @@ class ConfigurationLoader(YamlLoadable):
         env_files: List of environment file paths to load.
             None means "use defaults (.env, .env.local)", [] means "load nothing".
         silent: Whether to suppress initialization messages.
+        operator: Name for the current operator, e.g. a team or username.
+        operation: Name for the current operation.
 
     Example YAML configuration:
         memory_db_type: sqlite

@@ -32,7 +32,7 @@ This is especially nice with scoring. There are countless ways to do this, but t
 ![scoring_2.png](../../../assets/scoring_3_pivot.png)
 
 ## Using AzureSQL Query Editor to Query and Export Data
-If you are using an AzureSQL Database, you can use the Query Editor to run SQL queries to retrieve desired data. Memory labels (`labels`) may be an especially useful column to query on for finding data pertaining to a specific operation, user, harm_category, etc. Memory labels are a free-from dictionary for tagging prompts with whatever information you'd like (e.g. `op_name`, `username`, `harm_category`). (For more information on memory labels, see the [Memory Labels Guide](../memory/5_memory_labels.ipynb).) An example is shown below:
+If you are using an AzureSQL Database, you can use the Query Editor to run SQL queries to retrieve desired data. Memory labels (`labels`) may be an especially useful column to query on for finding data pertaining to a specific operation, user, harm_category, etc. Memory labels are a free-from dictionary for tagging prompts with whatever information you'd like (e.g. `operation`, `operator`, `harm_category`). (For more information on memory labels, see the [Advanced Memory Guide](../memory/5_advanced_memory.ipynb).) An example is shown below:
 
 1. Write a SQL query in the Query Editor. You can either write these manually or use the "Open Query" option to load one in. The image below shows a query that gathers prompt entries with their corresponding scores for a specific operation (using the `labels` column) with a "float_scale" `score_type`.
 

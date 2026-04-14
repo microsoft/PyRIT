@@ -35,9 +35,9 @@ class SeedObjective(Seed):
         """
         if self.is_general_technique:
             raise ValueError("SeedObjective cannot be a general technique.")
-        if not self.is_jinja_template:
-            self.value = self.escape_for_jinja(self.value)
-        self.value = super().render_template_value_silent(**PATHS_DICT)
+        # Only trusted templates are rendered through Jinja — see seed_prompt.py for details.
+        if self.is_jinja_template:
+            self.value = super().render_template_value_silent(**PATHS_DICT)
 
     @classmethod
     def from_yaml_with_required_parameters(

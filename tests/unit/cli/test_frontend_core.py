@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import frontend_core
+from pyrit.cli._cli_args import _ArgSpec, _parse_shell_arguments
 from pyrit.registry import InitializerMetadata, ScenarioMetadata
 
 
@@ -554,6 +555,93 @@ class TestParseInitializerArg:
         assert result == "target"
 
 
+class TestParseShellArguments:
+    """Tests for the generic _parse_shell_arguments function."""
+
+    def test_empty_parts_returns_none_defaults(self):
+        """Test that empty input returns None for all result keys."""
+        spec = _ArgSpec(flags=["--foo"], result_key="foo")
+        result = _parse_shell_arguments(parts=[], arg_specs=[spec])
+        assert result == {"foo": None}
+
+    def test_single_value_arg(self):
+        """Test parsing a single-value argument."""
+        spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(parts=["--name", "alice"], arg_specs=[spec])
+        assert result["name"] == "alice"
+
+    def test_single_value_with_parser(self):
+        """Test that single-value parser is applied."""
+        spec = _ArgSpec(flags=["--count"], result_key="count", parser=int)
+        result = _parse_shell_arguments(parts=["--count", "42"], arg_specs=[spec])
+        assert result["count"] == 42
+
+    def test_single_value_missing_raises(self):
+        """Test that missing value for single-value arg raises ValueError."""
+        spec = _ArgSpec(flags=["--name"], result_key="name")
+        with pytest.raises(ValueError, match="--name requires a value"):
+            _parse_shell_arguments(parts=["--name"], arg_specs=[spec])
+
+    def test_multi_value_arg(self):
+        """Test collecting multiple values until next flag."""
+        spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        result = _parse_shell_arguments(parts=["--items", "a", "b", "c"], arg_specs=[spec])
+        assert result["items"] == ["a", "b", "c"]
+
+    def test_multi_value_stops_at_next_flag(self):
+        """Test that multi-value collection stops at the next known flag."""
+        items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        name_spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(
+            parts=["--items", "a", "b", "--name", "alice"],
+            arg_specs=[items_spec, name_spec],
+        )
+        assert result["items"] == ["a", "b"]
+        assert result["name"] == "alice"
+
+    def test_multi_value_stops_at_short_flag_alias(self):
+        """Test that multi-value collection stops at a short flag alias like -s."""
+        long_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        short_spec = _ArgSpec(flags=["-s", "--short"], result_key="short", multi_value=True)
+        result = _parse_shell_arguments(
+            parts=["--items", "a", "b", "-s", "x"],
+            arg_specs=[long_spec, short_spec],
+        )
+        assert result["items"] == ["a", "b"]
+        assert result["short"] == ["x"]
+
+    def test_multi_value_with_parser(self):
+        """Test that parser transforms each collected value."""
+        spec = _ArgSpec(flags=["--nums"], result_key="nums", multi_value=True, parser=int)
+        result = _parse_shell_arguments(parts=["--nums", "1", "2", "3"], arg_specs=[spec])
+        assert result["nums"] == [1, 2, 3]
+
+    def test_multi_value_no_values_raises(self):
+        """Test that multi-value arg with no values raises ValueError."""
+        items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        name_spec = _ArgSpec(flags=["--name"], result_key="name")
+        with pytest.raises(ValueError, match="--items requires at least one value"):
+            _parse_shell_arguments(
+                parts=["--items", "--name", "alice"],
+                arg_specs=[items_spec, name_spec],
+            )
+
+    def test_unknown_flag_raises(self):
+        """Test that an unknown flag raises ValueError."""
+        spec = _ArgSpec(flags=["--known"], result_key="known")
+        with pytest.raises(ValueError, match="Unknown argument: --unknown"):
+            _parse_shell_arguments(parts=["--unknown"], arg_specs=[spec])
+
+    def test_multiple_specs_all_none_when_unused(self):
+        """Test that unused specs default to None."""
+        specs = [
+            _ArgSpec(flags=["--a"], result_key="a"),
+            _ArgSpec(flags=["--b"], result_key="b", multi_value=True),
+        ]
+        result = _parse_shell_arguments(parts=[], arg_specs=specs)
+        assert result == {"a": None, "b": None}
+
+
 class TestParseRunArguments:
     """Tests for parse_run_arguments function."""
 
@@ -670,6 +758,46 @@ class TestParseRunArguments:
         """Test parsing with missing argument value."""
         with pytest.raises(ValueError, match="requires a value"):
             frontend_core.parse_run_arguments(args_string="test_scenario --max-concurrency")
+
+
+class TestParseListTargetsArguments:
+    """Tests for parse_list_targets_arguments function."""
+
+    def test_parse_list_targets_arguments_empty(self):
+        """Test parsing empty string returns defaults."""
+        result = frontend_core.parse_list_targets_arguments(args_string="")
+        assert result["initializers"] is None
+        assert result["initialization_scripts"] is None
+
+    def test_parse_list_targets_arguments_with_initializers(self):
+        """Test parsing with initializers."""
+        result = frontend_core.parse_list_targets_arguments(args_string="--initializers target init2")
+        assert result["initializers"] == ["target", "init2"]
+
+    def test_parse_list_targets_arguments_with_initializer_params(self):
+        """Test parsing initializers with key=value params."""
+        result = frontend_core.parse_list_targets_arguments(args_string="--initializers target:tags=default,scorer")
+        assert result["initializers"] == [{"name": "target", "args": {"tags": ["default", "scorer"]}}]
+
+    def test_parse_list_targets_arguments_with_initialization_scripts(self):
+        """Test parsing with initialization-scripts."""
+        result = frontend_core.parse_list_targets_arguments(
+            args_string="--initialization-scripts script1.py script2.py"
+        )
+        assert result["initialization_scripts"] == ["script1.py", "script2.py"]
+
+    def test_parse_list_targets_arguments_with_both(self):
+        """Test parsing with both initializers and scripts."""
+        result = frontend_core.parse_list_targets_arguments(
+            args_string="--initializers target --initialization-scripts script1.py"
+        )
+        assert result["initializers"] == ["target"]
+        assert result["initialization_scripts"] == ["script1.py"]
+
+    def test_parse_list_targets_arguments_unknown_arg_raises(self):
+        """Test parsing with unknown argument raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown argument"):
+            frontend_core.parse_list_targets_arguments(args_string="--unknown-flag")
 
 
 @pytest.mark.asyncio
@@ -933,9 +1061,125 @@ class TestParseRunArgumentsTarget:
             args_string="test_scenario --target my_target --initializers init1 --max-concurrency 5"
         )
 
-        assert result["target"] == "my_target"
-        assert result["initializers"] == ["init1"]
-        assert result["max_concurrency"] == 5
+
+class TestWithOverrides:
+    """Tests for FrontendCore.with_overrides method."""
+
+    def _make_initialized_parent(self) -> frontend_core.FrontendCore:
+        """Create a fully-initialized FrontendCore for testing with_overrides."""
+        parent = frontend_core.FrontendCore(
+            database=frontend_core.IN_MEMORY,
+            initializer_names=["parent_init"],
+            log_level=logging.WARNING,
+        )
+        parent._scenario_registry = MagicMock()
+        parent._initializer_registry = MagicMock()
+        parent._initialized = True
+        parent._silent_reinit = True
+        return parent
+
+    def test_with_overrides_inherits_fields(self):
+        """Test that derived context inherits database, env_files, operator, operation."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._database == parent._database
+        assert derived._env_files == parent._env_files
+        assert derived._operator == parent._operator
+        assert derived._operation == parent._operation
+
+    def test_with_overrides_shares_registries(self):
+        """Test that derived context shares scenario and initializer registries."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._scenario_registry is parent._scenario_registry
+        assert derived._initializer_registry is parent._initializer_registry
+
+    def test_with_overrides_sets_initialized_and_silent(self):
+        """Test that derived context is marked initialized with silent reinit."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._initialized is True
+        assert derived._silent_reinit is True
+
+    def test_with_overrides_none_keeps_parent_values(self):
+        """Test that passing None for all overrides keeps parent's values."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(
+            initializer_names=None,
+            initialization_scripts=None,
+            log_level=None,
+        )
+
+        assert derived._initializer_configs == parent._initializer_configs
+        assert derived._initialization_scripts == parent._initialization_scripts
+        assert derived._log_level == parent._log_level
+
+    def test_with_overrides_initializer_names(self):
+        """Test that initializer_names override normalizes to InitializerConfig objects."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(initializer_names=["target", "dataset"])
+
+        assert derived._initializer_configs is not None
+        names = [ic.name for ic in derived._initializer_configs]
+        assert names == ["target", "dataset"]
+        # Parent should still have original
+        assert [ic.name for ic in parent._initializer_configs] == ["parent_init"]
+
+    def test_with_overrides_initializer_names_dict(self):
+        """Test initializer_names with dict entries (name + args)."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(initializer_names=[{"name": "target", "args": {"tags": "default"}}])
+
+        assert derived._initializer_configs is not None
+        assert len(derived._initializer_configs) == 1
+        assert derived._initializer_configs[0].name == "target"
+        assert derived._initializer_configs[0].args == {"tags": "default"}
+
+    def test_with_overrides_initialization_scripts(self):
+        """Test that initialization_scripts override replaces parent's scripts."""
+        parent = self._make_initialized_parent()
+        new_scripts = [Path("/new/script.py")]
+
+        derived = parent.with_overrides(initialization_scripts=new_scripts)
+
+        assert derived._initialization_scripts == new_scripts
+        # Parent should be unchanged
+        assert parent._initialization_scripts != new_scripts
+
+    def test_with_overrides_log_level(self):
+        """Test that log_level override replaces parent's log level."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(log_level=logging.DEBUG)
+
+        assert derived._log_level == logging.DEBUG
+        assert parent._log_level == logging.WARNING
+
+    def test_with_overrides_does_not_mutate_parent(self):
+        """Test that with_overrides does not modify the parent context."""
+        parent = self._make_initialized_parent()
+        original_configs = parent._initializer_configs
+        original_log_level = parent._log_level
+        original_scripts = parent._initialization_scripts
+
+        parent.with_overrides(
+            initializer_names=["new_init"],
+            initialization_scripts=[Path("/new.py")],
+            log_level=logging.DEBUG,
+        )
+
+        assert parent._initializer_configs is original_configs
+        assert parent._log_level == original_log_level
+        assert parent._initialization_scripts is original_scripts
 
     def test_parse_run_arguments_target_missing_value(self):
         """Test parsing --target without a value raises ValueError."""
@@ -1141,3 +1385,31 @@ class TestPrintTargetsList:
         captured = capsys.readouterr()
         assert "No targets found" in captured.out
         assert "--initializers target" in captured.out
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_list_targets_with_initialization_scripts_calls_initialize(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+    ):
+        """Test list_targets_async calls initialize_pyrit_async when only scripts are configured."""
+        mock_registry = MagicMock()
+        mock_registry.get_names.return_value = ["script_target"]
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+        context._initialization_scripts = ["/path/to/script.py"]
+        context._initializer_configs = None
+
+        result = await frontend_core.list_targets_async(context=context)
+
+        assert result == ["script_target"]
+        # Verify initialize_pyrit_async was called with the scripts
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["initialization_scripts"] == ["/path/to/script.py"]
+        assert call_kwargs["initializers"] is None

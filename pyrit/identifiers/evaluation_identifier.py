@@ -220,14 +220,17 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
 
     Per-child rules:
 
+    * ``seed_identifiers`` — excluded entirely (present for traceability only).
+    * ``attack_technique`` — not listed, so fully included by default.
+      Its nested children (``objective_target``, ``adversarial_chat``,
+      ``objective_scorer``, ``technique_seeds``) are processed recursively
+      using the same rules dict, so the rules below apply at any depth.
     * ``objective_target`` — include only ``temperature``.
     * ``adversarial_chat`` — include ``model_name``, ``temperature``, ``top_p``.
     * ``objective_scorer`` — excluded entirely.
-    * ``seeds`` — include only items where ``is_general_technique=True``.
 
-    Non-target children (e.g., ``request_converters``, ``response_converters``)
-    receive full recursive eval treatment, meaning they fully contribute to
-    the hash.
+    Non-target children (e.g., ``request_converters``, ``response_converters``,
+    ``technique_seeds``) receive full recursive eval treatment.
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
@@ -238,7 +241,7 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
             included_params=frozenset({"model_name", "temperature", "top_p"}),
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
-        "seeds": ChildEvalRule(
-            included_item_values={"is_general_technique": True},
-        ),
+        "seed_identifiers": ChildEvalRule(exclude=True),
+        # attack_technique: not listed in rules — fully included in eval hash.
+        # technique_seeds (nested inside attack_technique): also not listed — fully included.
     }

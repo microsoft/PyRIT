@@ -10,7 +10,7 @@ import pytest
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
-from pyrit.datasets.seed_datasets.remote import _VLSUMultimodalDataset
+from pyrit.datasets.seed_datasets.remote import _SimpleSafetyTestsDataset, _XSTestDataset
 from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetFilter,
 )
@@ -19,49 +19,49 @@ from pyrit.models import SeedDataset, SeedPrompt
 logger = logging.getLogger(__name__)
 
 
-def get_dataset_providers():
-    """Helper to get all registered providers for parameterization."""
-    providers = SeedDatasetProvider.get_all_providers()
-    return [(name, cls) for name, cls in providers.items()]
+# Smoke-test providers covering the three distinct fetch paths:
+#   - local YAML (no network)
+#   - remote URL-based (_fetch_from_url via GitHub)
+#   - remote HuggingFace (_fetch_from_huggingface)
+_all_providers = SeedDatasetProvider.get_all_providers()
+_SMOKE_PROVIDERS: list[tuple[str, type]] = [
+    ("LocalDataset_access_shell_commands", _all_providers["LocalDataset_access_shell_commands"]),
+    ("_XSTestDataset", _XSTestDataset),
+    ("_SimpleSafetyTestsDataset", _SimpleSafetyTestsDataset),
+]
 
 
-class TestSeedDatasetProviderIntegration:
-    """Integration tests for SeedDatasetProvider."""
+class TestSeedDatasetSmoke:
+    """Smoke tests for a small representative set of dataset providers.
+
+    The exhaustive test over all providers lives in tests/end_to_end/test_all_datasets.py.
+    """
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("name,provider_cls", get_dataset_providers())
-    async def test_fetch_dataset_integration(self, name, provider_cls):
+    @pytest.mark.parametrize("name,provider_cls", _SMOKE_PROVIDERS, ids=[p[0] for p in _SMOKE_PROVIDERS])
+    async def test_fetch_dataset_smoke(self, name, provider_cls):
         """
-        Integration test to verify that a specific registered dataset can be fetched.
+        Verify that a representative provider can be fetched successfully.
 
-        This test is parameterized to run for each registered provider.
-        It verifies that:
-        1. The dataset can be downloaded/loaded without error
-        2. The result is a SeedDataset
-        3. The dataset is not empty (has seeds)
+        Covers one local, one URL-remote, and one HuggingFace-remote provider
+        to catch regressions in each fetch path without downloading all 58 datasets.
         """
-        logger.info(f"Testing provider: {name}")
+        logger.info(f"Smoke testing provider: {name}")
 
-        try:
-            # Use max_examples for slow providers that fetch many remote images
-            provider = provider_cls(max_examples=6) if provider_cls == _VLSUMultimodalDataset else provider_cls()
-            dataset = await provider.fetch_dataset(cache=False)
+        provider = provider_cls()
+        dataset = await provider.fetch_dataset(cache=False)
 
-            assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
-            assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
-            assert dataset.dataset_name, f"{name} has no dataset_name"
+        assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
+        assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
+        assert dataset.dataset_name, f"{name} has no dataset_name"
 
-            # Verify seeds have required fields
-            for seed in dataset.seeds:
-                assert seed.value, f"Seed in {name} has no value"
-                assert seed.dataset_name == dataset.dataset_name, (
-                    f"Seed dataset_name mismatch in {name}: {seed.dataset_name} != {dataset.dataset_name}"
-                )
+        for seed in dataset.seeds:
+            assert seed.value, f"Seed in {name} has no value"
+            assert seed.dataset_name == dataset.dataset_name, (
+                f"Seed dataset_name mismatch in {name}: {seed.dataset_name} != {dataset.dataset_name}"
+            )
 
-            logger.info(f"Successfully verified {name} with {len(dataset.seeds)} seeds")
-
-        except Exception as e:
-            pytest.fail(f"Failed to fetch dataset from {name}: {str(e)}")
+        logger.info(f"Smoke test passed for {name} with {len(dataset.seeds)} seeds")
 
 
 class TestRemoteFilteringIntegration:

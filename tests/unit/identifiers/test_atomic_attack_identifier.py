@@ -122,18 +122,20 @@ class TestBuildAtomicAttackIdentifier:
         result = build_atomic_attack_identifier(attack_identifier=_make_attack())
         assert result.class_module == "pyrit.scenario.core.atomic_attack"
 
-    def test_attack_child_is_present(self):
+    def test_attack_technique_child_is_present(self):
         attack_id = _make_attack()
         result = build_atomic_attack_identifier(attack_identifier=attack_id)
-        assert result.children["attack"] == attack_id
+        technique = result.children["attack_technique"]
+        assert technique.class_name == "AttackTechnique"
+        assert technique.children["attack"] == attack_id
 
-    def test_no_seed_group_empty_seeds(self):
+    def test_no_seed_group_empty_seed_identifiers(self):
         result = build_atomic_attack_identifier(attack_identifier=_make_attack())
-        assert result.children["seeds"] == []
+        assert result.children["seed_identifiers"] == []
 
-    def test_empty_seed_group_empty_seeds(self):
+    def test_empty_seed_group_empty_seed_identifiers(self):
         result = build_atomic_attack_identifier(attack_identifier=_make_attack(), seed_group=_FakeSeedGroup(seeds=[]))
-        assert result.children["seeds"] == []
+        assert result.children["seed_identifiers"] == []
 
     def test_includes_all_seeds(self):
         general_seed = SeedPrompt(value="technique", value_sha256="abc", is_general_technique=True)
@@ -142,7 +144,7 @@ class TestBuildAtomicAttackIdentifier:
             attack_identifier=_make_attack(),
             seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_seed]),
         )
-        seed_ids = result.children["seeds"]
+        seed_ids = result.children["seed_identifiers"]
         assert len(seed_ids) == 2
         assert seed_ids[0].params.get("value_sha256") == "abc"
         assert seed_ids[0].params.get("is_general_technique") is True
@@ -156,7 +158,7 @@ class TestBuildAtomicAttackIdentifier:
             attack_identifier=_make_attack(),
             seed_group=_FakeSeedGroup(seeds=[seed1, seed2]),
         )
-        assert len(result.children["seeds"]) == 2
+        assert len(result.children["seed_identifiers"]) == 2
 
     def test_deterministic_hash(self):
         attack_id = _make_attack()
@@ -217,10 +219,9 @@ class TestAtomicAttackEvaluationIdentifier:
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["objective_scorer"]
         assert rule.exclude is True
 
-    def test_seeds_rule(self):
-        rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["seeds"]
-        assert rule.included_item_values == {"is_general_technique": True}
-        assert not rule.exclude
+    def test_seed_identifiers_rule(self):
+        rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["seed_identifiers"]
+        assert rule.exclude is True
 
     # -- Basic properties --------------------------------------------------
 
@@ -360,70 +361,72 @@ class TestAtomicAttackEvaluationIdentifier:
         c2 = build_atomic_attack_identifier(attack_identifier=a2)
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash == AtomicAttackEvaluationIdentifier(c2).eval_hash
 
-    # -- Seeds (eval hash uses only general technique seeds) ---------------
+    # -- Seeds and technique_seeds (eval hash uses technique_seeds, excludes seeds) ---
 
-    def test_different_general_technique_seeds_different_eval_hash(self):
+    def test_different_technique_seeds_different_eval_hash(self):
         attack_id = _make_attack()
         seed1 = SeedPrompt(value="tech1", value_sha256="aaa", is_general_technique=True)
         seed2 = SeedPrompt(value="tech2", value_sha256="bbb", is_general_technique=True)
-        c1 = build_atomic_attack_identifier(attack_identifier=attack_id, seed_group=_FakeSeedGroup(seeds=[seed1]))
-        c2 = build_atomic_attack_identifier(attack_identifier=attack_id, seed_group=_FakeSeedGroup(seeds=[seed2]))
+        technique1 = ComponentIdentifier(
+            class_name="AttackTechnique",
+            class_module="pyrit.scenario.core.attack_technique",
+            children={"attack": attack_id, "technique_seeds": [build_seed_identifier(seed1)]},
+        )
+        technique2 = ComponentIdentifier(
+            class_name="AttackTechnique",
+            class_module="pyrit.scenario.core.attack_technique",
+            children={"attack": attack_id, "technique_seeds": [build_seed_identifier(seed2)]},
+        )
+        c1 = build_atomic_attack_identifier(technique_identifier=technique1)
+        c2 = build_atomic_attack_identifier(technique_identifier=technique2)
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash != AtomicAttackEvaluationIdentifier(c2).eval_hash
 
-    def test_non_general_technique_seeds_ignored_in_eval_hash(self):
-        """Same general technique seeds but different non-general seeds -> same eval hash."""
+    def test_seeds_in_seed_group_ignored_in_eval_hash(self):
+        """Different seeds in seed_group (traceability) should not affect eval hash."""
         attack_id = _make_attack()
-        general_seed = SeedPrompt(value="technique", value_sha256="abc", is_general_technique=True)
         non_general_1 = SeedPrompt(value="obj1", value_sha256="xxx", is_general_technique=False)
         non_general_2 = SeedPrompt(value="obj2", value_sha256="yyy", is_general_technique=False)
         c1 = build_atomic_attack_identifier(
             attack_identifier=attack_id,
-            seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_1]),
+            seed_group=_FakeSeedGroup(seeds=[non_general_1]),
         )
         c2 = build_atomic_attack_identifier(
             attack_identifier=attack_id,
-            seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_2]),
+            seed_group=_FakeSeedGroup(seeds=[non_general_2]),
         )
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash == AtomicAttackEvaluationIdentifier(c2).eval_hash
 
-    def test_eval_hash_only_uses_general_technique_seeds(self):
-        """Eval hash with mixed seeds should match one built with only general technique seeds."""
+    def test_general_technique_seeds_in_seed_group_ignored_in_eval_hash(self):
+        """Even general technique seeds in seed_group are excluded from eval hash."""
         attack_id = _make_attack()
         general_seed = SeedPrompt(value="technique", value_sha256="abc", is_general_technique=True)
-        non_general_seed = SeedPrompt(value="objective", value_sha256="def", is_general_technique=False)
-
-        # Identifier with both general and non-general seeds
-        c_mixed = build_atomic_attack_identifier(
-            attack_identifier=attack_id,
-            seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_seed]),
-        )
-        # Identifier with only general technique seed
-        c_general_only = build_atomic_attack_identifier(
+        c_with = build_atomic_attack_identifier(
             attack_identifier=attack_id,
             seed_group=_FakeSeedGroup(seeds=[general_seed]),
         )
+        c_without = build_atomic_attack_identifier(
+            attack_identifier=attack_id,
+        )
         assert (
-            AtomicAttackEvaluationIdentifier(c_mixed).eval_hash
-            == AtomicAttackEvaluationIdentifier(c_general_only).eval_hash
+            AtomicAttackEvaluationIdentifier(c_with).eval_hash == AtomicAttackEvaluationIdentifier(c_without).eval_hash
         )
 
-    def test_identifier_hash_differs_with_non_general_seeds(self):
-        """The full identifier hash SHOULD differ when non-general seeds differ."""
+    def test_identifier_hash_differs_with_different_seeds(self):
+        """The full identifier hash SHOULD differ when seeds differ (even though eval hash doesn't)."""
         attack_id = _make_attack()
-        general_seed = SeedPrompt(value="technique", value_sha256="abc", is_general_technique=True)
         non_general_1 = SeedPrompt(value="obj1", value_sha256="xxx", is_general_technique=False)
         non_general_2 = SeedPrompt(value="obj2", value_sha256="yyy", is_general_technique=False)
         c1 = build_atomic_attack_identifier(
             attack_identifier=attack_id,
-            seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_1]),
+            seed_group=_FakeSeedGroup(seeds=[non_general_1]),
         )
         c2 = build_atomic_attack_identifier(
             attack_identifier=attack_id,
-            seed_group=_FakeSeedGroup(seeds=[general_seed, non_general_2]),
+            seed_group=_FakeSeedGroup(seeds=[non_general_2]),
         )
-        # Full identifier hash should differ (all seeds contribute)
+        # Full identifier hash should differ (all seeds contribute to hash)
         assert c1.hash != c2.hash
-        # But eval hash should be the same (only general technique seeds)
+        # But eval hash should be the same (seeds excluded)
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash == AtomicAttackEvaluationIdentifier(c2).eval_hash
 
     # -- Full composite scenario -------------------------------------------

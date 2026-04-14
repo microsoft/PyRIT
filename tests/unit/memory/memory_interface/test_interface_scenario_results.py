@@ -8,6 +8,7 @@ import pytest
 from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
@@ -645,3 +646,125 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
     assert len(results) == 1
     assert results[0].scenario_identifier.pyrit_version == "0.5.0"
     assert "gpt-4" in results[0].objective_target_identifier.params["model_name"]
+
+
+def test_get_scenario_results_by_target_identifier_filter_hash(sqlite_instance: MemoryInterface):
+    """Test filtering scenario results by identifier filter."""
+    target_id_1 = ComponentIdentifier(
+        class_name="OpenAI",
+        class_module="test",
+        params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
+    )
+    target_id_2 = ComponentIdentifier(
+        class_name="Azure",
+        class_module="test",
+        params={"endpoint": "https://azure.com", "model_name": "gpt-3.5"},
+    )
+
+    attack_result1 = create_attack_result("conv_1", "Objective 1")
+    attack_result2 = create_attack_result("conv_2", "Objective 2")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+
+    scenario1 = ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="Scenario OpenAI", scenario_version=1),
+        objective_target_identifier=target_id_1,
+        attack_results={"Attack1": [attack_result1]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    scenario2 = ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="Scenario Azure", scenario_version=1),
+        objective_target_identifier=target_id_2,
+        attack_results={"Attack2": [attack_result2]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+
+    # Filter by target hash
+    results = sqlite_instance.get_scenario_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.hash",
+                value=target_id_1.hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].scenario_identifier.name == "Scenario OpenAI"
+
+
+def test_get_scenario_results_by_target_identifier_filter_endpoint(sqlite_instance: MemoryInterface):
+    """Test filtering scenario results by identifier filter with endpoint."""
+    target_id_1 = ComponentIdentifier(
+        class_name="OpenAI",
+        class_module="test",
+        params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
+    )
+    target_id_2 = ComponentIdentifier(
+        class_name="Azure",
+        class_module="test",
+        params={"endpoint": "https://azure.com", "model_name": "gpt-3.5"},
+    )
+
+    attack_result1 = create_attack_result("conv_1", "Objective 1")
+    attack_result2 = create_attack_result("conv_2", "Objective 2")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+
+    scenario1 = ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="Scenario OpenAI", scenario_version=1),
+        objective_target_identifier=target_id_1,
+        attack_results={"Attack1": [attack_result1]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    scenario2 = ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="Scenario Azure", scenario_version=1),
+        objective_target_identifier=target_id_2,
+        attack_results={"Attack2": [attack_result2]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+
+    # Filter by endpoint partial match
+    results = sqlite_instance.get_scenario_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.endpoint",
+                value="openai",
+                partial_match=True,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].scenario_identifier.name == "Scenario OpenAI"
+
+
+def test_get_scenario_results_by_target_identifier_filter_no_match(sqlite_instance: MemoryInterface):
+    """Test that TargetIdentifierFilter returns empty when nothing matches."""
+    attack_result1 = create_attack_result("conv_1", "Objective 1")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1])
+
+    scenario1 = ScenarioResult(
+        scenario_identifier=ScenarioIdentifier(name="Test Scenario", scenario_version=1),
+        objective_target_identifier=ComponentIdentifier(
+            class_name="OpenAI",
+            class_module="test",
+            params={"endpoint": "https://api.openai.com"},
+        ),
+        attack_results={"Attack1": [attack_result1]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1])
+
+    results = sqlite_instance.get_scenario_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.hash",
+                value="nonexistent_hash",
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 0

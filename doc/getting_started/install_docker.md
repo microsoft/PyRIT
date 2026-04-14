@@ -59,16 +59,22 @@ docker-compose logs -f
 
 ### 4. Access JupyterLab
 
-Once the container is running, open your browser and navigate to:
+Once the container is running, retrieve the access URL (including the authentication token) from the logs:
+
+```bash
+docker-compose logs pyrit-jupyter
+```
+
+Look for a line like:
 
 ```
-http://localhost:8888
+http://127.0.0.1:8888/lab?token=<your-token>
 ```
 
-By default, JupyterLab runs without authentication for ease of use.
+Open that full URL in your browser. The token is required for access.
 
-```{warning}
-The default configuration has no password. For production use, consider adding authentication.
+```{note}
+JupyterLab is bound to `localhost` only and requires token authentication. Your API credentials are mounted into the container, so these protections prevent unauthorized access from other machines on your network.
 ```
 
 ## Using PyRIT in JupyterLab

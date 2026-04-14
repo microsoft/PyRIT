@@ -1273,6 +1273,25 @@ def test_from_messages_multiple_messages():
     assert result[2].sequence == 2
 
 
+@pytest.mark.parametrize(
+    ("role", "expected_role"),
+    [
+        ("system", "system"),
+        ("developer", "developer"),
+        ("tool", "tool"),
+        ("simulated_assistant", "assistant"),
+    ],
+)
+def test_from_messages_preserves_supported_roles(role, expected_role):
+    """Test from_messages preserves supported API roles instead of collapsing to user."""
+    message = Message(message_pieces=[MessagePiece(role=role, original_value=f"{role} message")])
+
+    result = SeedPrompt.from_messages([message])
+
+    assert len(result) == 1
+    assert result[0].role == expected_role
+
+
 def test_from_messages_multipart_message():
     """Test from_messages with a multipart message (e.g., text + image)."""
     conv_id = str(uuid.uuid4())

@@ -690,9 +690,9 @@ test.describe("Target type scenarios", () => {
     await page.getByTitle("Configuration").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 
-    await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
-    await expect(page.getByText("OpenAIImageTarget")).toBeVisible();
-    await expect(page.getByText("OpenAITTSTarget")).toBeVisible();
+    await expect(page.locator("table").getByText("OpenAIChatTarget")).toBeVisible();
+    await expect(page.locator("table").getByText("OpenAIImageTarget")).toBeVisible();
+    await expect(page.locator("table").getByText("OpenAITTSTarget")).toBeVisible();
   });
 
   test("should activate image target and show it in chat ribbon", async ({ page }) => {
