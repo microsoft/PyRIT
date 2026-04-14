@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Optional, Union
 
 from pyrit.registry.instance_registries.base_instance_registry import (
-    BaseInstanceRegistry,
+    BaseItemRegistry,
 )
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
+class AttackTechniqueRegistry(BaseItemRegistry["AttackTechniqueFactory"]):
     """
     Singleton registry of reusable attack technique factories.
 
@@ -84,10 +84,10 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Raises:
             KeyError: If no technique is registered with the given name.
         """
-        factory = self.get(name)
-        if factory is None:
+        entry = self._registry_items.get(name)
+        if entry is None:
             raise KeyError(f"No technique registered with name '{name}'")
-        return factory.create(
+        return entry.instance.create(
             objective_target=objective_target,
             attack_scoring_config=attack_scoring_config,
             attack_adversarial_config=attack_adversarial_config,

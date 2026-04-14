@@ -20,6 +20,7 @@ from pyrit.registry.discovery import (
 from pyrit.registry.instance_registries import (
     AttackTechniqueRegistry,
     BaseInstanceRegistry,
+    BaseItemRegistry,
     RegistryEntry,
     ScorerRegistry,
     TargetRegistry,
@@ -29,6 +30,7 @@ __all__ = [
     "AttackTechniqueRegistry",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
+    "BaseItemRegistry",
     "ClassEntry",
     "discover_in_directory",
     "discover_in_package",

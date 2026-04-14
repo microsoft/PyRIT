@@ -16,6 +16,7 @@ from pyrit.registry.instance_registries.attack_technique_registry import (
 )
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
+    BaseItemRegistry,
     RegistryEntry,
 )
 from pyrit.registry.instance_registries.converter_registry import (
@@ -29,8 +30,9 @@ from pyrit.registry.instance_registries.target_registry import (
 )
 
 __all__ = [
-    # Base class
+    # Base classes
     "BaseInstanceRegistry",
+    "BaseItemRegistry",
     "RegistryEntry",
     # Concrete registries
     "AttackTechniqueRegistry",

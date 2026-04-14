@@ -4,7 +4,11 @@
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier, Identifiable
-from pyrit.registry.instance_registries.base_instance_registry import BaseInstanceRegistry, RegistryEntry
+from pyrit.registry.instance_registries.base_instance_registry import (
+    BaseInstanceRegistry,
+    BaseItemRegistry,
+    RegistryEntry,
+)
 
 
 class _TestItem(Identifiable):
@@ -481,6 +485,44 @@ class TestBaseInstanceRegistryDunderMethods:
         assert collected == ["name1", "name2"]
 
 
+class _ItemOnlyRegistry(BaseItemRegistry["_TestItem"]):
+    """Concrete BaseItemRegistry subclass — should NOT have get/get_entry/get_all_instances."""
+
+
+class TestBaseItemRegistryDoesNotExposeInstanceMethods:
+    """Verify that BaseItemRegistry subclasses lack instance-retrieval methods."""
+
+    def test_item_registry_has_no_get(self):
+        """BaseItemRegistry subclasses should not have a get() method."""
+        assert not hasattr(_ItemOnlyRegistry, "get")
+
+    def test_item_registry_has_no_get_entry(self):
+        """BaseItemRegistry subclasses should not have a get_entry() method."""
+        assert not hasattr(_ItemOnlyRegistry, "get_entry")
+
+    def test_item_registry_has_no_get_all_instances(self):
+        """BaseItemRegistry subclasses should not have a get_all_instances() method."""
+        assert not hasattr(_ItemOnlyRegistry, "get_all_instances")
+
+    def test_instance_registry_has_get(self):
+        """BaseInstanceRegistry subclasses should have get()."""
+        assert hasattr(ConcreteTestRegistry, "get")
+
+    def test_instance_registry_has_get_entry(self):
+        """BaseInstanceRegistry subclasses should have get_entry()."""
+        assert hasattr(ConcreteTestRegistry, "get_entry")
+
+    def test_instance_registry_has_get_all_instances(self):
+        """BaseInstanceRegistry subclasses should have get_all_instances()."""
+        assert hasattr(ConcreteTestRegistry, "get_all_instances")
+
+    def test_item_registry_shares_common_methods(self):
+        """BaseItemRegistry subclasses should have shared registry methods."""
+        for method in ("register", "get_names", "get_by_tag", "add_tags", "list_metadata",
+                       "find_dependents_of_tag", "get_registry_singleton", "reset_instance"):
+            assert hasattr(_ItemOnlyRegistry, method), f"Missing method: {method}"
+
+
 class TestBaseInstanceRegistryAddTags:
     """Tests for add_tags functionality in BaseInstanceRegistry."""
 
@@ -555,7 +597,7 @@ class _IdentifiableStub(Identifiable):
         return self._stored_identifier
 
 
-class IdentifierTestRegistry(BaseInstanceRegistry["_IdentifiableStub"]):
+class IdentifierTestRegistry(BaseItemRegistry["_IdentifiableStub"]):
     """Registry for testing dependency-related functionality with ComponentIdentifier trees."""
 
 

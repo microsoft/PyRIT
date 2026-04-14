@@ -75,7 +75,7 @@ class TestAttackTechniqueRegistryRegister:
         self.registry.register_technique(name="stub_attack", factory=factory)
 
         assert "stub_attack" in self.registry
-        assert self.registry.get("stub_attack") is factory
+        assert self.registry._registry_items["stub_attack"].instance is factory
 
     def test_register_technique_with_tags(self):
         factory = AttackTechniqueFactory(attack_class=_StubAttack)
