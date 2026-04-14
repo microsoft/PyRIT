@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
 )
@@ -32,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory", ComponentIdentifier]):
+class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
     """
     Singleton registry of reusable attack technique factories.
 
@@ -94,16 +93,3 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory", Com
             attack_adversarial_config=attack_adversarial_config,
             attack_converter_config=attack_converter_config,
         )
-
-    def _build_metadata(self, name: str, instance: AttackTechniqueFactory) -> ComponentIdentifier:
-        """
-        Build metadata for a technique factory.
-
-        Args:
-            name: The registry name of the factory.
-            instance: The factory instance.
-
-        Returns:
-            ComponentIdentifier: The factory's identifier.
-        """
-        return instance.get_identifier()

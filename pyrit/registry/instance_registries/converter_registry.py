@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
 )
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentifier]):
+class ConverterRegistry(BaseInstanceRegistry["PromptConverter"]):
     """
     Registry for managing available converter instances.
 
@@ -68,16 +67,3 @@ class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentif
             The converter instance, or None if not found.
         """
         return self.get(name)
-
-    def _build_metadata(self, name: str, instance: PromptConverter) -> ComponentIdentifier:
-        """
-        Build metadata for a converter instance.
-
-        Args:
-            name: The registry name of the converter.
-            instance: The converter instance.
-
-        Returns:
-            ComponentIdentifier: The converter's identifier.
-        """
-        return instance.get_identifier()

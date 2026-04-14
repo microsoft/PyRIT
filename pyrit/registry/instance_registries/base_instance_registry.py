@@ -15,19 +15,18 @@ Examples include:
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar, Union
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.registry.base import RegistryProtocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Self
 
-T = TypeVar("T")  # The type of instances stored
-MetadataT = TypeVar("MetadataT", bound=ComponentIdentifier)
+T = TypeVar("T", bound=Identifiable)  # The type of instances stored
 
 
 @dataclass
@@ -49,7 +48,7 @@ class RegistryEntry(Generic[T]):
     tags: dict[str, str] = field(default_factory=dict)
 
 
-class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT]):
+class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
     """
     Abstract base class for registries that store pre-configured instances.
 
@@ -57,16 +56,15 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
     Type[T] and supports lazy discovery, instance registries store already-instantiated
     objects that are registered explicitly (typically during initialization).
 
-    Type Parameters:
-        T: The type of instances stored in the registry.
-        MetadataT: A TypedDict subclass for instance metadata.
+    All stored instances must implement ``Identifiable``, which provides
+    ``get_identifier()`` for metadata generation.
 
-    Subclasses must implement:
-        - _build_metadata(): Convert an instance to its metadata representation
+    Type Parameters:
+        T: The type of instances stored in the registry (must be Identifiable).
     """
 
     # Class-level singleton instances, keyed by registry class
-    _instances: dict[type, BaseInstanceRegistry[Any, Any]] = {}
+    _instances: dict[type, BaseInstanceRegistry[Any]] = {}
 
     @classmethod
     def get_registry_singleton(cls) -> Self:
@@ -114,7 +112,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """Initialize the instance registry."""
         # Maps registry names to registry entries
         self._registry_items: dict[str, RegistryEntry[T]] = {}
-        self._metadata_cache: Optional[list[MetadataT]] = None
+        self._metadata_cache: Optional[list[ComponentIdentifier]] = None
 
     def register(
         self,
@@ -278,7 +276,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         *,
         include_filters: Optional[dict[str, object]] = None,
         exclude_filters: Optional[dict[str, object]] = None,
-    ) -> list[MetadataT]:
+    ) -> list[ComponentIdentifier]:
         """
         List metadata for all registered instances, optionally filtered.
 
@@ -315,19 +313,18 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
             if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
         ]
 
-    @abstractmethod
-    def _build_metadata(self, name: str, instance: T) -> MetadataT:
+    def _build_metadata(self, name: str, instance: T) -> ComponentIdentifier:
         """
-        Build metadata for an instance.
+        Build metadata for an instance via its ``Identifiable`` interface.
 
         Args:
             name: The registry name of the instance.
             instance: The instance.
 
         Returns:
-            A metadata dictionary describing the instance.
+            The instance's ComponentIdentifier.
         """
-        ...
+        return instance.get_identifier()
 
     def __contains__(self, name: str) -> bool:
         """
