@@ -12,9 +12,9 @@ with the scenario's objective target and scorer.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
-from pyrit.registry.instance_registries.base_instance_registry import (
+from pyrit.registry.instance_registries.base_item_registry import (
     BaseItemRegistry,
 )
 
@@ -45,7 +45,7 @@ class AttackTechniqueRegistry(BaseItemRegistry["AttackTechniqueFactory"]):
         *,
         name: str,
         factory: AttackTechniqueFactory,
-        tags: Optional[Union[dict[str, str], list[str]]] = None,
+        tags: dict[str, str] | list[str] | None = None,
     ) -> None:
         """
         Register an attack technique factory.

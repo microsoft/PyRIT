@@ -6,6 +6,8 @@ import pytest
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
+)
+from pyrit.registry.instance_registries.base_item_registry import (
     BaseItemRegistry,
     RegistryEntry,
 )
@@ -518,8 +520,16 @@ class TestBaseItemRegistryDoesNotExposeInstanceMethods:
 
     def test_item_registry_shares_common_methods(self):
         """BaseItemRegistry subclasses should have shared registry methods."""
-        for method in ("register", "get_names", "get_by_tag", "add_tags", "list_metadata",
-                       "find_dependents_of_tag", "get_registry_singleton", "reset_instance"):
+        for method in (
+            "register",
+            "get_names",
+            "get_by_tag",
+            "add_tags",
+            "list_metadata",
+            "find_dependents_of_tag",
+            "get_registry_singleton",
+            "reset_instance",
+        ):
             assert hasattr(_ItemOnlyRegistry, method), f"Missing method: {method}"
 
 

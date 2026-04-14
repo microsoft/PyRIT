@@ -16,6 +16,8 @@ from pyrit.registry.instance_registries.attack_technique_registry import (
 )
 from pyrit.registry.instance_registries.base_instance_registry import (
     BaseInstanceRegistry,
+)
+from pyrit.registry.instance_registries.base_item_registry import (
     BaseItemRegistry,
     RegistryEntry,
 )

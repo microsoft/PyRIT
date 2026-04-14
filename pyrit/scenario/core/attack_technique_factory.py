@@ -83,18 +83,13 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If ``objective_target`` is included in attack_kwargs.
         """
         if "objective_target" in self._attack_kwargs:
-            raise ValueError(
-                "objective_target must not be in attack_kwargs — "
-                "it is provided at create() time."
-            )
+            raise ValueError("objective_target must not be in attack_kwargs — it is provided at create() time.")
 
         sig = inspect.signature(self._attack_class.__init__)
 
         # Reject constructors that accept **kwargs — we require explicitly named
         # parameters so that validation is meaningful.
-        has_var_keyword = any(
-            param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()
-        )
+        has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
         if has_var_keyword:
             raise TypeError(
                 f"{self._attack_class.__name__}.__init__ accepts **kwargs, which prevents "
