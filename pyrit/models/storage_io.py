@@ -200,9 +200,13 @@ class AzureBlobStorageIO(StorageIO):
             )
         else:
             logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+            parsed_url = urlparse(self._container_url)
+            account_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            container_name = parsed_url.path.lstrip("/")
             self._credential = DefaultAzureCredential()
-            self._client_async = AsyncContainerClient.from_container_url(
-                container_url=self._container_url,
+            self._client_async = AsyncContainerClient(
+                account_url=account_url,
+                container_name=container_name,
                 credential=self._credential,
             )
 

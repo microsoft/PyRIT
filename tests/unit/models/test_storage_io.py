@@ -198,17 +198,17 @@ async def test_azure_blob_storage_io_create_container_client_uses_default_creden
     mock_credential = AsyncMock()
 
     with (
-        patch(
-            "pyrit.models.storage_io.DefaultAzureCredential", return_value=mock_credential
-        ) as mock_credential_cls,
-        patch(
-            "pyrit.models.storage_io.AsyncContainerClient.from_container_url", return_value=mock_container_client
-        ) as mock_from_container_url,
+        patch("pyrit.models.storage_io.DefaultAzureCredential", return_value=mock_credential) as mock_credential_cls,
+        patch("pyrit.models.storage_io.AsyncContainerClient", return_value=mock_container_client) as mock_container_cls,
     ):
         await azure_blob_storage_io._create_container_client_async()
 
     mock_credential_cls.assert_called_once()
-    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=mock_credential)
+    mock_container_cls.assert_called_once_with(
+        account_url="https://youraccount.blob.core.windows.net",
+        container_name="yourcontainer",
+        credential=mock_credential,
+    )
     assert azure_blob_storage_io._client_async is mock_container_client
     assert azure_blob_storage_io._credential is mock_credential
 
