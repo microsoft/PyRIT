@@ -179,17 +179,38 @@ async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_t
 
     mock_container_client = AsyncMock()
 
+    with patch(
+        "pyrit.models.storage_io.AsyncContainerClient.from_container_url", return_value=mock_container_client
+    ) as mock_from_container_url:
+        await azure_blob_storage_io._create_container_client_async()
+
+    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=sas_token)
+    assert azure_blob_storage_io._client_async is mock_container_client
+    assert azure_blob_storage_io._credential is None
+
+
+@pytest.mark.asyncio
+async def test_azure_blob_storage_io_create_container_client_uses_default_credential_when_no_sas_token():
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(container_url=container_url)
+
+    mock_container_client = AsyncMock()
+    mock_credential = AsyncMock()
+
     with (
-        patch("pyrit.models.storage_io.AzureStorageAuth.get_sas_token", new_callable=AsyncMock) as mock_get_sas_token,
+        patch(
+            "pyrit.models.storage_io.DefaultAzureCredential", return_value=mock_credential
+        ) as mock_credential_cls,
         patch(
             "pyrit.models.storage_io.AsyncContainerClient.from_container_url", return_value=mock_container_client
         ) as mock_from_container_url,
     ):
         await azure_blob_storage_io._create_container_client_async()
 
-    mock_get_sas_token.assert_not_awaited()
-    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=sas_token)
+    mock_credential_cls.assert_called_once()
+    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=mock_credential)
     assert azure_blob_storage_io._client_async is mock_container_client
+    assert azure_blob_storage_io._credential is mock_credential
 
 
 @pytest.mark.asyncio

@@ -182,6 +182,7 @@ class AzureBlobStorageIO(StorageIO):
         self._container_url: str = container_url
         self._sas_token = sas_token
         self._client_async: AsyncContainerClient = None
+        self._credential: DefaultAzureCredential | None = None
 
     async def _create_container_client_async(self) -> None:
         """
@@ -199,10 +200,20 @@ class AzureBlobStorageIO(StorageIO):
             )
         else:
             logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+            self._credential = DefaultAzureCredential()
             self._client_async = AsyncContainerClient.from_container_url(
                 container_url=self._container_url,
-                credential=DefaultAzureCredential(),
+                credential=self._credential,
             )
+
+    async def _close_client_async(self) -> None:
+        """Close the container client and credential, resetting them to None."""
+        if self._client_async:
+            await self._client_async.close()  # type: ignore[no-untyped-call, unused-ignore]
+            self._client_async = None
+        if self._credential:
+            await self._credential.close()
+            self._credential = None
 
     async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
         """
@@ -227,10 +238,10 @@ class AzureBlobStorageIO(StorageIO):
         except Exception as exc:
             if isinstance(exc, ClientAuthenticationError):
                 logger.exception(
-                    msg="Authentication failed. Please check that the container existence in the "
-                    "Azure Storage Account and ensure the validity of the provided SAS token. If you "
-                    "haven't set the SAS token as an environment variable use `az login` to "
-                    "enable delegation-based SAS authentication to connect to the storage account"
+                    msg="Authentication failed. Please check that the container exists in the "
+                    "Azure Storage Account. If using a SAS token, ensure it is valid. Otherwise, "
+                    "ensure you are logged in via `az login` and have a data-plane role such as "
+                    "Storage Blob Data Contributor on the storage account."
                 )
                 raise
             logger.exception(msg=f"An unexpected error occurred: {exc}")
@@ -326,8 +337,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to read file at {blob_name}: {exc}")
             raise
         finally:
-            await self._client_async.close()  # type: ignore[no-untyped-call, unused-ignore]
-            self._client_async = None
+            await self._close_client_async()
 
     async def write_file(self, path: Union[Path, str], data: bytes) -> None:
         """
@@ -350,8 +360,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
         finally:
-            await self._client_async.close()  # type: ignore[no-untyped-call, unused-ignore]
-            self._client_async = None
+            await self._close_client_async()
 
     async def path_exists(self, path: Union[Path, str]) -> bool:
         """
@@ -374,8 +383,7 @@ class AzureBlobStorageIO(StorageIO):
         except ResourceNotFoundError:
             return False
         finally:
-            await self._client_async.close()  # type: ignore[no-untyped-call, unused-ignore]
-            self._client_async = None
+            await self._close_client_async()
 
     async def is_file(self, path: Union[Path, str]) -> bool:
         """
@@ -398,8 +406,7 @@ class AzureBlobStorageIO(StorageIO):
         except ResourceNotFoundError:
             return False
         finally:
-            await self._client_async.close()  # type: ignore[no-untyped-call, unused-ignore]
-            self._client_async = None
+            await self._close_client_async()
 
     async def create_directory_if_not_exists(self, directory_path: Union[Path, str]) -> None:
         """
