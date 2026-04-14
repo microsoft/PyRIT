@@ -214,6 +214,24 @@ async def test_azure_blob_storage_io_create_container_client_uses_default_creden
 
 
 @pytest.mark.asyncio
+async def test_azure_blob_storage_io_close_client_async_closes_credential_and_client():
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(container_url=container_url)
+
+    mock_client = AsyncMock()
+    mock_credential = AsyncMock()
+    azure_blob_storage_io._client_async = mock_client
+    azure_blob_storage_io._credential = mock_credential
+
+    await azure_blob_storage_io._close_client_async()
+
+    mock_client.close.assert_called_once()
+    mock_credential.close.assert_called_once()
+    assert azure_blob_storage_io._client_async is None
+    assert azure_blob_storage_io._credential is None
+
+
+@pytest.mark.asyncio
 async def test_azure_storage_io_path_exists(azure_blob_storage_io):
     azure_blob_storage_io._client_async = AsyncMock()
 
