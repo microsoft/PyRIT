@@ -45,7 +45,7 @@ class AttackTechniqueFactory(Identifiable):
     def __init__(
         self,
         *,
-        attack_class: type[AttackStrategy],
+        attack_class: type[AttackStrategy[Any, Any]],
         attack_kwargs: dict[str, Any] | None = None,
         seed_technique: SeedAttackTechniqueGroup | None = None,
     ) -> None:
@@ -115,7 +115,7 @@ class AttackTechniqueFactory(Identifiable):
             )
 
     @property
-    def attack_class(self) -> type[AttackStrategy]:
+    def attack_class(self) -> type[AttackStrategy[Any, Any]]:
         """The attack strategy class this factory produces."""
         return self._attack_class
 
