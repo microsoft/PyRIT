@@ -146,6 +146,7 @@ def compute_eval_hash(
         str: A hex-encoded SHA256 hash suitable for eval registry keying.
     """
     if not child_eval_rules:
+        assert identifier.hash is not None, "hash should be set by __post_init__"
         return identifier.hash
 
     eval_dict = _build_eval_dict(

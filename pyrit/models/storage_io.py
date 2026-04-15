@@ -182,7 +182,7 @@ class AzureBlobStorageIO(StorageIO):
 
         self._container_url: str = container_url
         self._sas_token = sas_token
-        self._client_async: AsyncContainerClient = None
+        self._client_async: AsyncContainerClient | None = None
 
     async def _create_container_client_async(self) -> None:
         """
@@ -216,6 +216,7 @@ class AzureBlobStorageIO(StorageIO):
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         try:
+            assert self._client_async is not None
             await self._client_async.upload_blob(
                 name=file_name,
                 data=data,
@@ -310,6 +311,7 @@ class AzureBlobStorageIO(StorageIO):
         """
         if not self._client_async:
             await self._create_container_client_async()
+        assert self._client_async is not None
 
         blob_name = self._resolve_blob_name(path)
 
@@ -341,6 +343,7 @@ class AzureBlobStorageIO(StorageIO):
         """
         if not self._client_async:
             await self._create_container_client_async()
+        assert self._client_async is not None
         blob_name = self._resolve_blob_name(path)
         try:
             await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
@@ -364,6 +367,7 @@ class AzureBlobStorageIO(StorageIO):
         """
         if not self._client_async:
             await self._create_container_client_async()
+        assert self._client_async is not None
         try:
             blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)
@@ -388,6 +392,7 @@ class AzureBlobStorageIO(StorageIO):
         """
         if not self._client_async:
             await self._create_container_client_async()
+        assert self._client_async is not None
         try:
             blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)

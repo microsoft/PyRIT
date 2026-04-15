@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    import types
+
     from pyrit.cli import frontend_core
     from pyrit.models.scenario_result import ScenarioResult
 
@@ -119,7 +121,7 @@ class PyRITShell(cmd.Cmd):
                 new_item="PyRITShell(database=..., log_level=..., ...)",
                 removed_in="0.14.0",
             )
-            self._deprecated_context = context
+            self._deprecated_context: frontend_core.FrontendCore | None = context
         else:
             self._deprecated_context = None
 
@@ -127,8 +129,9 @@ class PyRITShell(cmd.Cmd):
         self._scenario_history: list[tuple[str, ScenarioResult]] = []
 
         # Set by the background thread after importing frontend_core.
-        self.context: Optional[frontend_core.FrontendCore] = None
-        self.default_log_level: Optional[int] = None
+        self._fc: types.ModuleType | None = None
+        self.context: frontend_core.FrontendCore | None = None
+        self.default_log_level: int | None = None
 
         # Initialize PyRIT in background thread for faster startup.
         self._init_thread = threading.Thread(target=self._background_init, daemon=True)
@@ -165,6 +168,8 @@ class PyRITShell(cmd.Cmd):
             sys.stdout.flush()
             self._init_complete.wait()
         self._raise_init_error()
+        assert self._fc is not None, "frontend_core not initialized"
+        assert self.context is not None, "context not initialized"
 
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
@@ -193,6 +198,7 @@ class PyRITShell(cmd.Cmd):
             print(f"Error: list-scenarios does not accept arguments, got: {arg.strip()}")
             return
         self._ensure_initialized()
+        assert self._fc is not None and self.context is not None
         try:
             asyncio.run(self._fc.print_scenarios_list_async(context=self.context))
         except Exception as e:
@@ -204,6 +210,7 @@ class PyRITShell(cmd.Cmd):
             print(f"Error: list-initializers does not accept arguments, got: {arg.strip()}")
             return
         self._ensure_initialized()
+        assert self._fc is not None and self.context is not None
         try:
             asyncio.run(self._fc.print_initializers_list_async(context=self.context))
         except Exception as e:
@@ -227,6 +234,7 @@ class PyRITShell(cmd.Cmd):
             list-targets --initializers target:tags=default,scorer
         """
         self._ensure_initialized()
+        assert self._fc is not None and self.context is not None
         try:
             list_targets_context = self.context
             if arg.strip():
@@ -291,6 +299,7 @@ class PyRITShell(cmd.Cmd):
             Database and env-files are configured via the config file.
         """
         self._ensure_initialized()
+        assert self._fc is not None and self.context is not None
 
         if not line.strip():
             print("Error: Specify a scenario name")

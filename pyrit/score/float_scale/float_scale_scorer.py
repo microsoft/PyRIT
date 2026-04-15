@@ -58,8 +58,12 @@ class FloatScaleScorer(Scorer):
         if self.evaluation_file_mapping is None or self.evaluation_file_mapping.harm_category is None:
             return None
 
+        eval_hash = self.get_identifier().eval_hash
+        if eval_hash is None:
+            return None
+
         return find_harm_metrics_by_eval_hash(
-            eval_hash=self.get_identifier().eval_hash,
+            eval_hash=eval_hash,
             harm_category=self.evaluation_file_mapping.harm_category,
         )
 

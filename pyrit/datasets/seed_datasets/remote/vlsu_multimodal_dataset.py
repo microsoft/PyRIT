@@ -193,12 +193,12 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         Raises:
             Exception: If the image cannot be fetched.
         """
-        text = example.get("prompt")
-        image_url = example.get("web_path")
+        text = example.get("prompt", "")
+        image_url = example.get("web_path", "")
         text_grade = example.get("consensus_text_grade", "").lower()
         image_grade = example.get("image_grade", "").lower()
         combined_grade = example.get("consensus_combined_grade", "").lower()
-        combined_category = example.get("combined_category")
+        combined_category = example.get("combined_category", "")
 
         group_id = uuid.uuid4()
         local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))

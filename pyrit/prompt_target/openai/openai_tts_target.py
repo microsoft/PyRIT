@@ -143,11 +143,11 @@ class OpenAITTSTarget(OpenAITarget):
         # Use unified error handler for consistent error handling
         response = await self._handle_openai_request(
             api_call=lambda: self._client.audio.speech.create(
-                model=body_parameters["model"],
-                voice=body_parameters["voice"],
-                input=body_parameters["input"],
-                response_format=body_parameters.get("response_format"),
-                speed=body_parameters.get("speed"),
+                model=str(body_parameters["model"]),
+                voice=str(body_parameters["voice"]),
+                input=str(body_parameters["input"]),
+                response_format=body_parameters.get("response_format"),  # type: ignore[arg-type]
+                speed=body_parameters.get("speed"),  # type: ignore[arg-type]
             ),
             request=message,
         )

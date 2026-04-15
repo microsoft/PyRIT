@@ -60,10 +60,10 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
             )
 
-        # Create async client - type: ignore needed because get_required_value returns str
-        # but api_key parameter accepts str | Callable[[], str | Awaitable[str]]
+        # At this point api_key is str or callable; AsyncOpenAI accepts str
+        api_key_str = api_key if isinstance(api_key, str) else None
         self._async_client = AsyncOpenAI(
-            api_key=api_key,
+            api_key=api_key_str,
             base_url=endpoint,
         )
 

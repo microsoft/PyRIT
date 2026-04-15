@@ -183,6 +183,7 @@ class ComponentIdentifier:
         Returns:
             str: First 8 hex characters of the SHA256 hash.
         """
+        assert self.hash is not None, "hash should be set by __post_init__"
         return self.hash[:8]
 
     @property

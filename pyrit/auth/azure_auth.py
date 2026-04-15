@@ -320,7 +320,7 @@ def get_azure_token_provider(scope: str) -> Callable[[], str]:
         >>> token = token_provider()  # Get current token
     """
     try:
-        return get_bearer_token_provider(DefaultAzureCredential(), scope)  # type: ignore[no-any-return]
+        return get_bearer_token_provider(DefaultAzureCredential(), scope)
     except Exception as e:
         logger.error(f"Failed to obtain token provider for '{scope}': {e}")
         raise

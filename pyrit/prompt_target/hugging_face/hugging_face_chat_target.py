@@ -42,9 +42,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
     )
 
     # Class-level cache for model and tokenizer
-    _cached_model = None
-    _cached_tokenizer = None
-    _cached_model_id = None
+    _cached_model: Any = None
+    _cached_tokenizer: Any = None
+    _cached_model_id: str | None = None
 
     # Class-level flag to enable or disable cache
     _cache_enabled = True
@@ -198,7 +198,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         """
         try:
             # Attempt to load the configuration of the model
-            PretrainedConfig.from_pretrained(self.model_id)
+            PretrainedConfig.from_pretrained(self.model_id or "")
             return True
         except Exception as e:
             logger.error(f"Invalid HuggingFace model ID {self.model_id}: {e}")
@@ -263,17 +263,17 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 # Load the tokenizer and model from the specified directory
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
                 self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_id, cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
+                    self.model_id or "", cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
                 )
                 self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id,
+                    self.model_id or "",
                     cache_dir=cache_dir,
                     trust_remote_code=self.trust_remote_code,
                     **optional_model_kwargs,
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)
+            self.model = self.model.to(self.device)  # type: ignore[arg-type]
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -325,7 +325,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
         try:
             # Ensure model is on the correct device (should already be the case from `load_model_and_tokenizer`)
-            self.model.to(self.device)
+            self.model.to(self.device)  # type: ignore[arg-type]
 
             # Record the length of the input tokens to later extract only the generated tokens
             input_length = input_ids.shape[-1]
