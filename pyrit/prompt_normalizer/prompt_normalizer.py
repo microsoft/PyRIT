@@ -150,6 +150,12 @@ class PromptNormalizer:
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
+            # An empty list is valid for write-only targets (e.g., TextTarget)
+            # that don't produce responses. Return the request as-is.
+            if responses is not None and len(responses) == 0:
+                await self._calc_hash(request=request)
+                self.memory.add_message_to_memory(request=request)
+                return request
             raise EmptyResponseException(message="Target returned no valid responses")
 
         # Process all response messages (targets return list[Message])
