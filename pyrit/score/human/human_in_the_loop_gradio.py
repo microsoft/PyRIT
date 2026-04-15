@@ -47,7 +47,7 @@ class HumanInTheLoopScorerGradio(TrueFalseScorer):
         """
         print_deprecation_message(
             old_item="HumanInTheLoopScorerGradio (Gradio-based GUI)",
-            new_item="the React-based GUI (CoPyRIT); see https://azure.github.io/PyRIT/code/gui/0_gui.html",
+            new_item="the React-based GUI (CoPyRIT); see https://microsoft.github.io/PyRIT/code/gui/0_gui.html",
             removed_in="0.13.0",
         )
 

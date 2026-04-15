@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
@@ -29,6 +28,7 @@ def run_container(mode, tag="latest"):
     pyrit_config_dir = Path.home() / ".pyrit"
     env_file = pyrit_config_dir / ".env"
     env_local_file = pyrit_config_dir / ".env.local"
+    pyrit_conf_file = pyrit_config_dir / ".pyrit_conf"
 
     print("🐳 PyRIT Docker Runner")
     print("=" * 60)
@@ -38,7 +38,7 @@ def run_container(mode, tag="latest"):
         print("❌ ERROR: .env file not found!")
         print(f"   Expected location: {env_file}")
         print("   Please create a .env file with your API keys.")
-        print("   See: https://github.com/Azure/PyRIT/blob/main/doc/setup/setup.md")
+        print("   See: https://github.com/microsoft/PyRIT/blob/main/doc/setup/setup.md")
         sys.exit(1)
 
     # Check if image exists
@@ -70,14 +70,16 @@ def run_container(mode, tag="latest"):
 
     # Build docker run command
     # Mount env files to ~/.pyrit/ where PyRIT expects them
+    # Use -it for interactive mode (needed for az login device code prompt)
     cmd = [
         "docker",
         "run",
         "--rm",
+        "-it",
         "--name",
         container_name,
         "-p",
-        f"{port}:{port}",
+        f"127.0.0.1:{port}:{port}",
         "-e",
         f"PYRIT_MODE={mode}",
         "-v",
@@ -88,6 +90,19 @@ def run_container(mode, tag="latest"):
     if env_local_file.exists():
         print(f"   Found .env.local - including it")
         cmd.extend(["-v", f"{env_local_file}:/home/vscode/.pyrit/.env.local:ro"])
+
+    # Add .pyrit_conf if it exists (sets operator, operation, initializers)
+    if pyrit_conf_file.exists():
+        print(f"   Found .pyrit_conf - including it")
+        cmd.extend(["-v", f"{pyrit_conf_file}:/home/vscode/.pyrit/.pyrit_conf:ro"])
+
+    # Mount Azure CLI config so 'az login' tokens persist across container restarts.
+    # ~/.azure is created by the Azure CLI when you run 'az login' on the host.
+    # Mounting it lets the container reuse existing auth tokens without re-login.
+    azure_dir = Path.home() / ".azure"
+    if azure_dir.exists():
+        print(f"   Found .azure/ - mounting for Azure CLI auth")
+        cmd.extend(["-v", f"{azure_dir}:/home/vscode/.azure"])
 
     cmd.append(f"pyrit:{tag}")
 

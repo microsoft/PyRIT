@@ -40,6 +40,9 @@ Examples:
   # Start with custom port and host
   pyrit_backend --host 0.0.0.0 --port 8080
 
+  # Expose to network (listen on all interfaces)
+  pyrit_backend --host 0.0.0.0
+
   # List available initializers
   pyrit_backend --list-initializers
 """,
@@ -49,8 +52,8 @@ Examples:
     parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
-        help="Host to bind the server to (default: 0.0.0.0)",
+        default="localhost",
+        help="Host to bind the server to (default: localhost)",
     )
 
     parser.add_argument(
@@ -196,8 +199,11 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
         default_labels["operation"] = context._operation
     app.state.default_labels = default_labels
 
-    print(f"🚀 Starting PyRIT backend on http://{parsed_args.host}:{parsed_args.port}")
-    print(f"   API Docs: http://{parsed_args.host}:{parsed_args.port}/docs")
+    display_host = parsed_args.host
+    print(f"🚀 Starting PyRIT backend on http://{display_host}:{parsed_args.port}")
+    print(f"   API Docs: http://{display_host}:{parsed_args.port}/docs")
+    if parsed_args.host == "0.0.0.0":
+        print(f"   Open in browser: http://localhost:{parsed_args.port}")
 
     uvicorn_config = uvicorn.Config(
         "pyrit.backend.main:app",
@@ -232,8 +238,7 @@ def main(*, args: Optional[list[str]] = None) -> int:
     # Handle list-initializers command
     if parsed_args.list_initializers:
         context = frontend_core.FrontendCore(config_file=parsed_args.config_file, log_level=parsed_args.log_level)
-        scenarios_path = frontend_core.get_default_initializer_discovery_path()
-        return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
+        return asyncio.run(frontend_core.print_initializers_list_async(context=context))
 
     # Run the server
     try:

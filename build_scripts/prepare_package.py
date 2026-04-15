@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
@@ -27,13 +26,16 @@ def build_frontend(frontend_dir: Path) -> bool:
     print("Building TypeScript/React frontend...")
     print("=" * 60)
 
-    # Check if npm is available
+    # Check if npm is available (with cross-platform compatibility)
+    npm = shutil.which("npm")
     try:
-        result = subprocess.run(["npm", "--version"], capture_output=True, text=True, check=True)
+        if npm is None:
+            raise FileNotFoundError("npm not found")
+        result = subprocess.run([npm, "--version"], capture_output=True, text=True, check=True)
         print(f"Found npm version: {result.stdout.strip()}")
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("ERROR: npm is not installed or not in PATH")
-        print("Please install Node.js 20.x and npm from https://nodejs.org/")
+        print("Please install Node.js 24.x and npm from https://nodejs.org/")
         return False
 
     # Check if package.json exists
@@ -46,7 +48,7 @@ def build_frontend(frontend_dir: Path) -> bool:
     print("\nInstalling frontend dependencies...")
     try:
         subprocess.run(
-            ["npm", "install"],
+            ["npm", "install", "--legacy-peer-deps"],
             cwd=frontend_dir,
             check=True,
             stdout=subprocess.PIPE,
@@ -62,7 +64,7 @@ def build_frontend(frontend_dir: Path) -> bool:
     print("\nBuilding frontend for production...")
     try:
         subprocess.run(
-            ["npm", "run", "build"],
+            [npm, "run", "build"],
             cwd=frontend_dir,
             check=True,
             stdout=subprocess.PIPE,

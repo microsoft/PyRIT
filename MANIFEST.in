@@ -1,5 +1,6 @@
 recursive-include pyrit *.csv
 recursive-include pyrit *.json
+recursive-include pyrit *.jsonl
 recursive-include pyrit *.prompt
 recursive-include pyrit *.yaml
 recursive-include pyrit *.pdf

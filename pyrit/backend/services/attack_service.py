@@ -734,6 +734,31 @@ class AttackService:
                     children=new_children,
                 )
                 update_fields["attack_identifier"] = new_aid.to_dict()
+                # Also update atomic_attack_identifier so get_attack_strategy_identifier() sees the change
+                if ar.atomic_attack_identifier:
+                    atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
+                    atomic_children = dict(atomic.children)
+                    # Navigate into attack_technique child to update the nested attack child.
+                    technique = atomic_children.get("attack_technique")
+                    if isinstance(technique, ComponentIdentifier):
+                        tech_children = dict(technique.children)
+                        tech_children["attack"] = new_aid
+                        atomic_children["attack_technique"] = ComponentIdentifier(
+                            class_name=technique.class_name,
+                            class_module=technique.class_module,
+                            params=dict(technique.params),
+                            children=tech_children,
+                        )
+                    else:
+                        # Fallback for pre-nesting rows with children["attack"] directly.
+                        atomic_children["attack"] = new_aid
+                    new_atomic = ComponentIdentifier(
+                        class_name=atomic.class_name,
+                        class_module=atomic.class_module,
+                        params=dict(atomic.params),
+                        children=atomic_children,
+                    )
+                    update_fields["atomic_attack_identifier"] = new_atomic.to_dict()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -858,11 +883,14 @@ class AttackService:
                         piece.converted_value = file_path
                 continue
 
-            # Already an existing file on disk — keep as-is
-            if Path(piece.original_value).is_file():
-                if piece.converted_value is None:
-                    piece.converted_value = piece.original_value
-                continue
+            # Already an existing file on disk — keep as-is.
+            try:
+                if Path(piece.original_value).is_file():
+                    if piece.converted_value is None:
+                        piece.converted_value = piece.original_value
+                    continue
+            except (OSError, ValueError):
+                pass
 
             # Derive file extension from the MIME type sent by the frontend
             ext = None

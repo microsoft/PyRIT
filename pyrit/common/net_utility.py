@@ -32,10 +32,10 @@ def get_httpx_client(
     client_class = httpx.AsyncClient if use_async else httpx.Client
     proxy = "http://localhost:8080" if debug else None
 
-    proxy = cast(Optional[str], httpx_client_kwargs.pop("proxy", proxy))
-    verify_certs = cast(bool, httpx_client_kwargs.pop("verify", not debug))
+    proxy = cast("Optional[str]", httpx_client_kwargs.pop("proxy", proxy))
+    verify_certs = cast("bool", httpx_client_kwargs.pop("verify", not debug))
     # fun notes; httpx default is 5 seconds, httpclient is 100, urllib in indefinite
-    timeout = cast(float, httpx_client_kwargs.pop("timeout", 60.0))
+    timeout = cast("float", httpx_client_kwargs.pop("timeout", 60.0))
 
     return client_class(proxy=proxy, verify=verify_certs, timeout=timeout, **httpx_client_kwargs)
 
@@ -51,7 +51,7 @@ def extract_url_parameters(url: str) -> dict[str, str]:
         dict[str, str]: Dictionary of query parameters (flattened from lists).
     """
     parsed_url = urlparse(url)
-    url_params = parse_qs(parsed_url.query)
+    url_params = parse_qs(parsed_url.query, keep_blank_values=True)
     # Flatten params (parse_qs returns lists)
     return {k: v[0] if isinstance(v, list) and len(v) > 0 else "" for k, v in url_params.items()}
 

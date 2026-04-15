@@ -25,6 +25,7 @@ from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter, 
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -298,7 +299,7 @@ class Leakage(Scenario):
         # due to the heterogeneous dict values. The types are verified by unit tests.
         return AtomicAttack(
             atomic_attack_name=f"leakage_{strategy}",
-            attack=attack_strategy,  # type: ignore[arg-type]
+            attack_technique=AttackTechnique(attack=attack_strategy),  # type: ignore[arg-type]
             seed_groups=self._seed_groups,
             memory_labels=self._memory_labels,
         )
@@ -361,9 +362,9 @@ class Leakage(Scenario):
         """
         return RolePlayAttack(
             objective_target=self._objective_target,
-            adversarial_chat=self._adversarial_chat,
             role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT.value,
             attack_scoring_config=self._scorer_config,
+            attack_adversarial_config=self._adversarial_config,
         )
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:

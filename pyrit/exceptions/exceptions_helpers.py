@@ -46,22 +46,25 @@ def log_exception(retry_state: RetryCallState) -> None:
 
     # Build the "for X" part of the message based on execution context
     for_clause = fn_name
+    endpoint_clause = ""
     try:
         exec_context = get_execution_context()
         if exec_context:
-            # Format: "objective scorer; TrueFalseScorer::_score_value_with_llm"  # noqa: ERA001
+            # e.g. "objective scorer. TrueFalseScorer::_score_value_with_llm"
             role_display = exec_context.component_role.value.replace("_", " ")
             if exec_context.component_name:
                 for_clause = f"{role_display}. {exec_context.component_name}::{fn_name}"
             else:
                 for_clause = f"{role_display}. {fn_name}"
+            if exec_context.endpoint:
+                endpoint_clause = f" Endpoint: {exec_context.endpoint}."
     except Exception:
         # Don't let context retrieval errors break retry logging
         pass
 
     logger.error(
         f"Retry attempt {call_count} for {for_clause} "
-        f"failed with exception: {exception}. "
+        f"failed with exception: {exception}.{endpoint_clause} "
         f"Elapsed time: {elapsed_time} seconds. Total calls: {call_count}"
     )
 

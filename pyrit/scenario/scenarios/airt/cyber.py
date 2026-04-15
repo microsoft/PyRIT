@@ -18,6 +18,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -273,7 +274,7 @@ class Cyber(Scenario):
 
         return AtomicAttack(
             atomic_attack_name=f"cyber_{strategy}",
-            attack=attack_strategy,
+            attack_technique=AttackTechnique(attack=attack_strategy),
             seed_groups=self._seed_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._scorer_config.objective_scorer,

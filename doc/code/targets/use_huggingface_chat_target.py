@@ -38,7 +38,6 @@
 #      - `stabilityai/stablelm-zephyr-3b`: 8.37 seconds
 #
 
-
 # %%
 import time
 

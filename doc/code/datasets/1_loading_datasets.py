@@ -52,8 +52,10 @@
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.memory import CentralMemory
+from pyrit.setup.initialization import IN_MEMORY, initialize_pyrit_async
 
-SeedDatasetProvider.get_all_dataset_names()
+await SeedDatasetProvider.get_all_dataset_names_async()
 
 # %% [markdown]
 # ## Loading Specific Datasets
@@ -61,7 +63,8 @@ SeedDatasetProvider.get_all_dataset_names()
 # You can retrieve all built-in datasets using `SeedDatasetProvider.fetch_datasets_async()`, or fetch specific ones by providing dataset names. This returns a list of `SeedDataset` objects containing the seeds.
 
 # %%
-datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["airt_illegal", "airt_malware"])  # type: ignore
+# type: ignore
+datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["airt_illegal", "airt_malware"])
 
 for dataset in datasets:
     for seed in dataset.seeds:
@@ -79,13 +82,12 @@ for dataset in datasets:
 # The following example demonstrates adding datasets to memory. For comprehensive details on memory capabilities, see the [memory documentation](../memory/0_memory.md) and [seed database guide](../memory/8_seed_database.ipynb).
 
 # %%
-from pyrit.memory import CentralMemory
-from pyrit.setup.initialization import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 memory = CentralMemory().get_memory_instance()
-await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyrit")  # type: ignore
+# type: ignore
+await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyrit")
 
 # Memory has flexible querying capabilities
 memory.get_seeds(harm_categories=["illegal"], seed_type="objective")

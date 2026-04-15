@@ -170,12 +170,22 @@ class EvaluationIdentifier(ABC):
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]]
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
-        """Wrap a ComponentIdentifier and eagerly compute its eval hash."""
+        """
+        Wrap a ComponentIdentifier and resolve its eval hash.
+
+        If the identifier carries an ``eval_hash`` (preserved from a prior
+        DB round-trip or set by the scorer), that value is used directly.
+        Otherwise the eval hash is computed from the identifier's params
+        and children using the subclass's ``CHILD_EVAL_RULES``.
+        """
         self._identifier = identifier
-        self._eval_hash = compute_eval_hash(
-            identifier,
-            child_eval_rules=self.CHILD_EVAL_RULES,
-        )
+        if identifier.eval_hash is not None:
+            self._eval_hash = identifier.eval_hash
+        else:
+            self._eval_hash = compute_eval_hash(
+                identifier,
+                child_eval_rules=self.CHILD_EVAL_RULES,
+            )
 
     @property
     def identifier(self) -> ComponentIdentifier:
@@ -210,14 +220,17 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
 
     Per-child rules:
 
+    * ``seed_identifiers`` — excluded entirely (present for traceability only).
+    * ``attack_technique`` — not listed, so fully included by default.
+      Its nested children (``objective_target``, ``adversarial_chat``,
+      ``objective_scorer``, ``technique_seeds``) are processed recursively
+      using the same rules dict, so the rules below apply at any depth.
     * ``objective_target`` — include only ``temperature``.
     * ``adversarial_chat`` — include ``model_name``, ``temperature``, ``top_p``.
     * ``objective_scorer`` — excluded entirely.
-    * ``seeds`` — include only items where ``is_general_technique=True``.
 
-    Non-target children (e.g., ``request_converters``, ``response_converters``)
-    receive full recursive eval treatment, meaning they fully contribute to
-    the hash.
+    Non-target children (e.g., ``request_converters``, ``response_converters``,
+    ``technique_seeds``) receive full recursive eval treatment.
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
@@ -228,7 +241,7 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
             included_params=frozenset({"model_name", "temperature", "top_p"}),
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
-        "seeds": ChildEvalRule(
-            included_item_values={"is_general_technique": True},
-        ),
+        "seed_identifiers": ChildEvalRule(exclude=True),
+        # attack_technique: not listed in rules — fully included in eval hash.
+        # technique_seeds (nested inside attack_technique): also not listed — fully included.
     }

@@ -1596,6 +1596,35 @@ class TestPersistBase64Pieces:
 
         assert request.pieces[0].original_value == "thinking step"
 
+    @pytest.mark.asyncio
+    async def test_long_base64_audio_does_not_crash(self, attack_service) -> None:
+        """Base64 audio data longer than OS path limits should be saved, not crash with OSError."""
+        # Simulate a base64-encoded WAV file (>4096 chars, exceeds Linux filename limit of 255)
+        long_b64 = "UklGRiQ" + "A" * 5000  # fake WAV header + padding
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="audio_path",
+                    original_value=long_b64,
+                    mime_type="audio/wav",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as mock_factory:
+            mock_serializer = AsyncMock()
+            mock_serializer.value = "/tmp/saved_audio.wav"
+            mock_factory.return_value = mock_serializer
+
+            await AttackService._persist_base64_pieces_async(request)
+
+            mock_factory.assert_called_once()
+            mock_serializer.save_b64_image.assert_called_once_with(data=long_b64)
+            assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
+
 
 # ============================================================================
 # Related Conversations Tests

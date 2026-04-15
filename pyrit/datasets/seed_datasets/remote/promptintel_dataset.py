@@ -95,23 +95,10 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         self._api_key = api_key
 
         if severity is not None:
-            valid_severities = {s.value for s in PromptIntelSeverity}
-            sev_value = severity.value if isinstance(severity, PromptIntelSeverity) else severity
-            if sev_value not in valid_severities:
-                raise ValueError(
-                    f"Invalid severity: {sev_value}. Valid values: {[s.value for s in PromptIntelSeverity]}"
-                )
+            self._validate_enum(severity, PromptIntelSeverity, "severity")
 
         if categories is not None:
-            valid_categories = {c.value for c in PromptIntelCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, PromptIntelCategory) else cat for cat in categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(
-                    f"Invalid categories: {', '.join(str(c) for c in invalid_categories)}. "
-                    f"Valid values: {[c.value for c in PromptIntelCategory]}"
-                )
+            self._validate_enums(categories, PromptIntelCategory, "category")
 
         self._severity = severity
         self._categories = categories
@@ -303,7 +290,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         metadata = self._build_metadata(record)
 
         # Escape Jinja2 template syntax in the prompt text
-        escaped_prompt = f"{{% raw %}}{prompt_value}{{% endraw %}}"
+        escaped_prompt = prompt_value
 
         return SeedPrompt(
             value=escaped_prompt,

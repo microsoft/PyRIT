@@ -31,9 +31,9 @@ def mock_harm_scorer():
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_456"
+    mock_identifier.eval_hash = "test_hash_456"
     mock_identifier.system_prompt_template = "test_system_prompt"
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
-    scorer.get_eval_hash = MagicMock(return_value="test_hash_456")
     return scorer
 
 
@@ -45,9 +45,9 @@ def mock_objective_scorer():
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_123"
+    mock_identifier.eval_hash = "test_hash_123"
     mock_identifier.user_prompt_template = "test_user_prompt"
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
-    scorer.get_eval_hash = MagicMock(return_value="test_hash_123")
     return scorer
 
 
@@ -412,8 +412,8 @@ def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_sco
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    # Make get_eval_hash() raise an exception
-    mock_objective_scorer.get_eval_hash = MagicMock(side_effect=Exception("Identifier computation failed"))
+    # Make get_identifier() raise an exception
+    mock_objective_scorer.get_identifier = MagicMock(side_effect=Exception("Identifier computation failed"))
 
     should_skip, result = evaluator._should_skip_evaluation(
         dataset_version="1.0",
@@ -426,8 +426,11 @@ def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_sco
     assert result is None
     mock_find.assert_not_called()
 
-    # Restore get_eval_hash for other tests
-    mock_objective_scorer.get_eval_hash = MagicMock(return_value="test_hash_123")
+    # Restore get_identifier for other tests
+    mock_id = MagicMock()
+    mock_id.hash = "test_hash_123"
+    mock_id.eval_hash = "test_hash_123"
+    mock_objective_scorer.get_identifier = MagicMock(return_value=mock_id)
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_eval_hash")
@@ -764,6 +767,52 @@ async def test_run_evaluation_async_raises_on_mismatched_harm_definition_version
     )
 
     with pytest.raises(ValueError, match="All CSVs in a harm evaluation must use the same harm_definition_version"):
+        await evaluator.run_evaluation_async(
+            dataset_files=dataset_files,
+            num_scorer_trials=1,
+            update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE,
+        )
+
+
+@pytest.mark.asyncio
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
+async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition(
+    mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
+):
+    """Test that run_evaluation_async raises when harm CSVs have no harm_definition header."""
+    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+
+    csv1 = tmp_path / "harm" / "file1.csv"
+    (tmp_path / "harm").mkdir(parents=True)
+    csv1.touch()
+
+    mock_evals_path.__truediv__ = lambda self, x: tmp_path / x
+    mock_evals_path.glob = lambda pattern: [csv1]
+
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
+    ]
+    entry = HarmHumanLabeledEntry(responses, [0.2], "violence")
+
+    # Dataset with no harm_definition set
+    mock_from_csv.return_value = HumanLabeledDataset(
+        name="test",
+        metrics_type=MetricsType.HARM,
+        entries=[entry],
+        version="1.0",
+        harm_definition=None,
+        harm_definition_version=None,
+    )
+
+    evaluator = HarmScorerEvaluator(mock_harm_scorer)
+    dataset_files = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["harm/*.csv"],
+        result_file="harm/test_metrics.jsonl",
+        harm_category="violence",
+    )
+
+    with pytest.raises(ValueError, match="No harm_definition found in CSV headers"):
         await evaluator.run_evaluation_async(
             dataset_files=dataset_files,
             num_scorer_trials=1,

@@ -19,6 +19,12 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
     Reference: https://github.com/centerforaisafety/HarmBench
     """
 
+    # Metadata
+    harm_categories: list[str] = ["cybercrime", "illegal", "harmful", "chemical_biological", "harassment"]
+    modalities: list[str] = ["text"]
+    size: str = "large"  # 504 seeds
+    tags: set[str] = {"default", "safety"}
+
     def __init__(
         self,
         *,

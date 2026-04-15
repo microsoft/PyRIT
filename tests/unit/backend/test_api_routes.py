@@ -27,6 +27,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.converters import (
+    ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewResponse,
@@ -864,6 +865,29 @@ class TestConverterRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["items"] == []
+
+    def test_list_converter_catalog(self, client: TestClient) -> None:
+        """Test listing available converter types from the converter catalog."""
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_converter_catalog_async = AsyncMock(
+                return_value=ConverterCatalogResponse(
+                    items=[
+                        {
+                            "converter_type": "Base64Converter",
+                            "supported_input_types": ["text"],
+                            "supported_output_types": ["text"],
+                        }
+                    ]
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/converters/catalog")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["items"][0]["converter_type"] == "Base64Converter"
 
     def test_create_converter_success(self, client: TestClient) -> None:
         """Test successful converter instance creation."""

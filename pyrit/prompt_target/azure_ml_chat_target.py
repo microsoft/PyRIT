@@ -20,6 +20,8 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,15 @@ class AzureMLChatTarget(PromptChatTarget):
     endpoint_uri_environment_variable: str = "AZURE_ML_MANAGED_ENDPOINT"
     api_key_environment_variable: str = "AZURE_ML_KEY"
 
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_message_pieces=True,
+            supports_editable_history=True,
+            supports_multi_turn=True,
+            supports_system_prompt=True,
+        )
+    )
+
     def __init__(
         self,
         *,
@@ -52,6 +63,8 @@ class AzureMLChatTarget(PromptChatTarget):
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
         max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         **param_kwargs: Any,
     ) -> None:
         """
@@ -79,6 +92,10 @@ class AzureMLChatTarget(PromptChatTarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
+                instance. Useful for targets whose capabilities depend on deployment configuration.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **param_kwargs: Additional parameters to pass to the model for generating responses. Example
                 parameters can be found here: https://huggingface.co/docs/api-inference/tasks/text-generation.
                 Note that the link above may not be comprehensive, and specific acceptable parameters may be
@@ -89,7 +106,12 @@ class AzureMLChatTarget(PromptChatTarget):
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
         )
         PromptChatTarget.__init__(
-            self, max_requests_per_minute=max_requests_per_minute, endpoint=endpoint_value, model_name=model_name
+            self,
+            max_requests_per_minute=max_requests_per_minute,
+            endpoint=endpoint_value,
+            model_name=model_name,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
         )
 
         self._initialize_vars(endpoint=endpoint, api_key=api_key)
@@ -272,12 +294,3 @@ class AzureMLChatTarget(PromptChatTarget):
 
     def _validate_request(self, *, message: Message) -> None:
         pass
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

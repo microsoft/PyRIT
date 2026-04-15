@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import pytest
+
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries.base_instance_registry import BaseInstanceRegistry
+from pyrit.registry.instance_registries.base_instance_registry import BaseInstanceRegistry, RegistryEntry
 
 
 class ConcreteTestRegistry(BaseInstanceRegistry[str, ComponentIdentifier]):
@@ -126,6 +128,34 @@ class TestBaseInstanceRegistryGet:
         assert result is None
 
 
+class TestBaseInstanceRegistryGetEntry:
+    """Tests for get_entry functionality in BaseInstanceRegistry."""
+
+    def setup_method(self):
+        """Reset and get a fresh registry for each test."""
+        ConcreteTestRegistry.reset_instance()
+        self.registry = ConcreteTestRegistry.get_registry_singleton()
+        self.registry.register("test_value", name="test_name", tags={"role": "scorer"})
+
+    def teardown_method(self):
+        """Reset the singleton after each test."""
+        ConcreteTestRegistry.reset_instance()
+
+    def test_get_entry_returns_registry_entry(self):
+        """Test that get_entry returns a RegistryEntry with correct fields."""
+        entry = self.registry.get_entry("test_name")
+        assert entry is not None
+        assert isinstance(entry, RegistryEntry)
+        assert entry.name == "test_name"
+        assert entry.instance == "test_value"
+        assert entry.tags == {"role": "scorer"}
+
+    def test_get_entry_nonexistent_returns_none(self):
+        """Test that get_entry returns None for a non-existent name."""
+        result = self.registry.get_entry("nonexistent")
+        assert result is None
+
+
 class TestBaseInstanceRegistryGetNames:
     """Tests for get_names functionality in BaseInstanceRegistry."""
 
@@ -151,6 +181,53 @@ class TestBaseInstanceRegistryGetNames:
 
         names = self.registry.get_names()
         assert names == ["alpha", "beta", "zeta"]
+
+
+class TestBaseInstanceRegistryGetAllInstances:
+    """Tests for get_all_instances functionality in BaseInstanceRegistry."""
+
+    def setup_method(self):
+        """Reset and get a fresh registry for each test."""
+        ConcreteTestRegistry.reset_instance()
+        self.registry = ConcreteTestRegistry.get_registry_singleton()
+
+    def teardown_method(self):
+        """Reset the singleton after each test."""
+        ConcreteTestRegistry.reset_instance()
+
+    def test_get_all_instances_returns_list_of_registry_entries(self):
+        """Test that get_all_instances returns a list of RegistryEntry objects."""
+        self.registry.register("value1", name="name1")
+        self.registry.register("value2", name="name2")
+
+        result = self.registry.get_all_instances()
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(isinstance(entry, RegistryEntry) for entry in result)
+
+    def test_get_all_instances_sorted_by_name(self):
+        """Test that get_all_instances returns entries sorted by name."""
+        self.registry.register("value_z", name="zeta")
+        self.registry.register("value_a", name="alpha")
+        self.registry.register("value_b", name="beta")
+
+        result = self.registry.get_all_instances()
+        assert [e.name for e in result] == ["alpha", "beta", "zeta"]
+
+    def test_get_all_instances_preserves_tags(self):
+        """Test that get_all_instances preserves tags on entries."""
+        self.registry.register("value1", name="name1", tags={"role": "scorer"})
+        self.registry.register("value2", name="name2", tags=["fast"])
+
+        result = self.registry.get_all_instances()
+        entry_map = {e.name: e for e in result}
+        assert entry_map["name1"].tags == {"role": "scorer"}
+        assert entry_map["name2"].tags == {"fast": ""}
+
+    def test_get_all_instances_empty_registry(self):
+        """Test that get_all_instances returns empty list on empty registry."""
+        result = self.registry.get_all_instances()
+        assert result == []
 
 
 class TestBaseInstanceRegistryListMetadata:
@@ -224,6 +301,118 @@ class TestBaseInstanceRegistryListMetadata:
         assert len(metadata1) == 3
 
 
+class TestBaseInstanceRegistryTags:
+    """Tests for tag registration and retrieval in BaseInstanceRegistry."""
+
+    def setup_method(self):
+        """Reset and get a fresh registry for each test."""
+        ConcreteTestRegistry.reset_instance()
+        self.registry = ConcreteTestRegistry.get_registry_singleton()
+
+    def teardown_method(self):
+        """Reset the singleton after each test."""
+        ConcreteTestRegistry.reset_instance()
+
+    def test_register_with_dict_tags(self):
+        """Test that dict tags are stored correctly."""
+        self.registry.register("value", name="name1", tags={"role": "scorer", "provider": "azure"})
+
+        entry = self.registry.get_entry("name1")
+        assert entry is not None
+        assert entry.tags == {"role": "scorer", "provider": "azure"}
+
+    def test_register_with_list_tags(self):
+        """Test that list tags are normalized to dict with empty string values."""
+        self.registry.register("value", name="name1", tags=["fast", "default"])
+
+        entry = self.registry.get_entry("name1")
+        assert entry is not None
+        assert entry.tags == {"fast": "", "default": ""}
+
+    def test_register_without_tags(self):
+        """Test that registering without tags defaults to empty dict."""
+        self.registry.register("value", name="name1")
+
+        entry = self.registry.get_entry("name1")
+        assert entry is not None
+        assert entry.tags == {}
+
+    def test_get_by_tag_key_only(self):
+        """Test get_by_tag matching by key only (any value)."""
+        self.registry.register("v1", name="n1", tags={"role": "scorer"})
+        self.registry.register("v2", name="n2", tags={"role": "target"})
+        self.registry.register("v3", name="n3", tags={"provider": "azure"})
+
+        results = self.registry.get_by_tag(tag="role")
+        assert len(results) == 2
+        assert {e.name for e in results} == {"n1", "n2"}
+
+    def test_get_by_tag_key_and_value(self):
+        """Test get_by_tag matching by key and specific value."""
+        self.registry.register("v1", name="n1", tags={"role": "scorer"})
+        self.registry.register("v2", name="n2", tags={"role": "target"})
+        self.registry.register("v3", name="n3", tags={"role": "scorer"})
+
+        results = self.registry.get_by_tag(tag="role", value="scorer")
+        assert len(results) == 2
+        assert {e.name for e in results} == {"n1", "n3"}
+
+    def test_get_by_tag_no_match(self):
+        """Test get_by_tag returns empty list when no entries match."""
+        self.registry.register("v1", name="n1", tags={"role": "scorer"})
+
+        results = self.registry.get_by_tag(tag="nonexistent")
+        assert results == []
+
+    def test_get_by_tag_value_no_match(self):
+        """Test get_by_tag returns empty when key exists but value does not match."""
+        self.registry.register("v1", name="n1", tags={"role": "scorer"})
+
+        results = self.registry.get_by_tag(tag="role", value="nonexistent")
+        assert results == []
+
+    def test_get_by_tag_returns_sorted_by_name(self):
+        """Test that get_by_tag results are sorted by name."""
+        self.registry.register("v3", name="zeta", tags=["shared"])
+        self.registry.register("v1", name="alpha", tags=["shared"])
+        self.registry.register("v2", name="beta", tags=["shared"])
+
+        results = self.registry.get_by_tag(tag="shared")
+        assert [e.name for e in results] == ["alpha", "beta", "zeta"]
+
+    def test_get_by_tag_with_list_tags(self):
+        """Test get_by_tag works with list-style tags (normalized to empty string values)."""
+        self.registry.register("v1", name="n1", tags=["fast", "default"])
+        self.registry.register("v2", name="n2", tags=["slow"])
+
+        results = self.registry.get_by_tag(tag="fast")
+        assert len(results) == 1
+        assert results[0].name == "n1"
+
+    def test_get_by_tag_with_list_tags_value_empty_string(self):
+        """Test get_by_tag with explicit empty string value matches list-style tags."""
+        self.registry.register("v1", name="n1", tags=["fast"])
+
+        results = self.registry.get_by_tag(tag="fast", value="")
+        assert len(results) == 1
+        assert results[0].name == "n1"
+
+    def test_normalize_tags_none(self):
+        """Test _normalize_tags returns empty dict for None."""
+        assert BaseInstanceRegistry._normalize_tags(None) == {}
+
+    def test_normalize_tags_list(self):
+        """Test _normalize_tags converts list to dict with empty values."""
+        assert BaseInstanceRegistry._normalize_tags(["a", "b"]) == {"a": "", "b": ""}
+
+    def test_normalize_tags_dict(self):
+        """Test _normalize_tags returns a copy of the dict."""
+        original = {"key": "val"}
+        result = BaseInstanceRegistry._normalize_tags(original)
+        assert result == {"key": "val"}
+        assert result is not original
+
+
 class TestBaseInstanceRegistryDunderMethods:
     """Tests for dunder methods (__contains__, __len__, __iter__) in BaseInstanceRegistry."""
 
@@ -266,3 +455,193 @@ class TestBaseInstanceRegistryDunderMethods:
         """Test that the registry can be used in a for loop."""
         collected = list(self.registry)
         assert collected == ["name1", "name2"]
+
+
+class TestBaseInstanceRegistryAddTags:
+    """Tests for add_tags functionality in BaseInstanceRegistry."""
+
+    def setup_method(self):
+        """Reset and get a fresh registry for each test."""
+        ConcreteTestRegistry.reset_instance()
+        self.registry = ConcreteTestRegistry.get_registry_singleton()
+
+    def teardown_method(self):
+        """Reset the singleton after each test."""
+        ConcreteTestRegistry.reset_instance()
+
+    def test_add_tags_with_list(self):
+        """Test adding list-style tags to an existing entry."""
+        self.registry.register("value", name="entry1")
+        self.registry.add_tags(name="entry1", tags=["fast", "default"])
+
+        entry = self.registry.get_entry("entry1")
+        assert entry is not None
+        assert entry.tags == {"fast": "", "default": ""}
+
+    def test_add_tags_with_dict(self):
+        """Test adding dict-style tags to an existing entry."""
+        self.registry.register("value", name="entry1")
+        self.registry.add_tags(name="entry1", tags={"role": "scorer"})
+
+        entry = self.registry.get_entry("entry1")
+        assert entry is not None
+        assert entry.tags == {"role": "scorer"}
+
+    def test_add_tags_merges_with_existing(self):
+        """Test that add_tags merges new tags with existing ones."""
+        self.registry.register("value", name="entry1", tags={"existing": "yes"})
+        self.registry.add_tags(name="entry1", tags=["new_tag"])
+
+        entry = self.registry.get_entry("entry1")
+        assert entry is not None
+        assert entry.tags == {"existing": "yes", "new_tag": ""}
+
+    def test_add_tags_raises_for_missing_entry(self):
+        """Test that add_tags raises KeyError for a non-existent entry."""
+        with pytest.raises(KeyError, match="No entry named 'missing'"):
+            self.registry.add_tags(name="missing", tags=["tag"])
+
+    def test_add_tags_invalidates_metadata_cache(self):
+        """Test that add_tags invalidates the metadata cache."""
+        self.registry.register("value", name="entry1")
+        self.registry.list_metadata()  # Build cache
+
+        self.registry.add_tags(name="entry1", tags=["new"])
+
+        # Cache should be invalidated (None), next call rebuilds
+        assert self.registry._metadata_cache is None
+
+    def test_add_tags_entries_findable_by_get_by_tag(self):
+        """Test that entries are findable via get_by_tag after add_tags."""
+        self.registry.register("value", name="entry1")
+        self.registry.add_tags(name="entry1", tags=["best_scorer"])
+
+        results = self.registry.get_by_tag(tag="best_scorer")
+        assert len(results) == 1
+        assert results[0].name == "entry1"
+
+
+class _IdentifiableStub:
+    """A minimal stub that holds a ComponentIdentifier for dependency tests."""
+
+    def __init__(self, identifier: ComponentIdentifier) -> None:
+        self.identifier = identifier
+
+    def get_identifier(self) -> ComponentIdentifier:
+        return self.identifier
+
+
+class IdentifierTestRegistry(BaseInstanceRegistry["_IdentifiableStub", ComponentIdentifier]):
+    """Registry for testing dependency-related functionality with ComponentIdentifier trees."""
+
+    def _build_metadata(self, name: str, instance: "_IdentifiableStub") -> ComponentIdentifier:
+        return instance.get_identifier()
+
+
+class TestFindDependentsOfTag:
+    """Tests for BaseInstanceRegistry.find_dependents_of_tag."""
+
+    def setup_method(self) -> None:
+        IdentifierTestRegistry.reset_instance()
+        self.registry = IdentifierTestRegistry.get_registry_singleton()
+
+    def teardown_method(self) -> None:
+        IdentifierTestRegistry.reset_instance()
+
+    def test_no_tagged_entries_returns_empty(self) -> None:
+        """Test that when no entries have the tag, an empty list is returned."""
+        stub = _IdentifiableStub(ComponentIdentifier(class_name="A", class_module="mod"))
+        self.registry.register(stub, name="a")
+        assert self.registry.find_dependents_of_tag(tag="refusal") == []
+
+    def test_tagged_entry_not_returned_as_dependent(self) -> None:
+        """Test that an entry tagged with the tag is not returned as a dependent of itself."""
+        stub = _IdentifiableStub(ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1"))
+        self.registry.register(stub, name="refusal_scorer", tags=["refusal"])
+        assert self.registry.find_dependents_of_tag(tag="refusal") == []
+
+    def test_dependent_found_by_child_eval_hash(self) -> None:
+        """Test that an entry whose child matches a tagged entry's eval_hash is found."""
+        # Base scorer (tagged)
+        base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r_hash")
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
+
+        # Wrapper scorer (child references the base scorer)
+        child_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r_hash")
+        wrapper_id = ComponentIdentifier(
+            class_name="Inverter",
+            class_module="mod",
+            eval_hash="w_hash",
+            children={"sub_scorers": [child_id]},
+        )
+        self.registry.register(_IdentifiableStub(wrapper_id), name="inverter")
+
+        dependents = self.registry.find_dependents_of_tag(tag="refusal")
+        assert len(dependents) == 1
+        assert dependents[0].name == "inverter"
+
+    def test_non_dependent_not_returned(self) -> None:
+        """Test that entries without matching child eval_hash are not returned."""
+        base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r_hash")
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
+
+        # Unrelated scorer (no children matching r_hash)
+        unrelated_id = ComponentIdentifier(class_name="Likert", class_module="mod", eval_hash="l_hash")
+        self.registry.register(_IdentifiableStub(unrelated_id), name="likert")
+
+        assert self.registry.find_dependents_of_tag(tag="refusal") == []
+
+    def test_deeply_nested_dependency_found(self) -> None:
+        """Test that a deeply nested child eval_hash still triggers a match."""
+        base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="deep_r")
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
+
+        # Composite with nested child
+        inner_child = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="deep_r")
+        inverter = ComponentIdentifier(
+            class_name="Inverter",
+            class_module="mod",
+            children={"sub_scorers": [inner_child]},
+        )
+        composite_id = ComponentIdentifier(
+            class_name="Composite",
+            class_module="mod",
+            children={"sub_scorers": [inverter]},
+        )
+        self.registry.register(_IdentifiableStub(composite_id), name="composite")
+
+        dependents = self.registry.find_dependents_of_tag(tag="refusal")
+        assert len(dependents) == 1
+        assert dependents[0].name == "composite"
+
+    def test_multiple_dependents_returned_sorted(self) -> None:
+        """Test that multiple dependents are returned sorted by name."""
+        base_id = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1")
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
+
+        child = ComponentIdentifier(class_name="Refusal", class_module="mod", eval_hash="r1")
+        for wrapper_name in ["z_wrapper", "a_wrapper", "m_wrapper"]:
+            wrapper_id = ComponentIdentifier(
+                class_name="Wrapper",
+                class_module="mod",
+                children={"sub_scorers": [child]},
+            )
+            self.registry.register(_IdentifiableStub(wrapper_id), name=wrapper_name)
+
+        dependents = self.registry.find_dependents_of_tag(tag="refusal")
+        assert [d.name for d in dependents] == ["a_wrapper", "m_wrapper", "z_wrapper"]
+
+    def test_tagged_entries_without_eval_hash_returns_empty(self) -> None:
+        """Test that tagged entries without eval_hash yield no dependents."""
+        base_id = ComponentIdentifier(class_name="Refusal", class_module="mod")
+        self.registry.register(_IdentifiableStub(base_id), name="refusal_scorer", tags=["refusal"])
+
+        child = ComponentIdentifier(class_name="Refusal", class_module="mod")
+        wrapper_id = ComponentIdentifier(
+            class_name="Wrapper",
+            class_module="mod",
+            children={"sub_scorers": [child]},
+        )
+        self.registry.register(_IdentifiableStub(wrapper_id), name="wrapper")
+
+        assert self.registry.find_dependents_of_tag(tag="refusal") == []

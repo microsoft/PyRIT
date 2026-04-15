@@ -3,12 +3,14 @@
 
 import abc
 import logging
+import warnings
 from typing import Any, Optional, Union
 
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +25,40 @@ class PromptTarget(Identifiable):
 
     _memory: MemoryInterface
 
-    #: A list of PromptConverters that are supported by the prompt target.
-    #: An empty list implies that the prompt target supports all converters.
+    # A list of PromptConverters that are supported by the prompt target.
+    # An empty list implies that the prompt target supports all converters.
     supported_converters: list[Any]
 
     _identifier: Optional[ComponentIdentifier] = None
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities()
+    # Class-level default configuration for this target type.
+    #
+    # Subclasses **should** override this when their capabilities differ from the base
+    # defaults (e.g., to declare multi-turn support or non-text modalities).
+    # Overriding is *optional* — if a subclass does not define ``_DEFAULT_CONFIGURATION``,
+    # it inherits the base-class default (text-only, single-turn, no JSON response).
+    #
+    # Per-instance overrides are also possible via the ``custom_configuration``
+    # constructor parameter, which takes precedence over the class-level value.
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Auto-promote the deprecated ``_DEFAULT_CAPABILITIES`` class attribute.
+
+        If a subclass defines ``_DEFAULT_CAPABILITIES`` directly, this hook wraps it
+        in a ``TargetConfiguration`` and assigns it to ``_DEFAULT_CONFIGURATION``,
+        emitting a ``DeprecationWarning`` to guide migration.
+        """
+        super().__init_subclass__(**kwargs)
+        if "_DEFAULT_CAPABILITIES" in cls.__dict__:
+            warnings.warn(
+                f"{cls.__name__}._DEFAULT_CAPABILITIES is deprecated and will be removed in v0.14.0. "
+                "Use _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            cls._DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=cls.__dict__["_DEFAULT_CAPABILITIES"])
 
     def __init__(
         self,
@@ -38,7 +67,8 @@ class PromptTarget(Identifiable):
         endpoint: str = "",
         model_name: str = "",
         underlying_model: Optional[str] = None,
-        capabilities: Optional[TargetCapabilities] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -50,20 +80,30 @@ class PromptTarget(Identifiable):
             model_name (str): The model name. Defaults to empty string.
             underlying_model (str, Optional): The underlying model name (e.g., "gpt-4o") for
                 identification purposes. This is useful when the deployment name in Azure differs
-                from the actual model. If not provided, `model_name` will be used for the identifier.
+                from the actual model. If not provided, ``model_name`` will be used for the identifier.
                 Defaults to None.
-            capabilities (TargetCapabilities, Optional): Override the default capabilities for
-                this target instance. Useful for targets whose capabilities depend on deployment
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration
+                for this target instance. Useful for targets whose capabilities depend on deployment
                 configuration (e.g., Playwright, HTTP). If None, uses the class-level
-                ``_DEFAULT_CAPABILITIES``. Defaults to None.
+                ``_DEFAULT_CONFIGURATION``. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
+        custom_configuration = resolve_configuration_compat(
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
         self._max_requests_per_minute = max_requests_per_minute
         self._endpoint = endpoint
         self._model_name = model_name
         self._underlying_model = underlying_model
-        self._capabilities = capabilities if capabilities is not None else type(self)._DEFAULT_CAPABILITIES
+        self._configuration = (
+            custom_configuration
+            if custom_configuration is not None
+            else type(self).get_default_configuration(self._underlying_model)
+        )
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
@@ -78,14 +118,50 @@ class PromptTarget(Identifiable):
                 but some (like response target with tool calls) may return multiple messages.
         """
 
-    @abc.abstractmethod
     def _validate_request(self, *, message: Message) -> None:
         """
         Validate the provided message.
 
         Args:
             message: The message to validate.
+
+        Raises:
+            ValueError: if the target does not support the provided message pieces or if the message
+                violates any constraints based on the target's capabilities. This includes checks
+                for the number of message pieces, supported data types, and multi-turn conversation support.
+
         """
+        n_pieces = len(message.message_pieces)
+        if n_pieces == 0:
+            raise ValueError("Message must contain at least one message piece. Received: 0 pieces.")
+
+        custom_configuration_message = (
+            "If your target does support this, set the custom_configuration parameter accordingly."
+        )
+        if not self.capabilities.supports_multi_message_pieces and n_pieces != 1:
+            raise ValueError(
+                f"This target only supports a single message piece. Received: {n_pieces} pieces. "
+                f"{custom_configuration_message}"
+            )
+
+        for piece in message.message_pieces:
+            piece_type = piece.converted_value_data_type
+            supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
+            if piece_type not in supported_types_flat:
+                supported_types = ", ".join(sorted(supported_types_flat))
+                raise ValueError(
+                    f"This target supports only the following data types: {supported_types}. Received: {piece_type}. "
+                    f"{custom_configuration_message}"
+                )
+
+        if not self.capabilities.supports_multi_turn:
+            request = message.message_pieces[0]
+            messages = self._memory.get_message_pieces(conversation_id=request.conversation_id)
+
+            if len(messages) > 0:
+                raise ValueError(
+                    f"This target only supports a single turn conversation. {custom_configuration_message}"
+                )
 
     def set_model_name(self, *, model_name: str) -> None:
         """
@@ -127,13 +203,12 @@ class PromptTarget(Identifiable):
         Returns:
             ComponentIdentifier: The identifier for this prompt target.
         """
-        model_name = self._underlying_model or self._model_name or ""
-
         all_params: dict[str, Any] = {
             "endpoint": self._endpoint,
-            "model_name": model_name,
+            "model_name": self._model_name or "",
+            "underlying_model_name": self._underlying_model or "",
             "max_requests_per_minute": self._max_requests_per_minute,
-            "supports_multi_turn": self.supports_multi_turn,
+            "supports_multi_turn": self.capabilities.supports_multi_turn,
         }
         if params:
             all_params.update(params)
@@ -141,32 +216,75 @@ class PromptTarget(Identifiable):
         return ComponentIdentifier.of(self, params=all_params, children=children)
 
     @property
-    def capabilities(self) -> TargetCapabilities:
+    def configuration(self) -> TargetConfiguration:
         """
-        The capabilities of this target instance.
+        The configuration of this target instance.
 
-        Defaults to the class-level ``_DEFAULT_CAPABILITIES``. Can be overridden
-        per instance via the ``capabilities`` constructor parameter, which is useful
+        Defaults to the class-level ``_DEFAULT_CONFIGURATION``. Can be overridden
+        per instance via the ``custom_configuration`` constructor parameter, which is useful
         for targets whose capabilities depend on deployment configuration
         (e.g., Playwright, HTTP).
 
         Returns:
-            TargetCapabilities: The capabilities for this target.
+            TargetConfiguration: The configuration for this target.
         """
-        return self._capabilities
+        return self._configuration
 
     @property
-    def supports_multi_turn(self) -> bool:
+    def capabilities(self) -> TargetCapabilities:
         """
-        Whether this target supports multi-turn conversations.
+        The capabilities of this target instance.
 
-        Convenience property that delegates to ``self.capabilities.supports_multi_turn``.
+        Shorthand for ``self.configuration.capabilities``.
 
         Returns:
-            bool: False by default. Subclasses declare multi-turn support by setting
-                ``_DEFAULT_CAPABILITIES`` or passing ``capabilities`` to the constructor.
+            TargetCapabilities: The capabilities for this target.
         """
-        return self._capabilities.supports_multi_turn
+        return self._configuration.capabilities
+
+    @classmethod
+    def get_default_configuration(cls, underlying_model: Optional[str] = None) -> TargetConfiguration:
+        """
+        Return the configuration for the given underlying model, falling back to
+        the class-level ``_DEFAULT_CONFIGURATION`` when the model is not recognized.
+
+        Args:
+            underlying_model (str | None): The underlying model name (e.g., "gpt-4o"),
+                or None if not specified.
+
+        Returns:
+            TargetConfiguration: Known configuration for the model, or the class's own
+            ``_DEFAULT_CONFIGURATION`` if the model is unrecognized or not provided.
+        """
+        if underlying_model:
+            known = TargetCapabilities.get_known_capabilities(underlying_model)
+            if known is not None:
+                return TargetConfiguration(capabilities=known)
+            logger.info(
+                "No known capabilities for model '%s'. Falling back to %s._DEFAULT_CONFIGURATION.",
+                underlying_model,
+                cls.__name__,
+            )
+        return cls._DEFAULT_CONFIGURATION
+
+    @classmethod
+    def get_default_capabilities(cls, underlying_model: Optional[str] = None) -> TargetCapabilities:
+        """
+        Return the default capabilities for the given model.
+
+        **Deprecated.** Use :meth:`get_default_configuration` instead.
+        Will be removed in v0.14.0.
+
+        Returns:
+            TargetCapabilities: The capabilities for the given model or class default.
+        """
+        warnings.warn(
+            "get_default_capabilities() is deprecated and will be removed in v0.14.0. "
+            "Use get_default_configuration() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return cls.get_default_configuration(underlying_model).capabilities
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

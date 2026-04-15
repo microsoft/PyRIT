@@ -6,7 +6,7 @@ Prompt Targets are endpoints for where to send prompts. For example, a target co
 - A scorer's main job is to score a prompt. Often, these use LLMs, in which case, a given scorer can often use different configured targets.
 - A converter's job is to transform a prompt. Often, these use LLMs, in which case, a given converter can use different configured targets.
 
-Prompt targets are found [here](https://github.com/Azure/PyRIT/tree/main/pyrit/prompt_target/) in code.
+Prompt targets are found [here](https://github.com/microsoft/PyRIT/tree/main/pyrit/prompt_target/) in code.
 
 
 ## Send_Prompt_Async

@@ -15,7 +15,8 @@ Note: This module only includes PRIMARY endpoint configurations from .env_exampl
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from enum import Enum
+from typing import Any, Optional
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
 from pyrit.prompt_target import (
@@ -36,10 +37,13 @@ from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyR
 logger = logging.getLogger(__name__)
 
 
-# Literal type for target tags
-TargetTag = Literal["default", "scorer", "all"]
+class TargetInitializerTags(str, Enum):
+    """Tags used by TargetInitializer for filtering which targets to register."""
 
-ALL_TARGET_TAGS: list[str] = ["default", "scorer"]
+    DEFAULT = "default"
+    SCORER = "scorer"
+    ALL = "all"
+    DEFAULT_OBJECTIVE_TARGET = "default_objective_target"
 
 
 @dataclass
@@ -56,6 +60,7 @@ class TargetConfig:
         underlying_model_var: The environment variable name for the underlying model.
         temperature: Optional temperature override for the target.
         tags: Tags for filtering which targets to register.
+        default_objective_target: If True, tags this target as DEFAULT_OBJECTIVE_TARGET in the registry.
     """
 
     registry_name: str
@@ -66,7 +71,8 @@ class TargetConfig:
     underlying_model_var: Optional[str] = None
     temperature: Optional[float] = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
-    tags: list[TargetTag] = field(default_factory=lambda: ["default"])
+    tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
+    default_objective_target: bool = False
 
 
 # Define all supported target configurations.
@@ -74,13 +80,25 @@ class TargetConfig:
 # syntax in .env_example are excluded since they reference other primary configurations.
 ENV_TARGET_CONFIGS: list[TargetConfig] = [
     # ============================================
+    # Default Objective Target (generic OPENAI_CHAT_* env vars)
+    # ============================================
+    TargetConfig(
+        registry_name="openai_chat",
+        target_class=OpenAIChatTarget,
+        endpoint_var="OPENAI_CHAT_ENDPOINT",
+        key_var="OPENAI_CHAT_KEY",
+        model_var="OPENAI_CHAT_MODEL",
+        underlying_model_var="OPENAI_CHAT_UNDERLYING_MODEL",
+        default_objective_target=True,
+    ),
+    # ============================================
     # OpenAI Chat Targets (OpenAIChatTarget)
     # ============================================
     TargetConfig(
         registry_name="platform_openai_chat",
         target_class=OpenAIChatTarget,
         endpoint_var="PLATFORM_OPENAI_CHAT_ENDPOINT",
-        key_var="PLATFORM_OPENAI_CHAT_API_KEY",
+        key_var="PLATFORM_OPENAI_CHAT_KEY",
         model_var="PLATFORM_OPENAI_CHAT_GPT4O_MODEL",
     ),
     TargetConfig(
@@ -114,6 +132,22 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="AZURE_OPENAI_GPT4_CHAT_KEY",
         model_var="AZURE_OPENAI_GPT4_CHAT_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4_CHAT_UNDERLYING_MODEL",
+    ),
+    TargetConfig(
+        registry_name="azure_openai_gpt5_4",
+        target_class=OpenAIChatTarget,
+        endpoint_var="AZURE_OPENAI_GPT5_4_ENDPOINT",
+        key_var="AZURE_OPENAI_GPT5_4_KEY",
+        model_var="AZURE_OPENAI_GPT5_4_MODEL",
+        underlying_model_var="AZURE_OPENAI_GPT5_4_UNDERLYING_MODEL",
+    ),
+    TargetConfig(
+        registry_name="azure_openai_gpt5_1",
+        target_class=OpenAIChatTarget,
+        endpoint_var="AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT",
+        key_var="AZURE_OPENAI_GPT5_COMPLETIONS_KEY",
+        model_var="AZURE_OPENAI_GPT5_COMPLETIONS_MODEL",
+        underlying_model_var="AZURE_OPENAI_GPT5_COMPLETIONS_UNDERLYING_MODEL",
     ),
     TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat",
@@ -322,7 +356,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL",
         temperature=0.0,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_openai_gpt4o_temp9",
@@ -332,7 +366,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL",
         temperature=0.9,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat_temp0",
@@ -342,7 +376,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL",
         temperature=0.0,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat_temp9",
@@ -352,7 +386,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL",
         temperature=0.9,
-        tags=["scorer"],
+        tags=[TargetInitializerTags.SCORER],
     ),
 ]
 
@@ -383,6 +417,8 @@ class TargetInitializer(PyRITInitializer):
     - AZURE_OPENAI_INTEGRATION_TEST_* - Integration test endpoint
     - AZURE_OPENAI_GPT3_5_CHAT_* - Azure OpenAI GPT-3.5
     - AZURE_OPENAI_GPT4_CHAT_* - Azure OpenAI GPT-4
+    - AZURE_OPENAI_GPT5_4_* - Azure OpenAI GPT-5.4
+    - AZURE_OPENAI_GPT5_COMPLETIONS_* - Azure OpenAI GPT-5.1
     - AZURE_OPENAI_GPT4O_UNSAFE_CHAT_* - Azure OpenAI GPT-4o unsafe
     - AZURE_OPENAI_GPT4O_UNSAFE_CHAT_*2 - Azure OpenAI GPT-4o unsafe secondary
     - AZURE_FOUNDRY_DEEPSEEK_* - Azure AI Foundry DeepSeek
@@ -480,8 +516,8 @@ class TargetInitializer(PyRITInitializer):
         tags matching the configured tags are registered.
         """
         tags = self.params.get("tags", ["default"])
-        if "all" in tags:
-            tags = ALL_TARGET_TAGS
+        if TargetInitializerTags.ALL in tags:
+            tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
 
         for config in TARGET_CONFIGS:
             if not any(tag in tags for tag in config.tags):
@@ -547,4 +583,6 @@ class TargetInitializer(PyRITInitializer):
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=config.registry_name)
+        if config.default_objective_target:
+            registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
         logger.info(f"Registered target: {config.registry_name}")

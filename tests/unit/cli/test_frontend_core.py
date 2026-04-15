@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import frontend_core
+from pyrit.cli._cli_args import _ArgSpec, _parse_shell_arguments
 from pyrit.registry import InitializerMetadata, ScenarioMetadata
 
 
@@ -262,19 +263,21 @@ class TestResolveInitializationScripts:
         assert result == [Path("/test/script.py")]
 
 
-class TestGetDefaultInitializerDiscoveryPath:
-    """Tests for get_default_initializer_discovery_path function."""
-
-    def test_get_default_initializer_discovery_path(self):
-        """Test get_default_initializer_discovery_path returns correct path."""
-        path = frontend_core.get_default_initializer_discovery_path()
-
-        assert isinstance(path, Path)
-        assert path.parts[-3:] == ("setup", "initializers", "scenarios")
-
-
 class TestListFunctions:
     """Tests for list_scenarios_async and list_initializers_async functions."""
+
+    def test_discover_builtin_scenarios_uses_dotted_names(self):
+        """Built-in scenario names should be dotted (package.module) lowercase names."""
+        from pyrit.registry.class_registries.scenario_registry import ScenarioRegistry
+
+        registry = ScenarioRegistry()
+        registry._discover_builtin_scenarios()
+
+        names = list(registry._class_entries.keys())
+        assert len(names) > 0, "Should discover at least one built-in scenario"
+        for name in names:
+            assert "." in name, f"Scenario name '{name}' should be a dotted name (package.module)"
+            assert name == name.lower(), f"Scenario name '{name}' should be lowercase"
 
     async def test_list_scenarios(self):
         """Test list_scenarios_async returns scenarios from registry."""
@@ -290,8 +293,8 @@ class TestListFunctions:
         assert result == [{"name": "test_scenario"}]
         mock_registry.list_metadata.assert_called_once()
 
-    async def test_list_initializers_without_discovery_path(self):
-        """Test list_initializers_async without discovery path."""
+    async def test_list_initializers(self):
+        """Test list_initializers_async returns initializers from context registry."""
         mock_registry = MagicMock()
         mock_registry.list_metadata.return_value = [{"name": "test_init"}]
 
@@ -303,21 +306,6 @@ class TestListFunctions:
 
         assert result == [{"name": "test_init"}]
         mock_registry.list_metadata.assert_called_once()
-
-    @patch("pyrit.cli.frontend_core.InitializerRegistry")
-    async def test_list_initializers_with_discovery_path(self, mock_init_registry_class: MagicMock):
-        """Test list_initializers_async with discovery path."""
-        mock_registry = MagicMock()
-        mock_registry.list_metadata.return_value = [{"name": "custom_init"}]
-        mock_init_registry_class.return_value = mock_registry
-
-        context = frontend_core.FrontendCore()
-        discovery_path = Path("/custom/path")
-
-        result = await frontend_core.list_initializers_async(context=context, discovery_path=discovery_path)
-
-        mock_init_registry_class.assert_called_once_with(discovery_path=discovery_path)
-        assert result == [{"name": "custom_init"}]
 
 
 class TestPrintFunctions:
@@ -332,6 +320,7 @@ class TestPrintFunctions:
                 class_name="TestScenario",
                 class_module="test.scenarios",
                 class_description="Test description",
+                registry_name="test",
                 default_strategy="default",
                 all_strategies=(),
                 aggregate_strategies=(),
@@ -347,8 +336,7 @@ class TestPrintFunctions:
         assert result == 0
         captured = capsys.readouterr()
         assert "Available Scenarios" in captured.out
-        # snake_class_name no longer strips suffix, so TestScenario -> test_scenario
-        assert "test_scenario" in captured.out
+        assert "test" in captured.out
 
     async def test_print_scenarios_list_empty(self, capsys):
         """Test print_scenarios_list with no scenarios."""
@@ -373,6 +361,7 @@ class TestPrintFunctions:
                 class_name="TestInit",
                 class_module="test.initializers",
                 class_description="Test initializer",
+                registry_name="test",
                 display_name="test",
                 execution_order=100,
                 required_env_vars=(),
@@ -386,7 +375,7 @@ class TestPrintFunctions:
         assert result == 0
         captured = capsys.readouterr()
         assert "Available Initializers" in captured.out
-        assert "test_init" in captured.out
+        assert "test" in captured.out
 
     async def test_print_initializers_list_empty(self, capsys):
         """Test print_initializers_list_async with no initializers."""
@@ -413,6 +402,7 @@ class TestFormatFunctions:
             class_name="TestScenario",
             class_module="test.scenarios",
             class_description="",
+            registry_name="test",
             default_strategy="",
             all_strategies=(),
             aggregate_strategies=(),
@@ -423,8 +413,7 @@ class TestFormatFunctions:
         frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
 
         captured = capsys.readouterr()
-        # snake_class_name no longer strips suffix, so TestScenario -> test_scenario
-        assert "test_scenario" in captured.out
+        assert "test" in captured.out
         assert "TestScenario" in captured.out
 
     def test_format_scenario_metadata_with_description(self, capsys):
@@ -434,6 +423,7 @@ class TestFormatFunctions:
             class_name="TestScenario",
             class_module="test.scenarios",
             class_description="This is a test scenario",
+            registry_name="test",
             default_strategy="",
             all_strategies=(),
             aggregate_strategies=(),
@@ -452,6 +442,7 @@ class TestFormatFunctions:
             class_name="TestScenario",
             class_module="test.scenarios",
             class_description="",
+            registry_name="test",
             default_strategy="strategy1",
             all_strategies=("strategy1", "strategy2"),
             aggregate_strategies=(),
@@ -472,6 +463,7 @@ class TestFormatFunctions:
             class_name="TestInit",
             class_module="test.initializers",
             class_description="",
+            registry_name="test",
             display_name="test",
             required_env_vars=(),
             execution_order=100,
@@ -480,7 +472,7 @@ class TestFormatFunctions:
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
 
         captured = capsys.readouterr()
-        assert "test_init" in captured.out
+        assert "test" in captured.out
         assert "TestInit" in captured.out
         assert "100" in captured.out
 
@@ -490,6 +482,7 @@ class TestFormatFunctions:
             class_name="TestInit",
             class_module="test.initializers",
             class_description="",
+            registry_name="test",
             display_name="test",
             required_env_vars=("VAR1", "VAR2"),
             execution_order=100,
@@ -507,6 +500,7 @@ class TestFormatFunctions:
             class_name="TestInit",
             class_module="test.initializers",
             class_description="Test description",
+            registry_name="test",
             display_name="test",
             required_env_vars=(),
             execution_order=100,
@@ -559,6 +553,93 @@ class TestParseInitializerArg:
         """Test that 'name:' with trailing colon but no params returns the name string."""
         result = frontend_core._parse_initializer_arg("target:")
         assert result == "target"
+
+
+class TestParseShellArguments:
+    """Tests for the generic _parse_shell_arguments function."""
+
+    def test_empty_parts_returns_none_defaults(self):
+        """Test that empty input returns None for all result keys."""
+        spec = _ArgSpec(flags=["--foo"], result_key="foo")
+        result = _parse_shell_arguments(parts=[], arg_specs=[spec])
+        assert result == {"foo": None}
+
+    def test_single_value_arg(self):
+        """Test parsing a single-value argument."""
+        spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(parts=["--name", "alice"], arg_specs=[spec])
+        assert result["name"] == "alice"
+
+    def test_single_value_with_parser(self):
+        """Test that single-value parser is applied."""
+        spec = _ArgSpec(flags=["--count"], result_key="count", parser=int)
+        result = _parse_shell_arguments(parts=["--count", "42"], arg_specs=[spec])
+        assert result["count"] == 42
+
+    def test_single_value_missing_raises(self):
+        """Test that missing value for single-value arg raises ValueError."""
+        spec = _ArgSpec(flags=["--name"], result_key="name")
+        with pytest.raises(ValueError, match="--name requires a value"):
+            _parse_shell_arguments(parts=["--name"], arg_specs=[spec])
+
+    def test_multi_value_arg(self):
+        """Test collecting multiple values until next flag."""
+        spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        result = _parse_shell_arguments(parts=["--items", "a", "b", "c"], arg_specs=[spec])
+        assert result["items"] == ["a", "b", "c"]
+
+    def test_multi_value_stops_at_next_flag(self):
+        """Test that multi-value collection stops at the next known flag."""
+        items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        name_spec = _ArgSpec(flags=["--name"], result_key="name")
+        result = _parse_shell_arguments(
+            parts=["--items", "a", "b", "--name", "alice"],
+            arg_specs=[items_spec, name_spec],
+        )
+        assert result["items"] == ["a", "b"]
+        assert result["name"] == "alice"
+
+    def test_multi_value_stops_at_short_flag_alias(self):
+        """Test that multi-value collection stops at a short flag alias like -s."""
+        long_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        short_spec = _ArgSpec(flags=["-s", "--short"], result_key="short", multi_value=True)
+        result = _parse_shell_arguments(
+            parts=["--items", "a", "b", "-s", "x"],
+            arg_specs=[long_spec, short_spec],
+        )
+        assert result["items"] == ["a", "b"]
+        assert result["short"] == ["x"]
+
+    def test_multi_value_with_parser(self):
+        """Test that parser transforms each collected value."""
+        spec = _ArgSpec(flags=["--nums"], result_key="nums", multi_value=True, parser=int)
+        result = _parse_shell_arguments(parts=["--nums", "1", "2", "3"], arg_specs=[spec])
+        assert result["nums"] == [1, 2, 3]
+
+    def test_multi_value_no_values_raises(self):
+        """Test that multi-value arg with no values raises ValueError."""
+        items_spec = _ArgSpec(flags=["--items"], result_key="items", multi_value=True)
+        name_spec = _ArgSpec(flags=["--name"], result_key="name")
+        with pytest.raises(ValueError, match="--items requires at least one value"):
+            _parse_shell_arguments(
+                parts=["--items", "--name", "alice"],
+                arg_specs=[items_spec, name_spec],
+            )
+
+    def test_unknown_flag_raises(self):
+        """Test that an unknown flag raises ValueError."""
+        spec = _ArgSpec(flags=["--known"], result_key="known")
+        with pytest.raises(ValueError, match="Unknown argument: --unknown"):
+            _parse_shell_arguments(parts=["--unknown"], arg_specs=[spec])
+
+    def test_multiple_specs_all_none_when_unused(self):
+        """Test that unused specs default to None."""
+        specs = [
+            _ArgSpec(flags=["--a"], result_key="a"),
+            _ArgSpec(flags=["--b"], result_key="b", multi_value=True),
+        ]
+        result = _parse_shell_arguments(parts=[], arg_specs=specs)
+        assert result == {"a": None, "b": None}
 
 
 class TestParseRunArguments:
@@ -634,12 +715,6 @@ class TestParseRunArguments:
 
         assert result["memory_labels"] == {"key": "value"}
 
-    def test_parse_run_arguments_with_database(self):
-        """Test parsing with database override."""
-        result = frontend_core.parse_run_arguments(args_string=f"test_scenario --database {frontend_core.IN_MEMORY}")
-
-        assert result["database"] == frontend_core.IN_MEMORY
-
     def test_parse_run_arguments_with_log_level(self):
         """Test parsing with log-level override."""
         result = frontend_core.parse_run_arguments(args_string="test_scenario --log-level DEBUG")
@@ -683,6 +758,46 @@ class TestParseRunArguments:
         """Test parsing with missing argument value."""
         with pytest.raises(ValueError, match="requires a value"):
             frontend_core.parse_run_arguments(args_string="test_scenario --max-concurrency")
+
+
+class TestParseListTargetsArguments:
+    """Tests for parse_list_targets_arguments function."""
+
+    def test_parse_list_targets_arguments_empty(self):
+        """Test parsing empty string returns defaults."""
+        result = frontend_core.parse_list_targets_arguments(args_string="")
+        assert result["initializers"] is None
+        assert result["initialization_scripts"] is None
+
+    def test_parse_list_targets_arguments_with_initializers(self):
+        """Test parsing with initializers."""
+        result = frontend_core.parse_list_targets_arguments(args_string="--initializers target init2")
+        assert result["initializers"] == ["target", "init2"]
+
+    def test_parse_list_targets_arguments_with_initializer_params(self):
+        """Test parsing initializers with key=value params."""
+        result = frontend_core.parse_list_targets_arguments(args_string="--initializers target:tags=default,scorer")
+        assert result["initializers"] == [{"name": "target", "args": {"tags": ["default", "scorer"]}}]
+
+    def test_parse_list_targets_arguments_with_initialization_scripts(self):
+        """Test parsing with initialization-scripts."""
+        result = frontend_core.parse_list_targets_arguments(
+            args_string="--initialization-scripts script1.py script2.py"
+        )
+        assert result["initialization_scripts"] == ["script1.py", "script2.py"]
+
+    def test_parse_list_targets_arguments_with_both(self):
+        """Test parsing with both initializers and scripts."""
+        result = frontend_core.parse_list_targets_arguments(
+            args_string="--initializers target --initialization-scripts script1.py"
+        )
+        assert result["initializers"] == ["target"]
+        assert result["initialization_scripts"] == ["script1.py"]
+
+    def test_parse_list_targets_arguments_unknown_arg_raises(self):
+        """Test parsing with unknown argument raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown argument"):
+            frontend_core.parse_list_targets_arguments(args_string="--unknown-flag")
 
 
 @pytest.mark.asyncio
@@ -922,9 +1037,379 @@ class TestArgHelp:
             "memory_labels",
             "database",
             "log_level",
+            "target",
         ]
 
         for key in expected_keys:
             assert key in frontend_core.ARG_HELP
             assert isinstance(frontend_core.ARG_HELP[key], str)
             assert len(frontend_core.ARG_HELP[key]) > 0
+
+
+class TestParseRunArgumentsTarget:
+    """Tests for --target parsing in parse_run_arguments."""
+
+    def test_parse_run_arguments_with_target(self):
+        """Test parsing with --target."""
+        result = frontend_core.parse_run_arguments(args_string="test_scenario --target my_target")
+
+        assert result["target"] == "my_target"
+
+    def test_parse_run_arguments_target_with_other_args(self):
+        """Test parsing --target alongside other arguments."""
+        result = frontend_core.parse_run_arguments(
+            args_string="test_scenario --target my_target --initializers init1 --max-concurrency 5"
+        )
+
+
+class TestWithOverrides:
+    """Tests for FrontendCore.with_overrides method."""
+
+    def _make_initialized_parent(self) -> frontend_core.FrontendCore:
+        """Create a fully-initialized FrontendCore for testing with_overrides."""
+        parent = frontend_core.FrontendCore(
+            database=frontend_core.IN_MEMORY,
+            initializer_names=["parent_init"],
+            log_level=logging.WARNING,
+        )
+        parent._scenario_registry = MagicMock()
+        parent._initializer_registry = MagicMock()
+        parent._initialized = True
+        parent._silent_reinit = True
+        return parent
+
+    def test_with_overrides_inherits_fields(self):
+        """Test that derived context inherits database, env_files, operator, operation."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._database == parent._database
+        assert derived._env_files == parent._env_files
+        assert derived._operator == parent._operator
+        assert derived._operation == parent._operation
+
+    def test_with_overrides_shares_registries(self):
+        """Test that derived context shares scenario and initializer registries."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._scenario_registry is parent._scenario_registry
+        assert derived._initializer_registry is parent._initializer_registry
+
+    def test_with_overrides_sets_initialized_and_silent(self):
+        """Test that derived context is marked initialized with silent reinit."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides()
+
+        assert derived._initialized is True
+        assert derived._silent_reinit is True
+
+    def test_with_overrides_none_keeps_parent_values(self):
+        """Test that passing None for all overrides keeps parent's values."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(
+            initializer_names=None,
+            initialization_scripts=None,
+            log_level=None,
+        )
+
+        assert derived._initializer_configs == parent._initializer_configs
+        assert derived._initialization_scripts == parent._initialization_scripts
+        assert derived._log_level == parent._log_level
+
+    def test_with_overrides_initializer_names(self):
+        """Test that initializer_names override normalizes to InitializerConfig objects."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(initializer_names=["target", "dataset"])
+
+        assert derived._initializer_configs is not None
+        names = [ic.name for ic in derived._initializer_configs]
+        assert names == ["target", "dataset"]
+        # Parent should still have original
+        assert [ic.name for ic in parent._initializer_configs] == ["parent_init"]
+
+    def test_with_overrides_initializer_names_dict(self):
+        """Test initializer_names with dict entries (name + args)."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(initializer_names=[{"name": "target", "args": {"tags": "default"}}])
+
+        assert derived._initializer_configs is not None
+        assert len(derived._initializer_configs) == 1
+        assert derived._initializer_configs[0].name == "target"
+        assert derived._initializer_configs[0].args == {"tags": "default"}
+
+    def test_with_overrides_initialization_scripts(self):
+        """Test that initialization_scripts override replaces parent's scripts."""
+        parent = self._make_initialized_parent()
+        new_scripts = [Path("/new/script.py")]
+
+        derived = parent.with_overrides(initialization_scripts=new_scripts)
+
+        assert derived._initialization_scripts == new_scripts
+        # Parent should be unchanged
+        assert parent._initialization_scripts != new_scripts
+
+    def test_with_overrides_log_level(self):
+        """Test that log_level override replaces parent's log level."""
+        parent = self._make_initialized_parent()
+
+        derived = parent.with_overrides(log_level=logging.DEBUG)
+
+        assert derived._log_level == logging.DEBUG
+        assert parent._log_level == logging.WARNING
+
+    def test_with_overrides_does_not_mutate_parent(self):
+        """Test that with_overrides does not modify the parent context."""
+        parent = self._make_initialized_parent()
+        original_configs = parent._initializer_configs
+        original_log_level = parent._log_level
+        original_scripts = parent._initialization_scripts
+
+        parent.with_overrides(
+            initializer_names=["new_init"],
+            initialization_scripts=[Path("/new.py")],
+            log_level=logging.DEBUG,
+        )
+
+        assert parent._initializer_configs is original_configs
+        assert parent._log_level == original_log_level
+        assert parent._initialization_scripts is original_scripts
+
+    def test_parse_run_arguments_target_missing_value(self):
+        """Test parsing --target without a value raises ValueError."""
+        with pytest.raises(ValueError, match="--target requires a value"):
+            frontend_core.parse_run_arguments(args_string="test_scenario --target")
+
+    def test_parse_run_arguments_no_target(self):
+        """Test parsing without --target returns None."""
+        result = frontend_core.parse_run_arguments(args_string="test_scenario")
+
+        assert result["target"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+class TestRunScenarioAsyncTarget:
+    """Tests for target resolution in run_scenario_async."""
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.ConsoleScenarioResultPrinter")
+    async def test_run_scenario_async_with_valid_target(
+        self,
+        mock_printer_class: MagicMock,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+    ):
+        """Test running scenario with a valid target name resolves from registry."""
+        # Setup mocks
+        mock_target = MagicMock()
+        mock_registry = MagicMock()
+        mock_registry.get_instance_by_name.return_value = mock_target
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        mock_scenario_registry = MagicMock()
+        mock_scenario_class = MagicMock()
+        mock_scenario_instance = MagicMock()
+        mock_result = MagicMock()
+        mock_printer = MagicMock()
+        mock_printer.print_summary_async = AsyncMock()
+
+        mock_scenario_instance.initialize_async = AsyncMock()
+        mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
+        mock_scenario_class.return_value = mock_scenario_instance
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
+        mock_printer_class.return_value = mock_printer
+
+        context._scenario_registry = mock_scenario_registry
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+
+        result = await frontend_core.run_scenario_async(
+            scenario_name="test_scenario",
+            context=context,
+            target_name="my_target",
+        )
+
+        assert result == mock_result
+        mock_registry.get_instance_by_name.assert_called_once_with("my_target")
+        # Verify objective_target was passed to initialize_async
+        call_kwargs = mock_scenario_instance.initialize_async.call_args[1]
+        assert call_kwargs["objective_target"] is mock_target
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_run_scenario_async_with_invalid_target(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+    ):
+        """Test running scenario with an invalid target name raises ValueError."""
+        mock_registry = MagicMock()
+        mock_registry.get_instance_by_name.return_value = None
+        mock_registry.get_names.return_value = ["target_a", "target_b"]
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+
+        with pytest.raises(ValueError, match="Target 'bad_target' not found in registry"):
+            await frontend_core.run_scenario_async(
+                scenario_name="test_scenario",
+                context=context,
+                target_name="bad_target",
+            )
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_run_scenario_async_with_empty_target_registry(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+    ):
+        """Test running scenario with target name when registry is empty gives helpful error."""
+        mock_registry = MagicMock()
+        mock_registry.get_instance_by_name.return_value = None
+        mock_registry.get_names.return_value = []
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+
+        with pytest.raises(ValueError, match="target registry is empty"):
+            await frontend_core.run_scenario_async(
+                scenario_name="test_scenario",
+                context=context,
+                target_name="my_target",
+            )
+
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.ConsoleScenarioResultPrinter")
+    async def test_run_scenario_async_without_target(
+        self,
+        mock_printer_class: MagicMock,
+        mock_init: AsyncMock,
+    ):
+        """Test running scenario without target_name does not add objective_target to kwargs."""
+        context = frontend_core.FrontendCore()
+        mock_scenario_registry = MagicMock()
+        mock_scenario_class = MagicMock()
+        mock_scenario_instance = MagicMock()
+        mock_result = MagicMock()
+        mock_printer = MagicMock()
+        mock_printer.print_summary_async = AsyncMock()
+
+        mock_scenario_instance.initialize_async = AsyncMock()
+        mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
+        mock_scenario_class.return_value = mock_scenario_instance
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
+        mock_printer_class.return_value = mock_printer
+
+        context._scenario_registry = mock_scenario_registry
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+
+        await frontend_core.run_scenario_async(
+            scenario_name="test_scenario",
+            context=context,
+        )
+
+        # Verify no objective_target was passed
+        call_kwargs = mock_scenario_instance.initialize_async.call_args[1]
+        assert "objective_target" not in call_kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+class TestPrintTargetsList:
+    """Tests for print_targets_list_async function."""
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_print_targets_list_with_targets(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+        capsys,
+    ):
+        """Test print_targets_list_async displays target names."""
+        mock_registry = MagicMock()
+        mock_registry.get_names.return_value = ["target_a", "target_b"]
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+
+        result = await frontend_core.print_targets_list_async(context=context)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "target_a" in captured.out
+        assert "target_b" in captured.out
+        assert "Total targets: 2" in captured.out
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_print_targets_list_empty(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+        capsys,
+    ):
+        """Test print_targets_list_async with no targets gives helpful hint."""
+        mock_registry = MagicMock()
+        mock_registry.get_names.return_value = []
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+
+        result = await frontend_core.print_targets_list_async(context=context)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "No targets found" in captured.out
+        assert "--initializers target" in captured.out
+
+    @patch("pyrit.cli.frontend_core.TargetRegistry")
+    @patch("pyrit.cli.frontend_core.initialize_pyrit_async", new_callable=AsyncMock)
+    async def test_list_targets_with_initialization_scripts_calls_initialize(
+        self,
+        mock_init: AsyncMock,
+        mock_target_registry_class: MagicMock,
+    ):
+        """Test list_targets_async calls initialize_pyrit_async when only scripts are configured."""
+        mock_registry = MagicMock()
+        mock_registry.get_names.return_value = ["script_target"]
+        mock_target_registry_class.get_registry_singleton.return_value = mock_registry
+
+        context = frontend_core.FrontendCore()
+        context._scenario_registry = MagicMock()
+        context._initializer_registry = MagicMock()
+        context._initialized = True
+        context._initialization_scripts = ["/path/to/script.py"]
+        context._initializer_configs = None
+
+        result = await frontend_core.list_targets_async(context=context)
+
+        assert result == ["script_target"]
+        # Verify initialize_pyrit_async was called with the scripts
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["initialization_scripts"] == ["/path/to/script.py"]
+        assert call_kwargs["initializers"] is None

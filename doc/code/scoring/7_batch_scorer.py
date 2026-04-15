@@ -19,7 +19,6 @@
 #
 # The following example demonstrates this by manually entering prompts into the database and then scoring them.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../memory/0_memory.md).
 
@@ -93,7 +92,7 @@ for score in scores:
 #
 # This allows users to score response to prompts based on a number of filters (including memory labels, which are shown in this next example).
 #
-# Remember that `GLOBAL_MEMORY_LABELS`, which will be assigned to every prompt sent through an attack, can be set as an environment variable (.env or env.local), and any additional custom memory labels can be passed in the `PromptSendingAttack` `execute_async` function. (Custom memory labels passed in will have precedence over `GLOBAL_MEMORY_LABELS` in case of collisions.) For more information on memory labels, see the [Memory Labels Guide](../memory/5_memory_labels.ipynb).
+# Remember that `GLOBAL_MEMORY_LABELS`, which will be assigned to every prompt sent through an attack, can be set as an environment variable (.env or env.local), and any additional custom memory labels can be passed in the `PromptSendingAttack` `execute_async` function. (Custom memory labels passed in will have precedence over `GLOBAL_MEMORY_LABELS` in case of collisions.) For more information on memory labels, see the [Advanced Memory Guide](../memory/5_advanced_memory.ipynb).
 #
 # All filters include:
 # - Attack ID

@@ -17,6 +17,7 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -28,7 +29,23 @@ class OpenAIImageTarget(OpenAITarget):
 
     # Maximum number of image inputs supported by the OpenAI image API
     _MAX_INPUT_IMAGES = 16
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=False)
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["image_path"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+            output_modalities=frozenset(
+                {
+                    frozenset(["image_path"]),
+                }
+            ),
+        )
+    )
 
     def __init__(
         self,
@@ -38,6 +55,8 @@ class OpenAIImageTarget(OpenAITarget):
         output_format: Optional[Literal["png", "jpeg", "webp"]] = None,
         quality: Optional[Literal["standard", "hd", "low", "medium", "high"]] = None,
         style: Optional[Literal["natural", "vivid"]] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -76,6 +95,10 @@ class OpenAIImageTarget(OpenAITarget):
             style (Literal["natural", "vivid"], Optional): The style of the generated images.
                 This parameter is only supported for DALL-E-3.
                 Default is to not specify.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             *args: Additional positional arguments to be passed to AzureOpenAITarget.
             **kwargs: Additional keyword arguments to be passed to AzureOpenAITarget.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
@@ -87,13 +110,14 @@ class OpenAIImageTarget(OpenAITarget):
         self.style = style
         self.image_size = image_size
 
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
+        )
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_IMAGE_MODEL"
         self.endpoint_environment_variable = "OPENAI_IMAGE_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_IMAGE_API_KEY"
-        self.underlying_model_environment_variable = "OPENAI_IMAGE_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -297,14 +321,10 @@ class OpenAIImageTarget(OpenAITarget):
         raise EmptyResponseException(message="The image generation returned an empty response.")
 
     def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-
-        if n_pieces < 1:
-            raise ValueError("The message must contain at least one piece.")
+        super()._validate_request(message=message)
 
         text_pieces = [p for p in message.message_pieces if p.converted_value_data_type == "text"]
         image_pieces = [p for p in message.message_pieces if p.converted_value_data_type == "image_path"]
-        other_pieces = [p for p in message.message_pieces if p.converted_value_data_type not in ("text", "image_path")]
 
         if len(text_pieces) != 1:
             raise ValueError(f"The message must contain exactly one text piece. Received: {len(text_pieces)}.")
@@ -313,26 +333,3 @@ class OpenAIImageTarget(OpenAITarget):
             raise ValueError(
                 f"The message can contain up to {self._MAX_INPUT_IMAGES} image pieces. Received: {len(image_pieces)}."
             )
-
-        if len(other_pieces) > 0:
-            other_types = [p.converted_value_data_type for p in other_pieces]
-            raise ValueError(f"The message contains unsupported piece types. Unsupported types: {other_types}.")
-
-        request = text_pieces[0]
-        messages = self._memory.get_conversation(conversation_id=request.conversation_id)
-
-        n_messages = len(messages)
-        if n_messages > 0:
-            raise ValueError(
-                "This target only supports a single turn conversation. "
-                f"Received: {n_messages} messages which indicates a prior turn."
-            )
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

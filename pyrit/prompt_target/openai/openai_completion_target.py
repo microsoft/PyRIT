@@ -10,6 +10,7 @@ from pyrit.exceptions.exception_classes import (
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 class OpenAICompletionTarget(OpenAITarget):
     """A prompt target for OpenAI completion endpoints."""
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=False)
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
     def __init__(
         self,
@@ -29,6 +30,8 @@ class OpenAICompletionTarget(OpenAITarget):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         n: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -62,12 +65,18 @@ class OpenAICompletionTarget(OpenAITarget):
                 tokens based on their existing frequency in the text so far, decreasing the model's likelihood to
                 repeat the same line verbatim.
             n (int, Optional): How many completions to generate for each prompt.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             *args: Variable length argument list passed to the parent class.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
+        )
 
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -98,7 +107,6 @@ class OpenAICompletionTarget(OpenAITarget):
         self.model_name_environment_variable = "OPENAI_COMPLETION_MODEL"
         self.endpoint_environment_variable = "OPENAI_COMPLETION_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_COMPLETION_API_KEY"
-        self.underlying_model_environment_variable = "OPENAI_COMPLETION_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -167,21 +175,3 @@ class OpenAICompletionTarget(OpenAITarget):
         extracted_response = [choice.text for choice in response.choices]
 
         return construct_response_from_request(request=request, response_text_pieces=extracted_response)
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

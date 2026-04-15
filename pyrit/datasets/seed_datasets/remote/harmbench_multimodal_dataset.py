@@ -67,14 +67,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
         self.categories = categories
 
-        # Validate categories if provided
         if categories is not None:
-            valid_categories = {category.value for category in SemanticCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, SemanticCategory) else cat for cat in categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(f"Invalid semantic categories: {', '.join(invalid_categories)}")
+            self._validate_enums(categories, SemanticCategory, "semantic category")
 
     @property
     def dataset_name(self) -> str:
@@ -235,7 +229,9 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         results_path = serializer._memory.results_path
         results_storage_io = serializer._memory.results_storage_io
         if not results_path or results_storage_io is None:
-            raise RuntimeError("[HarmBench-Multimodal] Serializer memory is not properly configured: results_path and results_storage_io must be set.")
+            raise RuntimeError(
+                "[HarmBench-Multimodal] Serializer memory is not properly configured: results_path and results_storage_io must be set."
+            )
         serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:
             if await results_storage_io.path_exists(serializer.value):

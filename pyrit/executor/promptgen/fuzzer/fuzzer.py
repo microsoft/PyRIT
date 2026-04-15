@@ -832,7 +832,7 @@ class FuzzerGenerator(
             raise
 
         # Create template node for tracking
-        target_template = SeedPrompt(value=target_seed, data_type="text", parameters=["prompt"])
+        target_template = SeedPrompt(value=target_seed, data_type="text", parameters=["prompt"], is_jinja_template=True)
         target_template_node = _PromptNode(template=target_seed, parent=None)
 
         # Generate prompts from template
