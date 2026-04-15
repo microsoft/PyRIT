@@ -7,7 +7,7 @@ Base class registry for PyRIT.
 This module provides the abstract base class for registries that store classes (Type[T]).
 These registries allow on-demand instantiation of registered classes.
 
-For registries that store pre-configured instances, see instance_registries/.
+For registries that store pre-configured instances, see object_registries/.
 
 Terminology:
 - **Metadata**: A TypedDict describing a registered class (e.g., ScenarioMetadata)

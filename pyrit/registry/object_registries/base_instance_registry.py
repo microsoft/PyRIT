@@ -2,16 +2,16 @@
 # Licensed under the MIT license.
 
 """
-Base item registry for PyRIT.
+Base instance registry for PyRIT.
 
-This module provides ``BaseItemRegistry``, the shared infrastructure for
+This module provides ``BaseInstanceRegistry``, the shared infrastructure for
 registries that store ``Identifiable`` objects (not classes): singleton
 lifecycle, registration, tags, metadata, container protocol.
 
 Subclass directly for registries that store factories or other
 non-retrievable items (e.g., ``AttackTechniqueRegistry``).  For registries
 where callers retrieve stored objects directly, subclass
-``BaseInstanceRegistry`` instead.
+``RetrievableInstanceRegistry`` instead.
 
 For registries that store classes (Type[T]), see ``class_registries/``.
 """
@@ -51,7 +51,7 @@ class RegistryEntry(Generic[T]):
     tags: dict[str, str] = field(default_factory=dict)
 
 
-class BaseItemRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
+class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
     """
     Abstract base class providing shared registry infrastructure.
 
@@ -61,7 +61,7 @@ class BaseItemRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
 
     Subclass directly when stored items should not be retrievable via
     ``get()`` (e.g., factory registries). For registries that expose
-    direct item retrieval, subclass ``BaseInstanceRegistry`` instead.
+    direct item retrieval, subclass ``RetrievableInstanceRegistry`` instead.
 
     All stored items must implement ``Identifiable``, which provides
     ``get_identifier()`` for metadata generation.
@@ -71,7 +71,7 @@ class BaseItemRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
     """
 
     # Class-level singleton instances, keyed by registry class
-    _instances: dict[type, BaseItemRegistry[Any]] = {}
+    _instances: dict[type, BaseInstanceRegistry[Any]] = {}
 
     @classmethod
     def get_registry_singleton(cls) -> Self:

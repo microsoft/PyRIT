@@ -10,7 +10,7 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.instance_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 

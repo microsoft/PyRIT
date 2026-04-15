@@ -2,40 +2,40 @@
 # Licensed under the MIT license.
 
 """
-Instance registry for PyRIT.
+Retrievable instance registry for PyRIT.
 
-This module provides ``BaseInstanceRegistry``, which extends
-``BaseItemRegistry`` with ``get()``, ``get_entry()``, and
+This module provides ``RetrievableInstanceRegistry``, which extends
+``BaseInstanceRegistry`` with ``get()``, ``get_entry()``, and
 ``get_all_instances()`` for registries where callers retrieve stored
 objects directly (e.g., ``ScorerRegistry``, ``ConverterRegistry``,
 ``TargetRegistry``).
 
-For the shared base class, see ``base_item_registry``.
+For the shared base class, see ``base_instance_registry``.
 For registries that store classes (Type[T]), see ``class_registries/``.
 """
 
 from __future__ import annotations
 
-from pyrit.registry.instance_registries.base_item_registry import (
-    BaseItemRegistry,
+from pyrit.registry.object_registries.base_instance_registry import (
+    BaseInstanceRegistry,
     RegistryEntry,
     T,
 )
 
-# Re-export so existing ``from base_instance_registry import ...`` still works
-__all__ = ["BaseInstanceRegistry", "BaseItemRegistry", "RegistryEntry"]
+# Re-export so existing ``from retrievable_instance_registry import ...`` still works
+__all__ = ["RetrievableInstanceRegistry", "BaseInstanceRegistry", "RegistryEntry"]
 
 
-class BaseInstanceRegistry(BaseItemRegistry[T]):
+class RetrievableInstanceRegistry(BaseInstanceRegistry[T]):
     """
     Base class for registries that store directly-retrievable instances.
 
-    Extends ``BaseItemRegistry`` with ``get()``, ``get_entry()``, and
+    Extends ``BaseInstanceRegistry`` with ``get()``, ``get_entry()``, and
     ``get_all_instances()`` for registries where callers retrieve the
     stored objects directly (e.g., scorers, converters, targets).
 
     For registries that store factories or other non-retrievable items,
-    subclass ``BaseItemRegistry`` directly instead.
+    subclass ``BaseInstanceRegistry`` directly instead.
 
     Type Parameters:
         T: The type of instances stored in the registry (must be Identifiable).

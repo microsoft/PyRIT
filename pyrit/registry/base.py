@@ -5,7 +5,7 @@
 Shared base types for PyRIT registries.
 
 This module contains types shared between class registries (which store Type[T])
-and instance registries (which store T instances).
+and object registries (which store T instances).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ class RegistryProtocol(Protocol[MetadataT]):
     """
     Protocol defining the common interface for all registries.
 
-    Both class registries (BaseClassRegistry) and instance registries
+    Both class registries (BaseClassRegistry) and object registries
     (BaseInstanceRegistry) implement this interface, enabling code that
     works with either registry type.
 

@@ -4,11 +4,11 @@
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier, Identifiable
-from pyrit.registry.instance_registries.base_instance_registry import (
-    BaseInstanceRegistry,
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
 )
-from pyrit.registry.instance_registries.base_item_registry import (
-    BaseItemRegistry,
+from pyrit.registry.object_registries.base_instance_registry import (
+    BaseInstanceRegistry,
     RegistryEntry,
 )
 
@@ -45,12 +45,12 @@ def _item(value: str) -> _TestItem:
     return _TestItem(value)
 
 
-class ConcreteTestRegistry(BaseInstanceRegistry["_TestItem"]):
-    """Concrete implementation of BaseInstanceRegistry for testing."""
+class ConcreteTestRegistry(RetrievableInstanceRegistry["_TestItem"]):
+    """Concrete implementation of RetrievableInstanceRegistry for testing."""
 
 
-class TestBaseInstanceRegistrySingleton:
-    """Tests for the singleton pattern in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistrySingleton:
+    """Tests for the singleton pattern in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset the singleton before each test."""
@@ -82,8 +82,8 @@ class TestBaseInstanceRegistrySingleton:
         ConcreteTestRegistry.reset_instance()
 
 
-class TestBaseInstanceRegistryRegistration:
-    """Tests for registration functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryRegistration:
+    """Tests for registration functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -134,8 +134,8 @@ class TestBaseInstanceRegistryRegistration:
         assert len(metadata2) == 2
 
 
-class TestBaseInstanceRegistryGet:
-    """Tests for get functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGet:
+    """Tests for get functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -158,8 +158,8 @@ class TestBaseInstanceRegistryGet:
         assert result is None
 
 
-class TestBaseInstanceRegistryGetEntry:
-    """Tests for get_entry functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGetEntry:
+    """Tests for get_entry functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -186,8 +186,8 @@ class TestBaseInstanceRegistryGetEntry:
         assert result is None
 
 
-class TestBaseInstanceRegistryGetNames:
-    """Tests for get_names functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGetNames:
+    """Tests for get_names functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -213,8 +213,8 @@ class TestBaseInstanceRegistryGetNames:
         assert names == ["alpha", "beta", "zeta"]
 
 
-class TestBaseInstanceRegistryGetAllInstances:
-    """Tests for get_all_instances functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGetAllInstances:
+    """Tests for get_all_instances functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -260,8 +260,8 @@ class TestBaseInstanceRegistryGetAllInstances:
         assert result == []
 
 
-class TestBaseInstanceRegistryListMetadata:
-    """Tests for list_metadata functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryListMetadata:
+    """Tests for list_metadata functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -331,8 +331,8 @@ class TestBaseInstanceRegistryListMetadata:
         assert len(metadata1) == 3
 
 
-class TestBaseInstanceRegistryTags:
-    """Tests for tag registration and retrieval in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryTags:
+    """Tests for tag registration and retrieval in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -429,11 +429,11 @@ class TestBaseInstanceRegistryTags:
 
     def test_normalize_tags_none(self):
         """Test _normalize_tags returns empty dict for None."""
-        assert BaseInstanceRegistry._normalize_tags(None) == {}
+        assert RetrievableInstanceRegistry._normalize_tags(None) == {}
 
     def test_normalize_tags_list(self):
         """Test _normalize_tags converts list to dict with empty values."""
-        assert BaseInstanceRegistry._normalize_tags(["a", "b"]) == {"a": "", "b": ""}
+        assert RetrievableInstanceRegistry._normalize_tags(["a", "b"]) == {"a": "", "b": ""}
 
     def test_normalize_tags_dict(self):
         """Test _normalize_tags returns a copy of the dict."""
@@ -443,8 +443,8 @@ class TestBaseInstanceRegistryTags:
         assert result is not original
 
 
-class TestBaseInstanceRegistryDunderMethods:
-    """Tests for dunder methods (__contains__, __len__, __iter__) in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryDunderMethods:
+    """Tests for dunder methods (__contains__, __len__, __iter__) in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -487,39 +487,39 @@ class TestBaseInstanceRegistryDunderMethods:
         assert collected == ["name1", "name2"]
 
 
-class _ItemOnlyRegistry(BaseItemRegistry["_TestItem"]):
-    """Concrete BaseItemRegistry subclass — should NOT have get/get_entry/get_all_instances."""
+class _ItemOnlyRegistry(BaseInstanceRegistry["_TestItem"]):
+    """Concrete BaseInstanceRegistry subclass — should NOT have get/get_entry/get_all_instances."""
 
 
-class TestBaseItemRegistryDoesNotExposeInstanceMethods:
-    """Verify that BaseItemRegistry subclasses lack instance-retrieval methods."""
+class TestBaseInstanceRegistryDoesNotExposeInstanceMethods:
+    """Verify that BaseInstanceRegistry subclasses lack instance-retrieval methods."""
 
     def test_item_registry_has_no_get(self):
-        """BaseItemRegistry subclasses should not have a get() method."""
+        """BaseInstanceRegistry subclasses should not have a get() method."""
         assert not hasattr(_ItemOnlyRegistry, "get")
 
     def test_item_registry_has_no_get_entry(self):
-        """BaseItemRegistry subclasses should not have a get_entry() method."""
+        """BaseInstanceRegistry subclasses should not have a get_entry() method."""
         assert not hasattr(_ItemOnlyRegistry, "get_entry")
 
     def test_item_registry_has_no_get_all_instances(self):
-        """BaseItemRegistry subclasses should not have a get_all_instances() method."""
+        """BaseInstanceRegistry subclasses should not have a get_all_instances() method."""
         assert not hasattr(_ItemOnlyRegistry, "get_all_instances")
 
     def test_instance_registry_has_get(self):
-        """BaseInstanceRegistry subclasses should have get()."""
+        """RetrievableInstanceRegistry subclasses should have get()."""
         assert hasattr(ConcreteTestRegistry, "get")
 
     def test_instance_registry_has_get_entry(self):
-        """BaseInstanceRegistry subclasses should have get_entry()."""
+        """RetrievableInstanceRegistry subclasses should have get_entry()."""
         assert hasattr(ConcreteTestRegistry, "get_entry")
 
     def test_instance_registry_has_get_all_instances(self):
-        """BaseInstanceRegistry subclasses should have get_all_instances()."""
+        """RetrievableInstanceRegistry subclasses should have get_all_instances()."""
         assert hasattr(ConcreteTestRegistry, "get_all_instances")
 
     def test_item_registry_shares_common_methods(self):
-        """BaseItemRegistry subclasses should have shared registry methods."""
+        """BaseInstanceRegistry subclasses should have shared registry methods."""
         for method in (
             "register",
             "get_names",
@@ -533,8 +533,8 @@ class TestBaseItemRegistryDoesNotExposeInstanceMethods:
             assert hasattr(_ItemOnlyRegistry, method), f"Missing method: {method}"
 
 
-class TestBaseInstanceRegistryAddTags:
-    """Tests for add_tags functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryAddTags:
+    """Tests for add_tags functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -607,12 +607,12 @@ class _IdentifiableStub(Identifiable):
         return self._stored_identifier
 
 
-class IdentifierTestRegistry(BaseItemRegistry["_IdentifiableStub"]):
+class IdentifierTestRegistry(BaseInstanceRegistry["_IdentifiableStub"]):
     """Registry for testing dependency-related functionality with ComponentIdentifier trees."""
 
 
 class TestFindDependentsOfTag:
-    """Tests for BaseInstanceRegistry.find_dependents_of_tag."""
+    """Tests for RetrievableInstanceRegistry.find_dependents_of_tag."""
 
     def setup_method(self) -> None:
         IdentifierTestRegistry.reset_instance()

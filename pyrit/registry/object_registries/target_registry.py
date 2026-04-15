@@ -12,8 +12,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.registry.instance_registries.base_instance_registry import (
-    BaseInstanceRegistry,
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
 )
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TargetRegistry(BaseInstanceRegistry["PromptTarget"]):
+class TargetRegistry(RetrievableInstanceRegistry["PromptTarget"]):
     """
     Registry for managing available prompt target instances.
 

@@ -40,7 +40,7 @@ from pyrit.models import PromptDataType
 from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_target import PromptChatTarget
-from pyrit.registry.instance_registries import ConverterRegistry
+from pyrit.registry.object_registries import ConverterRegistry
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
     "image_path": ".png",

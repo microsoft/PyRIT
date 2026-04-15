@@ -13,7 +13,7 @@ import pytest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries import TargetRegistry
+from pyrit.registry.object_registries import TargetRegistry
 
 
 @pytest.fixture(autouse=True)
