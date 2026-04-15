@@ -60,6 +60,7 @@
   },
   "overrides": {
     "rollup": "4.59.0",
-    "@tootallnate/once": "3.0.1"
+    "@tootallnate/once": "3.0.1",
+    "follow-redirects": ">=1.15.11"
   }
 }
