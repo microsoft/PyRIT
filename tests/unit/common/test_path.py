@@ -53,12 +53,12 @@ def test_default_config_path():
     assert DEFAULT_CONFIG_PATH == CONFIGURATION_DIRECTORY_PATH / DEFAULT_CONFIG_FILENAME
 
 
-def test_db_data_path_exists():
-    assert DB_DATA_PATH.exists()
+def test_db_data_path_is_absolute():
+    assert DB_DATA_PATH.is_absolute()
 
 
-def test_log_path_exists():
-    assert LOG_PATH.exists()
+def test_log_path_is_absolute():
+    assert LOG_PATH.is_absolute()
 
 
 def test_paths_dict_contains_expected_keys():

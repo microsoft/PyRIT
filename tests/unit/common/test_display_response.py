@@ -49,7 +49,7 @@ async def test_display_image_no_action_for_text_type(_mock_central_memory):
 @pytest.mark.asyncio
 @patch("pyrit.common.display_response.is_in_ipython_session", return_value=True)
 @patch("pyrit.common.display_response.Image")
-@patch("builtins.display", create=True)
+@patch("pyrit.common.display_response.display", create=True)
 async def test_display_image_reads_and_displays(mock_display, mock_image, mock_ipython, _mock_central_memory):
     piece = MagicMock()
     piece.response_error = "none"

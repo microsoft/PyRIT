@@ -50,7 +50,7 @@ def test_from_yaml_file_uses_from_dict_if_available(yaml_file_for_from_dict: Pat
 
 def test_from_yaml_file_nonexistent_raises():
     with pytest.raises(FileNotFoundError):
-        _SimpleYaml.from_yaml_file("nonexistent_file.yaml")
+        _SimpleYaml.from_yaml_file(Path("nonexistent_file.yaml"))
 
 
 def test_from_yaml_file_invalid_yaml(tmp_path: Path):
