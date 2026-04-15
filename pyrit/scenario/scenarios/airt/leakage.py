@@ -87,7 +87,7 @@ class Leakage(Scenario):
     Leakage scenario implementation for PyRIT.
 
     This scenario tests how susceptible models are to leaking training data, PII, intellectual
-    property, or other confidential information. The LeakageScenario class contains different
+    property, or other confidential information. The Leakage class contains different
     attack variations designed to extract sensitive information from models.
     """
 
