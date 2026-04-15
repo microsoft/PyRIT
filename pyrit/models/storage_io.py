@@ -222,7 +222,7 @@ class AzureBlobStorageIO(StorageIO):
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         try:
-            if self._client_async is None:  # pragma: no cover
+            if self._client_async is None:
                 raise RuntimeError("Azure container client not initialized")
             await self._client_async.upload_blob(
                 name=file_name,
@@ -312,7 +312,7 @@ class AzureBlobStorageIO(StorageIO):
             file_content = await read_file("dir1/dir2/1726627689003831.png")
 
         """
-        if not self._client_async:  # pragma: no cover
+        if not self._client_async:
             self._client_async = await self._create_container_client_async()
 
         blob_name = self._resolve_blob_name(path)
@@ -342,7 +342,7 @@ class AzureBlobStorageIO(StorageIO):
             path (Union[Path, str]): Full blob URL or relative blob path.
             data (bytes): The data to write.
         """
-        if not self._client_async:  # pragma: no cover
+        if not self._client_async:
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
         try:
@@ -364,7 +364,7 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bool: True when the path exists.
         """
-        if not self._client_async:  # pragma: no cover
+        if not self._client_async:
             self._client_async = await self._create_container_client_async()
         try:
             blob_name = self._resolve_blob_name(path)
@@ -387,7 +387,7 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bool: True when the blob exists and has non-zero content size.
         """
-        if not self._client_async:  # pragma: no cover
+        if not self._client_async:
             self._client_async = await self._create_container_client_async()
         try:
             blob_name = self._resolve_blob_name(path)

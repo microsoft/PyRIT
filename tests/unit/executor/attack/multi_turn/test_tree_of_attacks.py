@@ -1790,3 +1790,17 @@ class TestTreeOfAttacksConversationTracking:
             )
             in context.related_conversations
         )
+
+
+def test_tap_init_raises_when_objective_scorer_is_none():
+    """Test that TAP __init__ raises ValueError when AttackScoringConfig has objective_scorer=None."""
+    scoring_config = AttackScoringConfig(objective_scorer=None)
+    with pytest.raises(ValueError, match="objective_scorer is required"):
+        TreeOfAttacksWithPruningAttack(
+            objective_target=MagicMock(spec=PromptChatTarget),
+            attack_adversarial_config=MagicMock(
+                target=MagicMock(spec=PromptChatTarget),
+                system_prompt_path=None,
+            ),
+            attack_scoring_config=scoring_config,
+        )

@@ -124,9 +124,9 @@ class AIRTInitializer(PyRITInitializer):
         scorer_model_name = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2")
 
         # Type assertions - safe because validate() already checked these
-        if converter_endpoint is None:  # pragma: no cover
+        if converter_endpoint is None:
             raise ValueError("converter_endpoint is not initialized")
-        if scorer_endpoint is None:  # pragma: no cover
+        if scorer_endpoint is None:
             raise ValueError("scorer_endpoint is not initialized")
         # model name can be empty in certain cases (e.g., custom model deployments that don't need model name)
 

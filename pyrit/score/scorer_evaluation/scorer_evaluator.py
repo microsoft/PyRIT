@@ -295,7 +295,7 @@ class ScorerEvaluator(abc.ABC):
         try:
             scorer_hash = self.scorer.get_identifier().eval_hash
 
-            if scorer_hash is None:  # pragma: no cover
+            if scorer_hash is None:
                 logger.debug("No eval_hash available for scorer, cannot check existing metrics")
                 return (False, None)
 
@@ -509,7 +509,7 @@ class ScorerEvaluator(abc.ABC):
         """
         try:
             eval_hash = self.scorer.get_identifier().eval_hash
-            if eval_hash is None:  # pragma: no cover
+            if eval_hash is None:
                 logger.warning("Cannot write metrics: no eval_hash available for scorer")
                 return
             replace_evaluation_results(

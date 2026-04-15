@@ -114,3 +114,22 @@ async def test_general_scorer_score_async_handles_custom_keys(patch_central_data
     assert score[0].score_value == "false"
     assert "This is the rationale." in score[0].score_rationale
     assert "This is the description." in score[0].score_value_description
+
+
+def test_true_false_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
+    """Test that TrueFalseScorer.get_scorer_metrics returns None when eval_hash is None."""
+    from unittest.mock import patch as _patch
+
+    from pyrit.score.true_false.self_ask_true_false_scorer import (
+        SelfAskTrueFalseScorer,
+    )
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
+    mock_identifier = MagicMock()
+    mock_identifier.eval_hash = None
+    with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
+        result = scorer.get_scorer_metrics()
+    assert result is None

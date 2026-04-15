@@ -95,7 +95,7 @@ class TrueFalseScorer(Scorer):
             return None
 
         eval_hash = self.get_identifier().eval_hash
-        if eval_hash is None:  # pragma: no cover
+        if eval_hash is None:
             return None
 
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=result_file)

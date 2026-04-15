@@ -559,3 +559,11 @@ class TestPromptNormalizerConverterContext:
         assert captured is not None
         assert captured.component_identifier is not None
         assert "ContextCapturingConverter" in str(captured.component_identifier)
+
+
+def test_memory_property_raises_when_memory_none():
+    """Guard at line 45: _memory is None raises RuntimeError."""
+    normalizer = PromptNormalizer.__new__(PromptNormalizer)
+    normalizer._memory = None
+    with pytest.raises(RuntimeError, match="Memory is not initialized"):
+        normalizer.memory

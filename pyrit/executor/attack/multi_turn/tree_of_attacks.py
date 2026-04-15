@@ -1354,7 +1354,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         else:
             # Convert AttackScoringConfig to TAPAttackScoringConfig
             objective_scorer = attack_scoring_config.objective_scorer
-            if objective_scorer is None:  # pragma: no cover
+            if objective_scorer is None:
                 raise ValueError("objective_scorer is required")
             if not isinstance(objective_scorer, FloatScaleThresholdScorer):
                 raise ValueError(

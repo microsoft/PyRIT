@@ -301,3 +301,11 @@ def test_resolve_blob_name_with_path_object(azure_blob_storage_io):
 
     result = azure_blob_storage_io._resolve_blob_name(PurePosixPath("dir1/dir2/file.txt"))
     assert result == "dir1/dir2/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_upload_blob_raises_when_client_async_none():
+    obj = AzureBlobStorageIO.__new__(AzureBlobStorageIO)
+    obj._client_async = None
+    with pytest.raises(RuntimeError, match="Azure container client not initialized"):
+        await obj._upload_blob_async(file_name="test.txt", data=b"data", content_type="text/plain")

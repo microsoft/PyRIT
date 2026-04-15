@@ -113,7 +113,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
         # Ensure the message piece has an ID
         piece_id = message.message_pieces[0].id
-        if piece_id is None:  # pragma: no cover
+        if piece_id is None:
             raise ValueError("Message piece must have an ID")
 
         return_score = Score(
