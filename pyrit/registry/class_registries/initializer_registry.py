@@ -66,16 +66,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
     The directory structure is used for organization but not exposed to users.
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> InitializerRegistry:
-        """
-        Get the singleton instance of the InitializerRegistry.
-
-        Returns:
-            The singleton InitializerRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def __init__(self, *, discovery_path: Optional[Path] = None, lazy_discovery: bool = False) -> None:
         """
         Initialize the initializer registry.

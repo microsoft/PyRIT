@@ -4,35 +4,38 @@
 """
 Base instance registry for PyRIT.
 
-This module provides the abstract base class for registries that store
-pre-configured instances (not classes). Unlike class registries which
-store Type[T] and create instances on demand, instance registries store
-already-instantiated objects.
+This module provides ``BaseInstanceRegistry``, the shared infrastructure for
+registries that store ``Identifiable`` objects (not classes): singleton
+lifecycle, registration, tags, metadata, container protocol.
 
-Examples include:
-- ScorerRegistry: stores Scorer instances configured with their chat_target
+Subclass directly for registries that store factories or other
+non-retrievable items (e.g., ``AttackTechniqueRegistry``).  For registries
+where callers retrieve stored objects directly, subclass
+``RetrievableInstanceRegistry`` instead.
+
+For registries that store classes (Type[T]), see ``class_registries/``.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.registry.base import RegistryProtocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Self
 
-T = TypeVar("T")  # The type of instances stored
-MetadataT = TypeVar("MetadataT", bound=ComponentIdentifier)
+T = TypeVar("T", bound=Identifiable)  # The type of items stored
 
 
 @dataclass
 class RegistryEntry(Generic[T]):
     """
-    A wrapper around a registered instance, holding its name, tags, and the instance itself.
+    A wrapper around a registered item, holding its name, tags, and the item itself.
 
     Tags are always stored as ``dict[str, str]``. When callers pass a plain
     ``list[str]``, each string is normalized to a key with an empty-string value.
@@ -48,27 +51,30 @@ class RegistryEntry(Generic[T]):
     tags: dict[str, str] = field(default_factory=dict)
 
 
-class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT]):
+class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
     """
-    Abstract base class for registries that store pre-configured instances.
+    Abstract base class providing shared registry infrastructure.
 
-    This class implements RegistryProtocol. Unlike BaseClassRegistry which stores
-    Type[T] and supports lazy discovery, instance registries store already-instantiated
-    objects that are registered explicitly (typically during initialization).
+    Provides singleton lifecycle, registration, tag-based lookup, metadata
+    filtering, and the standard container protocol (``__contains__``,
+    ``__len__``, ``__iter__``).
+
+    Subclass directly when stored items should not be retrievable via
+    ``get()`` (e.g., factory registries). For registries that expose
+    direct item retrieval, subclass ``RetrievableInstanceRegistry`` instead.
+
+    All stored items must implement ``Identifiable``, which provides
+    ``get_identifier()`` for metadata generation.
 
     Type Parameters:
-        T: The type of instances stored in the registry.
-        MetadataT: A TypedDict subclass for instance metadata.
-
-    Subclasses must implement:
-        - _build_metadata(): Convert an instance to its metadata representation
+        T: The type of items stored in the registry (must be Identifiable).
     """
 
     # Class-level singleton instances, keyed by registry class
-    _instances: dict[type, BaseInstanceRegistry[Any, Any]] = {}
+    _instances: dict[type, BaseInstanceRegistry[Any]] = {}
 
     @classmethod
-    def get_registry_singleton(cls) -> BaseInstanceRegistry[T, MetadataT]:
+    def get_registry_singleton(cls) -> Self:
         """
         Get the singleton instance of this registry.
 
@@ -79,7 +85,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()
-        return cls._instances[cls]
+        return cls._instances[cls]  # type: ignore[return-value]
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -92,7 +98,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
             del cls._instances[cls]
 
     @staticmethod
-    def _normalize_tags(tags: Optional[Union[dict[str, str], list[str]]] = None) -> dict[str, str]:
+    def _normalize_tags(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
         """
         Normalize tags into a ``dict[str, str]``.
 
@@ -110,57 +116,30 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         return dict(tags)
 
     def __init__(self) -> None:
-        """Initialize the instance registry."""
+        """Initialize the registry."""
         # Maps registry names to registry entries
         self._registry_items: dict[str, RegistryEntry[T]] = {}
-        self._metadata_cache: Optional[list[MetadataT]] = None
+        self._metadata_cache: list[ComponentIdentifier] | None = None
 
     def register(
         self,
         instance: T,
         *,
         name: str,
-        tags: Optional[Union[dict[str, str], list[str]]] = None,
+        tags: dict[str, str] | list[str] | None = None,
     ) -> None:
         """
-        Register an instance.
+        Register an item.
 
         Args:
-            instance: The pre-configured instance to register.
-            name: The registry name for this instance.
+            instance: The item to register.
+            name: The registry name for this item.
             tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
                 or a ``list[str]`` (each string becomes a key with value ``""``).
         """
         normalized = self._normalize_tags(tags)
         self._registry_items[name] = RegistryEntry(name=name, instance=instance, tags=normalized)
         self._metadata_cache = None
-
-    def get(self, name: str) -> Optional[T]:
-        """
-        Get a registered instance by name.
-
-        Args:
-            name: The registry name of the instance.
-
-        Returns:
-            The instance, or None if not found.
-        """
-        entry = self._registry_items.get(name)
-        if entry is None:
-            return None
-        return entry.instance
-
-    def get_entry(self, name: str) -> Optional[RegistryEntry[T]]:
-        """
-        Get a full registry entry by name, including tags.
-
-        Args:
-            name: The registry name of the entry.
-
-        Returns:
-            The RegistryEntry, or None if not found.
-        """
-        return self._registry_items.get(name)
 
     def get_names(self) -> list[str]:
         """
@@ -171,20 +150,11 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         return sorted(self._registry_items.keys())
 
-    def get_all_instances(self) -> list[RegistryEntry[T]]:
-        """
-        Get all registered entries sorted by name.
-
-        Returns:
-            List of RegistryEntry objects sorted by name.
-        """
-        return [self._registry_items[name] for name in sorted(self._registry_items.keys())]
-
     def get_by_tag(
         self,
         *,
         tag: str,
-        value: Optional[str] = None,
+        value: str | None = None,
     ) -> list[RegistryEntry[T]]:
         """
         Get all entries that have a given tag, optionally matching a specific value.
@@ -208,7 +178,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         self,
         *,
         name: str,
-        tags: Union[dict[str, str], list[str]],
+        tags: dict[str, str] | list[str],
     ) -> None:
         """
         Add tags to an existing registry entry.
@@ -275,11 +245,11 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
     def list_metadata(
         self,
         *,
-        include_filters: Optional[dict[str, object]] = None,
-        exclude_filters: Optional[dict[str, object]] = None,
-    ) -> list[MetadataT]:
+        include_filters: dict[str, object] | None = None,
+        exclude_filters: dict[str, object] | None = None,
+    ) -> list[ComponentIdentifier]:
         """
-        List metadata for all registered instances, optionally filtered.
+        List metadata for all registered items, optionally filtered.
 
         Supports filtering on any metadata property:
         - Simple types (str, int, bool): exact match
@@ -294,7 +264,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
                 Any matching filter excludes the item.
 
         Returns:
-            List of metadata dictionaries describing each registered instance.
+            List of ComponentIdentifier metadata for each registered item.
         """
         from pyrit.registry.base import _matches_filters
 
@@ -314,19 +284,18 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
             if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
         ]
 
-    @abstractmethod
-    def _build_metadata(self, name: str, instance: T) -> MetadataT:
+    def _build_metadata(self, name: str, instance: T) -> ComponentIdentifier:
         """
-        Build metadata for an instance.
+        Build metadata for an item via its ``Identifiable`` interface.
 
         Args:
-            name: The registry name of the instance.
-            instance: The instance.
+            name: The registry name of the item.
+            instance: The item.
 
         Returns:
-            A metadata dictionary describing the instance.
+            The item's ComponentIdentifier.
         """
-        ...
+        return instance.get_identifier()
 
     def __contains__(self, name: str) -> bool:
         """
@@ -339,10 +308,10 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
 
     def __len__(self) -> int:
         """
-        Get the count of registered instances.
+        Get the count of registered items.
 
         Returns:
-            The number of registered instances.
+            The number of registered items.
         """
         return len(self._registry_items)
 

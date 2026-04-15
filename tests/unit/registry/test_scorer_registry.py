@@ -5,7 +5,7 @@ from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.registry.instance_registries.scorer_registry import ScorerRegistry
+from pyrit.registry.object_registries.scorer_registry import ScorerRegistry
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -328,7 +328,7 @@ class TestScorerRegistryListMetadataFiltering:
 
 
 class TestScorerRegistryInheritedMethods:
-    """Tests for inherited methods from BaseInstanceRegistry."""
+    """Tests for inherited methods from RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry."""

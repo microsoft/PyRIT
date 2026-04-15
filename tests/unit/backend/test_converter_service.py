@@ -23,7 +23,7 @@ from pyrit.prompt_converter import (
     SuffixAppendConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
-from pyrit.registry.instance_registries import ConverterRegistry
+from pyrit.registry.object_registries import ConverterRegistry
 
 
 @pytest.fixture(autouse=True)

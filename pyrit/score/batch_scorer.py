@@ -105,6 +105,8 @@ class BatchScorer:
         if not message_pieces:
             raise ValueError("No entries match the provided filters. Please check your filters.")
 
+        message_pieces = self._remove_duplicates(message_pieces)
+
         # Group pieces by conversation
         conversations = group_message_pieces_into_conversations(message_pieces)
 
