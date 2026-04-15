@@ -117,14 +117,17 @@ async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, seed_group):
+async def test_send_prompt_async_no_response_raises_empty_response(mock_memory_instance, seed_group):
     prompt_target = AsyncMock()
     prompt_target.send_prompt_async = AsyncMock(return_value=None)
 
     normalizer = PromptNormalizer()
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
-    await normalizer.send_prompt_async(message=message, target=prompt_target)
+    with pytest.raises(EmptyResponseException):
+        await normalizer.send_prompt_async(message=message, target=prompt_target)
+
+    # Request should still be added to memory before the exception
     assert mock_memory_instance.add_message_to_memory.call_count == 1
 
     request = mock_memory_instance.add_message_to_memory.call_args[1]["request"]

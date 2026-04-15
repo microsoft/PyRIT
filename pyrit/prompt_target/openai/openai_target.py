@@ -63,6 +63,18 @@ class OpenAITarget(PromptTarget):
 
     _async_client: Optional[AsyncOpenAI] = None
 
+    @property
+    def _client(self) -> AsyncOpenAI:
+        """
+        Non-None accessor for the async client, used by subclasses.
+
+        Raises:
+            RuntimeError: If the AsyncOpenAI client is not initialized.
+        """
+        if self._async_client is None:
+            raise RuntimeError("AsyncOpenAI client is not initialized")
+        return self._async_client
+
     def __init__(
         self,
         *,
