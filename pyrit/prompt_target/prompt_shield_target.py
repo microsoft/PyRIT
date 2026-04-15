@@ -88,6 +88,9 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
             custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
                 ``custom_configuration`` instead. Will be removed in v0.14.0.
+
+        Raises:
+            ValueError: If the endpoint value is not provided.
         """
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint

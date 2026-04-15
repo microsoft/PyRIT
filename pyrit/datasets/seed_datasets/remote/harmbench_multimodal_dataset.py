@@ -221,6 +221,9 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         Returns:
             Local path to the saved image.
+
+        Raises:
+            RuntimeError: If the serializer memory is not properly configured.
         """
         filename = f"harmbench_{behavior_id}.png"
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
@@ -230,7 +233,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         results_storage_io = serializer._memory.results_storage_io
         if not results_path or results_storage_io is None:
             raise RuntimeError(
-                "[HarmBench-Multimodal] Serializer memory is not properly configured: results_path and results_storage_io must be set."
+                "[HarmBench-Multimodal] Serializer memory is not properly configured: "
+                "results_path and results_storage_io must be set."
             )
         serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:

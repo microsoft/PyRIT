@@ -93,6 +93,8 @@ class SeedAttackGroup(SeedGroup):
         Returns:
             The SeedObjective for this attack group.
 
+        Raises:
+            ValueError: If the attack group does not have an objective.
         """
         obj = self._get_objective()
         if obj is None:

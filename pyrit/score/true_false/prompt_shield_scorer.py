@@ -122,7 +122,9 @@ class PromptShieldScorer(TrueFalseScorer):
         user_prompt_attack: dict[str, bool] = response_json.get("userPromptAnalysis", False)
         documents_attack: list[dict[str, Any]] = response_json.get("documentsAnalysis", False)
 
-        user_detections: list[bool] = [False] if not user_prompt_attack else [bool(user_prompt_attack.get("attackDetected"))]
+        user_detections: list[bool] = (
+            [False] if not user_prompt_attack else [bool(user_prompt_attack.get("attackDetected"))]
+        )
 
         if not documents_attack:
             document_detections: list[bool] = [False]

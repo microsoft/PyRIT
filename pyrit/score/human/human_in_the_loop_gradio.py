@@ -101,6 +101,9 @@ class HumanInTheLoopScorerGradio(TrueFalseScorer):
 
         Returns:
             list[Score]: A list containing a single Score object from the human evaluator.
+
+        Raises:
+            ValueError: If no score is received from the RPC server.
         """
         self._rpc_server.wait_for_client()
         self._rpc_server.send_score_prompt(request_prompt)

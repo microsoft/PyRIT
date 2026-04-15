@@ -75,6 +75,7 @@ class RPCClient:
 
         Raises:
             RPCClientStoppedException: If the client has been stopped.
+            ValueError: If the semaphore or prompt is not initialized.
         """
         if self._prompt_received_sem is None:
             raise ValueError("Semaphore not initialized")
@@ -91,6 +92,9 @@ class RPCClient:
 
         Args:
             response (bool): True if the prompt is safe, False if unsafe.
+
+        Raises:
+            ValueError: If no prompt has been received or the RPC connection is not initialized.
         """
         if self._prompt_received is None:
             raise ValueError("No prompt received")
@@ -120,6 +124,9 @@ class RPCClient:
     def stop(self) -> None:
         """
         Stop the client.
+
+        Raises:
+            ValueError: If the shutdown event is not initialized.
         """
         # Send a signal to the thread to stop
         if self._shutdown_event is None:

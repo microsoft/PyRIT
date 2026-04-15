@@ -110,6 +110,9 @@ class AIRTInitializer(PyRITInitializer):
         2. Composite harm and objective scorers
         3. Adversarial target configurations
         4. Default values for all attack types
+
+        Raises:
+            ValueError: If required environment variables are not set.
         """
         # Ensure operator, operation, and email are populated from GLOBAL_MEMORY_LABELS.
         self._validate_operation_fields()

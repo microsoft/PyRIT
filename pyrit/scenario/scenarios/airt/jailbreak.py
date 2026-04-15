@@ -125,7 +125,7 @@ class Jailbreak(Scenario):
         scenario_result_id: Optional[str] = None,
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
-        jailbreak_names: Optional[list[str]] = None,
+        jailbreak_names: list[str] | None = None,
     ) -> None:
         """
         Initialize the jailbreak scenario.

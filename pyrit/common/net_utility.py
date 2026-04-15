@@ -32,7 +32,7 @@ def get_httpx_client(
     client_class = httpx.AsyncClient if use_async else httpx.Client
     proxy = "http://localhost:8080" if debug else None
 
-    proxy = cast("Optional[str]", httpx_client_kwargs.pop("proxy", proxy))
+    proxy = cast("str | None", httpx_client_kwargs.pop("proxy", proxy))
     verify_certs = cast("bool", httpx_client_kwargs.pop("verify", not debug))
     # fun notes; httpx default is 5 seconds, httpclient is 100, urllib in indefinite
     timeout = cast("float", httpx_client_kwargs.pop("timeout", 60.0))

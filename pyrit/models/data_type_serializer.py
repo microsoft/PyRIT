@@ -96,7 +96,7 @@ class DataTypeSerializer(abc.ABC):
     data_sub_directory: str
     file_extension: str
 
-    _file_path: Optional[Union[Path, str]] = None
+    _file_path: Union[Path, str] | None = None
 
     @property
     def _memory(self) -> MemoryInterface:
@@ -113,12 +113,15 @@ class DataTypeSerializer(abc.ABC):
 
         Raises:
             ValueError: If the Azure Storage URL is detected but the datasets storage handle is not set.
+            RuntimeError: If results_storage_io is not configured but Azure storage URL was detected.
 
         """
         if self._is_azure_storage_url(self.value):
             # Scenarios where a user utilizes an in-memory DuckDB but also needs to interact
             # with an Azure Storage Account, ex., XPIAWorkflow.
-            return self._memory.results_storage_io or DiskStorageIO()
+            if self._memory.results_storage_io is None:
+                raise RuntimeError("results_storage_io is not configured but Azure storage URL was detected")
+            return self._memory.results_storage_io
         return DiskStorageIO()
 
     @abc.abstractmethod
@@ -139,6 +142,8 @@ class DataTypeSerializer(abc.ABC):
             data: bytes: The data to be saved.
             output_filename (optional, str): filename to store data as. Defaults to UUID if not provided
 
+        Raises:
+            RuntimeError: If storage IO is not initialized.
         """
         file_path = await self.get_data_filename(file_name=output_filename)
         if self._memory.results_storage_io is None:
@@ -146,7 +151,7 @@ class DataTypeSerializer(abc.ABC):
         await self._memory.results_storage_io.write_file(file_path, data)
         self.value = str(file_path)
 
-    async def save_b64_image(self, data: str | bytes, output_filename: Optional[str] = None) -> None:
+    async def save_b64_image(self, data: str | bytes, output_filename: str | None = None) -> None:
         """
         Save a base64-encoded image to storage.
 
@@ -154,6 +159,8 @@ class DataTypeSerializer(abc.ABC):
             data: string or bytes with base64 data
             output_filename (optional, str): filename to store image as. Defaults to UUID if not provided
 
+        Raises:
+            RuntimeError: If storage IO is not initialized.
         """
         file_path = await self.get_data_filename(file_name=output_filename)
         image_bytes = base64.b64decode(data)
@@ -180,6 +187,8 @@ class DataTypeSerializer(abc.ABC):
             sample_width (optional, int): sample width in bytes. Defaults to 2
             sample_rate (optional, int): sample rate in Hz. Defaults to 16000
 
+        Raises:
+            RuntimeError: If storage IO is not initialized.
         """
         file_path = await self.get_data_filename(file_name=output_filename)
 
@@ -195,7 +204,7 @@ class DataTypeSerializer(abc.ABC):
             async with aiofiles.open(local_temp_path, "rb") as f:
                 audio_data = await f.read()
                 if self._memory.results_storage_io is None:
-                    raise ValueError("self._memory.results_storage_io is not initialized")
+                    raise RuntimeError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file(file_path, audio_data)
             os.remove(local_temp_path)
 
@@ -259,7 +268,7 @@ class DataTypeSerializer(abc.ABC):
             ValueError: If in-memory data cannot be converted to bytes.
 
         """
-        input_bytes: Optional[bytes] = None
+        input_bytes: bytes | None = None
 
         if self.data_on_disk():
             storage_io = self._get_storage_io()
@@ -307,6 +316,7 @@ class DataTypeSerializer(abc.ABC):
             results_path = str(self._memory.results_path)
         else:
             from pyrit.common.path import DB_DATA_PATH
+
             results_path = str(DB_DATA_PATH)
         file_name = file_name if file_name else str(ticks)
 
@@ -316,7 +326,7 @@ class DataTypeSerializer(abc.ABC):
         else:
             full_data_directory_path = results_path + self.data_sub_directory
             if self._memory.results_storage_io is None:
-                raise ValueError("self._memory.results_storage_io is not initialized")
+                raise RuntimeError("self._memory.results_storage_io is not initialized")
             await self._memory.results_storage_io.create_directory_if_not_exists(Path(full_data_directory_path))
             self._file_path = Path(full_data_directory_path, f"{file_name}.{self.file_extension}")
 

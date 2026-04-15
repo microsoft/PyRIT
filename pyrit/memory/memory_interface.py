@@ -70,10 +70,10 @@ class MemoryInterface(abc.ABC):
     such as files, databases, or cloud storage services.
     """
 
-    memory_embedding: Optional[MemoryEmbedding] = None
-    results_storage_io: Optional[StorageIO] = None
-    results_path: Optional[str] = None
-    engine: Optional[Engine] = None
+    memory_embedding: MemoryEmbedding | None = None
+    results_storage_io: StorageIO | None = None
+    results_path: str | None = None
+    engine: Engine | None = None
 
     @staticmethod
     def _uid() -> str:
@@ -1895,10 +1895,16 @@ class MemoryInterface(abc.ABC):
             raise
 
     def print_schema(self) -> None:
-        """Print the schema of all tables in the database."""
+        """
+        Print the schema of all tables in the database.
+
+        Raises:
+            RuntimeError: If the engine is not initialized.
+        """
         metadata = MetaData()
-        if self.engine:
-            metadata.reflect(bind=self.engine)
+        if self.engine is None:
+            raise RuntimeError("Engine is not initialized")
+        metadata.reflect(bind=self.engine)
 
         for table_name in metadata.tables:
             table = metadata.tables[table_name]

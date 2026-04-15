@@ -123,7 +123,9 @@ async def serve_media_async(
     """
     try:
         memory = CentralMemory.get_memory_instance()
-        allowed_root = os.path.realpath(memory.results_path or "")
+        if not memory.results_path:
+            raise HTTPException(status_code=500, detail="Memory results_path is not configured.")
+        allowed_root = os.path.realpath(memory.results_path)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Memory not initialized; cannot determine results path.") from exc
 

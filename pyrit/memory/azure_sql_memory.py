@@ -142,8 +142,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def _refresh_token_if_needed(self) -> None:
         """
         Refresh the access token if it is close to expiry (within 5 minutes).
+
+        Raises:
+            RuntimeError: If auth token expiry was not initialized.
         """
-        if self._auth_token_expiry is not None and datetime.now(timezone.utc) >= datetime.fromtimestamp(
+        if self._auth_token_expiry is None:
+            raise RuntimeError("Auth token expiry not initialized; call _create_auth_token() first")
+        if datetime.now(timezone.utc) >= datetime.fromtimestamp(
             float(self._auth_token_expiry), tz=timezone.utc
         ) - timedelta(minutes=5):
             logger.info("Refreshing Microsoft Entra ID access token...")
@@ -216,6 +221,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         Raises:
             Exception: If there's an issue creating the tables in the database.
+            RuntimeError: If the engine is not initialized.
         """
         try:
             # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
@@ -794,7 +800,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 raise
 
     def reset_database(self) -> None:
-        """Drop and recreate existing tables."""
+        """
+        Drop and recreate existing tables.
+
+        Raises:
+            RuntimeError: If the engine is not initialized.
+        """
         # Drop all existing tables
         if self.engine is None:
             raise RuntimeError("Engine is not initialized")

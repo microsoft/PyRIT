@@ -1015,6 +1015,9 @@ class FuzzerGenerator(
 
         Returns:
             List of normalizer requests.
+
+        Raises:
+            ValueError: If a seed group contains no message.
         """
         requests: list[NormalizerRequest] = []
 

@@ -268,7 +268,7 @@ class Scorer(Identifiable, abc.ABC):
         file_mapping: Optional[ScorerEvalDatasetFiles] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: Optional[RegistryUpdateBehavior] = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
     ) -> Optional[ScorerMetrics]:
         """

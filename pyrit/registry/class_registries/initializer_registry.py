@@ -86,6 +86,9 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 To discover only scenarios, pass pyrit/setup/initializers/scenarios.
             lazy_discovery: If True, discovery is deferred until first access.
                 Defaults to False for backwards compatibility.
+
+        Raises:
+            ValueError: If the discovery path could not be resolved.
         """
         self._discovery_path = discovery_path
         if self._discovery_path is None:

@@ -353,6 +353,9 @@ class CopilotAuthenticator(Authenticator):
 
         Returns:
             Optional[str]: The bearer token if successfully retrieved, None otherwise.
+
+        Raises:
+            ValueError: If the username is not set.
         """
         from playwright.async_api import async_playwright
 

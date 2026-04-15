@@ -18,6 +18,9 @@ async def display_image_response(response_piece: MessagePiece) -> None:
 
     Args:
         response_piece (MessagePiece): The response piece to display.
+
+    Raises:
+        RuntimeError: If storage IO is not initialized.
     """
     from pyrit.memory import CentralMemory
 

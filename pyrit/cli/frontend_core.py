@@ -56,7 +56,7 @@ except ImportError:
         """Dummy termcolor fallback for colored printing if termcolor is not installed."""
 
         @staticmethod
-        def cprint(text: str, color: Optional[str] = None, attrs: Optional[list[Any]] = None) -> None:
+        def cprint(text: str, color: str | None = None, attrs: list[Any] | None = None) -> None:
             """Print text without color."""
             print(text)
 
@@ -249,6 +249,7 @@ class FrontendCore:
 
         Raises:
             RuntimeError: If initialize_async() has not been called.
+            ValueError: If the scenario registry is not initialized.
         """
         if not self._initialized:
             raise RuntimeError(
@@ -265,6 +266,7 @@ class FrontendCore:
 
         Raises:
             RuntimeError: If initialize_async() has not been called.
+            ValueError: If the initializer registry is not initialized.
         """
         if not self._initialized:
             raise RuntimeError(

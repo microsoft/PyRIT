@@ -66,7 +66,7 @@ class OpenAITarget(PromptTarget):
     @property
     def _client(self) -> AsyncOpenAI:
         if self._async_client is None:
-            raise ValueError("AsyncOpenAI client is not initialized")
+            raise RuntimeError("AsyncOpenAI client is not initialized")
         return self._async_client
 
     def __init__(
@@ -425,6 +425,7 @@ class OpenAITarget(PromptTarget):
             APITimeoutError: For transient infrastructure errors.
             APIConnectionError: For transient infrastructure errors.
             AuthenticationError: For authentication failures.
+            ValueError: If there are no message pieces in the request.
         """
         try:
             # Execute the API call
@@ -461,9 +462,7 @@ class OpenAITarget(PromptTarget):
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
             if request_piece is None:
-                raise ValueError("No message pieces in request")
-            if request_piece is None:
-                raise ValueError("No message pieces in request")
+                raise ValueError("No message pieces in request") from e
             return self._handle_content_filter_response(_ErrorResponse(), request_piece)
         except BadRequestError as e:
             # Handle 400 errors - includes input policy filters and some Azure output-filter 400s
@@ -483,7 +482,7 @@ class OpenAITarget(PromptTarget):
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
             if request_piece is None:
-                raise ValueError("No message pieces in request")
+                raise ValueError("No message pieces in request") from e
             return handle_bad_request_exception(
                 response_text=str(payload),
                 request=request_piece,
@@ -597,7 +596,7 @@ class OpenAITarget(PromptTarget):
         raise NotImplementedError
 
     def _warn_url_with_api_path(
-        self, endpoint_url: str, api_path: str, provider_examples: Optional[dict[str, str]] = None
+        self, endpoint_url: str, api_path: str, provider_examples: dict[str, str] | None = None
     ) -> None:
         """
         Warn if URL includes API-specific path that should be handled by the SDK.

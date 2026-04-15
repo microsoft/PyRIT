@@ -205,7 +205,7 @@ class AppRPCServer:
 
         self._rpc_service.send_score_prompt(prompt, task)
 
-    def wait_for_score(self) -> Optional[Score]:
+    def wait_for_score(self) -> Score | None:
         """
         Wait for the client to send a score. Should always return a score, but if the synchronisation fails it will
         return None.

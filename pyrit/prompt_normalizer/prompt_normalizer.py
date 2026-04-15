@@ -32,12 +32,18 @@ class PromptNormalizer:
     Handles normalization and processing of prompts before they are sent to targets.
     """
 
-    _memory: Optional[MemoryInterface] = None
+    _memory: MemoryInterface | None = None
 
     @property
     def memory(self) -> MemoryInterface:
+        """
+        Get the memory instance.
+
+        Raises:
+            RuntimeError: If memory is not initialized.
+        """
         if self._memory is None:
-            raise ValueError("Memory is not initialized")
+            raise RuntimeError("Memory is not initialized")
         return self._memory
 
     def __init__(self, start_token: str = "⟪", end_token: str = "⟫") -> None:
@@ -80,6 +86,7 @@ class PromptNormalizer:
         Raises:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
+            EmptyResponseException: If the target returns no valid responses.
 
         Returns:
             Message: The response received from the target.
