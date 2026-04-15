@@ -254,8 +254,7 @@ class ConverterService:
         items: list[ConverterCatalogEntry] = []
         for converter_type, converter_class in sorted(_CONVERTER_CLASS_REGISTRY.items()):
             if (
-                converter_type
-                in ("PromptConverter", "ConverterResult", "HumanInTheLoopConverter", "SelectiveTextConverter")
+                converter_type in ("PromptConverter", "ConverterResult", "SelectiveTextConverter")
                 or "Strategy" in converter_type
             ):
                 continue

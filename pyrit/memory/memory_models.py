@@ -539,7 +539,6 @@ class SeedEntry(Base):
             are stored, this is used to order the prompts.
         role (str): The role of the prompt (e.g., user, system, assistant).
         seed_type (SeedType): The type of seed - "prompt", "objective", or "simulated_conversation".
-        is_objective (bool): Deprecated in 0.13.0. Use seed_type="objective" instead.
 
     Methods:
         __str__(): Returns a string representation of the memory entry.
@@ -566,7 +565,7 @@ class SeedEntry(Base):
     sequence: Mapped[Optional[int]] = mapped_column(INTEGER, nullable=True)
     role: Mapped[ChatMessageRole] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
-    # Deprecated in 0.13.0: Use seed_type instead
+    # Legacy column kept for backward compatibility with existing databases. Use seed_type instead.
     is_objective: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     def __init__(self, *, entry: Seed):

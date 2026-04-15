@@ -33,7 +33,7 @@ class _DeprecatedEnumMeta(EnumMeta):
     by setting ``__deprecated_members__`` on the class after definition.
     Each entry maps the old name to a ``(new_name, removed_in)`` tuple::
 
-        MyStrategy.__deprecated_members__ = {"OLD_NAME": ("NewName", "0.13.0")}
+        MyStrategy.__deprecated_members__ = {"OLD_NAME": ("NewName", "0.15.0")}
 
     Accessing ``MyStrategy.OLD_NAME`` will emit a DeprecationWarning and return
     the same enum member as ``MyStrategy.NewName``.

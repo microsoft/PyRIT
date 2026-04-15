@@ -113,6 +113,6 @@ async def apply_system_message_behavior(messages: list[Message], behavior: Syste
 
         return await GenericSystemSquashNormalizer().normalize_async(messages)
     if behavior == "ignore":
-        return [msg for msg in messages if msg.role != "system"]
+        return [msg for msg in messages if msg.api_role != "system"]
     # This should never happen due to Literal type, but handle it gracefully
     raise ValueError(f"Unknown system message behavior: {behavior}")
