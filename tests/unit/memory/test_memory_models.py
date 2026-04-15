@@ -39,6 +39,7 @@ from pyrit.models import (
 
 
 def _make_message_piece(**overrides) -> MessagePiece:
+    """Create a MessagePiece with sensible defaults; any keyword overrides a default field."""
     defaults = {
         "role": "user",
         "original_value": "hello",
@@ -59,6 +60,7 @@ def _make_message_piece(**overrides) -> MessagePiece:
 
 
 def _make_score(**overrides) -> Score:
+    """Create a Score with sensible defaults; any keyword overrides a default field."""
     defaults = {
         "score_value": "0.9",
         "score_value_description": "High",
@@ -75,6 +77,7 @@ def _make_score(**overrides) -> Score:
 
 
 def _make_seed_prompt(**overrides) -> SeedPrompt:
+    """Create a SeedPrompt with sensible defaults; any keyword overrides a default field."""
     defaults = {
         "value": "test seed value",
         "data_type": "text",
@@ -92,6 +95,7 @@ def _make_seed_prompt(**overrides) -> SeedPrompt:
 
 
 def _make_attack_result(**overrides) -> AttackResult:
+    """Create an AttackResult with sensible defaults; any keyword overrides a default field."""
     defaults = {
         "conversation_id": str(uuid.uuid4()),
         "objective": "test objective",
