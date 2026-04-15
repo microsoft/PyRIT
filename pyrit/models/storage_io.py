@@ -211,12 +211,15 @@ class AzureBlobStorageIO(StorageIO):
             data (bytes): Byte representation of content to upload to container.
             content_type (str): Content type to upload.
 
+        Raises:
+            RuntimeError: If the Azure container client is not initialized.
         """
         content_settings = ContentSettings(content_type=f"{content_type}")  # type: ignore[no-untyped-call, unused-ignore]
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         try:
-            assert self._client_async is not None
+            if self._client_async is None:
+                raise RuntimeError("Azure container client not initialized")
             await self._client_async.upload_blob(
                 name=file_name,
                 data=data,
@@ -299,8 +302,7 @@ class AzureBlobStorageIO(StorageIO):
             bytes: The content of the file (blob) as bytes.
 
         Raises:
-            Exception: If there is an error in reading the blob file, an exception will be logged
-                    and re-raised.
+            RuntimeError: If the Azure container client is not initialized.
 
         Example:
             file_content =
@@ -311,7 +313,8 @@ class AzureBlobStorageIO(StorageIO):
         """
         if not self._client_async:
             await self._create_container_client_async()
-        assert self._client_async is not None
+        if self._client_async is None:
+            raise RuntimeError("Azure container client not initialized")
 
         blob_name = self._resolve_blob_name(path)
 
@@ -340,10 +343,13 @@ class AzureBlobStorageIO(StorageIO):
             path (Union[Path, str]): Full blob URL or relative blob path.
             data (bytes): The data to write.
 
+        Raises:
+            RuntimeError: If the Azure container client is not initialized.
         """
         if not self._client_async:
             await self._create_container_client_async()
-        assert self._client_async is not None
+        if self._client_async is None:
+            raise RuntimeError("Azure container client not initialized")
         blob_name = self._resolve_blob_name(path)
         try:
             await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
@@ -364,10 +370,13 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bool: True when the path exists.
 
+        Raises:
+            RuntimeError: If the Azure container client is not initialized.
         """
         if not self._client_async:
             await self._create_container_client_async()
-        assert self._client_async is not None
+        if self._client_async is None:
+            raise RuntimeError("Azure container client not initialized")
         try:
             blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)
@@ -389,10 +398,13 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bool: True when the blob exists and has non-zero content size.
 
+        Raises:
+            RuntimeError: If the Azure container client is not initialized.
         """
         if not self._client_async:
             await self._create_container_client_async()
-        assert self._client_async is not None
+        if self._client_async is None:
+            raise RuntimeError("Azure container client not initialized")
         try:
             blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)

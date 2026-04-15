@@ -252,7 +252,8 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             Tuple of (AuthenticatedUser, claims) if valid, (None, {}) if validation fails.
         """
         try:
-            assert self._jwks_client is not None, "JWKS client not initialized"
+            if self._jwks_client is None:
+                raise RuntimeError("JWKS client not initialized")
             signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             claims = jwt.decode(
                 token,
