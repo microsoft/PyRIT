@@ -1024,7 +1024,7 @@ class FuzzerGenerator(
         for prompt in prompts:
             seed_group = SeedGroup(seeds=[SeedPrompt(value=prompt, data_type="text")])
             _msg = seed_group.next_message
-            if _msg is None:
+            if _msg is None:  # pragma: no cover
                 raise ValueError("No message in seed group")
             request = NormalizerRequest(
                 message=_msg,

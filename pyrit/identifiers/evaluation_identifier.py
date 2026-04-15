@@ -149,7 +149,7 @@ def compute_eval_hash(
         RuntimeError: If the identifier's hash is None and child_eval_rules is empty.
     """
     if not child_eval_rules:
-        if identifier.hash is None:
+        if identifier.hash is None:  # pragma: no cover
             raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
 

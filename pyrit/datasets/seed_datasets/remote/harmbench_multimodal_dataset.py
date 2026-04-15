@@ -231,7 +231,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         # Return existing path if image already exists for this BehaviorID
         results_path = serializer._memory.results_path
         results_storage_io = serializer._memory.results_storage_io
-        if not results_path or results_storage_io is None:
+        if not results_path or results_storage_io is None:  # pragma: no cover
             raise RuntimeError(
                 "[HarmBench-Multimodal] Serializer memory is not properly configured: "
                 "results_path and results_storage_io must be set."

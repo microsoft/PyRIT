@@ -52,17 +52,17 @@ class RPCClient:
         self._bgsrv_thread.start()
 
     def wait_for_prompt(self) -> MessagePiece:
-        if self._prompt_received_sem is None:
+        if self._prompt_received_sem is None:  # pragma: no cover
             raise ValueError("Semaphore not initialized")
         self._prompt_received_sem.acquire()
         if self._is_running:
-            if self._prompt_received is None:
+            if self._prompt_received is None:  # pragma: no cover
                 raise ValueError("No prompt received")
             return self._prompt_received
         raise RPCClientStoppedException
 
     def send_message(self, response: bool) -> None:
-        if self._prompt_received is None:
+        if self._prompt_received is None:  # pragma: no cover
             raise ValueError("No prompt received")
         score = Score(
             score_value=str(response),
@@ -77,7 +77,7 @@ class RPCClient:
                 class_module="pyrit.ui.rpc_client",
             ),
         )
-        if self._c is None:
+        if self._c is None:  # pragma: no cover
             raise ValueError("RPC connection not initialized")
         self._c.root.receive_score(score)
 
@@ -92,7 +92,7 @@ class RPCClient:
         Stop the client.
         """
         # Send a signal to the thread to stop
-        if self._shutdown_event is None:
+        if self._shutdown_event is None:  # pragma: no cover
             raise ValueError("Shutdown event not initialized")
         self._shutdown_event.set()
 
@@ -110,14 +110,14 @@ class RPCClient:
     def _receive_prompt(self, message_piece: MessagePiece, task: Optional[str] = None) -> None:
         print(f"Received prompt: {message_piece}")
         self._prompt_received = message_piece
-        if self._prompt_received_sem is None:
+        if self._prompt_received_sem is None:  # pragma: no cover
             raise ValueError("Semaphore not initialized")
         self._prompt_received_sem.release()
 
     def _ping(self) -> None:
         try:
             while self._is_running:
-                if self._c is None:
+                if self._c is None:  # pragma: no cover
                     raise ValueError("RPC connection not initialized")
                 self._c.root.receive_ping()
                 time.sleep(1.5)
@@ -136,22 +136,22 @@ class RPCClient:
         self._ping_thread.start()
 
         # Register callback
-        if self._c is None:
+        if self._c is None:  # pragma: no cover
             raise ValueError("RPC connection not initialized")
         self._c.root.callback_score_prompt(self._receive_prompt)
 
         # Wait for the server to be disconnected
-        if self._shutdown_event is None:
+        if self._shutdown_event is None:  # pragma: no cover
             raise ValueError("Shutdown event not initialized")
         self._shutdown_event.wait()
 
         self._is_running = False
 
         # Release the semaphore in case it was waiting
-        if self._prompt_received_sem is None:
+        if self._prompt_received_sem is None:  # pragma: no cover
             raise ValueError("Semaphore not initialized")
         self._prompt_received_sem.release()
-        if self._ping_thread is None:
+        if self._ping_thread is None:  # pragma: no cover
             raise ValueError("Ping thread not initialized")
         self._ping_thread.join()
 

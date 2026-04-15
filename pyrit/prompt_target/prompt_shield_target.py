@@ -95,7 +95,7 @@ class PromptShieldTarget(PromptTarget):
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
         )
-        if endpoint_value is None:
+        if endpoint_value is None:  # pragma: no cover
             raise ValueError("Endpoint value is required")
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
@@ -110,7 +110,7 @@ class PromptShieldTarget(PromptTarget):
         _api_key_value = default_values.get_required_value(
             env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
         )
-        if _api_key_value is None:
+        if _api_key_value is None:  # pragma: no cover
             raise ValueError("API key is required")
         self._api_key = _api_key_value
 

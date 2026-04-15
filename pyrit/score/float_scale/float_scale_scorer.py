@@ -59,7 +59,7 @@ class FloatScaleScorer(Scorer):
             return None
 
         eval_hash = self.get_identifier().eval_hash
-        if eval_hash is None:
+        if eval_hash is None:  # pragma: no cover
             return None
 
         return find_harm_metrics_by_eval_hash(

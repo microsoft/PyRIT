@@ -42,7 +42,7 @@ class PromptNormalizer:
         Raises:
             RuntimeError: If memory is not initialized.
         """
-        if self._memory is None:
+        if self._memory is None:  # pragma: no cover
             raise RuntimeError("Memory is not initialized")
         return self._memory
 

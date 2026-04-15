@@ -152,7 +152,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
             else:
                 # String API key
-                if not isinstance(self._api_key, str):
+                if not isinstance(self._api_key, str):  # pragma: no cover
                     raise RuntimeError("Expected string API key")
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._api_key))
         else:

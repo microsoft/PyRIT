@@ -146,7 +146,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             RuntimeError: If auth token expiry was not initialized.
         """
-        if self._auth_token_expiry is None:
+        if self._auth_token_expiry is None:  # pragma: no cover
             raise RuntimeError("Auth token expiry not initialized; call _create_auth_token() first")
         if datetime.now(timezone.utc) >= datetime.fromtimestamp(
             float(self._auth_token_expiry), tz=timezone.utc
@@ -206,7 +206,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             cargs[0] = cargs[0].replace(";Trusted_Connection=Yes", "")
 
             # encode the token
-            if self._auth_token is None:
+            if self._auth_token is None:  # pragma: no cover
                 raise RuntimeError("Azure auth token is not initialized")
             azure_token = self._auth_token.token
             azure_token_bytes = azure_token.encode("utf-16-le")
@@ -225,7 +225,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         try:
             # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
-            if self.engine is None:
+            if self.engine is None:  # pragma: no cover
                 raise RuntimeError("Engine is not initialized")
             Base.metadata.create_all(self.engine, checkfirst=True)
         except Exception as e:
@@ -807,7 +807,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             RuntimeError: If the engine is not initialized.
         """
         # Drop all existing tables
-        if self.engine is None:
+        if self.engine is None:  # pragma: no cover
             raise RuntimeError("Engine is not initialized")
 
         Base.metadata.drop_all(self.engine)

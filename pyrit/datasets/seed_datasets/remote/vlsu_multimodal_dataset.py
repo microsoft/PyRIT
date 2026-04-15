@@ -258,7 +258,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         # Return existing path if image already exists
         results_path = serializer._memory.results_path
         results_storage_io = serializer._memory.results_storage_io
-        if not results_path or results_storage_io is None:
+        if not results_path or results_storage_io is None:  # pragma: no cover
             raise RuntimeError("[ML-VLSU] Serializer memory is not properly configured.")
         serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:

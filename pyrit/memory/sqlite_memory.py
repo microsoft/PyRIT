@@ -138,7 +138,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         try:
             # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
-            if self.engine is None:
+            if self.engine is None:  # pragma: no cover
                 raise RuntimeError("Engine is not initialized")
             Base.metadata.create_all(self.engine, checkfirst=True)
         except Exception as e:
@@ -447,7 +447,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             RuntimeError: If the engine is not initialized.
         """
-        if self.engine is None:
+        if self.engine is None:  # pragma: no cover
             raise RuntimeError("Engine is not initialized")
 
         Base.metadata.drop_all(self.engine)

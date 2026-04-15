@@ -1902,7 +1902,7 @@ class MemoryInterface(abc.ABC):
             RuntimeError: If the engine is not initialized.
         """
         metadata = MetaData()
-        if self.engine is None:
+        if self.engine is None:  # pragma: no cover
             raise RuntimeError("Engine is not initialized")
         metadata.reflect(bind=self.engine)
 

@@ -627,7 +627,7 @@ class Scenario(ABC):
 
         # Type narrowing: _scenario_result_id is guaranteed to be non-None at this point
         # (verified in run_async before calling this method)
-        if self._scenario_result_id is None:
+        if self._scenario_result_id is None:  # pragma: no cover
             raise ValueError("self._scenario_result_id is not initialized")
         scenario_result_id: str = self._scenario_result_id
 

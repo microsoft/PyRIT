@@ -71,7 +71,7 @@ class OpenAITarget(PromptTarget):
         Raises:
             RuntimeError: If the AsyncOpenAI client is not initialized.
         """
-        if self._async_client is None:
+        if self._async_client is None:  # pragma: no cover
             raise RuntimeError("AsyncOpenAI client is not initialized")
         return self._async_client
 
@@ -439,7 +439,7 @@ class OpenAITarget(PromptTarget):
 
             # Extract MessagePiece for validation and construction (most targets use single piece)
             request_piece = request.message_pieces[0] if request.message_pieces else None
-            if request_piece is None:
+            if request_piece is None:  # pragma: no cover
                 raise ValueError("No message pieces in request")
 
             # Check for content filter via subclass implementation
@@ -467,7 +467,7 @@ class OpenAITarget(PromptTarget):
                     return error_str
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
-            if request_piece is None:
+            if request_piece is None:  # pragma: no cover
                 raise ValueError("No message pieces in request") from e
             return self._handle_content_filter_response(_ErrorResponse(), request_piece)
         except BadRequestError as e:
@@ -487,7 +487,7 @@ class OpenAITarget(PromptTarget):
             )
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
-            if request_piece is None:
+            if request_piece is None:  # pragma: no cover
                 raise ValueError("No message pieces in request") from e
             return handle_bad_request_exception(
                 response_text=str(payload),

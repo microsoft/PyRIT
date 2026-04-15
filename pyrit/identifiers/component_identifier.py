@@ -186,7 +186,7 @@ class ComponentIdentifier:
         Raises:
             RuntimeError: If the hash was not set by __post_init__.
         """
-        if self.hash is None:
+        if self.hash is None:  # pragma: no cover
             raise RuntimeError("hash should be set by __post_init__")
         return self.hash[:8]
 

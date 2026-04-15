@@ -97,7 +97,7 @@ class SeedAttackGroup(SeedGroup):
             ValueError: If the attack group does not have an objective.
         """
         obj = self._get_objective()
-        if obj is None:
+        if obj is None:  # pragma: no cover
             raise ValueError("SeedAttackGroup should always have an objective")
         return obj
 
