@@ -55,8 +55,8 @@ test.describe("Target Configuration Page", () => {
     // Table should appear with both targets
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("dall-e-3")).toBeVisible();
-    await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
-    await expect(page.getByText("OpenAIImageTarget")).toBeVisible();
+    await expect(page.locator("table").getByText("OpenAIChatTarget")).toBeVisible();
+    await expect(page.locator("table").getByText("OpenAIImageTarget")).toBeVisible();
   });
 
   test("should show empty state when no targets exist", async ({ page }) => {
@@ -94,7 +94,7 @@ test.describe("Target Configuration Page", () => {
     await setActiveBtns.first().click();
 
     // After clicking, the first target should show "Active" badge
-    await expect(page.getByText("Active", { exact: true })).toBeVisible();
+    await expect(page.locator("table").getByText("Active", { exact: true }).first()).toBeVisible();
   });
 
   test("should open create target dialog", async ({ page }) => {
@@ -177,7 +177,7 @@ test.describe("Create Target Dialog", () => {
     await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://my-endpoint.openai.azure.com/");
 
     // Fill model name
-    await dialog.getByPlaceholder("e.g. gpt-4o, dall-e-3").fill("gpt-4o-test");
+    await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("gpt-4o-test");
 
     // Click Create Target
     await dialog.getByRole("button", { name: "Create Target" }).click();

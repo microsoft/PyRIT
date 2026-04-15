@@ -101,6 +101,11 @@ from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import (
 from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import (  # noqa: F401
     _TransphobiaAwarenessDataset,
 )
+from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
+    VisualLeakBenchCategory,
+    VisualLeakBenchPIIType,
+    _VisualLeakBenchDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     _VLSUMultimodalDataset,
 )  # noqa: F401
@@ -144,5 +149,8 @@ __all__ = [
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
     "_VLSUMultimodalDataset",
+    "_VisualLeakBenchDataset",
+    "VisualLeakBenchCategory",
+    "VisualLeakBenchPIIType",
     "_XSTestDataset",
 ]

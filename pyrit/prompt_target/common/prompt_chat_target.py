@@ -8,6 +8,7 @@ from pyrit.models import MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 class PromptChatTarget(PromptTarget):
@@ -21,10 +22,12 @@ class PromptChatTarget(PromptTarget):
     Realtime chat targets or OpenAI completions are NOT PromptChatTargets. You don't send the conversation history.
     """
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        supports_system_prompt=True,
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+        )
     )
 
     def __init__(
@@ -34,6 +37,7 @@ class PromptChatTarget(PromptTarget):
         endpoint: str = "",
         model_name: str = "",
         underlying_model: Optional[str] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
@@ -46,14 +50,17 @@ class PromptChatTarget(PromptTarget):
             underlying_model (str, Optional): The underlying model name (e.g., "gpt-4o") for
                 identification purposes. This is useful when the deployment name in Azure differs
                 from the actual model. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
-                this target instance. If None, uses the class-level defaults. Defaults to None.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration
+                for this target instance. If None, uses the class-level defaults. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint,
             model_name=model_name,
             underlying_model=underlying_model,
+            custom_configuration=custom_configuration,
             custom_capabilities=custom_capabilities,
         )
 

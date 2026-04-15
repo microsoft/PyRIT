@@ -68,7 +68,7 @@ async def test_tts_validate_request_length(tts_target: OpenAITTSTarget):
     with pytest.raises(
         ValueError,
         match="This target only supports a single message piece.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await tts_target.send_prompt_async(message=request)
 
@@ -79,7 +79,7 @@ async def test_tts_validate_prompt_type(tts_target: OpenAITTSTarget):
     with pytest.raises(
         ValueError,
         match="This target supports only the following data types.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await tts_target.send_prompt_async(message=request)
 
@@ -103,7 +103,7 @@ async def test_tts_validate_previous_conversations(
         with pytest.raises(
             ValueError,
             match="This target only supports a single turn conversation.*If your target does support this, set the"
-            " custom_capabilities parameter accordingly",
+            " custom_configuration parameter accordingly",
         ):
             await tts_target.send_prompt_async(message=request)
 

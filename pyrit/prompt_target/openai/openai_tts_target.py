@@ -14,6 +14,7 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -27,8 +28,10 @@ TTSResponseFormat = Literal["flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", 
 class OpenAITTSTarget(OpenAITarget):
     """A prompt target for OpenAI Text-to-Speech (TTS) endpoints."""
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        output_modalities=frozenset({frozenset(["audio_path"])}),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            output_modalities=frozenset({frozenset(["audio_path"])}),
+        )
     )
 
     def __init__(
@@ -38,6 +41,7 @@ class OpenAITTSTarget(OpenAITarget):
         response_format: TTSResponseFormat = "mp3",
         language: str = "en",
         speed: Optional[float] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
@@ -60,13 +64,15 @@ class OpenAITTSTarget(OpenAITarget):
             response_format (str, Optional): The format of the audio response. Defaults to "mp3".
             language (str): The language for TTS. Defaults to "en".
             speed (float, Optional): The speed of the TTS. Select a value from 0.25 to 4.0. 1.0 is normal.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
 
         self._voice = voice
         self._response_format = response_format
@@ -77,7 +83,6 @@ class OpenAITTSTarget(OpenAITarget):
         self.model_name_environment_variable = "OPENAI_TTS_MODEL"
         self.endpoint_environment_variable = "OPENAI_TTS_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_TTS_KEY"
-        self.underlying_model_environment_variable = "OPENAI_TTS_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""

@@ -85,14 +85,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         self.unsafe_grades = unsafe_grades
         self.max_examples = max_examples
 
-        # Validate categories if provided
         if categories is not None:
-            valid_categories = {category.value for category in VLSUCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, VLSUCategory) else cat for cat in categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(f"Invalid VLSU categories: {', '.join(invalid_categories)}")
+            self._validate_enums(categories, VLSUCategory, "VLSU category")
 
     @property
     def dataset_name(self) -> str:
@@ -144,84 +138,20 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             if missing_keys:
                 raise ValueError(f"Missing keys in example: {', '.join(missing_keys)}")
 
-            text = example.get("prompt")
-            image_url = example.get("web_path")
-
-            # Get grades
-            text_grade = example.get("consensus_text_grade", "").lower()
-            image_grade = example.get("image_grade", "").lower()
-            combined_grade = example.get("consensus_combined_grade", "").lower()
-
-            # Get categories
-            text_category = example.get("text_category")
-            image_category = example.get("image_category")
-            combined_category = example.get("combined_category")
-
-            # Filter by categories if specified
-            if self.categories is not None:
-                category_values = {cat.value for cat in self.categories}
-                if combined_category not in category_values:
-                    continue
-
-            # Only create prompts if combined_grade is unsafe or borderline
-            if combined_grade not in self.unsafe_grades:
+            if not self._matches_filters(example):
                 continue
 
-            # Generate a shared group_id for the text+image pair
-            group_id = uuid.uuid4()
-
             try:
-                local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
-
-                # Create text prompt (sequence=0, sent first)
-                text_prompt = SeedPrompt(
-                    value=text,
-                    data_type="text",
-                    name="ML-VLSU Text",
-                    dataset_name=self.dataset_name,
-                    harm_categories=[combined_category],
-                    description="Text component of ML-VLSU multimodal prompt.",
-                    source=self.source,
-                    prompt_group_id=group_id,
-                    sequence=0,
-                    metadata={
-                        "category": combined_category,
-                        "text_grade": text_grade,
-                        "image_grade": image_grade,
-                        "combined_grade": combined_grade,
-                    },
-                )
-
-                # Create image prompt (sequence=1, sent second)
-                image_prompt = SeedPrompt(
-                    value=local_image_path,
-                    data_type="image_path",
-                    name="ML-VLSU Image",
-                    dataset_name=self.dataset_name,
-                    harm_categories=[combined_category],
-                    description="Image component of ML-VLSU multimodal prompt.",
-                    source=self.source,
-                    prompt_group_id=group_id,
-                    sequence=1,
-                    metadata={
-                        "category": combined_category,
-                        "text_grade": text_grade,
-                        "image_grade": image_grade,
-                        "combined_grade": combined_grade,
-                        "original_image_url": image_url,
-                    },
-                )
-
-                prompts.append(text_prompt)
-                prompts.append(image_prompt)
-
-                # Check if we've reached max_examples (each example = 2 prompts)
-                if self.max_examples is not None and len(prompts) >= self.max_examples * 2:
-                    break
-
+                pair = await self._build_prompt_pair_async(example)
             except Exception as e:
                 failed_image_count += 1
-                logger.warning(f"Failed to fetch image for combined prompt {group_id}: {e}")
+                logger.warning(f"[ML-VLSU] Failed to fetch image for example: {e}")
+                continue
+
+            prompts.extend(pair)
+
+            if self.max_examples is not None and len(prompts) >= self.max_examples * 2:
+                break
 
         if failed_image_count > 0:
             logger.warning(f"[ML-VLSU] Skipped {failed_image_count} image(s) due to fetch failures")
@@ -229,6 +159,84 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(prompts)} prompts from ML-VLSU dataset")
 
         return SeedDataset(seeds=prompts, dataset_name=self.dataset_name)
+
+    def _matches_filters(self, example: dict[str, str]) -> bool:
+        """
+        Check whether an example passes the configured category and grade filters.
+
+        Args:
+            example: A single example dictionary from the dataset.
+
+        Returns:
+            bool: True if the example should be included.
+        """
+        combined_category = example.get("combined_category")
+        combined_grade = example.get("consensus_combined_grade", "").lower()
+
+        if self.categories is not None:
+            category_values = {cat.value for cat in self.categories}
+            if combined_category not in category_values:
+                return False
+
+        return combined_grade in self.unsafe_grades
+
+    async def _build_prompt_pair_async(self, example: dict[str, str]) -> list[SeedPrompt]:
+        """
+        Build a text+image SeedPrompt pair for a single example.
+
+        Args:
+            example: A single example dictionary from the dataset.
+
+        Returns:
+            list[SeedPrompt]: A two-element list containing the text and image prompts.
+
+        Raises:
+            Exception: If the image cannot be fetched.
+        """
+        text = example.get("prompt")
+        image_url = example.get("web_path")
+        text_grade = example.get("consensus_text_grade", "").lower()
+        image_grade = example.get("image_grade", "").lower()
+        combined_grade = example.get("consensus_combined_grade", "").lower()
+        combined_category = example.get("combined_category")
+
+        group_id = uuid.uuid4()
+        local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
+
+        metadata: dict[str, str | int] = {
+            "category": combined_category,
+            "text_grade": text_grade,
+            "image_grade": image_grade,
+            "combined_grade": combined_grade,
+        }
+
+        text_prompt = SeedPrompt(
+            value=text,
+            data_type="text",
+            name="ML-VLSU Text",
+            dataset_name=self.dataset_name,
+            harm_categories=[combined_category],
+            description="Text component of ML-VLSU multimodal prompt.",
+            source=self.source,
+            prompt_group_id=group_id,
+            sequence=0,
+            metadata=metadata,
+        )
+
+        image_prompt = SeedPrompt(
+            value=local_image_path,
+            data_type="image_path",
+            name="ML-VLSU Image",
+            dataset_name=self.dataset_name,
+            harm_categories=[combined_category],
+            description="Image component of ML-VLSU multimodal prompt.",
+            source=self.source,
+            prompt_group_id=group_id,
+            sequence=1,
+            metadata={**metadata, "original_image_url": image_url},
+        )
+
+        return [text_prompt, image_prompt]
 
     async def _fetch_and_save_image_async(self, image_url: str, group_id: str) -> str:
         """

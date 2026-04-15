@@ -1287,3 +1287,19 @@ def test_build_identifier_includes_reasoning_params(patch_central_database):
     identifier = target._build_identifier()
     assert identifier.params["reasoning_effort"] == "low"
     assert identifier.params["reasoning_summary"] == "concise"
+
+
+def test_get_identifier_ignores_underlying_model_env_var_when_model_name_explicit(patch_central_database):
+    """Test that underlying_model env var is NOT used when model_name is explicitly passed."""
+    with patch.dict(os.environ, {"OPENAI_RESPONSES_UNDERLYING_MODEL": "gpt-4o"}):
+        target = OpenAIResponseTarget(
+            model_name="gpt-4.1",
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+        )
+
+        identifier = target.get_identifier()
+
+        # model_name was explicit, so underlying_model env var should be ignored
+        assert identifier.params["model_name"] == "gpt-4.1"
+        assert identifier.params["underlying_model_name"] == ""

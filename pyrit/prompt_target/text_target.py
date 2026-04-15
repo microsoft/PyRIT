@@ -10,6 +10,7 @@ from typing import IO, Optional
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 class TextTarget(PromptTarget):
@@ -25,6 +26,7 @@ class TextTarget(PromptTarget):
         self,
         *,
         text_stream: IO[str] = sys.stdout,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
@@ -32,10 +34,12 @@ class TextTarget(PromptTarget):
 
         Args:
             text_stream (IO[str]): The text stream to write prompts to. Defaults to sys.stdout.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
-        super().__init__(custom_capabilities=custom_capabilities)
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities)
         self._text_stream = text_stream
 
     async def send_prompt_async(self, *, message: Message) -> list[Message]:

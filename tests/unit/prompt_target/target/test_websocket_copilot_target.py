@@ -917,6 +917,6 @@ class TestSendPromptAsync:
         with pytest.raises(
             ValueError,
             match="This target supports only the following data types.*If your target does support this, set the"
-            " custom_capabilities parameter accordingly",
+            " custom_configuration parameter accordingly",
         ):
             await target.send_prompt_async(message=message)

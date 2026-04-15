@@ -20,6 +20,7 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
@@ -52,11 +53,13 @@ class OpenAIVideoTarget(OpenAITarget):
     SUPPORTED_RESOLUTIONS: list[VideoSize] = ["720x1280", "1280x720", "1024x1792", "1792x1024"]
     SUPPORTED_DURATIONS: list[VideoSeconds] = ["4", "8", "12"]
     SUPPORTED_IMAGE_FORMATS: list[str] = ["image/jpeg", "image/png", "image/webp"]
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=False,
-        supports_multi_message_pieces=True,
-        input_modalities=frozenset({frozenset(["text"]), frozenset(["text", "image_path"])}),
-        output_modalities=frozenset({frozenset(["video_path"])}),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=False,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset({frozenset(["text"]), frozenset(["text", "image_path"])}),
+            output_modalities=frozenset({frozenset(["video_path"])}),
+        )
     )
 
     def __init__(
@@ -64,6 +67,7 @@ class OpenAIVideoTarget(OpenAITarget):
         *,
         resolution_dimensions: VideoSize = "1280x720",
         n_seconds: int | VideoSeconds = 4,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
@@ -90,18 +94,20 @@ class OpenAIVideoTarget(OpenAITarget):
             n_seconds (int | VideoSeconds, Optional): The duration of the generated video.
                 Accepts an int (4, 8, 12) or a VideoSeconds string ("4", "8", "12").
                 Defaults to 4.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
 
-        Remix workflow:
+            Remix workflow:
             To remix an existing video, set ``prompt_metadata={"video_id": "<id>"}`` on the text
             MessagePiece. The video_id is returned in the response metadata after any successful
-            generation (``response.message_pieces[0].prompt_metadata["video_id"]``).
+            generation (``response.message_pieces[0].prompt_metadata["video_id"]"").
         """
-        super().__init__(custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
 
         self._n_seconds: VideoSeconds = (
             cast("VideoSeconds", str(n_seconds)) if isinstance(n_seconds, int) else n_seconds
@@ -114,7 +120,6 @@ class OpenAIVideoTarget(OpenAITarget):
         self.model_name_environment_variable = "OPENAI_VIDEO_MODEL"
         self.endpoint_environment_variable = "OPENAI_VIDEO_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_VIDEO_KEY"
-        self.underlying_model_environment_variable = "OPENAI_VIDEO_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
