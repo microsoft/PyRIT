@@ -29,7 +29,10 @@ class TargetInstance(BaseModel):
     target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     endpoint: Optional[str] = Field(None, description="Target endpoint URL")
-    model_name: Optional[str] = Field(None, description="Model or deployment name")
+    model_name: Optional[str] = Field(None, description="Model or deployment name used in API calls")
+    underlying_model_name: Optional[str] = Field(
+        None, description="Underlying model name if different (e.g., 'gpt-4o')"
+    )
     temperature: Optional[float] = Field(None, description="Temperature parameter for generation")
     top_p: Optional[float] = Field(None, description="Top-p parameter for generation")
     max_requests_per_minute: Optional[int] = Field(None, description="Maximum requests per minute")

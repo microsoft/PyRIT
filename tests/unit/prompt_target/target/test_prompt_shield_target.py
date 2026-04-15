@@ -64,7 +64,7 @@ async def test_prompt_shield_validate_request_length(promptshield_target: Prompt
     with pytest.raises(
         ValueError,
         match="This target only supports a single message piece.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await promptshield_target.send_prompt_async(message=request)
 

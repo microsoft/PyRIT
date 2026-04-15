@@ -153,7 +153,7 @@ class TestPlaywrightCopilotTarget:
         with pytest.raises(
             ValueError,
             match=r"This target supports only the following data types.*If your target does support this, set the"
-            r" custom_capabilities parameter accordingly",
+            r" custom_configuration parameter accordingly",
         ):
             target._validate_request(message=request)
 

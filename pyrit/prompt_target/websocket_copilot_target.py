@@ -23,6 +23,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import DataTypeSerializer, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -73,15 +74,17 @@ class WebSocketCopilotTarget(PromptTarget):
 
     RESPONSE_TIMEOUT_SECONDS: int = 60
     CONNECTION_TIMEOUT_SECONDS: int = 30
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        input_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["text", "image_path"]),
-            }
-        ),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        )
     )
 
     def __init__(
@@ -92,6 +95,7 @@ class WebSocketCopilotTarget(PromptTarget):
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
         authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
@@ -106,8 +110,10 @@ class WebSocketCopilotTarget(PromptTarget):
             authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -130,6 +136,7 @@ class WebSocketCopilotTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             endpoint=self._websocket_base_url,
             model_name=model_name,
+            custom_configuration=custom_configuration,
             custom_capabilities=custom_capabilities,
         )
 

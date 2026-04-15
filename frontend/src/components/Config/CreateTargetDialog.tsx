@@ -10,6 +10,8 @@ import {
   Input,
   Label,
   Select,
+  Switch,
+  Text,
   tokens,
   Field,
   MessageBar,
@@ -38,6 +40,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [modelName, setModelName] = useState('')
+  const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
+  const [underlyingModel, setUnderlyingModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -47,6 +51,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
     setTargetType('')
     setEndpoint('')
     setModelName('')
+    setHasDifferentUnderlying(false)
+    setUnderlyingModel('')
     setApiKey('')
     setError(null)
     setFieldErrors({})
@@ -75,6 +81,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
         endpoint,
       }
       if (modelName) params.model_name = modelName
+      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
       if (apiKey) params.api_key = apiKey
 
       await targetsApi.createTarget({
@@ -139,11 +146,35 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
 
               <Field label="Model / Deployment Name">
                 <Input
-                  placeholder="e.g. gpt-4o, dall-e-3"
+                  placeholder="e.g. gpt-4o, my-deployment"
                   value={modelName}
                   onChange={(_, data) => setModelName(data.value)}
                 />
               </Field>
+
+              <div>
+                <Switch
+                  checked={hasDifferentUnderlying}
+                  onChange={(_, data) => {
+                    setHasDifferentUnderlying(data.checked)
+                    if (!data.checked) setUnderlyingModel('')
+                  }}
+                  label="Underlying model differs from deployment name"
+                />
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: '2px' }}>
+                  On Azure, the deployment name (e.g. my-gpt4-deployment) may differ from the actual model (e.g. gpt-4o).
+                </Text>
+              </div>
+
+              {hasDifferentUnderlying && (
+                <Field label="Underlying Model">
+                  <Input
+                    placeholder="e.g. gpt-4o-2024-08-06"
+                    value={underlyingModel}
+                    onChange={(_, data) => setUnderlyingModel(data.value)}
+                  />
+                </Field>
+              )}
 
               <Field label="API Key">
                 <Input

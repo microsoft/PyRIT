@@ -26,6 +26,7 @@ from pyrit.models import (
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
@@ -65,11 +66,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
     """
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_json_output=True,
-        supports_multi_message_pieces=True,
-        supports_system_prompt=True,
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+        )
     )
 
     def __init__(
@@ -86,6 +89,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         is_json_supported: bool = True,
         audio_response_config: Optional[OpenAIChatAudioConfig] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
@@ -127,11 +131,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 setting the response_format header. Official OpenAI models all support this, but if you are using
                 this target with different models, is_json_supported should be set correctly to avoid issues when
                 using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
-                This value is now deprecated in favor of `custom_capabilities`.
+                This value is now deprecated in favor of `custom_configuration`.
             audio_response_config (OpenAIChatAudioConfig, Optional): Configuration for audio output from models
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
-            custom_capabilities (TargetCapabilities, Optional): Override the default target capabilities.
+            custom_configuration (TargetConfiguration, Optional): Override the default target configuration.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -146,18 +152,25 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        # Resolve capabilities:
-        # 1. Explicit custom_capabilities always wins.
-        # 2. If is_json_supported was explicitly set to False (deprecated), apply that override.
-        # 3. Otherwise, pass None so the parent can resolve via get_default_capabilities(underlying_model),
+        # Resolve configuration:
+        # 1. Resolve deprecated custom_capabilities into custom_configuration.
+        # 2. Explicit custom_configuration always wins.
+        # 3. If is_json_supported was explicitly set to False (deprecated), apply that override.
+        # 4. Otherwise, pass None so the parent can resolve via get_default_configuration(underlying_model),
         #    which checks _KNOWN_CAPABILITIES (e.g., gpt-4o gets image input support).
-        if custom_capabilities is not None:
-            effective_capabilities: TargetCapabilities | None = custom_capabilities
+        custom_configuration = resolve_configuration_compat(
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
+        if custom_configuration is not None:
+            effective_configuration: TargetConfiguration | None = custom_configuration
         elif not is_json_supported:
-            effective_capabilities = replace(type(self)._DEFAULT_CAPABILITIES, supports_json_output=False)
+            effective_configuration = TargetConfiguration(
+                capabilities=replace(type(self)._DEFAULT_CONFIGURATION.capabilities, supports_json_output=False)
+            )
         else:
-            effective_capabilities = None
-        super().__init__(custom_capabilities=effective_capabilities, **kwargs)
+            effective_configuration = None
+        super().__init__(custom_configuration=effective_configuration, custom_capabilities=None, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
@@ -211,7 +224,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         self.model_name_environment_variable = "OPENAI_CHAT_MODEL"
         self.endpoint_environment_variable = "OPENAI_CHAT_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_CHAT_KEY"
-        self.underlying_model_environment_variable = "OPENAI_CHAT_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""

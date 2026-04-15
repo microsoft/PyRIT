@@ -21,6 +21,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,12 @@ class HuggingFaceChatTarget(PromptChatTarget):
     Inherits from PromptTarget to comply with the current design standards.
     """
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_editable_history=True,
-        supports_system_prompt=True,
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_editable_history=True,
+            supports_system_prompt=True,
+        )
     )
 
     # Class-level cache for model and tokenizer
@@ -67,6 +70,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         torch_dtype: Optional[Any] = None,
         attn_implementation: Optional[str] = None,
         max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
@@ -88,8 +92,10 @@ class HuggingFaceChatTarget(PromptChatTarget):
             torch_dtype (Optional[torch.dtype]): Torch data type for model weights.
             attn_implementation (Optional[str]): Attention implementation type.
             max_requests_per_minute (Optional[int]): The maximum number of requests per minute. Defaults to None.
-            custom_capabilities (Optional[TargetCapabilities]): Override the default capabilities for this target
+            custom_configuration (Optional[TargetConfiguration]): Override the default configuration for this target
             instance. Defaults to None
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If neither or both of `model_id` and `model_path` are provided.
@@ -100,6 +106,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             model_name=model_name,
+            custom_configuration=custom_configuration,
             custom_capabilities=custom_capabilities,
         )
 

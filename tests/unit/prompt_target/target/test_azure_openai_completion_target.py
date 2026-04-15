@@ -56,7 +56,7 @@ async def test_azure_completion_validate_request_length(azure_completion_target:
     with pytest.raises(
         ValueError,
         match="This target only supports a single message piece.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await azure_completion_target.send_prompt_async(message=request)
 
@@ -67,7 +67,7 @@ async def test_azure_completion_validate_prompt_type(azure_completion_target: Op
     with pytest.raises(
         ValueError,
         match="This target supports only the following data types.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await azure_completion_target.send_prompt_async(message=request)
 
