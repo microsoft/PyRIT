@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
-from sqlalchemy import MetaData, and_, or_
+from sqlalchemy import MetaData, and_
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -1039,8 +1039,7 @@ class MemoryInterface(abc.ABC):
 
         # Handle seed_type filtering
         if seed_type == "objective":
-            # Match either seed_type="objective" OR legacy is_objective=True
-            conditions.append(or_(SeedEntry.seed_type == "objective", SeedEntry.is_objective == True))  # noqa: E712
+            conditions.append(SeedEntry.seed_type == "objective")
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
 

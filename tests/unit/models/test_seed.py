@@ -267,7 +267,7 @@ def test_prompt_dataset_from_yaml_defaults():
     prompts = SeedDataset.from_yaml_file(
         pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt" / "illegal.prompt"
     )
-    # Note: This file has is_objective: True at the top level, so all seeds are SeedObjective
+    # Note: This file uses seed_type: objective at the top level, so all seeds are SeedObjective
     assert len(prompts.seeds) == 5
     assert len([s for s in prompts.seeds if isinstance(s, SeedObjective)]) == 5
 
