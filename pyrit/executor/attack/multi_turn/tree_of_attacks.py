@@ -545,8 +545,6 @@ class _TreeOfAttacksNode:
             )
 
         # Store the last response text for reference
-        if response is None:
-            raise ValueError("Response was None")
         response_piece = response.get_piece()
         self.last_response = response_piece.converted_value
         logger.debug(f"Node {self.node_id}: Received response from target")
@@ -603,8 +601,6 @@ class _TreeOfAttacksNode:
             )
 
         # Store the last response text for reference
-        if response is None:
-            raise ValueError("Response was None")
         response_piece = response.get_piece()
         self.last_response = response_piece.converted_value
         logger.debug(f"Node {self.node_id}: Received response from target")
@@ -1115,8 +1111,6 @@ class _TreeOfAttacksNode:
                 attack_identifier=self._attack_id,
             )
 
-        if response is None:
-            raise ValueError("Response was None")
         return response.get_value()
 
     def _parse_red_teaming_response(self, red_teaming_response: str) -> str:
