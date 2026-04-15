@@ -91,12 +91,6 @@ def mock_float_threshold_scorer():
     return mock
 
 
-@pytest.fixture
-def sample_objectives():
-    """Create sample objectives for testing."""
-    return ["objective1", "objective2", "objective3"]
-
-
 @pytest.mark.usefixtures("patch_central_database")
 class TestFoundryInitialization:
     """Tests for RedTeamAgent initialization."""
@@ -157,24 +151,6 @@ class TestFoundryInitialization:
                 dataset_config=mock_dataset_config,
             )
             assert scenario.atomic_attack_count >= len(strategies)
-
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
-    def test_init_with_custom_objectives(self, mock_objective_target, mock_objective_scorer, sample_objectives):
-        """Test initialization with custom objectives."""
-        scenario = RedTeamAgent(
-            objectives=sample_objectives,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-        )
-
-        # objectives are stored but _seed_groups is resolved lazily
-        assert scenario._objectives == sample_objectives
 
     @patch.dict(
         "os.environ",
@@ -265,7 +241,7 @@ class TestFoundryInitialization:
             assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
             # seed_groups are resolved lazily during _get_atomic_attacks_async
-            assert scenario._objectives is None
+            assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
     @patch.dict(
         "os.environ",

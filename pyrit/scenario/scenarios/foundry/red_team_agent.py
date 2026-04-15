@@ -30,7 +30,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import SeedAttackGroup
 from pyrit.prompt_converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
@@ -243,7 +243,6 @@ class RedTeamAgent(Scenario):
         self,
         *,
         adversarial_chat: Optional[PromptChatTarget] = None,
-        objectives: Optional[list[str]] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
@@ -255,8 +254,6 @@ class RedTeamAgent(Scenario):
             adversarial_chat (Optional[PromptChatTarget]): Target for multi-turn attacks
                 like Crescendo and RedTeaming. Additionally used for scoring defaults.
                 If not provided, a default OpenAI target will be created using environment variables.
-            objectives (Optional[List[str]]): Deprecated. Use dataset_config in initialize_async instead.
-                List of attack objectives/prompts to test. Will be removed in a future release.
             attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
@@ -269,16 +266,6 @@ class RedTeamAgent(Scenario):
         Raises:
             ValueError: If attack_strategies is empty or contains unsupported strategies.
         """
-        # Handle deprecation warning for objectives parameter
-        if objectives is not None:
-            print_deprecation_message(
-                old_item="objectives parameter",
-                new_item="dataset_config in initialize_async",
-                removed_in="0.13.0",
-            )
-
-        self._objectives = objectives  # Store for backward compatibility
-
         self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
         if not attack_scoring_config:
             attack_scoring_config = AttackScoringConfig(objective_scorer=self._get_default_objective_scorer())
@@ -302,30 +289,11 @@ class RedTeamAgent(Scenario):
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Resolve seed groups from the configuration. This can be removed once objectives is removed.
-
-        Priority order:
-        1. objectives parameter (deprecated, for backward compatibility)
-        2. dataset_config (set by initialize_async, with scenario default if not provided)
+        Resolve seed groups from the dataset configuration.
 
         Returns:
             List[SeedGroup]: The resolved seed groups.
-
-        Raises:
-            ValueError: If both deprecated objectives and dataset_config are provided.
         """
-        # Check for conflict between deprecated parameter and new dataset_config
-        if self._objectives is not None and self._dataset_config_provided:
-            raise ValueError(
-                "Cannot use both deprecated 'objectives' parameter and 'dataset_config'. "
-                "Please use only 'dataset_config' in initialize_async()."
-            )
-
-        # Backward compatibility: convert objectives list to seed groups
-        if self._objectives is not None:
-            return [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._objectives]
-
-        # Use dataset_config (always set by initialize_async)
         return self._dataset_config.get_all_seed_attack_groups()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:

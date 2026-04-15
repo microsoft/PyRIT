@@ -22,7 +22,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackScoringConfig,
 )
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import SeedAttackGroup
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -134,7 +134,6 @@ class Scam(Scenario):
     def __init__(
         self,
         *,
-        objectives: Optional[list[str]] = None,
         objective_scorer: Optional[TrueFalseScorer] = None,
         adversarial_chat: Optional[PromptChatTarget] = None,
         include_baseline: bool = True,
@@ -144,7 +143,6 @@ class Scam(Scenario):
         Initialize the ScamScenario.
 
         Args:
-            objectives (Optional[List[str]]): List of objectives to test for scam-related harms.
             objective_scorer (Optional[TrueFalseScorer]): Custom scorer for objective
                 evaluation.
             adversarial_chat (Optional[PromptChatTarget]): Chat target used to rephrase the
@@ -155,12 +153,6 @@ class Scam(Scenario):
                 encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
         """
-        if objectives is not None:
-            logger.warning(
-                "objectives is deprecated and will be removed in 0.13.0. "
-                "Use dataset_config in initialize_async instead."
-            )
-
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
@@ -177,8 +169,6 @@ class Scam(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-        # Store deprecated objectives for later resolution in _resolve_seed_groups
-        self._deprecated_objectives = objectives
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
 
@@ -233,25 +223,11 @@ class Scam(Scenario):
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Resolve seed groups from deprecated objectives or dataset configuration.
+        Resolve seed groups from dataset configuration.
 
         Returns:
             List[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
-
-        Raises:
-            ValueError: If both 'objectives' parameter and 'dataset_config' are specified.
         """
-        # Check for conflict between deprecated objectives and dataset_config
-        if self._deprecated_objectives is not None and self._dataset_config_provided:
-            raise ValueError(
-                "Cannot specify both 'objectives' parameter and 'dataset_config'. "
-                "Please use only 'dataset_config' in initialize_async."
-            )
-
-        # Use deprecated objectives if provided
-        if self._deprecated_objectives is not None:
-            return [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
-
         # Use dataset_config (guaranteed to be set by initialize_async)
         seed_groups = self._dataset_config.get_all_seed_attack_groups()
 
