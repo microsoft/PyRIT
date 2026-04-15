@@ -79,6 +79,9 @@ class SeedDataset(YamlLoadable):
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
 
+        if yaml_data is None:
+            raise ValueError(f"YAML file '{file}' is empty.")
+
         yaml_data["is_jinja_template"] = True
         if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
             return cls.from_dict(yaml_data)
