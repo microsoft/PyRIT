@@ -795,26 +795,6 @@ def test_seed_group_dict_with_seed_type_objective():
     assert len(group.prompts) == 0
 
 
-def test_seed_group_dict_with_is_objective_true_backward_compat():
-    """Test backward compatibility: is_objective=True still works (deprecated)."""
-    import warnings
-
-    prompt_dict = {
-        "value": "Test objective from dict",
-        "is_objective": True,
-    }
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        group = SeedGroup(seeds=[prompt_dict])
-        # Verify deprecation warning was raised
-        assert any("is_objective" in str(warning.message) for warning in w)
-
-    # Should still work
-    assert group.objective is not None
-    assert group.objective.value == "Test objective from dict"
-
-
 def test_seed_group_dict_with_seed_type_prompt():
     """Test that a dictionary with seed_type='prompt' creates a prompt."""
     prompt_dict = {"value": "Test prompt from dict", "seed_type": "prompt", "sequence": 1}

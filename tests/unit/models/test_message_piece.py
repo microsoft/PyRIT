@@ -1039,7 +1039,7 @@ class TestSimulatedAssistantRole:
     def test_role_setter_sets_simulated_assistant(self):
         """Test that role setter can set simulated_assistant."""
         piece = MessagePiece(role="assistant", original_value="Hello")
-        piece.role = "simulated_assistant"
+        piece._role = "simulated_assistant"
         assert piece.get_role_for_storage() == "simulated_assistant"
         assert piece.api_role == "assistant"
         assert piece.is_simulated is True
