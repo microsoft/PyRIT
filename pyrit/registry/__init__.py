@@ -21,8 +21,8 @@ from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
     BaseInstanceRegistry,
     ConverterRegistry,
-    RetrievableInstanceRegistry,
     RegistryEntry,
+    RetrievableInstanceRegistry,
     ScorerRegistry,
     TargetRegistry,
 )
