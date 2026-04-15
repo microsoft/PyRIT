@@ -41,7 +41,7 @@ messages = [system_message, user_message, assistant_message, followup_message]
 
 print("Sample messages created:")
 for msg in messages:
-    print(f"  {msg.role}: {msg.get_piece().converted_value[:50]}...")
+    print(f"  {msg.api_role}: {msg.get_piece().converted_value[:50]}...")
 
 # %% [markdown]
 # ## ChatMessageNormalizer
