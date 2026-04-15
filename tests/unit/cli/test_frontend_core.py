@@ -710,8 +710,8 @@ class TestParseRunArguments:
         assert result["max_retries"] == 3
 
     def test_parse_run_arguments_with_memory_labels(self):
-        """Test parsing with memory-labels."""
-        result = frontend_core.parse_run_arguments(args_string='test_scenario --memory-labels {"key":"value"}')
+        """Test parsing with memory-labels (JSON must be quoted in shell mode)."""
+        result = frontend_core.parse_run_arguments(args_string="""test_scenario --memory-labels '{"key":"value"}'""")
 
         assert result["memory_labels"] == {"key": "value"}
 
@@ -728,6 +728,35 @@ class TestParseRunArguments:
         )
 
         assert result["initialization_scripts"] == ["script1.py", "script2.py"]
+
+    def test_parse_run_arguments_with_quoted_paths(self):
+        """Test parsing quoted paths with spaces for shell mode."""
+        result = frontend_core.parse_run_arguments(
+            args_string='test_scenario --initialization-scripts "/tmp/my script.py" --strategies s1'
+        )
+
+        assert result["initialization_scripts"] == ["/tmp/my script.py"]
+        assert result["scenario_strategies"] == ["s1"]
+
+    def test_parse_run_arguments_with_quoted_memory_labels(self):
+        """Test parsing quoted JSON for memory-labels in shell mode."""
+        result = frontend_core.parse_run_arguments(
+            args_string="""test_scenario --memory-labels '{"experiment": "test 1"}'"""
+        )
+
+        assert result["memory_labels"] == {"experiment": "test 1"}
+
+    def test_parse_run_arguments_with_short_strategies_after_initializers(self):
+        """Test that -s is treated as a flag after multi-value initializers."""
+        result = frontend_core.parse_run_arguments(args_string="test_scenario --initializers init1 -s s1 s2")
+
+        assert result["initializers"] == ["init1"]
+        assert result["scenario_strategies"] == ["s1", "s2"]
+
+    def test_parse_run_arguments_unterminated_quote_raises(self):
+        """Test that unterminated quotes raise ValueError."""
+        with pytest.raises(ValueError):
+            frontend_core.parse_run_arguments(args_string='test_scenario --initialization-scripts "/tmp/my script.py')
 
     def test_parse_run_arguments_complex(self):
         """Test parsing complex argument combination."""
