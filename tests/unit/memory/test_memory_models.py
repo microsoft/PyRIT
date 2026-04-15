@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.memory_models import (
@@ -123,7 +124,8 @@ def test_ensure_utc_naive_datetime_gets_utc():
 def test_ensure_utc_aware_datetime_unchanged():
     aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     result = _ensure_utc(aware)
-    assert result is aware
+    assert result == aware
+    assert result.tzinfo == timezone.utc
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +140,7 @@ def test_conversation_message_with_similarity_defaults():
 
 
 def test_conversation_message_with_similarity_forbids_extra():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ConversationMessageWithSimilarity(role="user", content="hi", metric="cosine", unknown_field="x")
 
 
@@ -155,7 +157,7 @@ def test_embedding_message_with_similarity_defaults():
 
 
 def test_embedding_message_with_similarity_forbids_extra():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         EmbeddingMessageWithSimilarity(uuid=uuid.uuid4(), metric="cosine", bad="x")
 
 
@@ -431,6 +433,16 @@ class TestScenarioResultEntry:
         conv_ids = entry.get_conversation_ids_by_attack_name()
         assert "attack1" in conv_ids
         assert len(conv_ids["attack1"]) == 1
+
+    def test_get_conversation_ids_by_attack_name_multiple_attacks(self):
+        result_a = _make_attack_result()
+        result_b = _make_attack_result()
+        result_c = _make_attack_result()
+        sr = self._make_scenario_result(attack_results={"attack1": [result_a, result_b], "attack2": [result_c]})
+        entry = ScenarioResultEntry(entry=sr)
+        conv_ids = entry.get_conversation_ids_by_attack_name()
+        assert len(conv_ids["attack1"]) == 2
+        assert len(conv_ids["attack2"]) == 1
 
     def test_str(self):
         sr = self._make_scenario_result()
