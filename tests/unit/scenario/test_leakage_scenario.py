@@ -230,7 +230,7 @@ class TestLeakageAttackGeneration:
             atomic_attacks = await scenario._get_atomic_attacks_async()
 
             assert len(atomic_attacks) > 0
-            assert all(hasattr(run, "_attack") for run in atomic_attacks)
+            assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_first_letter(
@@ -254,7 +254,7 @@ class TestLeakageAttackGeneration:
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
         for run in atomic_attacks:
-            assert isinstance(run._attack, PromptSendingAttack)
+            assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_crescendo(
@@ -274,7 +274,7 @@ class TestLeakageAttackGeneration:
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
         for run in atomic_attacks:
-            assert isinstance(run._attack, CrescendoAttack)
+            assert isinstance(run.attack_technique.attack, CrescendoAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_image(
@@ -293,7 +293,7 @@ class TestLeakageAttackGeneration:
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
         for run in atomic_attacks:
-            assert isinstance(run._attack, PromptSendingAttack)
+            assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_role_play(
@@ -312,7 +312,7 @@ class TestLeakageAttackGeneration:
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
         for run in atomic_attacks:
-            assert isinstance(run._attack, RolePlayAttack)
+            assert isinstance(run.attack_technique.attack, RolePlayAttack)
 
     @pytest.mark.asyncio
     async def test_attack_runs_include_objectives(
@@ -346,7 +346,7 @@ class TestLeakageAttackGeneration:
         await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
         atomic_attacks = await scenario._get_atomic_attacks_async()
         assert len(atomic_attacks) > 0
-        assert all(hasattr(run, "_attack") for run in atomic_attacks)
+        assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_unknown_strategy_raises_value_error(
@@ -604,7 +604,7 @@ class TestLeakageImageStrategy:
 
         # Verify the attack uses AddImageTextConverter
         for attack in atomic_attacks:
-            converters = attack._attack._request_converters
+            converters = attack.attack_technique.attack._request_converters
             assert len(converters) > 0
             # Check that the first converter is AddImageTextConverter
             first_converter = converters[0].converters[0]

@@ -23,6 +23,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -68,23 +69,25 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
     and https://platform.openai.com/docs/guides/realtime-websocket
     """
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        supports_system_prompt=True,
-        input_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["text", "audio_path"]),
-            }
-        ),
-        output_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["audio_path"]),
-                frozenset(["text", "audio_path"]),
-            }
-        ),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "audio_path"]),
+                }
+            ),
+            output_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["audio_path"]),
+                    frozenset(["text", "audio_path"]),
+                }
+            ),
+        )
     )
 
     def __init__(
@@ -92,6 +95,7 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         *,
         voice: Optional[RealTimeVoice] = None,
         existing_convo: Optional[dict[str, Any]] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
@@ -114,13 +118,15 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
             voice (literal str, Optional): The voice to use. Defaults to None.
                 the only supported voices by the AzureOpenAI Realtime API are "alloy", "echo", and "shimmer".
             existing_convo (dict[str, websockets.WebSocketClientProtocol], Optional): Existing conversations.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
@@ -130,7 +136,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"
         self.endpoint_environment_variable = "OPENAI_REALTIME_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_REALTIME_API_KEY"
-        self.underlying_model_environment_variable = "OPENAI_REALTIME_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""

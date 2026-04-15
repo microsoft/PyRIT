@@ -18,6 +18,7 @@ import dataclasses
 import inspect
 import json
 import logging
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -533,7 +534,7 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
     Raises:
         ValueError: If parsing or validation fails.
     """
-    parts = args_string.split()
+    parts = shlex.split(args_string)
 
     if not parts:
         raise ValueError("No scenario name provided")
@@ -558,7 +559,7 @@ def parse_list_targets_arguments(*, args_string: str) -> dict[str, Any]:
     Raises:
         ValueError: If parsing or validation fails.
     """
-    parts = args_string.split()
+    parts = shlex.split(args_string)
     return _parse_shell_arguments(parts=parts, arg_specs=_LIST_TARGETS_ARG_SPECS)
 
 

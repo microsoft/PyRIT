@@ -34,6 +34,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -361,7 +362,9 @@ class Encoding(Scenario):
             )
             atomic_attacks.append(
                 AtomicAttack(
-                    atomic_attack_name=encoding_name, attack=attack, seed_groups=self._resolved_seed_groups or []
+                    atomic_attack_name=encoding_name,
+                    attack_technique=AttackTechnique(attack=attack),
+                    seed_groups=self._resolved_seed_groups or [],
                 )
             )
 

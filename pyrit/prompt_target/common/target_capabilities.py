@@ -110,7 +110,7 @@ class TargetCapabilities:
     Describes the capabilities of a PromptTarget so that attacks
     and other components can adapt their behavior accordingly.
 
-    Each target class defines default capabilities via the _DEFAULT_CAPABILITIES
+    Each target class defines default capabilities via the _DEFAULT_CONFIGURATION
     class attribute. Users can override individual capabilities per instance
     through constructor parameters, which is useful for targets whose
     capabilities depend on deployment configuration (e.g., Playwright, HTTP).

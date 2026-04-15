@@ -132,3 +132,15 @@ async def test_fetch_dataset_missing_keys_raises():
 def test_dataset_name():
     loader = _HarmBenchMultimodalDataset()
     assert loader.dataset_name == "harmbench_multimodal"
+
+
+def test_init_with_invalid_categories_raises():
+    """Test that invalid categories raise ValueError."""
+    with pytest.raises(ValueError, match="Expected SemanticCategory"):
+        _HarmBenchMultimodalDataset(categories=["not_a_category"])
+
+
+def test_init_rejects_raw_string_matching_enum_value_for_categories():
+    """Test that raw strings matching enum values are rejected."""
+    with pytest.raises(ValueError, match="Expected SemanticCategory"):
+        _HarmBenchMultimodalDataset(categories=["illegal"])

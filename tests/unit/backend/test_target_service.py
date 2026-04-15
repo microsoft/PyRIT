@@ -5,7 +5,8 @@
 Tests for backend target service.
 """
 
-from unittest.mock import MagicMock
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -276,6 +277,47 @@ class TestCreateTarget:
         # Object should be retrievable from registry
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj is not None
+
+    @pytest.mark.asyncio
+    async def test_create_target_model_name_not_overridden_by_env_var(self, sqlite_instance) -> None:
+        """Test that explicit model_name is not overridden by underlying_model env var."""
+        with patch.dict(os.environ, {"OPENAI_CHAT_UNDERLYING_MODEL": "gpt-4o"}):
+            service = TargetService()
+
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params={
+                    "model_name": "claude-sonnet-4-6",
+                    "endpoint": "https://test.openai.azure.com/",
+                    "api_key": "test-key",
+                },
+            )
+
+            result = await service.create_target_async(request=request)
+
+            assert result.model_name == "claude-sonnet-4-6"
+            # underlying_model_name should be None since no underlying_model was passed
+            assert result.underlying_model_name is None
+
+    @pytest.mark.asyncio
+    async def test_create_target_with_different_underlying_model(self, sqlite_instance) -> None:
+        """Test that explicit underlying_model is used when it differs from model_name."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={
+                "model_name": "my-gpt4o-deployment",
+                "endpoint": "https://test.openai.azure.com/",
+                "api_key": "test-key",
+                "underlying_model": "gpt-4o",
+            },
+        )
+
+        result = await service.create_target_async(request=request)
+
+        assert result.model_name == "my-gpt4o-deployment"
+        assert result.underlying_model_name == "gpt-4o"
 
 
 class TestTargetServiceSingleton:

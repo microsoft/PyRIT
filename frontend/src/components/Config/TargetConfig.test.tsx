@@ -97,8 +97,8 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
-      expect(screen.getByText("OpenAIImageTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("OpenAIImageTarget").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -159,7 +159,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
     const setActiveButtons = screen.getAllByText("Set Active");
@@ -184,7 +184,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Active")).toBeInTheDocument();
+      expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -201,7 +201,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
@@ -254,7 +254,7 @@ describe("TargetConfig", () => {
     await userEvent.click(screen.getByTestId("dialog-create"));
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -271,7 +271,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("gpt-4")).toBeInTheDocument();
       expect(
         screen.getAllByText("https://api.openai.com").length
