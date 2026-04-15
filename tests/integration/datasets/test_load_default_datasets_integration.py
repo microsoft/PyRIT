@@ -22,7 +22,7 @@ class TestLoadDefaultDatasetsIntegration:
     """Integration test that LoadDefaultDatasets loads real datasets into memory."""
 
     @pytest.mark.asyncio
-    async def test_initialize_loads_datasets_into_memory(self):
+    async def test_initialize_loads_datasets_into_memory(self, sqlite_instance):
         """
         Verify that LoadDefaultDatasets.initialize_async() successfully fetches
         real datasets and stores them in CentralMemory.

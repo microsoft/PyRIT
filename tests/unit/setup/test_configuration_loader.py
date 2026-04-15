@@ -190,6 +190,14 @@ silent: true
         finally:
             pathlib.Path(yaml_path).unlink()
 
+    def test_from_empty_yaml_file_raises_value_error(self, tmp_path):
+        """Test that an empty YAML file raises a clear ValueError."""
+        yaml_path = tmp_path / "empty.yaml"
+        yaml_path.write_text("", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="is empty"):
+            ConfigurationLoader.from_yaml_file(yaml_path)
+
     def test_get_default_config_path(self):
         """Test get_default_config_path returns expected path."""
         default_path = ConfigurationLoader.get_default_config_path()

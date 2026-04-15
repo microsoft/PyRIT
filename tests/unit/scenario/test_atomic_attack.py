@@ -21,6 +21,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.scenario import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 
 
 @pytest.fixture
@@ -111,12 +112,12 @@ class TestAtomicAttackInitialization:
     def test_init_with_valid_params(self, mock_attack, sample_seed_groups):
         """Test successful initialization with valid parameters."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
 
-        assert atomic_attack._attack == mock_attack
+        assert atomic_attack._attack_technique.attack == mock_attack
         assert atomic_attack._seed_groups == sample_seed_groups
         assert atomic_attack._memory_labels == {}
         assert atomic_attack._attack_execute_params == {}
@@ -126,7 +127,7 @@ class TestAtomicAttackInitialization:
         memory_labels = {"test": "label", "category": "attack"}
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             memory_labels=memory_labels,
             atomic_attack_name="Test Attack Run",
@@ -137,7 +138,7 @@ class TestAtomicAttackInitialization:
     def test_init_with_attack_execute_params(self, mock_attack, sample_seed_groups):
         """Test initialization with additional attack execute parameters."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             max_retries=5,
             custom_param="value",
@@ -152,7 +153,7 @@ class TestAtomicAttackInitialization:
         memory_labels = {"test": "comprehensive"}
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             memory_labels=memory_labels,
             batch_size=10,
@@ -160,7 +161,7 @@ class TestAtomicAttackInitialization:
             atomic_attack_name="Test Attack Run",
         )
 
-        assert atomic_attack._attack == mock_attack
+        assert atomic_attack._attack_technique.attack == mock_attack
         assert atomic_attack._seed_groups == sample_seed_groups
         assert atomic_attack._memory_labels == memory_labels
         assert atomic_attack._attack_execute_params["batch_size"] == 10
@@ -170,7 +171,7 @@ class TestAtomicAttackInitialization:
         """Test that initialization fails when seed_groups list is empty."""
         with pytest.raises(ValueError, match="seed_groups list cannot be empty"):
             AtomicAttack(
-                attack=mock_attack,
+                attack_technique=AttackTechnique(attack=mock_attack),
                 seed_groups=[],
                 atomic_attack_name="Test Attack Run",
             )
@@ -188,7 +189,7 @@ class TestAtomicAttackInitialization:
     def test_objectives_property_returns_values_from_seed_groups(self, mock_attack, sample_seed_groups):
         """Test that the objectives property returns values from seed groups."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -198,7 +199,7 @@ class TestAtomicAttackInitialization:
     def test_seed_groups_property_returns_copy(self, mock_attack, sample_seed_groups):
         """Test that the seed_groups property returns a copy."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -206,6 +207,18 @@ class TestAtomicAttackInitialization:
         returned_groups = atomic_attack.seed_groups
         assert returned_groups == sample_seed_groups
         assert returned_groups is not atomic_attack._seed_groups
+
+    def test_deprecated_attack_param_still_works(self, mock_attack, sample_seed_groups):
+        """Test that the deprecated 'attack' parameter emits a warning and still initializes correctly."""
+        with pytest.deprecated_call():
+            atomic_attack = AtomicAttack(
+                attack=mock_attack,
+                seed_groups=sample_seed_groups,
+                atomic_attack_name="Deprecated Param Test",
+            )
+
+        assert atomic_attack._attack_technique.attack == mock_attack
+        assert atomic_attack._seed_groups == sample_seed_groups
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -216,7 +229,7 @@ class TestAtomicAttackExecution:
     async def test_run_async_with_valid_atomic_attack(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test successful execution of an atomic attack."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -239,7 +252,7 @@ class TestAtomicAttackExecution:
     async def test_run_async_with_custom_concurrency(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test execution with custom max_concurrency for atomic attack."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -259,7 +272,7 @@ class TestAtomicAttackExecution:
     async def test_run_async_with_default_concurrency(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that default concurrency (1) is used when not specified."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -280,7 +293,7 @@ class TestAtomicAttackExecution:
         memory_labels = {"test": "attack_run", "category": "attack"}
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             memory_labels=memory_labels,
             atomic_attack_name="Test Attack Run",
@@ -299,7 +312,7 @@ class TestAtomicAttackExecution:
     async def test_run_async_passes_seed_groups(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that seed_groups are passed to the executor."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -317,7 +330,7 @@ class TestAtomicAttackExecution:
     async def test_run_async_passes_attack_execute_params(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that attack execute parameters are passed to the executor."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             custom_param="value",
             max_retries=3,
@@ -339,7 +352,7 @@ class TestAtomicAttackExecution:
         memory_labels = {"test": "merge"}
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             memory_labels=memory_labels,
             batch_size=5,
@@ -361,7 +374,7 @@ class TestAtomicAttackExecution:
     async def test_run_async_handles_execution_failure(self, mock_attack, sample_seed_groups):
         """Test that execution failures are properly handled and raised."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -378,7 +391,7 @@ class TestAtomicAttackExecution:
     ):
         """Test that atomic attack passes return_partial_on_failure=True by default."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -398,7 +411,7 @@ class TestAtomicAttackExecution:
     ):
         """Test that explicit return_partial_on_failure parameter is passed through."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -423,7 +436,7 @@ class TestAtomicAttackIntegration:
         memory_labels = {"test": "integration", "attack_run": "full"}
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             memory_labels=memory_labels,
             batch_size=2,
@@ -469,7 +482,7 @@ class TestAtomicAttackIntegration:
         ]
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=single_seed_group,
             atomic_attack_name="Test Attack Run",
         )
@@ -505,7 +518,7 @@ class TestAtomicAttackIntegration:
         ]
 
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=many_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -572,7 +585,7 @@ class TestAtomicAttackExecutorParamCompatibility:
         The executor has strict_param_matching so invalid params would cause failures.
         """
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
             atomic_attack_name="Test Attack Run",
         )
@@ -635,7 +648,7 @@ class TestAtomicAttackWithMessages:
     def test_init_with_seed_groups_with_messages(self, mock_attack, seed_groups_with_messages):
         """Test that AtomicAttack initializes correctly with seed groups containing messages."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=seed_groups_with_messages,
             atomic_attack_name="Multi-turn Attack",
         )
@@ -650,7 +663,7 @@ class TestAtomicAttackWithMessages:
     def test_seed_groups_user_messages_property(self, mock_attack, seed_groups_with_messages):
         """Test that seed group user_messages are accessible and have correct content."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=seed_groups_with_messages,
             atomic_attack_name="Multi-turn Attack",
         )
@@ -673,7 +686,7 @@ class TestAtomicAttackWithMessages:
     async def test_run_async_passes_seed_groups_with_messages(self, mock_attack, seed_groups_with_messages):
         """Test that run_async correctly passes seed groups with messages to executor."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=seed_groups_with_messages,
             atomic_attack_name="Multi-turn Attack",
         )
@@ -707,7 +720,7 @@ class TestAtomicAttackWithMessages:
     def test_init_with_mixed_seed_groups(self, mock_attack, mixed_seed_groups):
         """Test that AtomicAttack handles mixed seed groups (some with user_messages, some without)."""
         atomic_attack = AtomicAttack(
-            attack=mock_attack,
+            attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=mixed_seed_groups,
             atomic_attack_name="Mixed Attack",
         )
@@ -745,7 +758,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -754,12 +769,13 @@ class TestEnrichAtomicAttackIdentifiers:
         enriched = result.completed_results[0]
         assert enriched.atomic_attack_identifier is not None
         assert enriched.atomic_attack_identifier.class_name == "AtomicAttack"
-        assert "attack" in enriched.atomic_attack_identifier.children
-        assert "seeds" in enriched.atomic_attack_identifier.children
+        assert "attack_technique" in enriched.atomic_attack_identifier.children
+        assert "seed_identifiers" in enriched.atomic_attack_identifier.children
 
     @pytest.mark.asyncio
-    async def test_enrichment_skips_results_without_attack_identifier(self, mock_attack):
-        """Test that enrichment is skipped when result has no attack_identifier."""
+    async def test_enrichment_populates_even_when_result_has_no_prior_identifier(self, mock_attack):
+        """Test that enrichment works even when result has no prior atomic_attack_identifier,
+        since AttackTechnique.get_identifier() is self-contained."""
         seed_groups = [
             SeedAttackGroup(seeds=[SeedObjective(value="obj1"), SeedPrompt(value="p1")]),
         ]
@@ -771,14 +787,18 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=None,
         )
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
             result = await atomic.run_async()
 
-        # Should not be enriched (no attack_identifier to build from)
-        assert result.completed_results[0].atomic_attack_identifier is None
+        # Should be enriched — technique provides its own identifier
+        enriched = result.completed_results[0]
+        assert enriched.atomic_attack_identifier is not None
+        assert enriched.atomic_attack_identifier.class_name == "AtomicAttack"
 
     @pytest.mark.asyncio
     async def test_enrichment_skips_out_of_range_index(self, mock_attack):
@@ -795,7 +815,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             # Index 99 is out of range for seed_groups (only 1 element)
@@ -834,7 +856,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -842,7 +866,7 @@ class TestEnrichAtomicAttackIdentifiers:
 
         enriched = result.completed_results[0].atomic_attack_identifier
         assert enriched is not None
-        seed_ids = enriched.children["seeds"]
+        seed_ids = enriched.children["seed_identifiers"]
         # All three seeds (objective + technique + non_technique) should be present
         assert len(seed_ids) == 3
         sha_values = [s.params.get("value_sha256") for s in seed_ids]
@@ -884,7 +908,9 @@ class TestEnrichAtomicAttackIdentifiers:
             ),
         ]
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results(results)
@@ -892,12 +918,12 @@ class TestEnrichAtomicAttackIdentifiers:
 
         # First result should have hash_a seed
         enriched_0 = result.completed_results[0].atomic_attack_identifier
-        seed_sha_values_0 = [s.params.get("value_sha256") for s in enriched_0.children["seeds"]]
+        seed_sha_values_0 = [s.params.get("value_sha256") for s in enriched_0.children["seed_identifiers"]]
         assert "hash_a" in seed_sha_values_0
 
         # Second result should have hash_b seed
         enriched_1 = result.completed_results[1].atomic_attack_identifier
-        seed_sha_values_1 = [s.params.get("value_sha256") for s in enriched_1.children["seeds"]]
+        seed_sha_values_1 = [s.params.get("value_sha256") for s in enriched_1.children["seed_identifiers"]]
         assert "hash_b" in seed_sha_values_1
 
     @pytest.mark.asyncio
@@ -921,7 +947,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
@@ -961,7 +989,9 @@ class TestEnrichAtomicAttackIdentifiers:
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
-        atomic = AtomicAttack(attack=mock_attack, seed_groups=seed_groups, atomic_attack_name="test")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack), seed_groups=seed_groups, atomic_attack_name="test"
+        )
 
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])

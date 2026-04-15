@@ -73,8 +73,9 @@ class ConversationNormalizationPipeline:
         * If the target already supports the capability, no normalizer is added.
         * If the capability is missing and the policy is ``ADAPT``, the
           corresponding normalizer (from overrides or defaults) is added.
-        * If the capability is missing and the policy is ``RAISE``, a
-          ``ValueError`` is raised immediately.
+        * If the capability is missing and the policy is ``RAISE``, no
+          normalizer is added (validation is deferred to
+          ``TargetConfiguration.ensure_can_handle()``).
 
         Args:
             capabilities (TargetCapabilities): The target's declared capabilities.
@@ -86,9 +87,6 @@ class ConversationNormalizationPipeline:
         Returns:
             ConversationNormalizationPipeline: A pipeline with the resolved
             ordered tuple of normalizers.
-
-        Raises:
-            ValueError: If a required capability is missing and the policy is RAISE.
         """
         overrides = normalizer_overrides or {}
         normalizers: list[MessageListNormalizer[Message]] = []
@@ -99,12 +97,14 @@ class ConversationNormalizationPipeline:
 
             behavior = policy.get_behavior(capability=capability)
 
-            if behavior == UnsupportedCapabilityBehavior.RAISE:
-                raise ValueError(f"Target does not support '{capability.value}' and the handling policy is RAISE.")
+            # RAISE capabilities are skipped here — no normalizer is added.
+            # Validation is deferred to TargetConfiguration.ensure_can_handle(),
+            # which should be called in the request flow once the full end-to-end
+            # workflow is implemented.
+            if behavior == UnsupportedCapabilityBehavior.ADAPT:
+                normalizer = overrides.get(capability, default_normalizer)
 
-            normalizer = overrides.get(capability, default_normalizer)
-
-            normalizers.append(normalizer)
+                normalizers.append(normalizer)
 
         return cls(normalizers=tuple(normalizers))
 

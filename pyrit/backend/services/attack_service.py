@@ -738,7 +738,20 @@ class AttackService:
                 if ar.atomic_attack_identifier:
                     atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
                     atomic_children = dict(atomic.children)
-                    atomic_children["attack"] = new_aid
+                    # Navigate into attack_technique child to update the nested attack child.
+                    technique = atomic_children.get("attack_technique")
+                    if isinstance(technique, ComponentIdentifier):
+                        tech_children = dict(technique.children)
+                        tech_children["attack"] = new_aid
+                        atomic_children["attack_technique"] = ComponentIdentifier(
+                            class_name=technique.class_name,
+                            class_module=technique.class_module,
+                            params=dict(technique.params),
+                            children=tech_children,
+                        )
+                    else:
+                        # Fallback for pre-nesting rows with children["attack"] directly.
+                        atomic_children["attack"] = new_aid
                     new_atomic = ComponentIdentifier(
                         class_name=atomic.class_name,
                         class_module=atomic.class_module,

@@ -19,6 +19,7 @@ from pyrit.common.path import HOME_PATH
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 # Path to sample audio file for testing
 SAMPLE_AUDIO_FILE = HOME_PATH / "assets" / "converted_audio.wav"
@@ -88,10 +89,12 @@ async def test_openai_chat_target_audio_multi_turn(sqlite_instance, platform_ope
     target = OpenAIChatTarget(
         **platform_openai_audio_args,
         audio_response_config=audio_config,
-        custom_capabilities=TargetCapabilities(
-            input_modalities=frozenset(
-                {frozenset({"text", "audio_path"}), frozenset({"text"}), frozenset({"audio_path"})}
-            ),
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                input_modalities=frozenset(
+                    {frozenset({"text", "audio_path"}), frozenset({"text"}), frozenset({"audio_path"})}
+                ),
+            )
         ),
     )
 

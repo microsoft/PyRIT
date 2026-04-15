@@ -7,8 +7,9 @@ import io
 import logging
 import tempfile
 from abc import ABC
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import fields
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, TextIO, cast
 
@@ -50,6 +51,51 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     - fetch_dataset(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
     """
+
+    @staticmethod
+    def _validate_enums(
+        values: Sequence[Enum],
+        enum_cls: type[Enum],
+        label: str,
+    ) -> None:
+        """
+        Validate that all values are instances of the expected enum class.
+
+        Args:
+            values: List of values to validate.
+            enum_cls: The enum class that all values must be instances of.
+            label: Human-readable label for error messages (e.g. "category").
+
+        Raises:
+            ValueError: If any value is not an instance of the expected enum class.
+        """
+        for v in values:
+            if not isinstance(v, enum_cls):
+                valid = ", ".join(f"{enum_cls.__name__}.{m.name}" for m in enum_cls)
+                raise ValueError(f"Expected {enum_cls.__name__}, got {type(v).__name__}: {v!r}. Valid values: {valid}")
+
+    @staticmethod
+    def _validate_enum(
+        value: Enum,
+        enum_cls: type[Enum],
+        label: str,
+    ) -> None:
+        """
+        Validate that a single value is an instance of the expected enum class.
+
+        Args:
+            value: The value to validate.
+            enum_cls: The enum class that the value must be an instance of.
+            label: Human-readable label for error messages (e.g. "severity").
+
+        Raises:
+            ValueError: If the value is not an instance of the expected enum class.
+        """
+        if not isinstance(value, enum_cls):
+            valid = ", ".join(f"{enum_cls.__name__}.{m.name}" for m in enum_cls)
+            raise ValueError(
+                f"Expected {enum_cls.__name__}, got {type(value).__name__}: {value!r}. Valid values: {valid}"
+            )
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """

@@ -12,6 +12,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
 )
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 class TestCapabilityHandlingPolicy:
@@ -100,7 +101,7 @@ class TestCapabilityHandlingPolicy:
 
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
-# Clear them so that targets use _DEFAULT_CAPABILITIES instead of _KNOWN_CAPABILITIES.
+# Clear them so that targets use _DEFAULT_CONFIGURATION instead of _KNOWN_CAPABILITIES.
 _CLEAN_UNDERLYING_MODEL_ENV = {
     "OPENAI_VIDEO_UNDERLYING_MODEL": "",
     "OPENAI_REALTIME_UNDERLYING_MODEL": "",
@@ -112,8 +113,8 @@ _CLEAN_UNDERLYING_MODEL_ENV = {
 }
 
 
-class TestDefaultCapabilitiesDefined:
-    """Verify that every concrete PromptTarget subclass defines _DEFAULT_CAPABILITIES."""
+class TestDefaultConfigurationDefined:
+    """Verify that every concrete PromptTarget subclass defines _DEFAULT_CONFIGURATION."""
 
     def _all_concrete_target_classes(self):
         from pyrit.prompt_target import (
@@ -160,21 +161,21 @@ class TestDefaultCapabilitiesDefined:
             WebSocketCopilotTarget,
         ]
 
-    def test_all_targets_have_default_capabilities(self):
-        """Every concrete target must have _DEFAULT_CAPABILITIES as a TargetCapabilities instance."""
+    def test_all_targets_have_default_configuration(self):
+        """Every concrete target must have _DEFAULT_CONFIGURATION as a TargetConfiguration instance."""
         for cls in self._all_concrete_target_classes():
-            assert hasattr(cls, "_DEFAULT_CAPABILITIES"), (
-                f"{cls.__name__} is missing _DEFAULT_CAPABILITIES class attribute"
+            assert hasattr(cls, "_DEFAULT_CONFIGURATION"), (
+                f"{cls.__name__} is missing _DEFAULT_CONFIGURATION class attribute"
             )
-            assert isinstance(cls._DEFAULT_CAPABILITIES, TargetCapabilities), (
-                f"{cls.__name__}._DEFAULT_CAPABILITIES must be a TargetCapabilities instance, "
-                f"got {type(cls._DEFAULT_CAPABILITIES)}"
+            assert isinstance(cls._DEFAULT_CONFIGURATION, TargetConfiguration), (
+                f"{cls.__name__}._DEFAULT_CONFIGURATION must be a TargetConfiguration instance, "
+                f"got {type(cls._DEFAULT_CONFIGURATION)}"
             )
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTargetCapabilitiesModalities:
-    """Test that each target declares the correct input/output modalities via _DEFAULT_CAPABILITIES."""
+    """Test that each target declares the correct input/output modalities via _DEFAULT_CONFIGURATION."""
 
     def test_default_capabilities_are_text_only(self):
         caps = TargetCapabilities()
@@ -330,7 +331,7 @@ class TestTargetCapabilitiesModalities:
     def test_hugging_face_chat_target_capabilities(self):
         from pyrit.prompt_target import HuggingFaceChatTarget
 
-        caps = HuggingFaceChatTarget._DEFAULT_CAPABILITIES
+        caps = HuggingFaceChatTarget._DEFAULT_CONFIGURATION.capabilities
         assert caps.supports_editable_history is True
         assert caps.supports_multi_turn is True
         assert caps.supports_system_prompt is True
@@ -370,19 +371,21 @@ class TestTargetCapabilitiesModalities:
         assert openai_response_target.capabilities.supports_system_prompt is True
         assert realtime_target.capabilities.supports_system_prompt is True
 
-    def test_custom_capabilities_override_modalities(self):
-        from pyrit.prompt_target import OpenAIChatTarget, TargetCapabilities
+    def test_custom_configuration_override_modalities(self):
+        from pyrit.prompt_target import OpenAIChatTarget, TargetCapabilities, TargetConfiguration
 
-        custom = TargetCapabilities(
-            supports_multi_turn=True,
-            input_modalities=frozenset({frozenset(["text"])}),
-            output_modalities=frozenset({frozenset(["text"])}),
+        custom = TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                input_modalities=frozenset({frozenset(["text"])}),
+                output_modalities=frozenset({frozenset(["text"])}),
+            )
         )
         target = OpenAIChatTarget(
             model_name="test-model",
             endpoint="https://mock.azure.com/",
             api_key="mock-api-key",
-            custom_capabilities=custom,
+            custom_configuration=custom,
         )
         assert target.capabilities.input_modalities == frozenset({frozenset(["text"])})
         assert target.capabilities.output_modalities == frozenset({frozenset(["text"])})
@@ -479,16 +482,16 @@ class TestGetKnownCapabilities:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestGetDefaultCapabilities:
-    """Test PromptTarget.get_default_capabilities classmethod."""
+class TestGetDefaultConfiguration:
+    """Test PromptTarget.get_default_configuration classmethod."""
 
-    def _make_target_class(self, *, default_caps: "TargetCapabilities"):
-        """Create a minimal concrete PromptTarget subclass with the given _DEFAULT_CAPABILITIES."""
+    def _make_target_class(self, *, default_config: "TargetConfiguration"):
+        """Create a minimal concrete PromptTarget subclass with the given _DEFAULT_CONFIGURATION."""
         from pyrit.models import Message
         from pyrit.prompt_target.common.prompt_target import PromptTarget
 
         class _ConcreteTarget(PromptTarget):
-            _DEFAULT_CAPABILITIES = default_caps
+            _DEFAULT_CONFIGURATION = default_config
 
             async def send_prompt_async(self, *, message: Message) -> list[Message]:
                 return []
@@ -496,47 +499,49 @@ class TestGetDefaultCapabilities:
         return _ConcreteTarget
 
     def test_returns_class_default_when_underlying_model_is_none(self):
-        custom_caps = TargetCapabilities(supports_editable_history=True)
-        cls = self._make_target_class(default_caps=custom_caps)
-        result = cls.get_default_capabilities(None)
-        assert result is custom_caps
+        custom_config = TargetConfiguration(capabilities=TargetCapabilities(supports_editable_history=True))
+        cls = self._make_target_class(default_config=custom_config)
+        result = cls.get_default_configuration(None)
+        assert result is custom_config
 
-    def test_returns_known_caps_when_model_is_recognized(self):
-        custom_caps = TargetCapabilities()
-        cls = self._make_target_class(default_caps=custom_caps)
-        result = cls.get_default_capabilities("gpt-4o")
+    def test_returns_known_config_when_model_is_recognized(self):
+        custom_config = TargetConfiguration(capabilities=TargetCapabilities())
+        cls = self._make_target_class(default_config=custom_config)
+        result = cls.get_default_configuration("gpt-4o")
         expected = TargetCapabilities.get_known_capabilities("gpt-4o")
-        assert result == expected
+        assert result.capabilities == expected
 
     def test_returns_class_default_and_warns_when_model_is_unrecognized(self):
-        custom_caps = TargetCapabilities(supports_multi_turn=True)
-        cls = self._make_target_class(default_caps=custom_caps)
+        custom_config = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
+        cls = self._make_target_class(default_config=custom_config)
         with patch("pyrit.prompt_target.common.prompt_target.logger") as mock_logger:
-            result = cls.get_default_capabilities("totally-unknown-model")
+            result = cls.get_default_configuration("totally-unknown-model")
             mock_logger.info.assert_called_once()
             warning_args = mock_logger.info.call_args[0]
             assert "totally-unknown-model" in warning_args[1]
-        assert result is custom_caps
+        assert result is custom_config
 
-    def test_subclass_default_caps_not_overridden_by_parent_default(self):
-        custom_caps = TargetCapabilities(supports_json_output=True, supports_multi_turn=True)
-        cls = self._make_target_class(default_caps=custom_caps)
-        result = cls.get_default_capabilities(None)
-        assert result.supports_json_output is True
-        assert result.supports_multi_turn is True
+    def test_subclass_default_config_not_overridden_by_parent_default(self):
+        custom_config = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_json_output=True, supports_multi_turn=True)
+        )
+        cls = self._make_target_class(default_config=custom_config)
+        result = cls.get_default_configuration(None)
+        assert result.capabilities.supports_json_output is True
+        assert result.capabilities.supports_multi_turn is True
 
     def test_recognized_model_overrides_class_default(self):
         # Class has a minimal default; recognized model should override it
-        minimal_caps = TargetCapabilities()
-        cls = self._make_target_class(default_caps=minimal_caps)
-        result = cls.get_default_capabilities("tts")
-        assert result.output_modalities == frozenset({frozenset(["audio_path"])})
+        minimal_config = TargetConfiguration(capabilities=TargetCapabilities())
+        cls = self._make_target_class(default_config=minimal_config)
+        result = cls.get_default_configuration("tts")
+        assert result.capabilities.output_modalities == frozenset({frozenset(["audio_path"])})
 
     def test_prompt_chat_target_preserves_system_prompt_for_recognized_model(self):
         from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 
-        result = PromptChatTarget.get_default_capabilities("gpt-4o")
+        result = PromptChatTarget.get_default_configuration("gpt-4o")
 
-        assert result.supports_multi_turn is True
-        assert result.supports_multi_message_pieces is True
-        assert result.supports_system_prompt is True
+        assert result.capabilities.supports_multi_turn is True
+        assert result.capabilities.supports_multi_message_pieces is True
+        assert result.capabilities.supports_system_prompt is True

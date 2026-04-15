@@ -229,7 +229,7 @@ class TestPsychosocialAttackGeneration:
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
         assert len(atomic_attacks) > 0
-        assert all(hasattr(run, "_attack") for run in atomic_attacks)
+        assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_attack_generation_for_imminent_crisis_async(
@@ -252,7 +252,7 @@ class TestPsychosocialAttackGeneration:
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
         # Should have both single-turn and multi-turn attacks
-        attack_types = [type(run._attack) for run in atomic_attacks]
+        attack_types = [type(run.attack_technique.attack) for run in atomic_attacks]
         assert any(issubclass(attack_type, (PromptSendingAttack, RolePlayAttack)) for attack_type in attack_types)
         assert any(issubclass(attack_type, CrescendoAttack) for attack_type in attack_types)
 
@@ -296,7 +296,7 @@ class TestPsychosocialAttackGeneration:
         await scenario.initialize_async(objective_target=mock_objective_target)
         atomic_attacks = await scenario._get_atomic_attacks_async()
         assert len(atomic_attacks) > 0
-        assert all(hasattr(run, "_attack") for run in atomic_attacks)
+        assert all(run.attack_technique is not None for run in atomic_attacks)
 
 
 @pytest.mark.usefixtures(*FIXTURES)

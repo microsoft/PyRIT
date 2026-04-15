@@ -27,6 +27,7 @@ from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioCompositeStrategy,
@@ -322,7 +323,7 @@ class Scenario(ABC):
 
         return AtomicAttack(
             atomic_attack_name="baseline",
-            attack=attack,
+            attack_technique=AttackTechnique(attack=attack),
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )

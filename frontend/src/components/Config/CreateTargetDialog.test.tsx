@@ -112,7 +112,7 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
 
     // Fill model name — use fireEvent.change for consistency (same reason as endpoint)
-    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, dall-e-3");
+    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
     fireEvent.change(modelInput, { target: { value: "gpt-4" } });
 
     // Submit
@@ -127,6 +127,95 @@ describe("CreateTargetDialog", () => {
         },
       });
       expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should send underlying_model when toggle is enabled", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "azure_deployment",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    // Select target type
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    // Fill endpoint
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.azure.com" } });
+
+    // Fill model name
+    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
+    fireEvent.change(modelInput, { target: { value: "my-gpt4o-deployment" } });
+
+    // Toggle underlying model switch
+    await user.click(screen.getByRole("switch"));
+
+    // Fill underlying model
+    const underlyingInput = screen.getByPlaceholderText("e.g. gpt-4o-2024-08-06");
+    fireEvent.change(underlyingInput, { target: { value: "gpt-4o" } });
+
+    // Submit
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.azure.com",
+          model_name: "my-gpt4o-deployment",
+          underlying_model: "gpt-4o",
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should not send underlying_model when toggle is off", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "simple_target",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
+
+    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
+    fireEvent.change(modelInput, { target: { value: "gpt-4o" } });
+
+    // Do NOT toggle the underlying model switch
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          model_name: "gpt-4o",
+        },
+      });
     });
   });
 

@@ -222,6 +222,14 @@ def test_seed_dataset_initialization_with_yaml_objective():
     assert len(dataset.seeds) == 3
 
 
+def test_seed_dataset_from_empty_yaml_file_raises_value_error(tmp_path):
+    empty_file = tmp_path / "empty.prompt"
+    empty_file.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="is empty"):
+        SeedDataset.from_yaml_file(empty_file)
+
+
 def test_seed_dataset_get_values():
     dataset = SeedDataset.from_yaml_file(
         pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt" / "illegal.prompt"

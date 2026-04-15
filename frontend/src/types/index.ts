@@ -58,6 +58,7 @@ export interface TargetInstance {
   target_type: string
   endpoint?: string | null
   model_name?: string | null
+  underlying_model_name?: string | null
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null

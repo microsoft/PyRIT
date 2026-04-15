@@ -30,6 +30,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     extracted_keys = {
         "endpoint",
         "model_name",
+        "underlying_model_name",
         "temperature",
         "top_p",
         "max_requests_per_minute",
@@ -47,6 +48,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         target_type=identifier.class_name,
         endpoint=params.get("endpoint") or None,
         model_name=params.get("model_name") or None,
+        underlying_model_name=params.get("underlying_model_name") or None,
         temperature=params.get("temperature"),
         top_p=params.get("top_p"),
         max_requests_per_minute=params.get("max_requests_per_minute"),
