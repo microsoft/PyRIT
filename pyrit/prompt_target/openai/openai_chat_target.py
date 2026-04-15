@@ -546,7 +546,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
     def _build_chat_messages_for_text(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries. This is needed because many
-        openai "compatible" models don't support ChatMessageListDictContent format (this is more universally accepted).
+        openai "compatible" models don't support multi-part content format (this is more universally accepted).
 
         Args:
             conversation (list[Message]): A list of Message objects.

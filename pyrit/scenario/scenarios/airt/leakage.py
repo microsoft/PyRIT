@@ -3,13 +3,12 @@
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from PIL import Image
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -83,21 +82,12 @@ class LeakageStrategy(ScenarioStrategy):
         return {"all", "single_turn", "multi_turn", "ip", "sensitive_data"}
 
 
-# Register deprecated ALL_CAPS member names that existed prior to 0.12.0
-LeakageStrategy.__deprecated_members__ = {  # type: ignore[attr-defined]
-    "FIRST_LETTER": ("FirstLetter", "0.13.0"),
-    "IMAGE": ("Image", "0.13.0"),
-    "ROLE_PLAY": ("RolePlay", "0.13.0"),
-    "CRESCENDO": ("Crescendo", "0.13.0"),
-}
-
-
 class Leakage(Scenario):
     """
     Leakage scenario implementation for PyRIT.
 
     This scenario tests how susceptible models are to leaking training data, PII, intellectual
-    property, or other confidential information. The LeakageScenario class contains different
+    property, or other confidential information. The Leakage class contains different
     attack variations designed to extract sensitive information from models.
     """
 
@@ -391,21 +381,3 @@ class Leakage(Scenario):
         )
 
         return [await self._get_atomic_attack_from_strategy_async(strategy) for strategy in strategies]
-
-
-class LeakageScenario(Leakage):
-    """
-    Deprecated alias for Leakage.
-
-    This class is deprecated and will be removed in version 0.13.0.
-    Use `Leakage` instead.
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        """Initialize LeakageScenario with deprecation warning."""
-        print_deprecation_message(
-            old_item="LeakageScenario",
-            new_item="Leakage",
-            removed_in="0.13.0",
-        )
-        super().__init__(**kwargs)

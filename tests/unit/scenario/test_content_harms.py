@@ -504,49 +504,6 @@ class TestContentHarmsBasic:
         assert scenario._max_concurrency == 5
         assert scenario._max_retries == 2
 
-    @pytest.mark.asyncio
-    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    @patch("pyrit.scenario.scenarios.airt.content_harms.ContentHarmsDatasetConfiguration.get_seed_attack_groups")
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.endpoint",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test_key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
-    async def test_initialization_with_objectives_by_harm(
-        self,
-        mock_get_seed_attack_groups,
-        mock_get_scorer,
-        mock_objective_target,
-        mock_adversarial_target,
-        mock_objective_scorer,
-        mock_seed_groups,
-    ):
-        """Test initialization with custom objectives_by_harm parameter."""
-        # Setup custom objectives by harm
-        custom_objectives = {
-            "hate": mock_seed_groups("hate"),
-            "violence": mock_seed_groups("violence"),
-        }
-
-        mock_get_scorer.return_value = mock_objective_scorer
-        mock_get_seed_attack_groups.return_value = custom_objectives
-
-        scenario = ContentHarms(
-            adversarial_chat=mock_adversarial_target,
-            objectives_by_harm=custom_objectives,
-        )
-
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[ContentHarmsStrategy.Hate, ContentHarmsStrategy.Violence],
-        )
-
-        # Verify the objectives_by_harm is stored
-        assert scenario._objectives_by_harm == custom_objectives
-
     @pytest.mark.parametrize(
         "harm_category", ["hate", "fairness", "violence", "sexual", "harassment", "misinformation", "leakage"]
     )

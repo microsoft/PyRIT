@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -15,7 +14,7 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import SeedAttackGroup
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -101,7 +100,6 @@ class Cyber(Scenario):
         self,
         *,
         adversarial_chat: Optional[PromptChatTarget] = None,
-        objectives: Optional[list[str]] = None,
         objective_scorer: Optional[TrueFalseScorer] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
@@ -112,7 +110,6 @@ class Cyber(Scenario):
         Args:
             adversarial_chat (Optional[PromptChatTarget]): Adversarial chat for the red teaming attack, corresponding
                 to CyberStrategy.MultiTurn. If not provided, defaults to an OpenAI chat target.
-            objectives (Optional[List[str]]): Deprecated. Use dataset_config in initialize_async instead.
             objective_scorer (Optional[TrueFalseScorer]): Objective scorer for malware detection. If not
                 provided, defaults to a SelfAskScorer using the malware.yaml file under the scorer config store for
                 malware detection
@@ -122,13 +119,6 @@ class Cyber(Scenario):
                 attack-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
         """
-        if objectives is not None:
-            print_deprecation_message(
-                old_item="objectives parameter",
-                new_item="dataset_config in initialize_async",
-                removed_in="0.13.0",
-            )
-
         # Cyber uses a "take object, make config" pattern to expose a more ergonomic interface. Helper
         # methods return objects, not configs.
 
@@ -151,8 +141,6 @@ class Cyber(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-        # Store deprecated objectives for later resolution in _resolve_seed_groups
-        self._deprecated_objectives = objectives
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
 
@@ -208,25 +196,11 @@ class Cyber(Scenario):
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Resolve seed groups from deprecated objectives or dataset configuration.
+        Resolve seed groups from dataset configuration.
 
         Returns:
             List[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
-
-        Raises:
-            ValueError: If both 'objectives' parameter and 'dataset_config' are specified.
         """
-        # Check for conflict between deprecated objectives and dataset_config
-        if self._deprecated_objectives is not None and self._dataset_config_provided:
-            raise ValueError(
-                "Cannot specify both 'objectives' parameter and 'dataset_config'. "
-                "Please use only 'dataset_config' in initialize_async."
-            )
-
-        # Use deprecated objectives if provided
-        if self._deprecated_objectives is not None:
-            return [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
-
         # Use dataset_config (guaranteed to be set by initialize_async)
         seed_groups = self._dataset_config.get_all_seed_attack_groups()
 

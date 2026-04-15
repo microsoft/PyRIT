@@ -512,61 +512,6 @@ class TestAttackExecutorResult:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestDeprecatedMethods:
-    """Tests for deprecated methods that should emit warnings."""
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_objective_attack_async_emits_warning(self):
-        """Test that deprecated method emits warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-
-        import warnings
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            await executor.execute_multi_objective_attack_async(
-                attack=attack,
-                objectives=["Test"],
-            )
-
-        # Check that a deprecation warning was logged (via logger.warning)
-        # The method uses logger.warning, not warnings.warn
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_single_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
-        )
-
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        from pyrit.executor.attack import MultiTurnAttackContext
-
-        attack = create_mock_attack(context_type=MultiTurnAttackContext)
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_multi_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
-        )
-
-        assert len(result) == 1
-
-
-@pytest.mark.usefixtures("patch_central_database")
 class TestParamsTypeIntegration:
     """Tests for params_type integration with executor."""
 

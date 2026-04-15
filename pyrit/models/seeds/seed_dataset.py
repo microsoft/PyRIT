@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import random
 import uuid
-import warnings
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -102,7 +101,6 @@ class SeedDataset(YamlLoadable):
         date_added: Optional[datetime] = None,
         added_by: Optional[str] = None,
         seed_type: Optional[SeedType] = None,
-        is_objective: bool = False,  # Deprecated in 0.13.0: Use seed_type="objective" instead
         is_jinja_template: bool = False,
     ):
         """
@@ -125,7 +123,6 @@ class SeedDataset(YamlLoadable):
             date_added: Date when the dataset was added.
             added_by: User who added the dataset.
             seed_type: The type of seeds in this dataset ("prompt", "objective", or "simulated_conversation").
-            is_objective: Deprecated in 0.13.0. Use seed_type="objective" instead.
             is_jinja_template: When True, seed values are Jinja2 templates. Set by from_yaml_file.
 
         Raises:
@@ -134,14 +131,6 @@ class SeedDataset(YamlLoadable):
         """
         if not seeds:
             raise ValueError("SeedDataset cannot be empty.")
-
-        # Emit deprecation warning for legacy is_objective parameter
-        if is_objective:
-            warnings.warn(
-                "is_objective parameter is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         input_seeds = seeds
 
@@ -162,23 +151,10 @@ class SeedDataset(YamlLoadable):
         self.seeds = []
         for p in input_seeds:
             if isinstance(p, dict):
-                # Support new seed_type field with backward compatibility for deprecated is_objective
                 p_seed_type = p.get("seed_type", seed_type)
-                p_is_objective = p.get("is_objective", is_objective)
-
-                # Emit deprecation warning if is_objective is used in dict
-                if "is_objective" in p and p["is_objective"]:
-                    warnings.warn(
-                        "is_objective in seed dict is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                    # Only error if seed_type is explicitly set to a conflicting value
-                    if p_seed_type is not None and p_seed_type != "objective":
-                        raise ValueError("Conflicting seed_type and is_objective values.")
 
                 effective_type: SeedType = "prompt"
-                if p_seed_type == "objective" or (p_is_objective):
+                if p_seed_type == "objective":
                     effective_type = "objective"
                 elif p_seed_type == "simulated_conversation":
                     effective_type = "simulated_conversation"

@@ -110,12 +110,6 @@ def mock_adversarial_target():
     return mock
 
 
-@pytest.fixture
-def sample_objectives() -> list[str]:
-    """Create sample objectives for testing."""
-    return ["test prompt 1", "test prompt 2"]
-
-
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 
@@ -123,27 +117,12 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 class TestCyberInitialization:
     """Tests for Cyber initialization."""
 
-    def test_init_with_custom_objectives(self, mock_objective_scorer, sample_objectives):
-        """Test initialization with custom objectives."""
-
-        scenario = Cyber(
-            objectives=sample_objectives,
-            objective_scorer=mock_objective_scorer,
-        )
-
-        # objectives are stored as _deprecated_objectives; _seed_groups is resolved lazily
-        assert scenario._deprecated_objectives == sample_objectives
-        assert scenario.name == "Cyber"
-        assert scenario.VERSION == 1
-
     def test_init_with_default_objectives(self, mock_objective_scorer, malware_prompts, mock_memory_seed_groups):
         """Test initialization with default objectives."""
 
         with patch.object(Cyber, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Cyber(objective_scorer=mock_objective_scorer)
 
-            # seed_groups are resolved lazily; _deprecated_objectives should be None
-            assert scenario._deprecated_objectives is None
             assert scenario.name == "Cyber"
             assert scenario.VERSION == 1
 

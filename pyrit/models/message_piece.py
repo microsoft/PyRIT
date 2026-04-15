@@ -74,8 +74,8 @@ class MessagePiece:
                 objects or dicts (deprecated, will be removed in 0.14.0). Defaults to None.
             prompt_target_identifier: The target identifier for the prompt. Defaults to None.
             attack_identifier: The attack identifier for the prompt. Defaults to None.
-            scorer_identifier: The scorer identifier for the prompt. Can be a ComponentIdentifier or a
-                dict (deprecated, will be removed in 0.13.0). Defaults to None.
+            scorer_identifier: The scorer identifier for the prompt. Accepts a ComponentIdentifier.
+                Defaults to None.
             original_value_data_type: The data type of the original prompt (text, image). Defaults to "text".
             converted_value_data_type: The data type of the converted prompt (text, image). Defaults to "text".
             response_error: The response error type. Defaults to "none".
@@ -225,40 +225,6 @@ class MessagePiece:
 
         """
         return self._role
-
-    @property
-    def role(self) -> ChatMessageRole:
-        """
-        Deprecated: Use api_role for comparisons or _role for internal storage.
-
-        This property is deprecated and will be removed in a future version.
-        Returns api_role for backward compatibility.
-        """
-        import warnings
-
-        warnings.warn(
-            "MessagePiece.role getter is deprecated. Use api_role for comparisons. "
-            "This property will be removed in 0.13.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.api_role
-
-    @role.setter
-    def role(self, value: ChatMessageRole) -> None:
-        """
-        Set the role for this message piece.
-
-        Args:
-            value: The role to set (system, user, assistant, simulated_assistant, tool, developer).
-
-        Raises:
-            ValueError: If the role is not a valid ChatMessageRole.
-
-        """
-        if value not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
-            raise ValueError(f"Role {value} is not a valid role.")
-        self._role = value
 
     def to_message(self) -> Message:  # type: ignore[name-defined] # noqa: F821
         """

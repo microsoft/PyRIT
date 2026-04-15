@@ -95,17 +95,6 @@ def sample_seeds():
 class TestEncodingInitialization:
     """Tests for Encoding initialization."""
 
-    def test_init_with_custom_seed_prompts(self, mock_objective_target, mock_objective_scorer, sample_seeds):
-        """Test initialization with custom seed prompts (deprecated parameter)."""
-        scenario = Encoding(
-            seed_prompts=sample_seeds,
-            objective_scorer=mock_objective_scorer,
-        )
-
-        assert scenario._deprecated_seed_prompts == sample_seeds
-        assert scenario.name == "Encoding"
-        assert scenario.VERSION == 1
-
     def test_init_with_default_seed_prompts(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with default seed prompts (Garak dataset)."""
         from unittest.mock import patch
@@ -115,8 +104,8 @@ class TestEncodingInitialization:
                 objective_scorer=mock_objective_scorer,
             )
 
-            # _deprecated_seed_prompts should be None when using defaults
-            assert scenario._deprecated_seed_prompts is None
+            assert scenario.name == "Encoding"
+            assert scenario.VERSION == 1
 
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with custom objective scorer."""
@@ -347,9 +336,6 @@ class TestEncodingExecution:
                 objective_scorer=mock_objective_scorer,
             )
 
-            # _deprecated_seed_prompts should be None when using defaults
-            assert scenario._deprecated_seed_prompts is None
-
             # After resolve, should have seed groups
             resolved = scenario._resolve_seed_groups()
             assert len(resolved) > 0
@@ -381,45 +367,6 @@ class TestEncodingDatasetConfiguration:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestEncodingResolveSeedGroups:
-    """Tests for the _resolve_seed_groups method."""
-
-    def test_resolve_seed_groups_with_deprecated_seed_prompts(self, mock_objective_scorer, sample_seeds):
-        """Test that _resolve_seed_groups handles deprecated seed_prompts correctly."""
-        scenario = Encoding(
-            seed_prompts=sample_seeds,
-            objective_scorer=mock_objective_scorer,
-        )
-
-        # Set up the dataset config to simulate initialize_async was called
-        scenario._dataset_config = DatasetConfiguration(dataset_names=["test"])
-        scenario._dataset_config_provided = False
-
-        resolved = scenario._resolve_seed_groups()
-
-        # Should return SeedAttackGroup for each seed prompt
-        assert len(resolved) == len(sample_seeds)
-        for i, group in enumerate(resolved):
-            assert isinstance(group, SeedAttackGroup)
-            # The first seed in each group should be a SeedObjective
-            assert isinstance(group.seeds[0], SeedObjective)
-            assert group.seeds[0].value == sample_seeds[i]
-
-    def test_resolve_seed_groups_raises_on_conflict(self, mock_objective_scorer, sample_seeds, mock_dataset_config):
-        """Test that _resolve_seed_groups raises ValueError when both seed_prompts and dataset_config are provided."""
-        scenario = Encoding(
-            seed_prompts=sample_seeds,
-            objective_scorer=mock_objective_scorer,
-        )
-
-        # Simulate that dataset_config was explicitly provided
-        scenario._dataset_config = mock_dataset_config
-        scenario._dataset_config_provided = True
-
-        with pytest.raises(ValueError, match="Cannot specify both"):
-            scenario._resolve_seed_groups()
-
-
 @pytest.mark.usefixtures("patch_central_database")
 class TestEncodingDatasetConfigurationGetAllSeedAttackGroups:
     """Tests for EncodingDatasetConfiguration.get_all_seed_attack_groups method."""

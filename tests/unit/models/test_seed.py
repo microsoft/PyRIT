@@ -267,7 +267,7 @@ def test_prompt_dataset_from_yaml_defaults():
     prompts = SeedDataset.from_yaml_file(
         pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt" / "illegal.prompt"
     )
-    # Note: This file has is_objective: True at the top level, so all seeds are SeedObjective
+    # Note: This file uses seed_type: objective at the top level, so all seeds are SeedObjective
     assert len(prompts.seeds) == 5
     assert len([s for s in prompts.seeds if isinstance(s, SeedObjective)]) == 5
 
@@ -793,26 +793,6 @@ def test_seed_group_dict_with_seed_type_objective():
 
     # Prompts list should be empty
     assert len(group.prompts) == 0
-
-
-def test_seed_group_dict_with_is_objective_true_backward_compat():
-    """Test backward compatibility: is_objective=True still works (deprecated)."""
-    import warnings
-
-    prompt_dict = {
-        "value": "Test objective from dict",
-        "is_objective": True,
-    }
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        group = SeedGroup(seeds=[prompt_dict])
-        # Verify deprecation warning was raised
-        assert any("is_objective" in str(warning.message) for warning in w)
-
-    # Should still work
-    assert group.objective is not None
-    assert group.objective.value == "Test objective from dict"
 
 
 def test_seed_group_dict_with_seed_type_prompt():

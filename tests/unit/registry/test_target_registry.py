@@ -8,7 +8,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.registry.instance_registries.target_registry import TargetRegistry
+from pyrit.registry.object_registries.target_registry import TargetRegistry
 
 
 class MockPromptTarget(PromptTarget):

@@ -126,17 +126,15 @@ project:
             - file: code/converters/4_video_converters.ipynb
             - file: code/converters/5_file_converters.ipynb
             - file: code/converters/6_selectively_converting.ipynb
-            - file: code/converters/7_human_converter.ipynb
         - file: code/scoring/0_scoring.md
           children:
             - file: code/scoring/1_azure_content_safety_scorers.ipynb
             - file: code/scoring/2_true_false_scorers.ipynb
             - file: code/scoring/3_classification_scorers.ipynb
             - file: code/scoring/4_likert_scorers.ipynb
-            - file: code/scoring/5_human_in_the_loop_scorer.ipynb
-            - file: code/scoring/6_refusal_scorer.ipynb
-            - file: code/scoring/7_batch_scorer.ipynb
-            - file: code/scoring/8_scorer_metrics.ipynb
+            - file: code/scoring/5_refusal_scorer.ipynb
+            - file: code/scoring/6_batch_scorer.ipynb
+            - file: code/scoring/7_scorer_metrics.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb

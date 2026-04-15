@@ -19,8 +19,6 @@ skip_files = {
     "playwright_target.py",  # Playwright installation takes too long
     "playwright_target_copilot.py",  # Playwright installation takes too long, plus requires M365 account
     "app.py",  # Flask app for playwright demo, not a notebook
-    # scoring
-    "5_human_in_the_loop_scorer.py",  # requires human input
     # executor
     "1_xpia_website.py",  # requires publicly accessible Azure Storage Account
     "2_xpia_ai_recruiter.py",  # requires AI recruiter service running locally

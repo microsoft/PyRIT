@@ -283,7 +283,6 @@ class TestSeedEntry:
         assert entry.value == "test seed value"
         assert entry.dataset_name == "test_dataset"
         assert entry.seed_type == "prompt"
-        assert entry.is_objective is False
 
     def test_init_from_seed_objective(self):
         obj = SeedObjective(
@@ -294,7 +293,6 @@ class TestSeedEntry:
         )
         entry = SeedEntry(entry=obj)
         assert entry.seed_type == "objective"
-        assert entry.is_objective is True
 
     def test_roundtrip_seed_prompt(self):
         seed = _make_seed_prompt()
