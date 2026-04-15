@@ -64,6 +64,7 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
     @apply_defaults
     def __init__(
         self,
+        *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,

@@ -13,18 +13,21 @@ from pyrit.exceptions import RateLimitException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIVideoTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
-_VIDEO_PATH_CAPABILITIES = TargetCapabilities(
-    supports_multi_turn=False,
-    supports_multi_message_pieces=True,
-    input_modalities=frozenset(
-        {
-            frozenset(["text"]),
-            frozenset(["text", "image_path"]),
-            frozenset(["text", "video_path"]),
-        }
-    ),
-    output_modalities=frozenset({frozenset(["video_path"])}),
+_VIDEO_PATH_CONFIGURATION = TargetConfiguration(
+    capabilities=TargetCapabilities(
+        supports_multi_turn=False,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset(
+            {
+                frozenset(["text"]),
+                frozenset(["text", "image_path"]),
+                frozenset(["text", "video_path"]),
+            }
+        ),
+        output_modalities=frozenset({frozenset(["video_path"])}),
+    )
 )
 
 
@@ -437,7 +440,7 @@ class TestVideoTargetValidation:
         with pytest.raises(
             ValueError,
             match="This target supports only the following data types.*If your target does support this, set the"
-            " custom_capabilities parameter accordingly",
+            " custom_configuration parameter accordingly",
         ):
             video_target._validate_request(message=Message([msg_text, msg_audio]))
 
@@ -550,7 +553,7 @@ class TestVideoTargetRemix:
             endpoint="https://api.openai.com/v1",
             api_key="test",
             model_name="sora-2",
-            custom_capabilities=_VIDEO_PATH_CAPABILITIES,
+            custom_configuration=_VIDEO_PATH_CONFIGURATION,
         )
 
     @pytest.mark.asyncio
@@ -1001,7 +1004,7 @@ def test_video_validate_previous_conversations(
     with pytest.raises(
         ValueError,
         match="This target only supports a single turn conversation.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         video_target._validate_request(message=request)
 
@@ -1016,7 +1019,7 @@ class TestVideoTargetRemixValidation:
             endpoint="https://api.openai.com/v1",
             api_key="test",
             model_name="sora-2",
-            custom_capabilities=_VIDEO_PATH_CAPABILITIES,
+            custom_configuration=_VIDEO_PATH_CONFIGURATION,
         )
 
     def test_validate_accepts_text_and_video_path(self, video_target: OpenAIVideoTarget) -> None:

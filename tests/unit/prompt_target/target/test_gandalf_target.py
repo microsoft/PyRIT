@@ -35,7 +35,7 @@ async def test_gandalf_validate_request_length(gandalf_target: GandalfTarget):
     with pytest.raises(
         ValueError,
         match="This target only supports a single message piece.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await gandalf_target.send_prompt_async(message=request)
 
@@ -46,6 +46,6 @@ async def test_gandalf_validate_prompt_type(gandalf_target: GandalfTarget):
     with pytest.raises(
         ValueError,
         match="This target supports only the following data types.*If your target does support this, set the"
-        " custom_capabilities parameter accordingly",
+        " custom_configuration parameter accordingly",
     ):
         await gandalf_target.send_prompt_async(message=request)

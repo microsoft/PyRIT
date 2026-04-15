@@ -238,7 +238,7 @@ class TestEncodingAtomicAttacks:
 
             # Should return multiple atomic attacks (one for each encoding type)
             assert len(atomic_attacks) > 0
-            assert all(hasattr(run, "_attack") for run in atomic_attacks)
+            assert all(run.attack_technique is not None for run in atomic_attacks)
 
     @pytest.mark.asyncio
     async def test_get_converter_attacks_returns_multiple_encodings(
@@ -280,7 +280,7 @@ class TestEncodingAtomicAttacks:
 
             # Each attack run should have the correct attack type
             for run in attack_runs:
-                assert isinstance(run._attack, PromptSendingAttack)
+                assert isinstance(run.attack_technique.attack, PromptSendingAttack)
                 assert len(run._seed_groups) == len(mock_seed_attack_groups)
 
     @pytest.mark.asyncio

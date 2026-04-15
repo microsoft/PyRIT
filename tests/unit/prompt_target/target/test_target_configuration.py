@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import warnings
+
 import pytest
 
 from pyrit.message_normalizer import GenericSystemSquashNormalizer, HistorySquashNormalizer
@@ -12,7 +14,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
 
 
 @pytest.fixture
@@ -69,10 +71,12 @@ def test_init_missing_capability_adapt_builds_pipeline(adapt_all_policy):
     assert isinstance(config.pipeline.normalizers[1], HistorySquashNormalizer)
 
 
-def test_init_missing_capability_raise_policy_raises():
+def test_init_missing_capability_raise_policy_skips_normalizer():
     caps = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=True)
-    with pytest.raises(ValueError, match="RAISE"):
-        TargetConfiguration(capabilities=caps)
+    config = TargetConfiguration(capabilities=caps)
+    # RAISE policy: pipeline construction succeeds but no normalizer is added for multi_turn.
+    # Validation is deferred to ensure_can_handle().
+    assert len(config.pipeline.normalizers) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -197,3 +201,23 @@ async def test_normalize_async_adapts_multi_turn(adapt_all_policy, make_message)
     assert len(result) == 1
     assert "[Conversation History]" in result[0].message_pieces[0].converted_value
     assert "turn 2" in result[0].message_pieces[0].converted_value
+
+
+def test_resolve_configuration_compat_raises_when_both_supplied():
+    caps = TargetCapabilities()
+    config = TargetConfiguration(capabilities=caps)
+    with pytest.raises(ValueError, match="Cannot specify both"):
+        resolve_configuration_compat(custom_configuration=config, custom_capabilities=caps)
+
+
+def test_resolve_configuration_compat_wraps_capabilities_with_warning():
+    caps = TargetCapabilities(supports_multi_turn=True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = resolve_configuration_compat(custom_configuration=None, custom_capabilities=caps)
+
+    assert isinstance(result, TargetConfiguration)
+    assert result.capabilities.supports_multi_turn is True
+    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(deprecation_warnings) == 1
+    assert "custom_capabilities" in str(deprecation_warnings[0].message)
