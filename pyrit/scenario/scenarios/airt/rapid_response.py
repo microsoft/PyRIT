@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackScoringConfig
+from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -140,9 +140,9 @@ class RapidResponse(Scenario):
         Register core techniques with this scenario's adversarial chat target.
         """
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-        from pyrit.scenario.core.scenario_techniques import ScenarioTechniqueRegistrar
+        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
 
-        ScenarioTechniqueRegistrar(adversarial_chat=self._adversarial_chat).register()
+        register_scenario_techniques(adversarial_chat=self._adversarial_chat)
         return AttackTechniqueRegistry.get_registry_singleton().get_factories()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
@@ -184,9 +184,15 @@ class RapidResponse(Scenario):
             # would fail TAP's type validation.
             scoring_for_technique = None if technique_name == "tap" else scoring_config
 
+            # Build adversarial config override if scenario has a custom adversarial target
+            adversarial_override = None
+            if self._adversarial_chat is not None:
+                adversarial_override = AttackAdversarialConfig(target=self._adversarial_chat)
+
             attack_technique = factory.create(
                 objective_target=self._objective_target,
                 attack_scoring_config_override=scoring_for_technique,
+                attack_adversarial_config_override=adversarial_override,
             )
 
             for dataset_name, seed_groups in seed_groups_by_dataset.items():

@@ -190,9 +190,9 @@ class Scenario(ABC):
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
-        from pyrit.scenario.core.scenario_techniques import ScenarioTechniqueRegistrar
+        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
 
-        ScenarioTechniqueRegistrar().register()
+        register_scenario_techniques()
 
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 

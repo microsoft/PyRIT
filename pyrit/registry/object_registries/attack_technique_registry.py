@@ -11,6 +11,7 @@ with the scenario's objective target and scorer.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
@@ -37,11 +38,11 @@ class TechniqueSpec:
     """
     Declarative definition of an attack technique.
 
-    Each spec describes one registrable technique. The registrar converts
+    Each spec describes one registrable technique. The registry converts
     specs into ``AttackTechniqueFactory`` instances and registers them.
 
     Whether a technique receives an ``AttackAdversarialConfig`` is determined
-    automatically: the registrar inspects the attack class constructor and
+    automatically: the registry inspects the attack class constructor and
     injects one when ``attack_adversarial_config`` is an accepted parameter.
 
     Args:
@@ -132,3 +133,68 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             attack_adversarial_config_override=attack_adversarial_config_override,
             attack_converter_config_override=attack_converter_config_override,
         )
+
+    @staticmethod
+    def build_factory_from_spec(
+        spec: TechniqueSpec,
+        *,
+        adversarial_chat: "PromptChatTarget | None" = None,
+    ) -> "AttackTechniqueFactory":
+        """
+        Build an ``AttackTechniqueFactory`` from a ``TechniqueSpec``.
+
+        Automatically injects ``AttackAdversarialConfig`` when the attack
+        class accepts ``attack_adversarial_config`` as a constructor parameter.
+
+        Args:
+            spec: The technique specification.
+            adversarial_chat: Shared adversarial chat target for techniques
+                that require one. If None, no adversarial config is injected.
+
+        Returns:
+            AttackTechniqueFactory: A factory ready for registration.
+        """
+        from pyrit.executor.attack import AttackAdversarialConfig
+        from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+
+        kwargs: dict[str, Any] = {}
+
+        if adversarial_chat is not None and AttackTechniqueRegistry._accepts_adversarial(spec.attack_class):
+            kwargs["attack_adversarial_config"] = AttackAdversarialConfig(target=adversarial_chat)
+
+        if spec.extra_kwargs_builder:
+            kwargs.update(spec.extra_kwargs_builder(adversarial_chat))
+
+        return AttackTechniqueFactory(
+            attack_class=spec.attack_class,
+            attack_kwargs=kwargs or None,
+        )
+
+    @staticmethod
+    def _accepts_adversarial(attack_class: type) -> bool:
+        """Check if an attack class accepts ``attack_adversarial_config``."""
+        sig = inspect.signature(attack_class.__init__)
+        return "attack_adversarial_config" in sig.parameters
+
+    def register_from_specs(
+        self,
+        specs: list[TechniqueSpec],
+        *,
+        adversarial_chat: "PromptChatTarget | None" = None,
+    ) -> None:
+        """
+        Build factories from specs and register them.
+
+        Per-name idempotent: existing entries are not overwritten.
+
+        Args:
+            specs: Technique specifications to register.
+            adversarial_chat: Shared adversarial chat target for techniques
+                that require one.
+        """
+        for spec in specs:
+            if spec.name not in self:
+                factory = self.build_factory_from_spec(spec, adversarial_chat=adversarial_chat)
+                self.register_technique(name=spec.name, factory=factory, tags=spec.tags)
+
+        logger.debug("Technique registration complete (%d total in registry)", len(self))

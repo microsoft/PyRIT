@@ -176,7 +176,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="ADVERSARIAL_CHAT_KEY",
         model_var="ADVERSARIAL_CHAT_MODEL",
         temperature=1.2,
-        tags=[TargetInitializerTags.ALL, TargetInitializerTags.ADVERSARIAL],
+        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
         registry_name="azure_foundry_deepseek",

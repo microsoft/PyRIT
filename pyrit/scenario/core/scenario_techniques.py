@@ -5,7 +5,7 @@
 Scenario attack technique definitions and registration.
 
 Provides ``SCENARIO_TECHNIQUES`` (the standard catalog) and
-``ScenarioTechniqueRegistrar`` (registers specs into the
+``register_scenario_techniques`` (registers specs into the
 ``AttackTechniqueRegistry`` singleton).
 
 To add a new technique, append a ``TechniqueSpec`` to ``SCENARIO_TECHNIQUES``.
@@ -13,12 +13,9 @@ To add a new technique, append a ``TechniqueSpec`` to ``SCENARIO_TECHNIQUES``.
 
 from __future__ import annotations
 
-import inspect
 import logging
-from typing import Any
 
 from pyrit.executor.attack import (
-    AttackAdversarialConfig,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RolePlayAttack,
@@ -26,8 +23,8 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.registry.object_registries.attack_technique_registry import TechniqueSpec
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
 
@@ -81,101 +78,37 @@ def get_default_adversarial_target() -> PromptChatTarget:
 
     registry = TargetRegistry.get_registry_singleton()
     if "adversarial_chat" in registry:
-        return registry.get("adversarial_chat")
+        target = registry.get("adversarial_chat")
+        if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
+            raise ValueError(
+                f"Registry entry 'adversarial_chat' must support multi-turn conversations, "
+                f"but {type(target).__name__} does not."
+            )
+        return target  # type: ignore[return-value]
 
     return OpenAIChatTarget(temperature=1.2)
 
 
 # ---------------------------------------------------------------------------
-# Registrar
+# Registration helper
 # ---------------------------------------------------------------------------
 
 
-class ScenarioTechniqueRegistrar:
+def register_scenario_techniques(*, adversarial_chat: PromptChatTarget | None = None) -> None:
     """
-    Registers ``TechniqueSpec`` entries into the ``AttackTechniqueRegistry``.
+    Register all ``SCENARIO_TECHNIQUES`` into the ``AttackTechniqueRegistry`` singleton.
 
-    Holds shared defaults (e.g. ``adversarial_chat``) so they're set once
-    and applied to every technique that needs them.
+    Per-name idempotent: existing entries are not overwritten.
 
-    Typical usage from a scenario::
-
-        ScenarioTechniqueRegistrar(adversarial_chat=self._adversarial_chat).register()
+    Args:
+        adversarial_chat: Shared adversarial chat target for techniques
+            that require one. If None, resolved via ``get_default_adversarial_target()``.
     """
+    from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
-    def __init__(self, *, adversarial_chat: PromptChatTarget | None = None) -> None:
-        """
-        Args:
-            adversarial_chat: Shared adversarial chat target for techniques
-                that require one. Defaults to ``get_default_adversarial_target()``.
-        """
-        self._adversarial_chat = adversarial_chat
+    if adversarial_chat is None:
+        adversarial_chat = get_default_adversarial_target()
 
-    @property
-    def adversarial_chat(self) -> PromptChatTarget:
-        """Resolve the adversarial chat target (custom or default)."""
-        if self._adversarial_chat is None:
-            self._adversarial_chat = get_default_adversarial_target()
-        return self._adversarial_chat
-
-    def build_factory(self, spec: TechniqueSpec) -> AttackTechniqueFactory:
-        """
-        Build an ``AttackTechniqueFactory`` from a ``TechniqueSpec``.
-
-        Automatically injects ``AttackAdversarialConfig`` when the attack
-        class accepts ``attack_adversarial_config`` as a constructor parameter.
-
-        Args:
-            spec: The technique specification.
-
-        Returns:
-            AttackTechniqueFactory: A factory ready for registration.
-        """
-        kwargs: dict[str, Any] = {}
-
-        if self._accepts_adversarial(spec.attack_class):
-            kwargs["attack_adversarial_config"] = AttackAdversarialConfig(target=self.adversarial_chat)
-
-        if spec.extra_kwargs_builder:
-            kwargs.update(spec.extra_kwargs_builder(self.adversarial_chat))
-
-        return AttackTechniqueFactory(
-            attack_class=spec.attack_class,
-            attack_kwargs=kwargs or None,
-        )
-
-    @staticmethod
-    def _accepts_adversarial(attack_class: type) -> bool:
-        """Check if an attack class accepts ``attack_adversarial_config``."""
-        sig = inspect.signature(attack_class.__init__)
-        return "attack_adversarial_config" in sig.parameters
-
-    def register(
-        self,
-        *,
-        techniques: list[TechniqueSpec] | None = None,
-        registry: "AttackTechniqueRegistry | None" = None,
-    ) -> None:
-        """
-        Register technique specs into the registry.
-
-        Per-name idempotent: existing entries are not overwritten.
-
-        Args:
-            techniques: Specs to register. Defaults to ``SCENARIO_TECHNIQUES``.
-            registry: Registry instance. Defaults to the singleton.
-        """
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-
-        if registry is None:
-            registry = AttackTechniqueRegistry.get_registry_singleton()
-        if techniques is None:
-            techniques = SCENARIO_TECHNIQUES
-
-        for spec in techniques:
-            if spec.name not in registry:
-                factory = self.build_factory(spec)
-                registry.register_technique(name=spec.name, factory=factory, tags=spec.tags)
-
-        logger.debug("Technique registration complete (%d total in registry)", len(registry))
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    registry.register_from_specs(SCENARIO_TECHNIQUES, adversarial_chat=adversarial_chat)
 
