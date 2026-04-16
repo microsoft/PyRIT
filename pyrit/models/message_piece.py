@@ -12,6 +12,7 @@ from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 
 if TYPE_CHECKING:
+    from pyrit.models.message import Message
     from pyrit.models.score import Score
 
 Originator = Literal["attack", "converter", "undefined", "scorer"]
@@ -226,7 +227,7 @@ class MessagePiece:
         """
         return self._role
 
-    def to_message(self) -> Message:  # type: ignore[name-defined] # noqa: F821
+    def to_message(self) -> Message:
         """
         Convert this message piece into a Message.
 
@@ -235,7 +236,7 @@ class MessagePiece:
         """
         from pyrit.models.message import Message
 
-        return Message([self])  # noqa: F821
+        return Message([self])
 
     def has_error(self) -> bool:
         """
