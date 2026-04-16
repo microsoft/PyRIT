@@ -205,7 +205,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         print_deprecation_message(
             old_item="ScenarioStrategy.normalize_strategies",
             new_item="ScenarioStrategy.expand",
-            removed_in="0.8.0",
+            removed_in="0.15.0",
         )
         return set(cls.expand(strategies))
 
@@ -275,151 +275,6 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
                     result.append(item)
         return result
 
-    @classmethod
-    def prepare_scenario_strategies(
-        cls: type[T],
-        strategies: Sequence[T | ScenarioCompositeStrategy] | None = None,
-        *,
-        default_aggregate: T | None = None,
-    ) -> list[ScenarioCompositeStrategy]:
-        """
-        Prepare and normalize scenario strategies for use in a scenario.
-
-        This helper method simplifies scenario initialization by:
-        1. Handling None input with sensible defaults
-        2. Auto-wrapping bare ScenarioStrategy instances into ScenarioCompositeStrategy
-        3. Expanding aggregate tags (like EASY, ALL) into concrete strategies
-        4. Validating compositions according to the strategy's rules
-
-        This eliminates boilerplate code in scenario __init__ methods.
-
-        Args:
-            strategies (Sequence[T | ScenarioCompositeStrategy] | None): The strategies to prepare.
-                Can be a mix of bare strategy enums and composite strategies.
-                If None, uses default_aggregate to determine defaults.
-                If an empty sequence, returns an empty list (useful for baseline-only execution).
-            default_aggregate (T | None): The aggregate strategy to use when strategies is None.
-                Common values: MyStrategy.ALL, MyStrategy.EASY. If None when strategies is None,
-                raises ValueError.
-
-        Returns:
-            List[ScenarioCompositeStrategy]: Normalized list of composite strategies ready for use.
-                May be empty if an empty sequence was explicitly provided.
-
-        Raises:
-            ValueError: If strategies is None and default_aggregate is None, or if compositions
-                       are invalid according to validate_composition().
-        """
-        print_deprecation_message(
-            old_item="ScenarioStrategy.prepare_scenario_strategies",
-            new_item="ScenarioStrategy.resolve and Scenario._prepare_strategies",
-            removed_in="0.8.0",
-        )
-        # Handle None input with default aggregate
-        if strategies is None:
-            if default_aggregate is None:
-                raise ValueError(
-                    f"Either strategies or default_aggregate must be provided. "
-                    f"Common defaults: {cls.__name__}.ALL, {cls.__name__}.EASY"
-                )
-
-            # Expand the default aggregate into concrete strategies
-            expanded = cls.normalize_strategies({default_aggregate})
-            # Wrap each in a ScenarioCompositeStrategy
-            composite_strategies = [ScenarioCompositeStrategy(strategies=[strategy]) for strategy in expanded]
-        else:
-            # Process the provided strategies
-            composite_strategies = []
-            for item in strategies:
-                if isinstance(item, ScenarioCompositeStrategy):
-                    # Already a composite, use as-is
-                    composite_strategies.append(item)
-                elif isinstance(item, cls):
-                    # Bare strategy enum - wrap it in a composite
-                    composite_strategies.append(ScenarioCompositeStrategy(strategies=[item]))
-                else:
-                    # Not our strategy type - skip or could raise error
-                    # For now, skip to allow flexibility
-                    pass
-
-        # Allow empty list if explicitly provided (for baseline-only execution)
-        if not composite_strategies:
-            if strategies is not None and len(strategies) == 0:
-                return []
-            raise ValueError(
-                f"No valid {cls.__name__} strategies provided. "
-                f"Provide at least one {cls.__name__} enum or ScenarioCompositeStrategy."
-            )
-
-        # Normalize compositions (expands aggregates, validates compositions)
-        return ScenarioCompositeStrategy.normalize_compositions(composite_strategies, strategy_type=cls)
-
-    @classmethod
-    def supports_composition(cls: type[T]) -> bool:
-        """
-        Indicate whether this strategy type supports composition.
-
-        By default, strategies do NOT support composition (only single strategies allowed).
-        Subclasses that support composition (e.g., FoundryStrategy) should override this
-        to return True and implement validate_composition() to enforce their specific rules.
-
-        Returns:
-            bool: True if composition is supported, False otherwise.
-        """
-        print_deprecation_message(
-            old_item="ScenarioStrategy.supports_composition",
-            new_item="FoundryComposite dataclass",
-            removed_in="0.8.0",
-        )
-        return False
-
-    @classmethod
-    def validate_composition(cls: type[T], strategies: Sequence[T]) -> None:
-        """
-        Validate whether the given strategies can be composed together.
-
-        The base implementation checks supports_composition() and raises an error if
-        composition is not supported and multiple strategies are provided.
-
-        Subclasses that support composition should override this method to define their
-        specific composition rules (e.g., "no more than one attack strategy").
-
-        Args:
-            strategies (Sequence[T]): The strategies to validate for composition.
-
-        Raises:
-            ValueError: If the composition is invalid according to the subclass's rules.
-                        The error message should clearly explain what rule was violated.
-
-        Examples:
-            # EncodingStrategy doesn't support composition (uses default)
-            >>> EncodingStrategy.validate_composition([EncodingStrategy.Base64, EncodingStrategy.ROT13])
-            ValueError: EncodingStrategy does not support composition. Each strategy must be used individually.
-
-            # FoundryStrategy allows composition but with rules
-            >>> FoundryStrategy.validate_composition([FoundryStrategy.Crescendo, FoundryStrategy.MultiTurn])
-            ValueError: Cannot compose multiple attack strategies: ['crescendo', 'multi_turn']
-        """
-        print_deprecation_message(
-            old_item="ScenarioStrategy.validate_composition",
-            new_item="FoundryComposite dataclass",
-            removed_in="0.8.0",
-        )
-        if not strategies:
-            raise ValueError("Cannot validate empty strategy list")
-
-        # Filter to only instances of this strategy type
-        typed_strategies = [s for s in strategies if isinstance(s, cls)]
-
-        # Default rule: if composition is not supported, only single strategies allowed
-        if not cls.supports_composition() and len(typed_strategies) > 1:
-            raise ValueError(
-                f"{cls.__name__} does not support composition. "
-                f"Each strategy must be used individually. "
-                f"Received: {[s.value for s in typed_strategies]}"
-            )
-
-
 class ScenarioCompositeStrategy:
     """
     Represents a composition of one or more attack strategies.
@@ -473,6 +328,12 @@ class ScenarioCompositeStrategy:
         if not strategies:
             raise ValueError("strategies list cannot be empty")
 
+        print_deprecation_message(
+            old_item="ScenarioCompositeStrategy",
+            new_item="FoundryComposite (from pyrit.scenario.scenarios.foundry)",
+            removed_in="0.15.0",
+        )
+
         self._strategies = list(strategies)
         if len(self._strategies) == 1:
             self._name = str(self._strategies[0].value)
@@ -520,13 +381,6 @@ class ScenarioCompositeStrategy:
         Raises:
             ValueError: If any composite contains multiple strategies.
         """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="ScenarioCompositeStrategy.extract_single_strategy_values",
-            new_item="[s.value for s in self._scenario_strategies]",
-            removed_in="0.8.0",
-        )
         # Check that all composites are single-strategy
         multi_strategy_composites = [comp for comp in composites if not comp.is_single_strategy]
         if multi_strategy_composites:
@@ -576,8 +430,8 @@ class ScenarioCompositeStrategy:
 
         print_deprecation_message(
             old_item="ScenarioCompositeStrategy.get_composite_name",
-            new_item="ScenarioCompositeStrategy.name property",
-            removed_in="0.8.0",
+            new_item="FoundryComposite.name",
+            removed_in="0.15.0",
         )
         if not strategies:
             raise ValueError("Cannot generate name for empty strategy list")
@@ -627,13 +481,6 @@ class ScenarioCompositeStrategy:
             # Error: Cannot mix aggregate with concrete in same composition
             [ScenarioCompositeStrategy(strategies=[EASY, Base64])] -> ValueError
         """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="ScenarioCompositeStrategy.normalize_compositions",
-            new_item="ScenarioStrategy.resolve and Scenario._prepare_strategies",
-            removed_in="0.8.0",
-        )
         if not compositions:
             raise ValueError("Compositions list cannot be empty")
 
@@ -679,9 +526,7 @@ class ScenarioCompositeStrategy:
                     ScenarioCompositeStrategy(strategies=[strategy]) for strategy in expanded
                 )
             else:
-                # Concrete composition - validate and preserve as-is
-                strategy_type.validate_composition(typed_strategies)
-                # Keep the composite (name is auto-generated from strategies)
+                # Concrete composition - preserve as-is (single-strategy composites are always valid)
                 normalized_compositions.append(composite)
 
         if not normalized_compositions:

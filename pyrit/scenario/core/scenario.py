@@ -29,10 +29,7 @@ from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -188,7 +185,7 @@ class Scenario(ABC):
 
     def _prepare_strategies(
         self,
-        strategies: Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]],
+        strategies: Optional[Sequence[ScenarioStrategy]],
     ) -> list[ScenarioStrategy]:
         """
         Resolve strategy inputs into a concrete list for this scenario.
@@ -213,7 +210,7 @@ class Scenario(ABC):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
-        scenario_strategies: Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]] = None,
+        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
         max_concurrency: int = 10,
         max_retries: int = 0,
@@ -232,10 +229,8 @@ class Scenario(ABC):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]]):
-                The strategies to execute. Can be a list of bare ScenarioStrategy enums or
-                ScenarioCompositeStrategy instances for advanced composition. Bare enums are
-                automatically wrapped into composites. If None, uses the default aggregate
+            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The strategies to execute.
+                Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.

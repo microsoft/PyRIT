@@ -17,7 +17,7 @@ from inspect import signature
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.common import apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
     CrescendoAttack,
@@ -60,13 +60,14 @@ from pyrit.prompt_converter.token_smuggling.ascii_smuggler_converter import (
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
@@ -91,9 +92,11 @@ class FoundryComposite:
     @property
     def name(self) -> str:
         """Return a human-readable name for this composite."""
-        attack_name = self.attack.value if self.attack else "baseline"
         if not self.converters:
-            return attack_name
+            return self.attack.value if self.attack else "baseline"
+        if self.attack is None and len(self.converters) == 1:
+            return self.converters[0].value
+        attack_name = self.attack.value if self.attack else "baseline"
         converter_names = ", ".join(c.value for c in self.converters)
         return f"ComposedStrategy({attack_name}, {converter_names})"
 
@@ -267,23 +270,92 @@ class RedTeamAgent(Scenario):
         )
         self._scenario_composites: list[FoundryComposite] = []
 
-    def _prepare_strategies(self, strategies: Sequence[ScenarioStrategy] | None) -> list[ScenarioStrategy]:
+    @apply_defaults
+    async def initialize_async(
+        self,
+        *,
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        scenario_strategies: Optional[Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]] = None,
+        dataset_config: Optional[DatasetConfiguration] = None,
+        max_concurrency: int = 10,
+        max_retries: int = 0,
+        memory_labels: Optional[dict[str, str]] = None,
+    ) -> None:
+        """
+        Initialize the scenario.
+
+        Args:
+            objective_target (PromptTarget): The target system to attack.
+            scenario_strategies (Optional[Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy]]): The
+                strategies to execute. Accepts bare FoundryStrategy enum members, FoundryComposite
+                objects (for pairing an attack with converters), or a mix of both. Passing
+                ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
+                If None, uses the default aggregate (EASY).
+            dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
+            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 10.
+            max_retries (int): Maximum number of retries on failure. Defaults to 0.
+            memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
+        """
+        await super().initialize_async(
+            objective_target=objective_target,
+            scenario_strategies=scenario_strategies,  # type: ignore[arg-type]
+            dataset_config=dataset_config,
+            max_concurrency=max_concurrency,
+            max_retries=max_retries,
+            memory_labels=memory_labels,
+        )
+
+    def _prepare_strategies(  # type: ignore[override]
+        self,
+        strategies: "Optional[Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy]]",
+    ) -> list[ScenarioStrategy]:
         """
         Resolve strategies and build FoundryComposite objects.
 
-        Each resolved FoundryStrategy becomes a separate FoundryComposite.
-        Strategies tagged "attack" populate composite.attack; strategies tagged
-        "converter" populate composite.converters as a single-converter composite.
+        Accepts bare FoundryStrategy members (each becomes its own composite) or
+        FoundryComposite objects (used as-is, enabling attack+converter pairings).
+        None resolves to the default strategy aggregate.
 
         Args:
-            strategies: Optional sequence of FoundryStrategy members (or None to use default).
+            strategies: FoundryStrategy enums, FoundryComposite objects, or None for default.
 
         Returns:
-            list[ScenarioStrategy]: The resolved strategies stored in self._scenario_strategies.
+            list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
-        resolved = FoundryStrategy.resolve(strategies, default=self.get_default_strategy())
-        self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
-        return list(resolved)
+        if strategies is None:
+            resolved = FoundryStrategy.resolve(None, default=self.get_default_strategy())
+            self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
+            return list(resolved)
+
+        # Process in input order, expanding aggregates for bare strategies in-place
+        composites: list[FoundryComposite] = []
+        flat: list[ScenarioStrategy] = []
+        seen: set[FoundryStrategy] = set()
+
+        for item in strategies:
+            if isinstance(item, ScenarioCompositeStrategy):
+                # Legacy backward-compat: convert to FoundryComposite (ScenarioCompositeStrategy
+                # is deprecated — use FoundryComposite directly instead)
+                foundry_strats = [s for s in item.strategies if isinstance(s, FoundryStrategy)]
+                if foundry_strats:
+                    item = FoundryComposite(attack=foundry_strats[0], converters=foundry_strats[1:])
+                else:
+                    continue
+
+            if isinstance(item, FoundryComposite):
+                composites.append(item)
+                if item.attack:
+                    flat.append(item.attack)
+                flat.extend(item.converters)
+            else:
+                for s in FoundryStrategy.resolve([item], default=self.get_default_strategy()):
+                    if s not in seen:
+                        seen.add(s)
+                        composites.append(self._strategy_to_composite(s))
+                        flat.append(s)
+
+        self._scenario_composites = composites
+        return flat
 
     @staticmethod
     def _strategy_to_composite(strategy: ScenarioStrategy) -> "FoundryComposite":
