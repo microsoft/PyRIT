@@ -220,8 +220,8 @@ class TestFactoryCreate:
         assert technique1.attack.objective_target is target1
         assert technique2.attack.objective_target is target2
 
-    def test_create_deepcopies_kwargs(self):
-        """Mutating the original kwargs dict should not affect future creates."""
+    def test_create_shares_kwargs_values(self):
+        """Factory uses shallow copy — mutable values inside kwargs are shared (by design)."""
         mutable_list = [1, 2, 3]
 
         class _ListAttack:
@@ -239,15 +239,12 @@ class TestFactoryCreate:
         target = MagicMock(spec=PromptTarget)
 
         technique1 = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
-        # Mutate the source list
-        mutable_list.append(999)
-
-        technique2 = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
-
-        # First create should have the original snapshot
         assert technique1.attack.items == [1, 2, 3]
-        # Second create should also have the original (from deepcopy of stored kwargs)
-        assert technique2.attack.items == [1, 2, 3]
+
+        # Mutating the original list is visible to future creates (shallow copy)
+        mutable_list.append(999)
+        technique2 = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        assert technique2.attack.items == [1, 2, 3, 999]
 
     def test_create_without_optional_configs_omits_them(self):
         """When optional configs are None, adversarial and converter should not be passed."""

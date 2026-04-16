@@ -44,6 +44,7 @@ class TargetInitializerTags(str, Enum):
     SCORER = "scorer"
     ALL = "all"
     DEFAULT_OBJECTIVE_TARGET = "default_objective_target"
+    ADVERSARIAL = "adversarial"
 
 
 @dataclass
@@ -164,6 +165,18 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2",
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL2",
+    ),
+    # ============================================
+    # Adversarial Chat Target (for scenario attack techniques)
+    # ============================================
+    TargetConfig(
+        registry_name="adversarial_chat",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_ENDPOINT",
+        key_var="ADVERSARIAL_CHAT_KEY",
+        model_var="ADVERSARIAL_CHAT_MODEL",
+        temperature=1.2,
+        tags=[TargetInitializerTags.ALL, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
         registry_name="azure_foundry_deepseek",

@@ -174,41 +174,35 @@ class Scenario(ABC):
             DatasetConfiguration: The default dataset configuration.
         """
 
-    @classmethod
-    def get_attack_technique_factories(cls) -> dict[str, "AttackTechniqueFactory"]:
+    def get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
         """
-        Return the default attack technique factories for this scenario.
+        Return the attack technique factories for this scenario.
 
         Each key is a technique name (matching a strategy enum value) and each
         value is an ``AttackTechniqueFactory`` that can produce an
         ``AttackTechnique`` for that technique.
 
-        The base implementation returns the common set from
-        ``core_techniques``.  Subclasses may override to add, remove, or
-        replace factories.
+        The base implementation lazily populates the
+        ``AttackTechniqueRegistry`` singleton with core techniques (via
+        ``ScenarioTechniqueRegistrar``) and returns all registered factories.
+        Subclasses may override to add, remove, or replace factories.
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
-        from pyrit.scenario.core.core_techniques import (
-            many_shot_factory,
-            prompt_sending_factory,
-            role_play_factory,
-            tap_factory,
-        )
+        from pyrit.scenario.core.scenario_techniques import ScenarioTechniqueRegistrar
 
-        return {
-            "prompt_sending": prompt_sending_factory(),
-            "role_play": role_play_factory(),
-            "many_shot": many_shot_factory(),
-            "tap": tap_factory(),
-        }
+        ScenarioTechniqueRegistrar().register()
+
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+
+        return AttackTechniqueRegistry.get_registry_singleton().get_factories()
 
     def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str) -> str:
         """
         Build the grouping key for an atomic attack.
 
-        Controls how attacks are grouped for result storage and resume
+        Controls how attacks are grouped for result storage, display, and resume
         logic.  Override to customize grouping:
 
         - **By technique** (default): ``return technique_name``

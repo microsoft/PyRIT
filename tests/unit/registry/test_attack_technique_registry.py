@@ -120,7 +120,7 @@ class TestAttackTechniqueRegistryCreateTechnique:
         target = MagicMock(spec=PromptTarget)
         scoring = MagicMock(spec=AttackScoringConfig)
 
-        technique = self.registry.create_technique("stub", objective_target=target, attack_scoring_config=scoring)
+        technique = self.registry.create_technique("stub", objective_target=target, attack_scoring_config_override=scoring)
 
         assert isinstance(technique, AttackTechnique)
         assert isinstance(technique.attack, _StubAttack)
@@ -141,7 +141,7 @@ class TestAttackTechniqueRegistryCreateTechnique:
         scoring = MagicMock(spec=AttackScoringConfig)
 
         technique = self.registry.create_technique(
-            "scoring_stub", objective_target=target, attack_scoring_config=scoring
+            "scoring_stub", objective_target=target, attack_scoring_config_override=scoring
         )
 
         assert technique.attack.attack_scoring_config is scoring
@@ -151,7 +151,7 @@ class TestAttackTechniqueRegistryCreateTechnique:
             self.registry.create_technique(
                 "nonexistent",
                 objective_target=MagicMock(spec=PromptTarget),
-                attack_scoring_config=MagicMock(spec=AttackScoringConfig),
+                attack_scoring_config_override=MagicMock(spec=AttackScoringConfig),
             )
 
     def test_create_technique_preserves_frozen_kwargs(self):
@@ -163,7 +163,7 @@ class TestAttackTechniqueRegistryCreateTechnique:
         target = MagicMock(spec=PromptTarget)
 
         technique = self.registry.create_technique(
-            "custom", objective_target=target, attack_scoring_config=MagicMock(spec=AttackScoringConfig)
+            "custom", objective_target=target, attack_scoring_config_override=MagicMock(spec=AttackScoringConfig)
         )
 
         assert technique.attack.max_turns == 42
@@ -252,3 +252,20 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="a", factory=factory)
 
         assert list(self.registry) == ["a", "b"]
+
+    def test_get_factories_returns_dict_mapping(self):
+        factory_a = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory_b = AttackTechniqueFactory(attack_class=_StubAttack, attack_kwargs={"max_turns": 5})
+        self.registry.register_technique(name="alpha", factory=factory_a)
+        self.registry.register_technique(name="beta", factory=factory_b)
+
+        result = self.registry.get_factories()
+
+        assert isinstance(result, dict)
+        assert set(result.keys()) == {"alpha", "beta"}
+        assert result["alpha"] is factory_a
+        assert result["beta"] is factory_b
+
+    def test_get_factories_empty_registry(self):
+        result = self.registry.get_factories()
+        assert result == {}

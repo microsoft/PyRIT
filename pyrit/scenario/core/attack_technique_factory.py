@@ -11,7 +11,6 @@ scorer) become available.
 
 from __future__ import annotations
 
-import copy
 import inspect
 from typing import TYPE_CHECKING, Any
 
@@ -64,7 +63,7 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If ``objective_target`` is included in attack_kwargs.
         """
         self._attack_class = attack_class
-        self._attack_kwargs = copy.deepcopy(attack_kwargs) if attack_kwargs else {}
+        self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._seed_technique = seed_technique
 
         self._validate_kwargs()
@@ -169,7 +168,7 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             A fresh AttackTechnique with a newly-constructed attack strategy.
         """
-        kwargs = copy.deepcopy(self._attack_kwargs)
+        kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
 
         # Only forward overrides when the attack class accepts the underlying param

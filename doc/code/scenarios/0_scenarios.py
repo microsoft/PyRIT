@@ -61,7 +61,6 @@
 #
 # 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available attack techniques for your scenario.
 #    - Each enum member represents an **attack technique** (the *how* of an attack)
-#    - Datasets control *what* content is tested; strategies control *how* attacks are run
 #    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
 #    - Optionally implement `supports_composition()` and `validate_composition()` for strategy composition rules
@@ -71,7 +70,11 @@
 #    - `get_default_strategy()`: Return the default strategy (typically `YourStrategy.ALL`)
 #    - `_get_atomic_attacks_async()`: Build and return a list of `AtomicAttack` instances
 #
-# 3. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
+# 3. **Default Dataset**: Implement `default_dataset_config()` to specify the datasets your scenario uses out of the box.
+#    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
+#    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
+#
+# 4. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
 #    - `name`: Descriptive name for your scenario
 #    - `version`: Integer version number
 #    - `strategy_class`: The strategy enum class for this scenario
@@ -79,7 +82,7 @@
 #    - `include_default_baseline`: Whether to include a baseline attack (default: True)
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
-# 4. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
+# 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
 #    - `objective_target`: The target system being tested (required)
 #    - `scenario_strategies`: List of strategies to execute (optional, defaults to ALL)
 #    - `max_concurrency`: Number of concurrent operations (default: 1)

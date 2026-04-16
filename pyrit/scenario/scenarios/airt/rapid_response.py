@@ -10,15 +10,14 @@ violence, …). Use ``--dataset-names`` to narrow which harm categories
 to test.
 """
 
-import logging
-import os
-from typing import Optional
+from __future__ import annotations
 
-from pyrit.auth import get_azure_openai_auth
+import logging
+from typing import TYPE_CHECKING
+
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.models import SeedAttackGroup
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
+from pyrit.executor.attack import AttackScoringConfig
+from pyrit.prompt_target import PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
@@ -27,6 +26,9 @@ from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
 from pyrit.score import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +111,8 @@ class RapidResponse(Scenario):
 
         Args:
             adversarial_chat: Chat target for multi-turn / adversarial
-                attacks (RolePlay, TAP). Defaults to an Azure OpenAI
-                target from environment variables.
+                attacks (RolePlay, TAP). When provided, overrides the
+                default adversarial target baked into technique factories.
             objective_scorer: Scorer for evaluating attack success.
                 Defaults to a composite Azure-Content-Filter + refusal
                 scorer.
@@ -120,7 +122,7 @@ class RapidResponse(Scenario):
         self._objective_scorer: TrueFalseScorer = (
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat
 
         super().__init__(
             version=self.VERSION,
@@ -133,14 +135,15 @@ class RapidResponse(Scenario):
         """Group results by harm category (dataset) rather than technique."""
         return seed_group_name
 
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
+    def get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+        """
+        Register core techniques with this scenario's adversarial chat target.
+        """
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.scenario.core.scenario_techniques import ScenarioTechniqueRegistrar
+
+        ScenarioTechniqueRegistrar(adversarial_chat=self._adversarial_chat).register()
+        return AttackTechniqueRegistry.get_registry_singleton().get_factories()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -163,7 +166,11 @@ class RapidResponse(Scenario):
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
 
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
-        adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
+
+        # Resolve adversarial_chat for AtomicAttack parameter building.
+        from pyrit.scenario.core.scenario_techniques import get_default_adversarial_target
+
+        adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
 
         atomic_attacks: list[AtomicAttack] = []
         for technique_name in selected_techniques:
@@ -180,7 +187,6 @@ class RapidResponse(Scenario):
             attack_technique = factory.create(
                 objective_target=self._objective_target,
                 attack_scoring_config_override=scoring_for_technique,
-                attack_adversarial_config_override=adversarial_config,
             )
 
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
@@ -192,7 +198,7 @@ class RapidResponse(Scenario):
                         ),
                         attack_technique=attack_technique,
                         seed_groups=list(seed_groups),
-                        adversarial_chat=self._adversarial_chat,
+                        adversarial_chat=adversarial_chat,
                         objective_scorer=self._objective_scorer,
                         memory_labels=self._memory_labels,
                     )

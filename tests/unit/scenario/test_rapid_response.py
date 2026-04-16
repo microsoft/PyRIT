@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
+    AttackAdversarialConfig,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RolePlayAttack,
@@ -17,15 +18,16 @@ from pyrit.executor.attack import (
 )
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, TechniqueSpec
 from pyrit.scenario import ScenarioCompositeStrategy
-from pyrit.scenario.core.core_techniques import (
-    many_shot_factory,
-    prompt_sending_factory,
-    role_play_factory,
-    tap_factory,
+from pyrit.scenario.core.scenario_techniques import (
+    SCENARIO_TECHNIQUES,
+    ScenarioTechniqueRegistrar,
+    get_default_adversarial_target,
 )
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse,
@@ -76,6 +78,18 @@ def mock_objective_scorer():
 
 
 @pytest.fixture(autouse=True)
+def reset_technique_registry():
+    """Reset the AttackTechniqueRegistry and TargetRegistry singletons between tests."""
+    from pyrit.registry import TargetRegistry
+
+    AttackTechniqueRegistry.reset_instance()
+    TargetRegistry.reset_instance()
+    yield
+    AttackTechniqueRegistry.reset_instance()
+    TargetRegistry.reset_instance()
+
+
+@pytest.fixture(autouse=True)
 def patch_many_shot_load():
     """Prevent ManyShotJailbreakAttack from loading the full bundled dataset."""
     with patch(
@@ -87,12 +101,13 @@ def patch_many_shot_load():
 
 @pytest.fixture
 def mock_runtime_env():
+    """Set minimal env vars needed for OpenAIChatTarget fallback via @apply_defaults."""
     with patch.dict(
         "os.environ",
         {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+            "OPENAI_CHAT_ENDPOINT": "https://test.openai.azure.com/",
+            "OPENAI_CHAT_KEY": "test-key",
+            "OPENAI_CHAT_MODEL": "gpt-4",
         },
     ):
         yield
@@ -233,11 +248,11 @@ class TestRapidResponseBasic:
         assert scenario._objective_scorer == mock_objective_scorer
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    def test_default_adversarial_target_created(self, mock_get_scorer, mock_objective_scorer):
-        """With env vars patched, constructor creates an OpenAIChatTarget."""
+    def test_no_adversarial_chat_stored_when_not_provided(self, mock_get_scorer, mock_objective_scorer):
+        """When adversarial_chat is not provided, it stays None (factories own the default)."""
         mock_get_scorer.return_value = mock_objective_scorer
         scenario = RapidResponse()
-        assert scenario._adversarial_chat is not None
+        assert scenario._adversarial_chat is None
 
     @pytest.mark.asyncio
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
@@ -443,13 +458,19 @@ class TestRapidResponseAttackGeneration:
     ):
         """If a technique name has no factory, it's skipped (not an error)."""
         groups = {"hate": _make_seed_groups("hate")}
+
+        # Register only prompt_sending in the registry — the other techniques
+        # (role_play, many_shot, tap) won't have factories.
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registry.register_technique(
+            name="prompt_sending",
+            factory=AttackTechniqueFactory(attack_class=PromptSendingAttack),
+            tags=["single_turn"],
+        )
+
         with (
             patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(
-                RapidResponse,
-                "get_attack_technique_factories",
-                return_value={"prompt_sending": prompt_sending_factory()},
-            ),
+            patch.object(ScenarioTechniqueRegistrar, "register"),
         ):
             scenario = RapidResponse(
                 adversarial_chat=mock_adversarial_target,
@@ -510,32 +531,38 @@ class TestBuildAtomicAttackName:
 # ===========================================================================
 
 
+@pytest.mark.usefixtures(*FIXTURES)
 class TestCoreTechniques:
-    """Tests for shared AttackTechniqueFactory builders in core_techniques.py."""
+    """Tests for shared AttackTechniqueFactory builders in scenario_techniques.py."""
 
-    def test_prompt_sending_factory_attack_class(self):
-        f = prompt_sending_factory()
-        assert f.attack_class is PromptSendingAttack
-
-    def test_role_play_factory_attack_class(self):
-        f = role_play_factory()
-        assert f.attack_class is RolePlayAttack
-
-    def test_many_shot_factory_attack_class(self):
-        f = many_shot_factory()
-        assert f.attack_class is ManyShotJailbreakAttack
-
-    def test_tap_factory_attack_class(self):
-        f = tap_factory()
-        assert f.attack_class is TreeOfAttacksWithPruningAttack
-
-    def test_base_class_returns_all_four_factories(self):
-        factories = RapidResponse.get_attack_technique_factories()
+    def test_instance_returns_all_four_factories(self, mock_adversarial_target, mock_objective_scorer):
+        scenario = RapidResponse(adversarial_chat=mock_adversarial_target, objective_scorer=mock_objective_scorer)
+        factories = scenario.get_attack_technique_factories()
         assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
         assert factories["prompt_sending"].attack_class is PromptSendingAttack
         assert factories["role_play"].attack_class is RolePlayAttack
         assert factories["many_shot"].attack_class is ManyShotJailbreakAttack
         assert factories["tap"].attack_class is TreeOfAttacksWithPruningAttack
+
+    def test_factories_use_default_adversarial_when_none(self, mock_objective_scorer):
+        """When no adversarial_chat is passed, factories use get_default_adversarial_target."""
+        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+        factories = scenario.get_attack_technique_factories()
+        # role_play and tap should have attack_adversarial_config baked in
+        assert "attack_adversarial_config" in factories["role_play"]._attack_kwargs
+        assert "attack_adversarial_config" in factories["tap"]._attack_kwargs
+
+    def test_factories_use_custom_adversarial_when_provided(self, mock_adversarial_target, mock_objective_scorer):
+        """When adversarial_chat is provided, the registrar bakes it into factories."""
+        scenario = RapidResponse(adversarial_chat=mock_adversarial_target, objective_scorer=mock_objective_scorer)
+        factories = scenario.get_attack_technique_factories()
+
+        # The registrar bakes the custom adversarial target directly into factories
+        rp_kwargs = factories["role_play"]._attack_kwargs
+        assert rp_kwargs["attack_adversarial_config"].target is mock_adversarial_target
+
+        tap_kwargs = factories["tap"]._attack_kwargs
+        assert tap_kwargs["attack_adversarial_config"].target is mock_adversarial_target
 
 
 # ===========================================================================
@@ -567,3 +594,223 @@ class TestDeprecatedAliases:
         )
         assert scenario.name == "RapidResponse"
         assert isinstance(scenario, RapidResponse)
+
+
+# ===========================================================================
+# Registry integration tests
+# ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestRegistryIntegration:
+    """Tests for AttackTechniqueRegistry wiring via ScenarioTechniqueRegistrar."""
+
+    def test_registrar_populates_registry(self, mock_adversarial_target):
+        """After calling register(), all 4 techniques are in registry."""
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        names = set(registry.get_names())
+        assert names == {"prompt_sending", "role_play", "many_shot", "tap"}
+
+    def test_registrar_idempotent(self, mock_adversarial_target):
+        """Calling register() twice doesn't duplicate entries."""
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        assert len(registry) == 4
+
+    def test_registrar_preserves_custom(self, mock_adversarial_target):
+        """Pre-registered custom techniques aren't overwritten."""
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        custom_factory = AttackTechniqueFactory(attack_class=PromptSendingAttack)
+        registry.register_technique(name="role_play", factory=custom_factory, tags=["custom"])
+
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+
+        # role_play should still be the custom factory
+        factories = registry.get_factories()
+        assert factories["role_play"] is custom_factory
+        # Other 3 should have been registered normally
+        assert len(factories) == 4
+
+    def test_get_factories_returns_dict(self, mock_adversarial_target):
+        """get_factories() returns a dict of name → factory."""
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories()
+        assert isinstance(factories, dict)
+        assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+        assert factories["prompt_sending"].attack_class is PromptSendingAttack
+
+    def test_scenario_base_class_reads_from_registry(self, mock_adversarial_target, mock_objective_scorer):
+        """Scenario.get_attack_technique_factories() triggers registration and reads from registry."""
+        scenario = RapidResponse(adversarial_chat=mock_adversarial_target, objective_scorer=mock_objective_scorer)
+        factories = scenario.get_attack_technique_factories()
+
+        # Should have all 4 core techniques from the registry
+        assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+
+        # Registry should also have them
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        assert set(registry.get_names()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+
+    def test_tags_assigned_correctly(self, mock_adversarial_target):
+        """Core techniques have correct tags (single_turn / multi_turn)."""
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+
+        single_turn = {e.name for e in registry.get_by_tag(tag="single_turn")}
+        multi_turn = {e.name for e in registry.get_by_tag(tag="multi_turn")}
+
+        assert single_turn == {"prompt_sending", "role_play"}
+        assert multi_turn == {"many_shot", "tap"}
+
+
+# ===========================================================================
+# ScenarioTechniqueRegistrar tests
+# ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestScenarioTechniqueRegistrar:
+    """Tests for the declarative ScenarioTechniqueRegistrar class."""
+
+    def test_registrar_populates_all_four_techniques(self):
+        """Registrar with default adversarial registers all 4 techniques."""
+        ScenarioTechniqueRegistrar().register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        assert set(registry.get_names()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+
+    def test_registrar_with_custom_adversarial(self, mock_adversarial_target):
+        """Custom adversarial_chat is baked into adversarial-needing factories."""
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories()
+
+        # role_play and tap should have the mock adversarial target baked in
+        rp_kwargs = factories["role_play"]._attack_kwargs
+        assert rp_kwargs["attack_adversarial_config"].target is mock_adversarial_target
+
+        tap_kwargs = factories["tap"]._attack_kwargs
+        assert tap_kwargs["attack_adversarial_config"].target is mock_adversarial_target
+
+    def test_registrar_idempotent(self, mock_adversarial_target):
+        """Calling register() twice does not duplicate or overwrite entries."""
+        registrar = ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target)
+        registrar.register()
+        registrar.register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        assert len(registry) == 4
+
+    def test_registrar_preserves_custom_preregistered(self, mock_adversarial_target):
+        """Pre-registered custom techniques are not overwritten by registrar."""
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        custom_factory = AttackTechniqueFactory(attack_class=PromptSendingAttack)
+        registry.register_technique(name="role_play", factory=custom_factory, tags=["custom"])
+
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        # role_play should still be the custom factory
+        assert registry.get_factories()["role_play"] is custom_factory
+        assert len(registry) == 4
+
+    def test_registrar_assigns_correct_tags(self, mock_adversarial_target):
+        """Tags from TechniqueSpec are applied correctly."""
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+
+        single_turn = {e.name for e in registry.get_by_tag(tag="single_turn")}
+        multi_turn = {e.name for e in registry.get_by_tag(tag="multi_turn")}
+        assert single_turn == {"prompt_sending", "role_play"}
+        assert multi_turn == {"many_shot", "tap"}
+
+    def test_registrar_custom_techniques_list(self, mock_adversarial_target):
+        """Registrar accepts a custom list of TechniqueSpecs."""
+        custom_specs = [
+            TechniqueSpec(name="custom_attack", attack_class=PromptSendingAttack, tags=["custom"]),
+        ]
+        ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target).register(techniques=custom_specs)
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        assert set(registry.get_names()) == {"custom_attack"}
+
+    def test_registrar_adversarial_lazy_resolution(self):
+        """Adversarial target is not resolved until register() accesses it."""
+        registrar = ScenarioTechniqueRegistrar()
+        # No env var resolution yet — just creating the registrar
+        assert registrar._adversarial_chat is None
+
+    def test_get_default_adversarial_target_from_registry(self, mock_adversarial_target):
+        """get_default_adversarial_target returns registry entry when available."""
+        from pyrit.registry import TargetRegistry
+
+        target_registry = TargetRegistry.get_registry_singleton()
+        target_registry.register(name="adversarial_chat", instance=mock_adversarial_target)
+        result = get_default_adversarial_target()
+        assert result is mock_adversarial_target
+
+    def test_get_default_adversarial_target_fallback(self):
+        """get_default_adversarial_target falls back to OpenAIChatTarget when not in registry."""
+        result = get_default_adversarial_target()
+        assert isinstance(result, OpenAIChatTarget)
+        assert result._temperature == 1.2
+
+
+# ===========================================================================
+# TechniqueSpec tests
+# ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestTechniqueSpec:
+    """Tests for the TechniqueSpec dataclass."""
+
+    def test_simple_spec(self):
+        spec = TechniqueSpec(name="test", attack_class=PromptSendingAttack, tags=["single_turn"])
+        assert spec.name == "test"
+        assert spec.attack_class is PromptSendingAttack
+        assert spec.tags == ["single_turn"]
+        assert spec.extra_kwargs_builder is None
+
+    def test_extra_kwargs_builder(self, mock_adversarial_target):
+        builder = lambda _adv: {"role_play_definition_path": "/custom/path.yaml"}
+        spec = TechniqueSpec(
+            name="complex",
+            attack_class=RolePlayAttack,
+            tags=["single_turn"],
+            extra_kwargs_builder=builder,
+        )
+        registrar = ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target)
+        factory = registrar.build_factory(spec)
+        assert factory._attack_kwargs["role_play_definition_path"] == "/custom/path.yaml"
+        assert "attack_adversarial_config" in factory._attack_kwargs
+
+    def test_build_factory_no_adversarial(self, mock_adversarial_target):
+        """Non-adversarial spec should not have attack_adversarial_config."""
+        spec = TechniqueSpec(name="simple", attack_class=PromptSendingAttack, tags=[])
+        registrar = ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target)
+        factory = registrar.build_factory(spec)
+        assert "attack_adversarial_config" not in (factory._attack_kwargs or {})
+
+    def test_SCENARIO_TECHNIQUES_list_has_four_entries(self):
+        assert len(SCENARIO_TECHNIQUES) == 4
+        names = {s.name for s in SCENARIO_TECHNIQUES}
+        assert names == {"prompt_sending", "role_play", "many_shot", "tap"}
+
+    def test_frozen_spec(self):
+        """TechniqueSpec is frozen (immutable)."""
+        spec = TechniqueSpec(name="test", attack_class=PromptSendingAttack)
+        with pytest.raises(AttributeError):
+            spec.name = "modified"
+
+    def test_adversarial_auto_detected_from_signature(self, mock_adversarial_target):
+        """Adversarial config is injected based on attack class signature, not a manual flag."""
+        registrar = ScenarioTechniqueRegistrar(adversarial_chat=mock_adversarial_target)
+
+        # RolePlayAttack accepts attack_adversarial_config → should be injected
+        rp_spec = TechniqueSpec(name="rp", attack_class=RolePlayAttack, tags=[])
+        rp_factory = registrar.build_factory(rp_spec)
+        assert "attack_adversarial_config" in rp_factory._attack_kwargs
+
+        # PromptSendingAttack does NOT accept it → should not be injected
+        ps_spec = TechniqueSpec(name="ps", attack_class=PromptSendingAttack, tags=[])
+        ps_factory = registrar.build_factory(ps_spec)
+        assert "attack_adversarial_config" not in (ps_factory._attack_kwargs or {})

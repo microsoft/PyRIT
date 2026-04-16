@@ -8,32 +8,9 @@ Deprecated — use ``rapid_response`` instead.
 backward compatibility.  They will be removed in a future release.
 """
 
-import warnings
-
 from pyrit.scenario.scenarios.airt.rapid_response import (
-    RapidResponse,
-    RapidResponseStrategy,
+    RapidResponse as ContentHarms,
+    RapidResponseStrategy as ContentHarmsStrategy,
 )
 
-
-def __getattr__(name: str):
-    if name == "ContentHarms":
-        warnings.warn(
-            "ContentHarms is deprecated. Use RapidResponse instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return RapidResponse
-    if name == "ContentHarmsStrategy":
-        warnings.warn(
-            "ContentHarmsStrategy is deprecated. Use RapidResponseStrategy instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return RapidResponseStrategy
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# Direct aliases for import-from statements
-ContentHarms = RapidResponse
-ContentHarmsStrategy = RapidResponseStrategy
+__all__ = ["ContentHarms", "ContentHarmsStrategy"]
