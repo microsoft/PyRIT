@@ -84,7 +84,7 @@ for piece in prompts:
 print("-----------------")
 
 # These are all original prompts sent previously
-original_user_prompts = [prompt.original_value for prompt in prompts if prompt.role == "user"]
+original_user_prompts = [prompt.original_value for prompt in prompts if prompt.api_role == "user"]
 
 # we can now send them to a new target, using different converters
 
@@ -149,7 +149,7 @@ for filter_target_class in filter_target_classes:
 
     print(f"Message pieces to/from {filter_target_class}: {len(target_class_pieces)}")
     for piece in target_class_pieces:
-        print(f"  [{piece.role}] {piece.converted_value[:80]}")
+        print(f"  [{piece.api_role}] {piece.converted_value[:80]}")
 
 # %% [markdown]
 # ### Filter by target with partial match
@@ -172,7 +172,7 @@ openai_pieces = memory.get_message_pieces(
 
 print(f"Message pieces to/from *OpenAI* targets: {len(openai_pieces)}")
 for piece in openai_pieces:
-    print(f"  [{piece.role}] {piece.original_value[:80]}")
+    print(f"  [{piece.api_role}] {piece.original_value[:80]}")
 
 # %% [markdown]
 # ### Filter by converter (array column)
@@ -195,7 +195,7 @@ base64_pieces = memory.get_message_pieces(
 
 print(f"Message pieces that used Base64Converter: {len(base64_pieces)}")
 for piece in base64_pieces:
-    print(f"  [{piece.role}] original: {piece.original_value[:60]} → converted: {piece.converted_value[:60]}")
+    print(f"  [{piece.api_role}] original: {piece.original_value[:60]} → converted: {piece.converted_value[:60]}")
 
 # %% [markdown]
 # ### Combining multiple filters
@@ -216,7 +216,7 @@ combined_pieces = memory.get_message_pieces(
 
 print(f"Pieces to/from TextTarget AND using Base64Converter: {len(combined_pieces)}")
 for piece in combined_pieces:
-    print(f"  [{piece.role}] {piece.original_value[:80]}")
+    print(f"  [{piece.api_role}] {piece.original_value[:80]}")
 
 # %% [markdown]
 # ### Mixing labels and identifier filters
@@ -234,7 +234,7 @@ labeled_and_filtered = memory.get_message_pieces(
 
 print(f"Labeled + filtered pieces: {len(labeled_and_filtered)}")
 for piece in labeled_and_filtered:
-    print(f"  [{piece.role}] {piece.original_value[:80]}")
+    print(f"  [{piece.api_role}] {piece.original_value[:80]}")
 
 # %% [markdown]
 # ## Part 3 — Filtering Scores by Scorer Identity
