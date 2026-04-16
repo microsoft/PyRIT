@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
     CrescendoAttack,
@@ -486,20 +485,3 @@ class RedTeamAgent(Scenario):
         # these constructor parameters.
         return attack_type(**kwargs)  # type: ignore[arg-type]
 
-
-class FoundryScenario(RedTeamAgent):
-    """
-    Deprecated alias for RedTeamAgent.
-
-    This class is deprecated and will be removed in version 0.13.0.
-    Use `RedTeamAgent` instead.
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        """Initialize FoundryScenario with deprecation warning."""
-        print_deprecation_message(
-            old_item="FoundryScenario",
-            new_item="RedTeamAgent",
-            removed_in="0.13.0",
-        )
-        super().__init__(**kwargs)
