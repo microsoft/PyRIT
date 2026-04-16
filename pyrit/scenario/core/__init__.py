@@ -6,6 +6,12 @@
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.core_techniques import (
+    many_shot_factory,
+    prompt_sending_factory,
+    role_play_factory,
+    tap_factory,
+)
 from pyrit.scenario.core.dataset_configuration import EXPLICIT_SEED_GROUPS_KEY, DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
@@ -19,4 +25,8 @@ __all__ = [
     "Scenario",
     "ScenarioCompositeStrategy",
     "ScenarioStrategy",
+    "many_shot_factory",
+    "prompt_sending_factory",
+    "role_play_factory",
+    "tap_factory",
 ]

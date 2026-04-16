@@ -94,24 +94,40 @@ Options:
 
 ## Strategy Enum
 
-Strategies should be selectable by an axis. E.g. it could be harm category or and attack type, but likely not both or it gets confusing.
+Strategy members should represent **attack techniques** — the *how* of an attack (e.g., prompt sending, role play, TAP).  Datasets control *what* is tested (e.g., harm categories, compliance topics).  Avoid mixing dataset/category selection into the strategy enum; use `DatasetConfiguration` and `--dataset-names` for that axis.
 
 ```python
 class MyStrategy(ScenarioStrategy):
-    ALL = ("all", {"all"})            # Required aggregate
-    EASY = ("easy", {"easy"})
+    ALL = ("all", {"all"})                  # Required aggregate
+    DEFAULT = ("default", {"default"})      # Recommended default aggregate
+    SINGLE_TURN = ("single_turn", {"single_turn"})  # Category aggregate
 
-    Base64 = ("base64", {"easy", "converter"})
-    Crescendo = ("crescendo", {"difficult", "multi_turn"})
+    PromptSending = ("prompt_sending", {"single_turn", "default"})
+    RolePlay = ("role_play", {"single_turn"})
+    ManyShot = ("many_shot", {"multi_turn", "default"})
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
-        return {"all", "easy", "difficult"}
+        return {"all", "default", "single_turn", "multi_turn"}
 ```
 
 - `ALL` aggregate is always required
 - Each member: `NAME = ("string_value", {tag_set})`
 - Aggregates expand to all strategies matching their tag
+
+### `_build_atomic_attack_name()` — Result Grouping
+
+Override `_build_atomic_attack_name()` on the `Scenario` base class to control how attack results are grouped:
+
+```python
+def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str) -> str:
+    # Default: group by technique name (most common)
+    return technique_name
+
+    # Override examples:
+    # Group by dataset/harm category: return seed_group_name
+    # Cross-product: return f"{technique_name}_{seed_group_name}"
+```
 
 ## AtomicAttack Construction
 

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.models import SeedAttackGroup
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,56 @@ class Scenario(ABC):
         Returns:
             DatasetConfiguration: The default dataset configuration.
         """
+
+    @classmethod
+    def get_attack_technique_factories(cls) -> dict[str, "AttackTechniqueFactory"]:
+        """
+        Return the default attack technique factories for this scenario.
+
+        Each key is a technique name (matching a strategy enum value) and each
+        value is an ``AttackTechniqueFactory`` that can produce an
+        ``AttackTechnique`` for that technique.
+
+        The base implementation returns the common set from
+        ``core_techniques``.  Subclasses may override to add, remove, or
+        replace factories.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
+        """
+        from pyrit.scenario.core.core_techniques import (
+            many_shot_factory,
+            prompt_sending_factory,
+            role_play_factory,
+            tap_factory,
+        )
+
+        return {
+            "prompt_sending": prompt_sending_factory(),
+            "role_play": role_play_factory(),
+            "many_shot": many_shot_factory(),
+            "tap": tap_factory(),
+        }
+
+    def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str) -> str:
+        """
+        Build the grouping key for an atomic attack.
+
+        Controls how attacks are grouped for result storage and resume
+        logic.  Override to customize grouping:
+
+        - **By technique** (default): ``return technique_name``
+        - **By dataset/category**: ``return seed_group_name``
+        - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
+
+        Args:
+            technique_name: The name of the attack technique.
+            seed_group_name: The dataset or category name for the seed group.
+
+        Returns:
+            str: The atomic attack name used as a grouping key.
+        """
+        return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency:

@@ -59,8 +59,10 @@
 #
 # ### Required Components
 #
-# 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available strategies for your scenario.
-#    - Each enum member is defined as `(value, tags)` where value is a string and tags is a set of strings
+# 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available attack techniques for your scenario.
+#    - Each enum member represents an **attack technique** (the *how* of an attack)
+#    - Datasets control *what* content is tested; strategies control *how* attacks are run
+#    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
 #    - Optionally implement `supports_composition()` and `validate_composition()` for strategy composition rules
 #
@@ -105,8 +107,9 @@ await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-lev
 
 class MyStrategy(ScenarioStrategy):
     ALL = ("all", {"all"})
-    StrategyA = ("strategy_a", {"tag1", "tag2"})
-    StrategyB = ("strategy_b", {"tag1"})
+    # Strategy members represent attack techniques
+    PromptSending = ("prompt_sending", {"single_turn"})
+    RolePlay = ("role_play", {"single_turn"})
 
 
 class MyScenario(Scenario):
@@ -166,7 +169,7 @@ class MyScenario(Scenario):
             # self._dataset_config is set by the parent class
             seed_groups = self._dataset_config.get_all_seed_groups()
 
-            # Create attack instances based on strategy
+            # Create attack instances based on the selected technique
             attack = PromptSendingAttack(
                 objective_target=self._objective_target,
                 attack_scoring_config=self._scorer_config,
