@@ -24,10 +24,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -57,13 +54,11 @@ class ContentHarmsDatasetConfiguration(DatasetConfiguration):
         """
         result = super().get_seed_groups()
 
-        if self._scenario_composites is None:
+        if self._scenario_strategies is None:
             return result
 
         # Extract selected harm strategies
-        selected_harms = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=ContentHarmsStrategy
-        )
+        selected_harms = {s.value for s in self._scenario_strategies if isinstance(s, ContentHarmsStrategy)}
 
         # Filter to matching datasets and map keys to harm names
         mapped_result: dict[str, list[SeedGroup]] = {}
@@ -201,7 +196,7 @@ class ContentHarms(Scenario):
                 seed attack groups.
         """
         # Set scenario_composites on the config so get_seed_attack_groups can filter by strategy
-        self._dataset_config._scenario_composites = self._scenario_composites
+        self._dataset_config._scenario_strategies = self._scenario_strategies
         return self._dataset_config.get_seed_attack_groups()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:

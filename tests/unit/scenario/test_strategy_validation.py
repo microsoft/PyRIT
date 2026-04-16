@@ -7,6 +7,7 @@ import pytest
 
 from pyrit.scenario import ScenarioCompositeStrategy
 from pyrit.scenario.foundry import FoundryStrategy
+from pyrit.scenario.foundry.red_team_agent import FoundryComposite
 from pyrit.scenario.garak import EncodingStrategy
 
 
@@ -28,29 +29,36 @@ class TestStrategyValidation:
         # Should not raise
         FoundryStrategy.validate_composition([FoundryStrategy.Base64])
 
-    def test_foundry_validation_allows_converter_composition(self):
-        """Test that foundry validation allows multiple converters."""
-        # Should not raise
-        FoundryStrategy.validate_composition([FoundryStrategy.Base64, FoundryStrategy.Atbash])
 
-    def test_foundry_validation_allows_one_attack_with_converters(self):
-        """Test that foundry validation allows one attack with converters."""
-        # Should not raise
-        FoundryStrategy.validate_composition(
-            [FoundryStrategy.Base64, FoundryStrategy.Crescendo, FoundryStrategy.Atbash]
+class TestFoundryComposite:
+    """Tests for FoundryComposite dataclass construction and naming."""
+
+    def test_converter_only_composite_name(self):
+        """Test name for a composite with only a converter strategy."""
+        composite = FoundryComposite(attack=None, converters=[FoundryStrategy.Base64])
+        assert composite.name == "ComposedStrategy(baseline, base64)"
+
+    def test_attack_only_composite_name(self):
+        """Test name for a composite with only an attack strategy."""
+        composite = FoundryComposite(attack=FoundryStrategy.Crescendo)
+        assert composite.name == "crescendo"
+
+    def test_attack_with_converter_composite_name(self):
+        """Test name for attack + converter composition."""
+        composite = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])
+        assert composite.name == "ComposedStrategy(crescendo, base64)"
+
+    def test_attack_with_multiple_converters_composite_name(self):
+        """Test name with multiple converters."""
+        composite = FoundryComposite(
+            attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64, FoundryStrategy.Atbash]
         )
+        assert composite.name == "ComposedStrategy(crescendo, base64, atbash)"
 
-    def test_foundry_validation_rejects_multiple_attacks(self):
-        """Test that foundry validation rejects multiple attack strategies."""
-        with pytest.raises(ValueError, match="Cannot compose multiple attack strategies"):
-            FoundryStrategy.validate_composition([FoundryStrategy.Crescendo, FoundryStrategy.MultiTurn])
-
-    def test_foundry_validation_rejects_attacks_with_converters_and_another_attack(self):
-        """Test that foundry validation rejects multiple attacks even with converters."""
-        with pytest.raises(ValueError, match="Cannot compose multiple attack strategies"):
-            FoundryStrategy.validate_composition(
-                [FoundryStrategy.Base64, FoundryStrategy.Crescendo, FoundryStrategy.MultiTurn]
-            )
+    def test_empty_composite_defaults(self):
+        """Test that FoundryComposite defaults converters to empty list."""
+        composite = FoundryComposite(attack=FoundryStrategy.Base64)
+        assert composite.converters == []
 
 
 class TestScenarioCompositeStrategyExtraction:

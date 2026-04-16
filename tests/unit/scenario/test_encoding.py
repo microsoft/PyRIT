@@ -193,17 +193,11 @@ class TestEncodingInitialization:
             await scenario.initialize_async(objective_target=mock_objective_target, dataset_config=mock_dataset_config)
 
             # By default, EncodingStrategy.ALL is used, which expands to all encoding strategies
-            assert len(scenario._scenario_composites) > 0
-            # Verify all composites contain EncodingStrategy instances
-            assert all(
-                isinstance(comp.strategies[0], EncodingStrategy)
-                for comp in scenario._scenario_composites
-                if comp.strategies
-            )
+            assert len(scenario._scenario_strategies) > 0
+            # Verify all strategies contain EncodingStrategy instances
+            assert all(isinstance(s, EncodingStrategy) for s in scenario._scenario_strategies)
             # Verify none of the strategies are the aggregate "ALL"
-            assert all(
-                comp.strategies[0] != EncodingStrategy.ALL for comp in scenario._scenario_composites if comp.strategies
-            )
+            assert all(s != EncodingStrategy.ALL for s in scenario._scenario_strategies)
 
 
 @pytest.mark.usefixtures("patch_central_database")

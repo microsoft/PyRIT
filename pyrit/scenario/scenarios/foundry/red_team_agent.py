@@ -12,6 +12,7 @@ available attacks against specified datasets.
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
@@ -65,16 +66,36 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 
 AttackStrategyT = TypeVar("AttackStrategyT", bound="AttackStrategy[Any, Any]")
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FoundryComposite:
+    """
+    A typed composition of Foundry attack strategies.
+
+    Exactly one attack strategy (e.g., Crescendo) paired with zero or more
+    converter strategies (e.g., Base64, ROT13). When no attack is specified,
+    a PromptSendingAttack is used.
+    """
+
+    attack: "FoundryStrategy | None"
+    converters: "list[FoundryStrategy]" = field(default_factory=list)
+
+    @property
+    def name(self) -> str:
+        """Return a human-readable name for this composite."""
+        attack_name = self.attack.value if self.attack else "baseline"
+        if not self.converters:
+            return attack_name
+        converter_names = ", ".join(c.value for c in self.converters)
+        return f"ComposedStrategy({attack_name}, {converter_names})"
 
 
 class FoundryStrategy(ScenarioStrategy):
@@ -153,47 +174,6 @@ class FoundryStrategy(ScenarioStrategy):
         """
         # Include base class aggregates ("all") and add Foundry-specific ones
         return super().get_aggregate_tags() | {"easy", "moderate", "difficult", "converter", "attack"}
-
-    @classmethod
-    def supports_composition(cls) -> bool:
-        """
-        Indicate that FoundryStrategy supports composition.
-
-        Returns:
-            bool: True, as Foundry strategies can be composed together (with rules).
-        """
-        return True
-
-    @classmethod
-    def validate_composition(cls, strategies: Sequence[ScenarioStrategy]) -> None:
-        """
-        Validate whether the given Foundry strategies can be composed together.
-
-        Foundry-specific composition rules:
-        - Multiple attack strategies (e.g., Crescendo, MultiTurn) cannot be composed together
-        - Converters can be freely composed with each other
-        - At most one attack can be composed with any number of converters
-
-        Args:
-            strategies (Sequence[ScenarioStrategy]): The strategies to validate for composition.
-
-        Raises:
-            ValueError: If the composition violates Foundry's rules (e.g., multiple attack).
-        """
-        if not strategies:
-            raise ValueError("Cannot validate empty strategy list")
-
-        # Filter to only FoundryStrategy instances
-        foundry_strategies = [s for s in strategies if isinstance(s, FoundryStrategy)]
-
-        # Foundry-specific rule: Cannot compose multiple attack strategies
-        attacks = [s for s in foundry_strategies if "attack" in s.tags]
-
-        if len(attacks) > 1:
-            raise ValueError(
-                f"Cannot compose multiple attack strategies together: {[a.value for a in attacks]}. "
-                f"Only one attack strategy is allowed per composition."
-            )
 
 
 class RedTeamAgent(Scenario):
@@ -285,6 +265,34 @@ class RedTeamAgent(Scenario):
             include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
+        self._scenario_composites: list[FoundryComposite] = []
+
+    def _prepare_strategies(self, strategies: Sequence[ScenarioStrategy] | None) -> list[ScenarioStrategy]:
+        """
+        Resolve strategies and build FoundryComposite objects.
+
+        Each resolved FoundryStrategy becomes a separate FoundryComposite.
+        Strategies tagged "attack" populate composite.attack; strategies tagged
+        "converter" populate composite.converters as a single-converter composite.
+
+        Args:
+            strategies: Optional sequence of FoundryStrategy members (or None to use default).
+
+        Returns:
+            list[ScenarioStrategy]: The resolved strategies stored in self._scenario_strategies.
+        """
+        resolved = FoundryStrategy.resolve(strategies, default=self.get_default_strategy())
+        self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
+        return list(resolved)
+
+    @staticmethod
+    def _strategy_to_composite(strategy: ScenarioStrategy) -> "FoundryComposite":
+        """Wrap a single FoundryStrategy in a FoundryComposite."""
+        if not isinstance(strategy, FoundryStrategy):
+            raise ValueError(f"Expected FoundryStrategy, got {type(strategy)}")
+        if "attack" in strategy.tags:
+            return FoundryComposite(attack=strategy)
+        return FoundryComposite(attack=None, converters=[strategy])
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
@@ -316,49 +324,34 @@ class RedTeamAgent(Scenario):
             temperature=1.2,
         )
 
-    def _get_attack_from_strategy(self, composite_strategy: ScenarioCompositeStrategy) -> AtomicAttack:
+    def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
         """
-        Get an atomic attack for the specified strategy composition.
+        Get an atomic attack for the specified FoundryComposite.
 
         Args:
-            composite_strategy (ScenarioCompositeStrategy): Composite strategy containing one or more
-                FoundryStrategy enum members to compose together. Can include attack strategies
-                (e.g., Crescendo, MultiTurn) and converter strategies (e.g., Base64, ROT13) that
-                will be applied to the same prompts.
+            composite (FoundryComposite): Typed composite with an optional attack strategy
+                and zero or more converter strategies.
 
         Returns:
             AtomicAttack: The configured atomic attack.
-
-        Raises:
-            ValueError: If the strategy composition is invalid (e.g., multiple attack strategies).
         """
         attack: AttackStrategy[Any, Any]
 
-        # Extract FoundryStrategy enums from the composite
-        strategy_list = [s for s in composite_strategy.strategies if isinstance(s, FoundryStrategy)]
-
-        attacks = [s for s in strategy_list if "attack" in s.tags]
-        converters_strategies = [s for s in strategy_list if "converter" in s.tags]
-
-        # Validate attack composition
-        if len(attacks) > 1:
-            raise ValueError(f"Cannot compose multiple attack strategies: {[a.value for a in attacks]}")
-
         attack_type: type[AttackStrategy[Any, Any]] = PromptSendingAttack
         attack_kwargs: dict[str, Any] = {}
-        if len(attacks) == 1:
-            if attacks[0] == FoundryStrategy.Crescendo:
+        if composite.attack is not None:
+            if composite.attack == FoundryStrategy.Crescendo:
                 attack_type = CrescendoAttack
-            elif attacks[0] == FoundryStrategy.MultiTurn:
+            elif composite.attack == FoundryStrategy.MultiTurn:
                 attack_type = RedTeamingAttack
-            elif attacks[0] == FoundryStrategy.Pair:
+            elif composite.attack == FoundryStrategy.Pair:
                 attack_type = TreeOfAttacksWithPruningAttack
                 attack_kwargs = {"tree_width": 1}
-            elif attacks[0] == FoundryStrategy.Tap:
+            elif composite.attack == FoundryStrategy.Tap:
                 attack_type = TreeOfAttacksWithPruningAttack
 
         converters: list[PromptConverter] = []
-        for strategy in converters_strategies:
+        for strategy in composite.converters:
             if strategy == FoundryStrategy.AnsiAttack:
                 converters.append(AnsiAttackConverter())
             elif strategy == FoundryStrategy.AsciiArt:
@@ -408,7 +401,7 @@ class RedTeamAgent(Scenario):
         attack = self._get_attack(attack_type=attack_type, converters=converters, attack_kwargs=attack_kwargs)
 
         return AtomicAttack(
-            atomic_attack_name=composite_strategy.name,
+            atomic_attack_name=composite.name,
             attack_technique=AttackTechnique(attack=attack),
             seed_groups=self._seed_groups,
             adversarial_chat=self._adversarial_chat,

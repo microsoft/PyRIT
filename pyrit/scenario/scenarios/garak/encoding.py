@@ -36,10 +36,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 
@@ -274,9 +271,7 @@ class Encoding(Scenario):
         ]
 
         # Filter to only include selected strategies
-        selected_encoding_names = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=EncodingStrategy
-        )
+        selected_encoding_names = {s.value for s in self._scenario_strategies}
         converters_with_encodings = [
             (conv, name) for conv, name in all_converters_with_encodings if name in selected_encoding_names
         ]

@@ -202,28 +202,78 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             Set[T]: The normalized set of concrete attack strategies with aggregate tags
                    expanded and removed.
         """
-        normalized_strategies = set(strategies)
+        print_deprecation_message(
+            old_item="ScenarioStrategy.normalize_strategies",
+            new_item="ScenarioStrategy.expand",
+            removed_in="0.8.0",
+        )
+        return set(cls.expand(strategies))
 
-        # Find aggregate tags in the input and expand them
+    @classmethod
+    def expand(cls: type[T], strategies: set[T]) -> list[T]:
+        """
+        Expand a set of strategies (including aggregates) into an ordered, deduplicated list.
+
+        Aggregate markers (like EASY, ALL) are expanded into their constituent concrete strategies.
+        The result is sorted by enum definition order for determinism.
+
+        Args:
+            strategies (set[T]): Set of strategies, which may include aggregate markers.
+
+        Returns:
+            list[T]: Ordered list of concrete strategies with aggregates expanded.
+        """
+        concrete: set[T] = set(strategies)
         aggregate_tags = cls.get_aggregate_tags()
         aggregates_to_expand = {
             tag for strategy in strategies if strategy.value in aggregate_tags for tag in strategy.tags
         }
-
         for aggregate_tag in aggregates_to_expand:
-            # Remove the aggregate marker itself
-            aggregate_marker = next((s for s in normalized_strategies if s.value == aggregate_tag), None)
+            aggregate_marker = next((s for s in concrete if s.value == aggregate_tag), None)
             if aggregate_marker:
-                normalized_strategies.remove(aggregate_marker)
-
-            # Special handling for "all" tag - expand to all non-aggregate strategies
+                concrete.remove(aggregate_marker)
             if aggregate_tag == "all":
-                normalized_strategies.update(cls.get_all_strategies())
+                concrete.update(cls.get_all_strategies())
             else:
-                # Add all strategies with that tag
-                normalized_strategies.update(cls.get_strategies_by_tag(aggregate_tag))
+                concrete.update(cls.get_strategies_by_tag(aggregate_tag))
+        return [s for s in cls if s in concrete]
 
-        return normalized_strategies
+    @classmethod
+    def resolve(cls: type[T], strategies: Sequence[Any] | None, *, default: T) -> list[T]:
+        """
+        Resolve strategy inputs into a concrete, ordered, deduplicated list.
+
+        Handles None (returns expanded default), plain strategies, and aggregate strategies.
+        Non-cls items (e.g., ScenarioCompositeStrategy) are silently skipped for
+        backward compatibility.
+
+        Args:
+            strategies (Sequence[Any] | None): Strategies to resolve. If None, expands the
+                default. If an empty list, returns empty (baseline-only execution).
+            default (T): Default aggregate strategy to use when strategies is None.
+
+        Returns:
+            list[T]: Ordered, deduplicated list of concrete strategies.
+        """
+        if strategies is None:
+            return cls.expand({default})
+
+        result: list[T] = []
+        seen: set[T] = set()
+        aggregate_tags = cls.get_aggregate_tags()
+        for item in strategies:
+            if not isinstance(item, cls):
+                continue
+            if item.value in aggregate_tags:
+                for s in cls.expand({item}):
+                    if s not in seen:
+                        seen.add(s)
+                        result.append(s)
+            else:
+                if item not in seen:
+                    seen.add(item)
+                    result.append(item)
+        return result
 
     @classmethod
     def prepare_scenario_strategies(
@@ -260,6 +310,11 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             ValueError: If strategies is None and default_aggregate is None, or if compositions
                        are invalid according to validate_composition().
         """
+        print_deprecation_message(
+            old_item="ScenarioStrategy.prepare_scenario_strategies",
+            new_item="ScenarioStrategy.resolve and Scenario._prepare_strategies",
+            removed_in="0.8.0",
+        )
         # Handle None input with default aggregate
         if strategies is None:
             if default_aggregate is None:
@@ -311,6 +366,11 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         Returns:
             bool: True if composition is supported, False otherwise.
         """
+        print_deprecation_message(
+            old_item="ScenarioStrategy.supports_composition",
+            new_item="FoundryComposite dataclass",
+            removed_in="0.8.0",
+        )
         return False
 
     @classmethod
@@ -340,6 +400,11 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             >>> FoundryStrategy.validate_composition([FoundryStrategy.Crescendo, FoundryStrategy.MultiTurn])
             ValueError: Cannot compose multiple attack strategies: ['crescendo', 'multi_turn']
         """
+        print_deprecation_message(
+            old_item="ScenarioStrategy.validate_composition",
+            new_item="FoundryComposite dataclass",
+            removed_in="0.8.0",
+        )
         if not strategies:
             raise ValueError("Cannot validate empty strategy list")
 
@@ -409,7 +474,11 @@ class ScenarioCompositeStrategy:
             raise ValueError("strategies list cannot be empty")
 
         self._strategies = list(strategies)
-        self._name = self.get_composite_name(self._strategies)
+        if len(self._strategies) == 1:
+            self._name = str(self._strategies[0].value)
+        else:
+            strategy_names = ", ".join(s.value for s in self._strategies)
+            self._name = f"ComposedStrategy({strategy_names})"
 
     @property
     def name(self) -> str:
@@ -451,6 +520,13 @@ class ScenarioCompositeStrategy:
         Raises:
             ValueError: If any composite contains multiple strategies.
         """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="ScenarioCompositeStrategy.extract_single_strategy_values",
+            new_item="[s.value for s in self._scenario_strategies]",
+            removed_in="0.8.0",
+        )
         # Check that all composites are single-strategy
         multi_strategy_composites = [comp for comp in composites if not comp.is_single_strategy]
         if multi_strategy_composites:
@@ -496,6 +572,13 @@ class ScenarioCompositeStrategy:
             ... ])
             >>> # Returns: "ComposedStrategy(base64, atbash)"
         """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="ScenarioCompositeStrategy.get_composite_name",
+            new_item="ScenarioCompositeStrategy.name property",
+            removed_in="0.8.0",
+        )
         if not strategies:
             raise ValueError("Cannot generate name for empty strategy list")
 
@@ -544,6 +627,13 @@ class ScenarioCompositeStrategy:
             # Error: Cannot mix aggregate with concrete in same composition
             [ScenarioCompositeStrategy(strategies=[EASY, Base64])] -> ValueError
         """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="ScenarioCompositeStrategy.normalize_compositions",
+            new_item="ScenarioStrategy.resolve and Scenario._prepare_strategies",
+            removed_in="0.8.0",
+        )
         if not compositions:
             raise ValueError("Compositions list cannot be empty")
 
