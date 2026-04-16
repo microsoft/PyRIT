@@ -57,7 +57,7 @@ def test_get_similar_chat_messages_by_embedding(mock_memory_interface, sample_me
         EmbeddingDataEntry(id=sample_message_pieces[1].id, embedding=different_embedding, embedding_type_name="model2"),
     ]
 
-    # Mock the get_message_pieces method to return the mock EmbeddingData entries
+    # Mock the get_all_embeddings method to return the mock EmbeddingData entries
     mock_memory_interface.get_all_embeddings.return_value = mock_embeddings
     mock_memory_interface.get_message_pieces.return_value = sample_message_pieces
 
