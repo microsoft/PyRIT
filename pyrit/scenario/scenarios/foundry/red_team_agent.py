@@ -484,4 +484,3 @@ class RedTeamAgent(Scenario):
         # attack types. The caller is responsible for ensuring the attack type accepts
         # these constructor parameters.
         return attack_type(**kwargs)  # type: ignore[arg-type]
-
