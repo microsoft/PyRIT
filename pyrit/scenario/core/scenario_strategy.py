@@ -453,11 +453,9 @@ class ScenarioCompositeStrategy:
         Each aggregate expansion creates separate single-strategy compositions.
         Concrete strategy compositions are preserved together as single compositions.
 
-        This method also validates compositions according to the strategy's rules via validate_composition().
-
         Args:
             compositions (List[ScenarioCompositeStrategy]): List of composite strategies to normalize.
-            strategy_type (type[T]): The strategy enum type to use for normalization and validation.
+            strategy_type (type[T]): The strategy enum type to use for normalization.
 
         Returns:
             List[ScenarioCompositeStrategy]: Normalized list of composite strategies with aggregates expanded.
@@ -465,7 +463,7 @@ class ScenarioCompositeStrategy:
         Raises:
             ValueError: If compositions is empty, contains empty compositions,
                 mixes aggregates with concrete strategies in the same composition,
-                has multiple aggregates in one composition, or violates validate_composition() rules.
+                or has multiple aggregates in one composition.
 
         Example::
 

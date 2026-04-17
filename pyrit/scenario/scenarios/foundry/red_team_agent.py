@@ -296,6 +296,9 @@ class RedTeamAgent(Scenario):
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
         """
+        # This override exists purely for type-widening: FoundryComposite is a dataclass,
+        # not a ScenarioStrategy enum member, so the base class signature would reject it.
+        # All logic lives in _prepare_strategies (also overridden below).
         await super().initialize_async(
             objective_target=objective_target,
             scenario_strategies=scenario_strategies,  # type: ignore[arg-type]

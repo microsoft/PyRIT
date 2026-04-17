@@ -62,7 +62,7 @@
 # 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available strategies for your scenario.
 #    - Each enum member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
-#    - Optionally implement `supports_composition()` and `validate_composition()` for strategy composition rules
+#    - Optionally override `_prepare_strategies()` for custom composition logic (see `FoundryComposite`)
 #
 # 2. **Scenario Class**: Extend `Scenario` and implement these abstract methods:
 #    - `get_strategy_class()`: Return your strategy enum class
