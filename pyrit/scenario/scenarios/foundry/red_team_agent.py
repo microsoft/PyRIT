@@ -14,7 +14,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import REQUIRED_VALUE, apply_defaults
@@ -90,6 +90,7 @@ class FoundryComposite:
     converters: "list[FoundryStrategy]" = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        """Validate that attack and converter slots contain correctly tagged strategies."""
         if self.attack is not None and "attack" not in self.attack.tags:
             raise ValueError(
                 f"FoundryComposite.attack must be an attack-tagged strategy "
@@ -110,7 +111,7 @@ class FoundryComposite:
         if not self.converters:
             return self.attack.value if self.attack else "baseline"
         if self.attack is None and len(self.converters) == 1:
-            return self.converters[0].value
+            return str(self.converters[0].value)
         attack_name = self.attack.value if self.attack else "baseline"
         converter_names = ", ".join(c.value for c in self.converters)
         return f"ComposedStrategy({attack_name}, {converter_names})"
@@ -290,7 +291,9 @@ class RedTeamAgent(Scenario):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
-        scenario_strategies: Optional[Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]] = None,
+        scenario_strategies: Optional[
+            Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
+        ] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
         max_concurrency: int = 10,
         max_retries: int = 0,
@@ -301,7 +304,8 @@ class RedTeamAgent(Scenario):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy]]): The
+            scenario_strategies (Optional[Sequence[FoundryStrategy | FoundryComposite |
+                ScenarioCompositeStrategy]]): The
                 strategies to execute. Accepts bare FoundryStrategy enum members, FoundryComposite
                 objects (for pairing an attack with converters), or a mix of both. Passing
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
@@ -316,7 +320,7 @@ class RedTeamAgent(Scenario):
         # All logic lives in _prepare_strategies (also overridden below).
         await super().initialize_async(
             objective_target=objective_target,
-            scenario_strategies=scenario_strategies,  # type: ignore[arg-type]
+            scenario_strategies=scenario_strategies,
             dataset_config=dataset_config,
             max_concurrency=max_concurrency,
             max_retries=max_retries,
@@ -341,7 +345,7 @@ class RedTeamAgent(Scenario):
             list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
         if strategies is None:
-            resolved = FoundryStrategy.resolve(None, default=self.get_default_strategy())
+            resolved = FoundryStrategy.resolve(None, default=cast(FoundryStrategy, self.get_default_strategy()))
             self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
             return list(resolved)
 
@@ -366,7 +370,7 @@ class RedTeamAgent(Scenario):
                     flat.append(item.attack)
                 flat.extend(item.converters)
             else:
-                for s in FoundryStrategy.resolve([item], default=self.get_default_strategy()):
+                for s in FoundryStrategy.resolve([item], default=cast(FoundryStrategy, self.get_default_strategy())):
                     if s not in seen:
                         seen.add(s)
                         composites.append(self._strategy_to_composite(s))
@@ -377,7 +381,16 @@ class RedTeamAgent(Scenario):
 
     @staticmethod
     def _strategy_to_composite(strategy: ScenarioStrategy) -> "FoundryComposite":
-        """Wrap a single FoundryStrategy in a FoundryComposite."""
+        """
+        Wrap a single FoundryStrategy in a FoundryComposite.
+
+        Returns:
+            FoundryComposite: Attack-slotted composite for attack-tagged strategies;
+                converter-slotted composite otherwise.
+
+        Raises:
+            ValueError: If strategy is not a FoundryStrategy instance.
+        """
         if not isinstance(strategy, FoundryStrategy):
             raise ValueError(f"Expected FoundryStrategy, got {type(strategy)}")
         if "attack" in strategy.tags:
@@ -424,6 +437,9 @@ class RedTeamAgent(Scenario):
 
         Returns:
             AtomicAttack: The configured atomic attack.
+
+        Raises:
+            ValueError: If a converter strategy in the composite is not recognized.
         """
         attack: AttackStrategy[Any, Any]
 

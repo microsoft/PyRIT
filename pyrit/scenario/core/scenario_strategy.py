@@ -275,6 +275,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
                     result.append(item)
         return result
 
+
 class ScenarioCompositeStrategy:
     """
     Represents a composition of one or more attack strategies.

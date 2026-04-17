@@ -807,6 +807,7 @@ class TestFoundryProperties:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     @pytest.mark.asyncio
     async def test_initialize_converts_scenario_composite_strategy_to_foundry_composite(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
@@ -829,4 +830,3 @@ class TestFoundryProperties:
         result = scenario._scenario_composites[0]
         assert result.attack == FoundryStrategy.Crescendo
         assert result.converters == [FoundryStrategy.Base64]
-
