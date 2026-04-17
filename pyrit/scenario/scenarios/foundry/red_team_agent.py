@@ -95,7 +95,7 @@ class FoundryComposite:
 
         Raises:
             ValueError: If attack slot contains a non-attack-tagged strategy, or if
-                converters list contains an attack-tagged strategy.
+                converters list contains any non-converter-tagged strategy (including aggregates).
         """
         if self.attack is not None and "attack" not in self.attack.tags:
             raise ValueError(
@@ -103,12 +103,12 @@ class FoundryComposite:
                 f"(e.g., Crescendo, MultiTurn), got '{self.attack.value}'. "
                 f"Converter strategies belong in the converters list."
             )
-        attack_in_converters = [s for s in self.converters if "attack" in s.tags]
-        if attack_in_converters:
+        misrouted = [s for s in self.converters if "converter" not in s.tags]
+        if misrouted:
             raise ValueError(
-                f"FoundryComposite.converters must only contain converter strategies, "
-                f"but got attack strategies: {[s.value for s in attack_in_converters]}. "
-                f"Pass an attack strategy via the attack parameter instead."
+                f"FoundryComposite.converters must only contain converter-tagged strategies, "
+                f"got {[s.value for s in misrouted]}. "
+                f"Attack strategies belong in the attack parameter; aggregates must be expanded first."
             )
 
     @property

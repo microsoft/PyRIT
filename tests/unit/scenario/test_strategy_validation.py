@@ -3,6 +3,8 @@
 
 """Unit tests for strategy composition validation."""
 
+import pytest
+
 import warnings
 
 from pyrit.scenario import ScenarioCompositeStrategy
@@ -40,6 +42,21 @@ class TestFoundryComposite:
         """Test that FoundryComposite defaults converters to empty list."""
         composite = FoundryComposite(attack=FoundryStrategy.Crescendo)
         assert composite.converters == []
+
+    def test_converter_in_attack_slot_raises(self):
+        """Putting a converter-tagged strategy in the attack slot should raise."""
+        with pytest.raises(ValueError, match="attack must be an attack-tagged strategy"):
+            FoundryComposite(attack=FoundryStrategy.Base64)
+
+    def test_attack_in_converters_raises(self):
+        """Putting an attack-tagged strategy in converters should raise."""
+        with pytest.raises(ValueError, match="converters must only contain converter-tagged"):
+            FoundryComposite(attack=None, converters=[FoundryStrategy.Crescendo])
+
+    def test_aggregate_in_converters_raises(self):
+        """Aggregates (e.g. EASY) in converters slot should fail early rather than silently later."""
+        with pytest.raises(ValueError, match="converters must only contain converter-tagged"):
+            FoundryComposite(attack=None, converters=[FoundryStrategy.EASY])
 
 
 class TestScenarioCompositeStrategyDeprecation:
