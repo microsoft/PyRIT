@@ -81,7 +81,7 @@ def test_video_validate_request_multiple_text_pieces(video_target: OpenAIVideoTa
         msg2 = MessagePiece(
             role="user", original_value="test2", converted_value="test2", conversation_id=conversation_id
         )
-        video_target._validate_request(message=Message([msg1, msg2]))
+        video_target._validate_request(normalized_conversation=[Message([msg1, msg2])])
 
 
 def test_video_validate_prompt_type_image_only(video_target: OpenAIVideoTarget):
@@ -90,7 +90,7 @@ def test_video_validate_prompt_type_image_only(video_target: OpenAIVideoTarget):
         msg = MessagePiece(
             role="user", original_value="test", converted_value="test", converted_value_data_type="image_path"
         )
-        video_target._validate_request(message=Message([msg]))
+        video_target._validate_request(normalized_conversation=[Message([msg])])
 
 
 @pytest.mark.asyncio
@@ -374,7 +374,7 @@ class TestVideoTargetValidation:
         """Test validation accepts single text piece (text-to-video mode)."""
         msg = MessagePiece(role="user", original_value="test prompt", converted_value="test prompt")
         # Should not raise
-        video_target._validate_request(message=Message([msg]))
+        video_target._validate_request(normalized_conversation=[Message([msg])])
 
     def test_validate_accepts_text_and_image(self, video_target: OpenAIVideoTarget):
         """Test validation accepts text + image (image-to-video mode)."""
@@ -393,7 +393,7 @@ class TestVideoTargetValidation:
             conversation_id=conversation_id,
         )
         # Should not raise
-        video_target._validate_request(message=Message([msg_text, msg_image]))
+        video_target._validate_request(normalized_conversation=[Message([msg_text, msg_image])])
 
     def test_validate_rejects_multiple_images(self, video_target: OpenAIVideoTarget):
         """Test validation rejects multiple image pieces."""
@@ -419,7 +419,7 @@ class TestVideoTargetValidation:
             conversation_id=conversation_id,
         )
         with pytest.raises(ValueError, match="at most 1 image piece"):
-            video_target._validate_request(message=Message([msg_text, msg_img1, msg_img2]))
+            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_img1, msg_img2])])
 
     def test_validate_rejects_unsupported_types(self, video_target: OpenAIVideoTarget):
         """Test validation rejects unsupported data types."""
@@ -442,7 +442,7 @@ class TestVideoTargetValidation:
             match="This target supports only the following data types.*If your target does support this, set the"
             " custom_configuration parameter accordingly",
         ):
-            video_target._validate_request(message=Message([msg_text, msg_audio]))
+            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_audio])])
 
     def test_validate_rejects_remix_with_image(self, video_target: OpenAIVideoTarget):
         """Test validation rejects remix mode combined with image input."""
@@ -462,7 +462,7 @@ class TestVideoTargetValidation:
             conversation_id=conversation_id,
         )
         with pytest.raises(ValueError, match="Cannot use image input in remix mode"):
-            video_target._validate_request(message=Message([msg_text, msg_image]))
+            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_image])])
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -789,7 +789,7 @@ class TestVideoTargetEdgeCases:
             converted_value_data_type="image_path",
         )
         with pytest.raises(ValueError, match="Expected exactly 1 text piece"):
-            video_target._validate_request(message=Message([msg]))
+            video_target._validate_request(normalized_conversation=[Message([msg])])
 
     @pytest.mark.asyncio
     async def test_image_to_video_with_jpeg(self, video_target: OpenAIVideoTarget):
@@ -993,12 +993,7 @@ def test_video_validate_previous_conversations(
 ):
     message_piece = sample_conversations[0]
 
-    mock_memory = MagicMock()
-    mock_memory.get_message_pieces.return_value = sample_conversations
-    mock_memory.add_message_to_memory = AsyncMock()
-
-    video_target._memory = mock_memory
-
+    prior_message = Message(message_pieces=[message_piece])
     request = Message(message_pieces=[message_piece])
 
     with pytest.raises(
@@ -1006,7 +1001,7 @@ def test_video_validate_previous_conversations(
         match="This target only supports a single turn conversation.*If your target does support this, set the"
         " custom_configuration parameter accordingly",
     ):
-        video_target._validate_request(message=request)
+        video_target._validate_request(normalized_conversation=[prior_message, request])
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1039,7 +1034,7 @@ class TestVideoTargetRemixValidation:
             conversation_id=conversation_id,
         )
         # Should not raise
-        video_target._validate_request(message=Message([msg_text, msg_video]))
+        video_target._validate_request(normalized_conversation=[Message([msg_text, msg_video])])
 
     def test_validate_rejects_video_path_and_image_path(self, video_target: OpenAIVideoTarget) -> None:
         """Test validation rejects combining video_path and image_path."""
@@ -1065,7 +1060,7 @@ class TestVideoTargetRemixValidation:
             conversation_id=conversation_id,
         )
         with pytest.raises(ValueError, match="Cannot combine video_path and image_path"):
-            video_target._validate_request(message=Message([msg_text, msg_video, msg_image]))
+            video_target._validate_request(normalized_conversation=[Message([msg_text, msg_video, msg_image])])
 
     def test_remix_keeps_video_path_pieces_when_ids_match(self, video_target: OpenAIVideoTarget) -> None:
         """Test that video_path pieces are preserved after validation so normalizer stores them."""

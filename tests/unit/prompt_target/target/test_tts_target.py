@@ -90,8 +90,10 @@ async def test_tts_validate_previous_conversations(
 ):
     message_piece = sample_conversations[0]
 
+    prior_message = Message(message_pieces=[message_piece])
+
     mock_memory = MagicMock()
-    mock_memory.get_message_pieces.return_value = sample_conversations
+    mock_memory.get_conversation.return_value = [prior_message]
     mock_memory.add_message_to_memory = AsyncMock()
 
     tts_target._memory = mock_memory

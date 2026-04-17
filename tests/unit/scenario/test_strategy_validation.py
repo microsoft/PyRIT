@@ -3,101 +3,77 @@
 
 """Unit tests for strategy composition validation."""
 
+import warnings
+
 import pytest
 
 from pyrit.scenario import ScenarioCompositeStrategy
 from pyrit.scenario.foundry import FoundryStrategy
+from pyrit.scenario.foundry.red_team_agent import FoundryComposite
 from pyrit.scenario.garak import EncodingStrategy
 
 
-class TestStrategyValidation:
-    """Test validation of strategy compositions."""
+class TestFoundryComposite:
+    """Tests for FoundryComposite dataclass construction and naming."""
 
-    def test_encoding_validation_allows_single_strategy(self):
-        """Test that encoding validation allows single strategies."""
-        # Should not raise
-        EncodingStrategy.validate_composition([EncodingStrategy.Base64])
+    def test_converter_only_composite_name(self):
+        """Test name for a composite with only a converter strategy — matches old single-strategy convention."""
+        composite = FoundryComposite(attack=None, converters=[FoundryStrategy.Base64])
+        assert composite.name == "base64"
 
-    def test_encoding_validation_rejects_composition(self):
-        """Test that encoding validation rejects composed strategies."""
-        with pytest.raises(ValueError, match="EncodingStrategy does not support composition"):
-            EncodingStrategy.validate_composition([EncodingStrategy.Base64, EncodingStrategy.ROT13])
+    def test_attack_only_composite_name(self):
+        """Test name for a composite with only an attack strategy."""
+        composite = FoundryComposite(attack=FoundryStrategy.Crescendo)
+        assert composite.name == "crescendo"
 
-    def test_foundry_validation_allows_single_strategy(self):
-        """Test that foundry validation allows single strategies."""
-        # Should not raise
-        FoundryStrategy.validate_composition([FoundryStrategy.Base64])
+    def test_attack_with_converter_composite_name(self):
+        """Test name for attack + converter composition."""
+        composite = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])
+        assert composite.name == "ComposedStrategy(crescendo, base64)"
 
-    def test_foundry_validation_allows_converter_composition(self):
-        """Test that foundry validation allows multiple converters."""
-        # Should not raise
-        FoundryStrategy.validate_composition([FoundryStrategy.Base64, FoundryStrategy.Atbash])
-
-    def test_foundry_validation_allows_one_attack_with_converters(self):
-        """Test that foundry validation allows one attack with converters."""
-        # Should not raise
-        FoundryStrategy.validate_composition(
-            [FoundryStrategy.Base64, FoundryStrategy.Crescendo, FoundryStrategy.Atbash]
+    def test_attack_with_multiple_converters_composite_name(self):
+        """Test name with multiple converters."""
+        composite = FoundryComposite(
+            attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64, FoundryStrategy.Atbash]
         )
+        assert composite.name == "ComposedStrategy(crescendo, base64, atbash)"
 
-    def test_foundry_validation_rejects_multiple_attacks(self):
-        """Test that foundry validation rejects multiple attack strategies."""
-        with pytest.raises(ValueError, match="Cannot compose multiple attack strategies"):
-            FoundryStrategy.validate_composition([FoundryStrategy.Crescendo, FoundryStrategy.MultiTurn])
+    def test_empty_composite_defaults(self):
+        """Test that FoundryComposite defaults converters to empty list."""
+        composite = FoundryComposite(attack=FoundryStrategy.Crescendo)
+        assert composite.converters == []
 
-    def test_foundry_validation_rejects_attacks_with_converters_and_another_attack(self):
-        """Test that foundry validation rejects multiple attacks even with converters."""
-        with pytest.raises(ValueError, match="Cannot compose multiple attack strategies"):
-            FoundryStrategy.validate_composition(
-                [FoundryStrategy.Base64, FoundryStrategy.Crescendo, FoundryStrategy.MultiTurn]
-            )
+    def test_converter_in_attack_slot_raises(self):
+        """Putting a converter-tagged strategy in the attack slot should raise."""
+        with pytest.raises(ValueError, match="attack must be an attack-tagged strategy"):
+            FoundryComposite(attack=FoundryStrategy.Base64)
+
+    def test_attack_in_converters_raises(self):
+        """Putting an attack-tagged strategy in converters should raise."""
+        with pytest.raises(ValueError, match="converters must only contain converter-tagged"):
+            FoundryComposite(attack=None, converters=[FoundryStrategy.Crescendo])
+
+    def test_aggregate_in_converters_raises(self):
+        """Aggregates (e.g. EASY) in converters slot should fail early rather than silently later."""
+        with pytest.raises(ValueError, match="converters must only contain converter-tagged"):
+            FoundryComposite(attack=None, converters=[FoundryStrategy.EASY])
 
 
-class TestScenarioCompositeStrategyExtraction:
-    """Test extraction of strategy values from composite strategies."""
+class TestScenarioCompositeStrategyDeprecation:
+    """Test that ScenarioCompositeStrategy emits deprecation warnings."""
 
-    def test_extract_single_strategy_values_with_single_strategies(self):
-        """Test extracting values from single-strategy composites."""
-        composites = [
-            ScenarioCompositeStrategy(strategies=[EncodingStrategy.Base64]),
-            ScenarioCompositeStrategy(strategies=[EncodingStrategy.ROT13]),
-            ScenarioCompositeStrategy(strategies=[EncodingStrategy.Atbash]),
-        ]
+    def test_init_emits_deprecation_warning(self):
+        """Creating a ScenarioCompositeStrategy should emit a DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ScenarioCompositeStrategy(strategies=[EncodingStrategy.Base64])
+        assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
+        assert any("ScenarioCompositeStrategy" in str(warning.message) for warning in w)
 
-        values = ScenarioCompositeStrategy.extract_single_strategy_values(composites, strategy_type=EncodingStrategy)
-
-        assert values == {"base64", "rot13", "atbash"}
-
-    def test_extract_single_strategy_values_filters_by_type(self):
-        """Test that extraction filters by strategy type."""
-        composites = [
-            ScenarioCompositeStrategy(strategies=[EncodingStrategy.Base64]),
-            ScenarioCompositeStrategy(strategies=[FoundryStrategy.ROT13]),
-        ]
-
-        # Extract only EncodingStrategy values
-        encoding_values = ScenarioCompositeStrategy.extract_single_strategy_values(
-            composites, strategy_type=EncodingStrategy
-        )
-        assert encoding_values == {"base64"}
-
-        # Extract only FoundryStrategy values
-        foundry_values = ScenarioCompositeStrategy.extract_single_strategy_values(
-            composites, strategy_type=FoundryStrategy
-        )
-        assert foundry_values == {"rot13"}
-
-    def test_extract_single_strategy_values_rejects_multi_strategy_composites(self):
-        """Test that extraction raises error if any composite has multiple strategies."""
-        composites = [
-            ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64]),
-            ScenarioCompositeStrategy(strategies=[FoundryStrategy.ROT13, FoundryStrategy.Atbash]),  # Multi-strategy!
-        ]
-
-        with pytest.raises(ValueError, match="extract_single_strategy_values.*requires all composites"):
-            ScenarioCompositeStrategy.extract_single_strategy_values(composites, strategy_type=FoundryStrategy)
-
-    def test_extract_single_strategy_values_with_empty_list(self):
-        """Test that extraction handles empty composite list."""
-        values = ScenarioCompositeStrategy.extract_single_strategy_values([], strategy_type=EncodingStrategy)
-        assert values == set()
+    def test_init_warning_mentions_foundry_composite(self):
+        """The deprecation warning should point users to FoundryComposite."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ScenarioCompositeStrategy(strategies=[EncodingStrategy.Base64])
+        messages = [str(warning.message) for warning in w if issubclass(warning.category, DeprecationWarning)]
+        assert any("FoundryComposite" in msg for msg in messages)

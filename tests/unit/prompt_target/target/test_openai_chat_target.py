@@ -322,6 +322,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
+        target._memory.get_conversation.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -500,6 +501,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
+        target._memory.get_conversation.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -581,7 +583,7 @@ def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
     )
 
     with pytest.raises(ValueError) as excinfo:
-        target._validate_request(message=message)
+        target._validate_request(normalized_conversation=[message])
 
     assert "This target supports only the following data types" in str(excinfo.value), (
         "Error not raised for unsupported data types"
@@ -1117,12 +1119,27 @@ def test_get_identifier_uses_underlying_model_when_provided_as_param(patch_centr
 
     identifier = target.get_identifier()
 
-    assert identifier.params["model_name"] == "gpt-4o"
+    assert identifier.params["model_name"] == "my-deployment"
+    assert identifier.params["underlying_model_name"] == "gpt-4o"
     assert identifier.class_name == "OpenAIChatTarget"
 
 
-def test_get_identifier_uses_underlying_model_from_env_var(patch_central_database):
-    """Test that get_identifier uses underlying_model from environment variable."""
+def test_get_identifier_ignores_underlying_model_env_var_even_when_model_from_env(patch_central_database):
+    """Test that underlying_model env var is never used — model_name is always the truth."""
+    with patch.dict(os.environ, {"OPENAI_CHAT_UNDERLYING_MODEL": "gpt-4o", "OPENAI_CHAT_MODEL": "my-deployment"}):
+        target = OpenAIChatTarget(
+            endpoint="https://mock.azure.com/",
+            api_key="mock-api-key",
+        )
+
+        identifier = target.get_identifier()
+
+        # underlying_model env var is ignored; model_name from OPENAI_CHAT_MODEL is used
+        assert identifier.params["model_name"] == "my-deployment"
+
+
+def test_get_identifier_ignores_underlying_model_env_var_when_model_name_explicit(patch_central_database):
+    """Test that underlying_model env var is NOT used when model_name is explicitly passed."""
     with patch.dict(os.environ, {"OPENAI_CHAT_UNDERLYING_MODEL": "gpt-4o"}):
         target = OpenAIChatTarget(
             model_name="my-deployment",
@@ -1132,7 +1149,9 @@ def test_get_identifier_uses_underlying_model_from_env_var(patch_central_databas
 
         identifier = target.get_identifier()
 
-        assert identifier.params["model_name"] == "gpt-4o"
+        # model_name was explicit, so underlying_model env var should be ignored
+        assert identifier.params["model_name"] == "my-deployment"
+        assert identifier.params["underlying_model_name"] == ""
 
 
 def test_underlying_model_param_takes_precedence_over_env_var(patch_central_database):
@@ -1147,7 +1166,8 @@ def test_underlying_model_param_takes_precedence_over_env_var(patch_central_data
 
         identifier = target.get_identifier()
 
-        assert identifier.params["model_name"] == "gpt-4o-from-param"
+        assert identifier.params["model_name"] == "my-deployment"
+        assert identifier.params["underlying_model_name"] == "gpt-4o-from-param"
 
 
 def test_get_identifier_includes_endpoint(patch_central_database):

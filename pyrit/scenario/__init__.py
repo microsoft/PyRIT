@@ -19,6 +19,7 @@ from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
+    AttackTechniqueFactory,
     DatasetConfiguration,
     Scenario,
     ScenarioCompositeStrategy,
@@ -44,6 +45,7 @@ foundry = _foundry_module
 __all__ = [
     "AtomicAttack",
     "AttackTechnique",
+    "AttackTechniqueFactory",
     "DatasetConfiguration",
     "Scenario",
     "ScenarioCompositeStrategy",

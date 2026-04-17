@@ -12,6 +12,7 @@ from dataclasses import fields
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, TextIO, cast
+from urllib.parse import urlparse
 
 import requests
 from datasets import DownloadMode, disable_progress_bars, load_dataset
@@ -125,6 +126,24 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
 
+    def _get_file_type(self, *, source: str) -> str:
+        """
+        Infer the source file type from a URL or local path.
+
+        Query strings and fragments are ignored for URLs, and the result is
+        normalized to lowercase so `.JSON` and `.json` are treated identically.
+
+        Args:
+            source (str): The URL or local file path to extract the file type from.
+
+        Returns:
+            str: The lowercase file extension without the leading dot.
+        """
+        parsed = urlparse(source)
+        source_path = parsed.path if parsed.scheme else source
+        suffix = Path(source_path).suffix
+        return suffix.lstrip(".").lower()
+
     def _read_cache(self, *, cache_file: Path, file_type: str) -> list[dict[str, str]]:
         """
         Read data from cache.
@@ -237,7 +256,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             ...     source_type='public_url'
             ... )
         """
-        file_type = source.split(".")[-1]
+        file_type = self._get_file_type(source=source)
         if file_type not in FILE_TYPE_HANDLERS:
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")

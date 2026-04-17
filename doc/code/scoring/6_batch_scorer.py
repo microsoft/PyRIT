@@ -66,13 +66,11 @@ from pyrit.score import (  # noqa: F401
     AzureContentFilterScorer,
     BatchScorer,
     ContentClassifierPaths,
-    HumanInTheLoopScorerGradio,
     SelfAskCategoryScorer,
 )
 
 # The scorer is interchangeable with other scorers
 # scorer = AzureContentFilterScorer()
-# scorer = HumanInTheLoopScorerGradio()
 scorer = SelfAskCategoryScorer(
     chat_target=OpenAIChatTarget(), content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value
 )
@@ -115,7 +113,6 @@ from pyrit.score import (  # noqa: F401
     AzureContentFilterScorer,
     BatchScorer,
     ContentClassifierPaths,
-    HumanInTheLoopScorerGradio,
     SelfAskCategoryScorer,
 )
 
@@ -139,7 +136,6 @@ await AttackExecutor().execute_attack_async(  # type: ignore
 
 # The scorer is interchangeable with other scorers
 # scorer = AzureContentFilterScorer()
-# scorer = HumanInTheLoopScorer()
 scorer = SelfAskCategoryScorer(
     chat_target=OpenAIChatTarget(), content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value
 )

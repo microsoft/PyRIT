@@ -35,6 +35,6 @@ The API will be available at `http://localhost:8000`
 ## Configuration
 
 Environment variables:
-- `PYRIT_API_HOST` - Host to bind to (default: 0.0.0.0)
+- `PYRIT_API_HOST` - Host to bind to (default: localhost)
 - `PYRIT_API_PORT` - Port to listen on (default: 8000)
 - `PYRIT_API_RELOAD` - Enable auto-reload (default: false)

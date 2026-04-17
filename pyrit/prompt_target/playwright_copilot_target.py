@@ -205,13 +205,14 @@ class PlaywrightCopilotTarget(PromptTarget):
             file_picker_selector='span.fui-MenuItem__content:has-text("Upload images and files")',
         )
 
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send a message to Microsoft Copilot and return the response.
 
         Args:
-            message (Message): The message to send. Can contain multiple pieces
-                of type 'text' or 'image_path'.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from Copilot.
@@ -219,7 +220,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         Raises:
             RuntimeError: If an error occurs during interaction.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         try:
             response_content = await self._interact_with_copilot_async(message)

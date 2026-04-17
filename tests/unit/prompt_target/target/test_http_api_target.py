@@ -148,14 +148,7 @@ async def test_send_prompt_async_missing_explicit_file_path_raises(mock_request,
 
 
 @pytest.mark.asyncio
-@patch("httpx.AsyncClient.request")
-async def test_send_prompt_async_validation(mock_request, patch_central_database):
-    # Create an invalid message (empty message_pieces)
-    message = MagicMock()
-    message.message_pieces = []
-    target = HTTPXAPITarget(http_url="http://example.com/validate/", method="POST", timeout=180)
-
-    with pytest.raises(ValueError) as excinfo:
-        await target.send_prompt_async(message=message)
-
-    assert "Message must contain at least one message piece. Received: 0 pieces." in str(excinfo.value)
+async def test_send_prompt_async_validation(patch_central_database):
+    # Creating a Message with no pieces raises immediately
+    with pytest.raises(ValueError, match="must have at least one message piece"):
+        Message(message_pieces=[])

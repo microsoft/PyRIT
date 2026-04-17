@@ -14,9 +14,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries.base_instance_registry import (
-    BaseInstanceRegistry,
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
 )
 
 if TYPE_CHECKING:
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentifier]):
+class ConverterRegistry(RetrievableInstanceRegistry["PromptConverter"]):
     """
     Registry for managing available converter instances.
 
@@ -33,16 +32,6 @@ class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentif
     Converters are registered explicitly via initializers after being instantiated
     with their required parameters.
     """
-
-    @classmethod
-    def get_registry_singleton(cls) -> ConverterRegistry:
-        """
-        Get the singleton instance of the ConverterRegistry.
-
-        Returns:
-            The singleton ConverterRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
 
     def register_instance(
         self,
@@ -78,16 +67,3 @@ class ConverterRegistry(BaseInstanceRegistry["PromptConverter", ComponentIdentif
             The converter instance, or None if not found.
         """
         return self.get(name)
-
-    def _build_metadata(self, name: str, instance: PromptConverter) -> ComponentIdentifier:
-        """
-        Build metadata for a converter instance.
-
-        Args:
-            name: The registry name of the converter.
-            instance: The converter instance.
-
-        Returns:
-            ComponentIdentifier: The converter's identifier.
-        """
-        return instance.get_identifier()

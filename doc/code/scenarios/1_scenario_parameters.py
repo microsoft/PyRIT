@@ -79,13 +79,13 @@ single_strategy = [FoundryStrategy.Base64]
 aggregate_strategy = [FoundryStrategy.EASY]
 
 # %% [markdown]
-# **Composite strategies** — multiple converters applied together in sequence using
-# `ScenarioCompositeStrategy`:
+# **Composite strategies** — pair an attack with one or more converters using `FoundryComposite`.
+# For example, to run Crescendo with Base64 encoding applied:
 
 # %%
-from pyrit.scenario import ScenarioCompositeStrategy
+from pyrit.scenario.scenarios.foundry import FoundryComposite
 
-composite_strategy = [ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])]
+composite_strategy = [FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])]
 
 # %% [markdown]
 # You can mix all three types in a single list:
@@ -94,14 +94,15 @@ composite_strategy = [ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caes
 scenario_strategies = [
     FoundryStrategy.Base64,
     FoundryStrategy.Binary,
-    ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap]),
+    FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar]),
 ]
 
 # %% [markdown]
 # ## Baseline Execution
 #
-# Pass an empty `scenario_strategies` list to run a baseline-only scenario. The baseline sends each
-# objective directly to the target without any converters or multi-turn strategies. This is useful for:
+# The baseline sends each objective directly to the target without any converters or multi-turn
+# strategies. It is included automatically when `include_baseline=True` (the default). This is
+# useful for:
 #
 # - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
 # - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
@@ -111,7 +112,7 @@ scenario_strategies = [
 baseline_scenario = RedTeamAgent()
 await baseline_scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[],  # Empty list = baseline only
+    scenario_strategies=None,  # Uses default strategies; baseline is prepended automatically
     dataset_config=dataset_config,
 )
 baseline_result = await baseline_scenario.run_async()  # type: ignore

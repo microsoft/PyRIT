@@ -3,24 +3,54 @@
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries.base_instance_registry import BaseInstanceRegistry, RegistryEntry
+from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.registry.object_registries.base_instance_registry import (
+    BaseInstanceRegistry,
+    RegistryEntry,
+)
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
+)
 
 
-class ConcreteTestRegistry(BaseInstanceRegistry[str, ComponentIdentifier]):
-    """Concrete implementation of BaseInstanceRegistry for testing."""
+class _TestItem(Identifiable):
+    """Minimal Identifiable stub wrapping a string value for testing."""
 
-    def _build_metadata(self, name: str, instance: str) -> ComponentIdentifier:
-        """Build test metadata from a string instance."""
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def _build_identifier(self) -> ComponentIdentifier:
         return ComponentIdentifier(
-            class_name="str",
-            class_module="builtins",
-            params={"category": "test" if "test" in instance.lower() else "other"},
+            class_name="_TestItem",
+            class_module="test",
+            params={"category": "test" if "test" in self.value.lower() else "other"},
         )
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _TestItem):
+            return self.value == other.value
+        if isinstance(other, str):
+            return self.value == other
+        return NotImplemented
 
-class TestBaseInstanceRegistrySingleton:
-    """Tests for the singleton pattern in BaseInstanceRegistry."""
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+    def __repr__(self) -> str:
+        return f"_TestItem({self.value!r})"
+
+
+def _item(value: str) -> _TestItem:
+    """Shorthand factory for _TestItem."""
+    return _TestItem(value)
+
+
+class ConcreteTestRegistry(RetrievableInstanceRegistry["_TestItem"]):
+    """Concrete implementation of RetrievableInstanceRegistry for testing."""
+
+
+class TestRetrievableInstanceRegistrySingleton:
+    """Tests for the singleton pattern in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset the singleton before each test."""
@@ -52,8 +82,8 @@ class TestBaseInstanceRegistrySingleton:
         ConcreteTestRegistry.reset_instance()
 
 
-class TestBaseInstanceRegistryRegistration:
-    """Tests for registration functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryRegistration:
+    """Tests for registration functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -66,16 +96,16 @@ class TestBaseInstanceRegistryRegistration:
 
     def test_register_adds_instance(self):
         """Test that register adds an instance to the registry."""
-        self.registry.register("test_value", name="test_name")
+        self.registry.register(_item("test_value"), name="test_name")
 
         assert "test_name" in self.registry
         assert self.registry.get("test_name") == "test_value"
 
     def test_register_multiple_instances(self):
         """Test registering multiple instances."""
-        self.registry.register("value1", name="name1")
-        self.registry.register("value2", name="name2")
-        self.registry.register("value3", name="name3")
+        self.registry.register(_item("value1"), name="name1")
+        self.registry.register(_item("value2"), name="name2")
+        self.registry.register(_item("value3"), name="name3")
 
         assert len(self.registry) == 3
         assert self.registry.get("name1") == "value1"
@@ -84,34 +114,34 @@ class TestBaseInstanceRegistryRegistration:
 
     def test_register_overwrites_existing(self):
         """Test that registering with the same name overwrites the existing instance."""
-        self.registry.register("original", name="name")
-        self.registry.register("updated", name="name")
+        self.registry.register(_item("original"), name="name")
+        self.registry.register(_item("updated"), name="name")
 
         assert len(self.registry) == 1
         assert self.registry.get("name") == "updated"
 
     def test_register_invalidates_metadata_cache(self):
         """Test that registering a new instance invalidates the metadata cache."""
-        self.registry.register("value1", name="name1")
+        self.registry.register(_item("value1"), name="name1")
         # Build cache by calling list_metadata
         metadata1 = self.registry.list_metadata()
         assert len(metadata1) == 1
 
         # Register new instance - should invalidate cache
-        self.registry.register("value2", name="name2")
+        self.registry.register(_item("value2"), name="name2")
         metadata2 = self.registry.list_metadata()
 
         assert len(metadata2) == 2
 
 
-class TestBaseInstanceRegistryGet:
-    """Tests for get functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGet:
+    """Tests for get functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
         ConcreteTestRegistry.reset_instance()
         self.registry = ConcreteTestRegistry.get_registry_singleton()
-        self.registry.register("test_value", name="test_name")
+        self.registry.register(_item("test_value"), name="test_name")
 
     def teardown_method(self):
         """Reset the singleton after each test."""
@@ -128,14 +158,14 @@ class TestBaseInstanceRegistryGet:
         assert result is None
 
 
-class TestBaseInstanceRegistryGetEntry:
-    """Tests for get_entry functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGetEntry:
+    """Tests for get_entry functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
         ConcreteTestRegistry.reset_instance()
         self.registry = ConcreteTestRegistry.get_registry_singleton()
-        self.registry.register("test_value", name="test_name", tags={"role": "scorer"})
+        self.registry.register(_item("test_value"), name="test_name", tags={"role": "scorer"})
 
     def teardown_method(self):
         """Reset the singleton after each test."""
@@ -156,8 +186,8 @@ class TestBaseInstanceRegistryGetEntry:
         assert result is None
 
 
-class TestBaseInstanceRegistryGetNames:
-    """Tests for get_names functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGetNames:
+    """Tests for get_names functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -175,16 +205,16 @@ class TestBaseInstanceRegistryGetNames:
 
     def test_get_names_returns_sorted_list(self):
         """Test that get_names returns a sorted list of names."""
-        self.registry.register("value3", name="zeta")
-        self.registry.register("value1", name="alpha")
-        self.registry.register("value2", name="beta")
+        self.registry.register(_item("value3"), name="zeta")
+        self.registry.register(_item("value1"), name="alpha")
+        self.registry.register(_item("value2"), name="beta")
 
         names = self.registry.get_names()
         assert names == ["alpha", "beta", "zeta"]
 
 
-class TestBaseInstanceRegistryGetAllInstances:
-    """Tests for get_all_instances functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryGetAllInstances:
+    """Tests for get_all_instances functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -197,8 +227,8 @@ class TestBaseInstanceRegistryGetAllInstances:
 
     def test_get_all_instances_returns_list_of_registry_entries(self):
         """Test that get_all_instances returns a list of RegistryEntry objects."""
-        self.registry.register("value1", name="name1")
-        self.registry.register("value2", name="name2")
+        self.registry.register(_item("value1"), name="name1")
+        self.registry.register(_item("value2"), name="name2")
 
         result = self.registry.get_all_instances()
         assert isinstance(result, list)
@@ -207,17 +237,17 @@ class TestBaseInstanceRegistryGetAllInstances:
 
     def test_get_all_instances_sorted_by_name(self):
         """Test that get_all_instances returns entries sorted by name."""
-        self.registry.register("value_z", name="zeta")
-        self.registry.register("value_a", name="alpha")
-        self.registry.register("value_b", name="beta")
+        self.registry.register(_item("value_z"), name="zeta")
+        self.registry.register(_item("value_a"), name="alpha")
+        self.registry.register(_item("value_b"), name="beta")
 
         result = self.registry.get_all_instances()
         assert [e.name for e in result] == ["alpha", "beta", "zeta"]
 
     def test_get_all_instances_preserves_tags(self):
         """Test that get_all_instances preserves tags on entries."""
-        self.registry.register("value1", name="name1", tags={"role": "scorer"})
-        self.registry.register("value2", name="name2", tags=["fast"])
+        self.registry.register(_item("value1"), name="name1", tags={"role": "scorer"})
+        self.registry.register(_item("value2"), name="name2", tags=["fast"])
 
         result = self.registry.get_all_instances()
         entry_map = {e.name: e for e in result}
@@ -230,16 +260,16 @@ class TestBaseInstanceRegistryGetAllInstances:
         assert result == []
 
 
-class TestBaseInstanceRegistryListMetadata:
-    """Tests for list_metadata functionality in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryListMetadata:
+    """Tests for list_metadata functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
         ConcreteTestRegistry.reset_instance()
         self.registry = ConcreteTestRegistry.get_registry_singleton()
-        self.registry.register("test_item_1", name="item1")
-        self.registry.register("other_item_2", name="item2")
-        self.registry.register("test_item_3", name="item3")
+        self.registry.register(_item("test_item_1"), name="item1")
+        self.registry.register(_item("other_item_2"), name="item2")
+        self.registry.register(_item("test_item_3"), name="item3")
 
     def teardown_method(self):
         """Reset the singleton after each test."""
@@ -256,9 +286,9 @@ class TestBaseInstanceRegistryListMetadata:
         # Since unique_name is auto-computed, we verify we get 3 items in order
         # The actual unique_name field is auto-computed from class_name::hash
         assert len(metadata) == 3
-        # All should have "str" in the unique_name since class_name is "str"
+        # All should have "_TestItem" in the unique_name since class_name is "_TestItem"
         for m in metadata:
-            assert "str" in m.unique_name
+            assert "_TestItem" in m.unique_name
 
     def test_list_metadata_with_filter(self):
         """Test filtering metadata by a field."""
@@ -280,7 +310,7 @@ class TestBaseInstanceRegistryListMetadata:
     def test_list_metadata_combined_include_and_exclude(self):
         """Test combined include and exclude filters."""
         # Add another test item to have more variety
-        self.registry.register("another_test_item", name="item4")
+        self.registry.register(_item("another_test_item"), name="item4")
 
         # Get items with category "test" but exclude by class_name "str"
         # Since all have class_name="str", excluding by class_name would exclude all
@@ -301,8 +331,8 @@ class TestBaseInstanceRegistryListMetadata:
         assert len(metadata1) == 3
 
 
-class TestBaseInstanceRegistryTags:
-    """Tests for tag registration and retrieval in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryTags:
+    """Tests for tag registration and retrieval in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -315,7 +345,7 @@ class TestBaseInstanceRegistryTags:
 
     def test_register_with_dict_tags(self):
         """Test that dict tags are stored correctly."""
-        self.registry.register("value", name="name1", tags={"role": "scorer", "provider": "azure"})
+        self.registry.register(_item("value"), name="name1", tags={"role": "scorer", "provider": "azure"})
 
         entry = self.registry.get_entry("name1")
         assert entry is not None
@@ -323,7 +353,7 @@ class TestBaseInstanceRegistryTags:
 
     def test_register_with_list_tags(self):
         """Test that list tags are normalized to dict with empty string values."""
-        self.registry.register("value", name="name1", tags=["fast", "default"])
+        self.registry.register(_item("value"), name="name1", tags=["fast", "default"])
 
         entry = self.registry.get_entry("name1")
         assert entry is not None
@@ -331,7 +361,7 @@ class TestBaseInstanceRegistryTags:
 
     def test_register_without_tags(self):
         """Test that registering without tags defaults to empty dict."""
-        self.registry.register("value", name="name1")
+        self.registry.register(_item("value"), name="name1")
 
         entry = self.registry.get_entry("name1")
         assert entry is not None
@@ -339,9 +369,9 @@ class TestBaseInstanceRegistryTags:
 
     def test_get_by_tag_key_only(self):
         """Test get_by_tag matching by key only (any value)."""
-        self.registry.register("v1", name="n1", tags={"role": "scorer"})
-        self.registry.register("v2", name="n2", tags={"role": "target"})
-        self.registry.register("v3", name="n3", tags={"provider": "azure"})
+        self.registry.register(_item("v1"), name="n1", tags={"role": "scorer"})
+        self.registry.register(_item("v2"), name="n2", tags={"role": "target"})
+        self.registry.register(_item("v3"), name="n3", tags={"provider": "azure"})
 
         results = self.registry.get_by_tag(tag="role")
         assert len(results) == 2
@@ -349,9 +379,9 @@ class TestBaseInstanceRegistryTags:
 
     def test_get_by_tag_key_and_value(self):
         """Test get_by_tag matching by key and specific value."""
-        self.registry.register("v1", name="n1", tags={"role": "scorer"})
-        self.registry.register("v2", name="n2", tags={"role": "target"})
-        self.registry.register("v3", name="n3", tags={"role": "scorer"})
+        self.registry.register(_item("v1"), name="n1", tags={"role": "scorer"})
+        self.registry.register(_item("v2"), name="n2", tags={"role": "target"})
+        self.registry.register(_item("v3"), name="n3", tags={"role": "scorer"})
 
         results = self.registry.get_by_tag(tag="role", value="scorer")
         assert len(results) == 2
@@ -359,31 +389,31 @@ class TestBaseInstanceRegistryTags:
 
     def test_get_by_tag_no_match(self):
         """Test get_by_tag returns empty list when no entries match."""
-        self.registry.register("v1", name="n1", tags={"role": "scorer"})
+        self.registry.register(_item("v1"), name="n1", tags={"role": "scorer"})
 
         results = self.registry.get_by_tag(tag="nonexistent")
         assert results == []
 
     def test_get_by_tag_value_no_match(self):
         """Test get_by_tag returns empty when key exists but value does not match."""
-        self.registry.register("v1", name="n1", tags={"role": "scorer"})
+        self.registry.register(_item("v1"), name="n1", tags={"role": "scorer"})
 
         results = self.registry.get_by_tag(tag="role", value="nonexistent")
         assert results == []
 
     def test_get_by_tag_returns_sorted_by_name(self):
         """Test that get_by_tag results are sorted by name."""
-        self.registry.register("v3", name="zeta", tags=["shared"])
-        self.registry.register("v1", name="alpha", tags=["shared"])
-        self.registry.register("v2", name="beta", tags=["shared"])
+        self.registry.register(_item("v3"), name="zeta", tags=["shared"])
+        self.registry.register(_item("v1"), name="alpha", tags=["shared"])
+        self.registry.register(_item("v2"), name="beta", tags=["shared"])
 
         results = self.registry.get_by_tag(tag="shared")
         assert [e.name for e in results] == ["alpha", "beta", "zeta"]
 
     def test_get_by_tag_with_list_tags(self):
         """Test get_by_tag works with list-style tags (normalized to empty string values)."""
-        self.registry.register("v1", name="n1", tags=["fast", "default"])
-        self.registry.register("v2", name="n2", tags=["slow"])
+        self.registry.register(_item("v1"), name="n1", tags=["fast", "default"])
+        self.registry.register(_item("v2"), name="n2", tags=["slow"])
 
         results = self.registry.get_by_tag(tag="fast")
         assert len(results) == 1
@@ -391,7 +421,7 @@ class TestBaseInstanceRegistryTags:
 
     def test_get_by_tag_with_list_tags_value_empty_string(self):
         """Test get_by_tag with explicit empty string value matches list-style tags."""
-        self.registry.register("v1", name="n1", tags=["fast"])
+        self.registry.register(_item("v1"), name="n1", tags=["fast"])
 
         results = self.registry.get_by_tag(tag="fast", value="")
         assert len(results) == 1
@@ -399,11 +429,11 @@ class TestBaseInstanceRegistryTags:
 
     def test_normalize_tags_none(self):
         """Test _normalize_tags returns empty dict for None."""
-        assert BaseInstanceRegistry._normalize_tags(None) == {}
+        assert RetrievableInstanceRegistry._normalize_tags(None) == {}
 
     def test_normalize_tags_list(self):
         """Test _normalize_tags converts list to dict with empty values."""
-        assert BaseInstanceRegistry._normalize_tags(["a", "b"]) == {"a": "", "b": ""}
+        assert RetrievableInstanceRegistry._normalize_tags(["a", "b"]) == {"a": "", "b": ""}
 
     def test_normalize_tags_dict(self):
         """Test _normalize_tags returns a copy of the dict."""
@@ -413,15 +443,15 @@ class TestBaseInstanceRegistryTags:
         assert result is not original
 
 
-class TestBaseInstanceRegistryDunderMethods:
-    """Tests for dunder methods (__contains__, __len__, __iter__) in BaseInstanceRegistry."""
+class TestRetrievableInstanceRegistryDunderMethods:
+    """Tests for dunder methods (__contains__, __len__, __iter__) in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
         ConcreteTestRegistry.reset_instance()
         self.registry = ConcreteTestRegistry.get_registry_singleton()
-        self.registry.register("value1", name="name1")
-        self.registry.register("value2", name="name2")
+        self.registry.register(_item("value1"), name="name1")
+        self.registry.register(_item("value2"), name="name2")
 
     def teardown_method(self):
         """Reset the singleton after each test."""
@@ -457,8 +487,54 @@ class TestBaseInstanceRegistryDunderMethods:
         assert collected == ["name1", "name2"]
 
 
-class TestBaseInstanceRegistryAddTags:
-    """Tests for add_tags functionality in BaseInstanceRegistry."""
+class _ItemOnlyRegistry(BaseInstanceRegistry["_TestItem"]):
+    """Concrete BaseInstanceRegistry subclass — should NOT have get/get_entry/get_all_instances."""
+
+
+class TestBaseInstanceRegistryDoesNotExposeInstanceMethods:
+    """Verify that BaseInstanceRegistry subclasses lack instance-retrieval methods."""
+
+    def test_item_registry_has_no_get(self):
+        """BaseInstanceRegistry subclasses should not have a get() method."""
+        assert not hasattr(_ItemOnlyRegistry, "get")
+
+    def test_item_registry_has_no_get_entry(self):
+        """BaseInstanceRegistry subclasses should not have a get_entry() method."""
+        assert not hasattr(_ItemOnlyRegistry, "get_entry")
+
+    def test_item_registry_has_no_get_all_instances(self):
+        """BaseInstanceRegistry subclasses should not have a get_all_instances() method."""
+        assert not hasattr(_ItemOnlyRegistry, "get_all_instances")
+
+    def test_instance_registry_has_get(self):
+        """RetrievableInstanceRegistry subclasses should have get()."""
+        assert hasattr(ConcreteTestRegistry, "get")
+
+    def test_instance_registry_has_get_entry(self):
+        """RetrievableInstanceRegistry subclasses should have get_entry()."""
+        assert hasattr(ConcreteTestRegistry, "get_entry")
+
+    def test_instance_registry_has_get_all_instances(self):
+        """RetrievableInstanceRegistry subclasses should have get_all_instances()."""
+        assert hasattr(ConcreteTestRegistry, "get_all_instances")
+
+    def test_item_registry_shares_common_methods(self):
+        """BaseInstanceRegistry subclasses should have shared registry methods."""
+        for method in (
+            "register",
+            "get_names",
+            "get_by_tag",
+            "add_tags",
+            "list_metadata",
+            "find_dependents_of_tag",
+            "get_registry_singleton",
+            "reset_instance",
+        ):
+            assert hasattr(_ItemOnlyRegistry, method), f"Missing method: {method}"
+
+
+class TestRetrievableInstanceRegistryAddTags:
+    """Tests for add_tags functionality in RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry for each test."""
@@ -471,7 +547,7 @@ class TestBaseInstanceRegistryAddTags:
 
     def test_add_tags_with_list(self):
         """Test adding list-style tags to an existing entry."""
-        self.registry.register("value", name="entry1")
+        self.registry.register(_item("value"), name="entry1")
         self.registry.add_tags(name="entry1", tags=["fast", "default"])
 
         entry = self.registry.get_entry("entry1")
@@ -480,7 +556,7 @@ class TestBaseInstanceRegistryAddTags:
 
     def test_add_tags_with_dict(self):
         """Test adding dict-style tags to an existing entry."""
-        self.registry.register("value", name="entry1")
+        self.registry.register(_item("value"), name="entry1")
         self.registry.add_tags(name="entry1", tags={"role": "scorer"})
 
         entry = self.registry.get_entry("entry1")
@@ -489,7 +565,7 @@ class TestBaseInstanceRegistryAddTags:
 
     def test_add_tags_merges_with_existing(self):
         """Test that add_tags merges new tags with existing ones."""
-        self.registry.register("value", name="entry1", tags={"existing": "yes"})
+        self.registry.register(_item("value"), name="entry1", tags={"existing": "yes"})
         self.registry.add_tags(name="entry1", tags=["new_tag"])
 
         entry = self.registry.get_entry("entry1")
@@ -503,7 +579,7 @@ class TestBaseInstanceRegistryAddTags:
 
     def test_add_tags_invalidates_metadata_cache(self):
         """Test that add_tags invalidates the metadata cache."""
-        self.registry.register("value", name="entry1")
+        self.registry.register(_item("value"), name="entry1")
         self.registry.list_metadata()  # Build cache
 
         self.registry.add_tags(name="entry1", tags=["new"])
@@ -513,7 +589,7 @@ class TestBaseInstanceRegistryAddTags:
 
     def test_add_tags_entries_findable_by_get_by_tag(self):
         """Test that entries are findable via get_by_tag after add_tags."""
-        self.registry.register("value", name="entry1")
+        self.registry.register(_item("value"), name="entry1")
         self.registry.add_tags(name="entry1", tags=["best_scorer"])
 
         results = self.registry.get_by_tag(tag="best_scorer")
@@ -521,25 +597,22 @@ class TestBaseInstanceRegistryAddTags:
         assert results[0].name == "entry1"
 
 
-class _IdentifiableStub:
+class _IdentifiableStub(Identifiable):
     """A minimal stub that holds a ComponentIdentifier for dependency tests."""
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
-        self.identifier = identifier
+        self._stored_identifier = identifier
 
-    def get_identifier(self) -> ComponentIdentifier:
-        return self.identifier
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._stored_identifier
 
 
-class IdentifierTestRegistry(BaseInstanceRegistry["_IdentifiableStub", ComponentIdentifier]):
+class IdentifierTestRegistry(BaseInstanceRegistry["_IdentifiableStub"]):
     """Registry for testing dependency-related functionality with ComponentIdentifier trees."""
-
-    def _build_metadata(self, name: str, instance: "_IdentifiableStub") -> ComponentIdentifier:
-        return instance.get_identifier()
 
 
 class TestFindDependentsOfTag:
-    """Tests for BaseInstanceRegistry.find_dependents_of_tag."""
+    """Tests for RetrievableInstanceRegistry.find_dependents_of_tag."""
 
     def setup_method(self) -> None:
         IdentifierTestRegistry.reset_instance()

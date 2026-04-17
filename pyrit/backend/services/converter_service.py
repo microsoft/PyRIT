@@ -40,7 +40,7 @@ from pyrit.models import PromptDataType
 from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_target import PromptChatTarget
-from pyrit.registry.instance_registries import ConverterRegistry
+from pyrit.registry.object_registries import ConverterRegistry
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
     "image_path": ".png",
@@ -254,8 +254,7 @@ class ConverterService:
         items: list[ConverterCatalogEntry] = []
         for converter_type, converter_class in sorted(_CONVERTER_CLASS_REGISTRY.items()):
             if (
-                converter_type
-                in ("PromptConverter", "ConverterResult", "HumanInTheLoopConverter", "SelectiveTextConverter")
+                converter_type in ("PromptConverter", "ConverterResult", "SelectiveTextConverter")
                 or "Strategy" in converter_type
             ):
                 continue

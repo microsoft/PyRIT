@@ -79,7 +79,7 @@ def run_container(mode, tag="latest"):
         "--name",
         container_name,
         "-p",
-        f"{port}:{port}",
+        f"127.0.0.1:{port}:{port}",
         "-e",
         f"PYRIT_MODE={mode}",
         "-v",

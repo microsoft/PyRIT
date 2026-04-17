@@ -11,7 +11,6 @@ from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
     from pyrit.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.score import Scorer
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
@@ -68,8 +67,6 @@ class ScenarioResult:
         completion_time: Optional[datetime] = None,
         number_tries: int = 0,
         id: Optional[uuid.UUID] = None,  # noqa: A002
-        # Deprecated parameter - will be removed in 0.13.0
-        objective_scorer: Optional["Scorer"] = None,
     ) -> None:
         """
         Initialize a scenario result.
@@ -84,10 +81,8 @@ class ScenarioResult:
             completion_time (Optional[datetime]): Optional completion timestamp.
             number_tries (int): Number of run attempts.
             id (Optional[uuid.UUID]): Optional scenario result ID.
-            objective_scorer (Optional[Scorer]): Deprecated scorer object parameter.
 
         """
-        from pyrit.common import print_deprecation_message
         from pyrit.identifiers.component_identifier import ComponentIdentifier
 
         self.id = id if id is not None else uuid.uuid4()
@@ -96,18 +91,7 @@ class ScenarioResult:
         # Normalize objective_target_identifier to ComponentIdentifier
         self.objective_target_identifier = ComponentIdentifier.normalize(objective_target_identifier)
 
-        # Handle deprecated objective_scorer parameter
-        if objective_scorer is not None:
-            print_deprecation_message(
-                old_item="objective_scorer parameter",
-                new_item="objective_scorer_identifier",
-                removed_in="0.13.0",
-            )
-            # Extract identifier from scorer object and normalize
-            # (handles both ComponentIdentifier and legacy dict returns)
-            self.objective_scorer_identifier = ComponentIdentifier.normalize(objective_scorer.get_identifier())
-        else:
-            self.objective_scorer_identifier = ComponentIdentifier.normalize(objective_scorer_identifier)
+        self.objective_scorer_identifier = ComponentIdentifier.normalize(objective_scorer_identifier)
 
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results

@@ -72,6 +72,9 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
+            input_modalities=frozenset(
+                {frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}
+            ),
         )
     )
 
@@ -224,7 +227,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         self.model_name_environment_variable = "OPENAI_CHAT_MODEL"
         self.endpoint_environment_variable = "OPENAI_CHAT_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_CHAT_KEY"
-        self.underlying_model_environment_variable = "OPENAI_CHAT_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -241,28 +243,25 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously sends a message and handles the response within a managed conversation context.
 
         Args:
-            message (Message): The message object.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
         """
-        self._validate_request(message=message)
-
+        message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
         json_config = self._get_json_response_config(message_piece=message_piece)
 
-        # Get conversation from memory and append the current message
-        conversation = self._memory.get_conversation(conversation_id=message_piece.conversation_id)
-        conversation.append(message)
-
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
-        body = await self._construct_request_body(conversation=conversation, json_config=json_config)
+        body = await self._construct_request_body(conversation=normalized_conversation, json_config=json_config)
 
         # Use unified error handling - automatically detects ChatCompletion and validates
         response = await self._handle_openai_request(
@@ -547,7 +546,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
     def _build_chat_messages_for_text(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries. This is needed because many
-        openai "compatible" models don't support ChatMessageListDictContent format (this is more universally accepted).
+        openai "compatible" models don't support multi-part content format (this is more universally accepted).
 
         Args:
             conversation (list[Message]): A list of Message objects.

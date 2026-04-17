@@ -12,9 +12,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries.base_instance_registry import (
-    BaseInstanceRegistry,
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
 )
 
 if TYPE_CHECKING:
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
+class TargetRegistry(RetrievableInstanceRegistry["PromptTarget"]):
     """
     Registry for managing available prompt target instances.
 
@@ -34,16 +33,6 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
     Targets are identified by their snake_case name derived from the class name,
     or a custom name provided during registration.
     """
-
-    @classmethod
-    def get_registry_singleton(cls) -> TargetRegistry:
-        """
-        Get the singleton instance of the TargetRegistry.
-
-        Returns:
-            The singleton TargetRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
 
     def register_instance(
         self,
@@ -85,16 +74,3 @@ class TargetRegistry(BaseInstanceRegistry["PromptTarget", ComponentIdentifier]):
             The target instance, or None if not found.
         """
         return self.get(name)
-
-    def _build_metadata(self, name: str, instance: PromptTarget) -> ComponentIdentifier:
-        """
-        Build metadata for a target instance.
-
-        Args:
-            name: The registry name of the target.
-            instance: The target instance.
-
-        Returns:
-            ComponentIdentifier: The target's identifier.
-        """
-        return instance.get_identifier()

@@ -7,7 +7,7 @@ Class registries package.
 This package contains registries that store classes (Type[T]) which can be
 instantiated on demand. Examples include ScenarioRegistry and InitializerRegistry.
 
-For registries that store pre-configured instances, see instance_registries/.
+For registries that store pre-configured instances, see object_registries/.
 """
 
 from pyrit.registry.class_registries.base_class_registry import (

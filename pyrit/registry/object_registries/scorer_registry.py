@@ -12,9 +12,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries.base_instance_registry import (
-    BaseInstanceRegistry,
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
 )
 
 if TYPE_CHECKING:
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ScorerRegistry(BaseInstanceRegistry["Scorer", ComponentIdentifier]):
+class ScorerRegistry(RetrievableInstanceRegistry["Scorer"]):
     """
     Registry for managing available scorer instances.
 
@@ -34,16 +33,6 @@ class ScorerRegistry(BaseInstanceRegistry["Scorer", ComponentIdentifier]):
     Scorers are identified by their snake_case name derived from the class name,
     or a custom name provided during registration.
     """
-
-    @classmethod
-    def get_registry_singleton(cls) -> ScorerRegistry:
-        """
-        Get the singleton instance of the ScorerRegistry.
-
-        Returns:
-            The singleton ScorerRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
 
     def register_instance(
         self,
@@ -84,16 +73,3 @@ class ScorerRegistry(BaseInstanceRegistry["Scorer", ComponentIdentifier]):
             The scorer instance, or None if not found.
         """
         return self.get(name)
-
-    def _build_metadata(self, name: str, instance: Scorer) -> ComponentIdentifier:
-        """
-        Build metadata for a scorer instance.
-
-        Args:
-            name: The registry name of the scorer.
-            instance: The scorer instance.
-
-        Returns:
-            ComponentIdentifier: The scorer's identifier
-        """
-        return instance.get_identifier()

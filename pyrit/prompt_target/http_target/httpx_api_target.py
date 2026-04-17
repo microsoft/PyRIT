@@ -108,7 +108,7 @@ class HTTPXAPITarget(HTTPTarget):
             raise ValueError(f"File uploads are not allowed with HTTP method: {self.method}")
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Override the parent's method to skip raw http_request usage,
         and do a standard "API mode" approach.
@@ -125,7 +125,7 @@ class HTTPXAPITarget(HTTPTarget):
             httpx.RequestError: If the request fails.
             FileNotFoundError: If the specified file to upload is not found.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
 
         # If user didn't set file_path, see if the PDF path is in converted_value

@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "0.13.0.dev0"
+version = "0.14.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
@@ -46,7 +46,7 @@ dependencies = [
     "numpy>=1.26.0",
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
-    "pillow>=12.1.1",
+    "pillow>=12.2.0",
     "pydantic>=2.11.5",
     "PyJWT[crypto]>=2.8.0",
     "pyodbc>=5.1.0",
@@ -61,7 +61,7 @@ dependencies = [
     "tenacity>=9.1.2",
     "tinytag>=2.2.1",
     "tqdm>=4.67.1",
-    "transformers>=4.52.4",
+    "transformers>=4.55.0",
     "treelib>=1.7.1",
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
@@ -81,7 +81,7 @@ dev = [
     "mock-alchemy>=0.2.6",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
     "diff-cover>=9.0.0",
     "pytest-cov>=6.1.1",
@@ -119,11 +119,6 @@ playwright = [
     "ollama>=0.5.1",
     "playwright>=1.49.0",
 ]
-gradio = [
-    "gradio>=6.7.0",
-    "rpyc>=6.0.1",
-    "pywebview>=5.4"
-]
 fairness_bias = [
     "spacy>=3.8.7",
 ]
@@ -145,15 +140,12 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "gradio>=6.7.0",
     "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
-    "pywebview>=5.4",
     "spacy>=3.8.7",
-    "rpyc>=6.0.1",
     "torch>=2.7.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
@@ -184,6 +176,7 @@ exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
 [tool.uv]
 constraint-dependencies = [
     "aiohttp>=3.13.4",
+    "pyasn1>=0.6.3",
     "cryptography>=46.0.7",
     "orjson>=3.11.6",
     "Pygments>=2.20.0",

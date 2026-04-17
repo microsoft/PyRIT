@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -64,6 +64,7 @@ async def test_send_prompt_async(target):
     target.send_text_async.assert_called_once_with(
         text="Hello",
         conversation_id="test_conversation_id",
+        conversation=ANY,
     )
     assert response[0].get_value() == "hello"
     assert response[0].get_value(1) == "output.wav"
@@ -75,23 +76,21 @@ async def test_send_prompt_async(target):
 @pytest.mark.asyncio
 async def test_get_system_prompt_from_conversation_with_system_message(target):
     """Test that system prompt is extracted from conversation history when present."""
-    conversation_id = "test_conversation_with_system"
 
-    # Add a system message to memory
+    # Create a system message
     system_message = Message(
         message_pieces=[
             MessagePiece(
                 role="system",
                 original_value="You are a helpful assistant specialized in security.",
                 converted_value="You are a helpful assistant specialized in security.",
-                conversation_id=conversation_id,
+                conversation_id="test_conversation_with_system",
             )
         ]
     )
-    target._memory.add_message_to_memory(request=system_message)
 
     # Get the system prompt
-    system_prompt = target._get_system_prompt_from_conversation(conversation_id=conversation_id)
+    system_prompt = target._get_system_prompt_from_conversation(conversation=[system_message])
 
     assert system_prompt == "You are a helpful assistant specialized in security."
 
@@ -99,23 +98,21 @@ async def test_get_system_prompt_from_conversation_with_system_message(target):
 @pytest.mark.asyncio
 async def test_get_system_prompt_from_conversation_default(target):
     """Test that default system prompt is returned when no system message in conversation."""
-    conversation_id = "test_conversation_no_system"
 
-    # Add a user message (no system message)
+    # Create a user message (no system message)
     user_message = Message(
         message_pieces=[
             MessagePiece(
                 role="user",
                 original_value="Hello",
                 converted_value="Hello",
-                conversation_id=conversation_id,
+                conversation_id="test_conversation_no_system",
             )
         ]
     )
-    target._memory.add_message_to_memory(request=user_message)
 
     # Get the system prompt
-    system_prompt = target._get_system_prompt_from_conversation(conversation_id=conversation_id)
+    system_prompt = target._get_system_prompt_from_conversation(conversation=[user_message])
 
     assert system_prompt == "You are a helpful AI assistant"
 
@@ -123,10 +120,9 @@ async def test_get_system_prompt_from_conversation_default(target):
 @pytest.mark.asyncio
 async def test_get_system_prompt_empty_conversation(target):
     """Test that default system prompt is returned for empty conversation."""
-    conversation_id = "test_empty_conversation"
 
-    # Get the system prompt without adding any messages
-    system_prompt = target._get_system_prompt_from_conversation(conversation_id=conversation_id)
+    # Get the system prompt without any messages
+    system_prompt = target._get_system_prompt_from_conversation(conversation=[])
 
     assert system_prompt == "You are a helpful AI assistant"
 
@@ -185,7 +181,7 @@ async def test_send_prompt_async_invalid_request(target):
     )
     message = Message(message_pieces=[message_piece])
     with pytest.raises(ValueError) as excinfo:
-        target._validate_request(message=message)
+        target._validate_request(normalized_conversation=[message])
 
     assert "This target supports only the following data types" in str(excinfo.value)
     assert "image_path" in str(excinfo.value)

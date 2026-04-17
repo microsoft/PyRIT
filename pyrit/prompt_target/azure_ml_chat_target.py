@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Optional
+import warnings
+from typing import Any
 
 from httpx import HTTPStatusError
 
@@ -20,7 +21,12 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityHandlingPolicy,
+    CapabilityName,
+    TargetCapabilities,
+    UnsupportedCapabilityBehavior,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 
@@ -54,57 +60,95 @@ class AzureMLChatTarget(PromptChatTarget):
     def __init__(
         self,
         *,
-        endpoint: Optional[str] = None,
-        api_key: Optional[str] = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
         model_name: str = "",
-        message_normalizer: Optional[MessageListNormalizer[Any]] = None,
+        message_normalizer: MessageListNormalizer[Any] | None = None,
         max_new_tokens: int = 400,
         temperature: float = 1.0,
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
+        custom_capabilities: TargetCapabilities | None = None,
         **param_kwargs: Any,
     ) -> None:
         """
         Initialize an instance of the AzureMLChatTarget class.
 
         Args:
-            endpoint (str, Optional): The endpoint URL for the deployed Azure ML model.
+            endpoint (str | None): The endpoint URL for the deployed Azure ML model.
                 Defaults to the value of the AZURE_ML_MANAGED_ENDPOINT environment variable.
-            api_key (str, Optional): The API key for accessing the Azure ML endpoint.
+            api_key (str | None): The API key for accessing the Azure ML endpoint.
                 Defaults to the value of the `AZURE_ML_KEY` environment variable.
-            model_name (str, Optional): The name of the model being used (e.g., "Llama-3.2-3B-Instruct").
+            model_name (str): The name of the model being used (e.g., "Llama-3.2-3B-Instruct").
                 Used for identification purposes. Defaults to empty string.
-            message_normalizer (MessageListNormalizer, Optional): The message normalizer.
-                For models that do not allow system prompts such as mistralai-Mixtral-8x7B-Instruct-v01,
-                GenericSystemSquashNormalizer() can be passed in. Defaults to ChatMessageNormalizer().
-            max_new_tokens (int, Optional): The maximum number of tokens to generate in the response.
+            message_normalizer (MessageListNormalizer[Any] | None): **Deprecated.** Use
+                ``custom_configuration`` with ``CapabilityHandlingPolicy`` instead. Previously used for
+                models that do not allow system prompts.
+                Will be removed in v0.15.0.
+            max_new_tokens (int): The maximum number of tokens to generate in the response.
                 Defaults to 400.
-            temperature (float, Optional): The temperature for generating diverse responses. 1.0 is most random,
+            temperature (float): The temperature for generating diverse responses. 1.0 is most random,
                 0.0 is least random. Defaults to 1.0.
-            top_p (float, Optional): The top-p value for generating diverse responses. It represents
+            top_p (float): The top-p value for generating diverse responses. It represents
                 the cumulative probability of the top tokens to keep. Defaults to 1.0.
-            repetition_penalty (float, Optional): The repetition penalty for generating diverse responses.
+            repetition_penalty (float): The repetition penalty for generating diverse responses.
                 1.0 means no penalty with a greater value (up to 2.0) meaning more penalty for repeating tokens.
                 Defaults to 1.2.
-            max_requests_per_minute (int, Optional): Number of requests the target can handle per
+            max_requests_per_minute (int | None): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
-            custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
+            custom_configuration (TargetConfiguration | None): Override the default configuration for this target
                 instance. Useful for targets whose capabilities depend on deployment configuration.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
+            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.15.0.
             **param_kwargs: Additional parameters to pass to the model for generating responses. Example
                 parameters can be found here: https://huggingface.co/docs/api-inference/tasks/text-generation.
                 Note that the link above may not be comprehensive, and specific acceptable parameters may be
                 model-dependent. If a model does not accept a certain parameter that is passed in, it will be skipped
                 without throwing an error.
+
+        Raises:
+            ValueError: If both `message_normalizer` and `custom_configuration` are provided,
+                since `message_normalizer` is deprecated and the two configurations may conflict.
         """
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
         )
+
+        # Translate legacy message_normalizer into TargetConfiguration
+        if message_normalizer is not None:
+            if custom_configuration is not None:
+                raise ValueError(
+                    "Cannot specify both 'message_normalizer' and 'custom_configuration'. "
+                    "Use 'custom_configuration' only; 'message_normalizer' is deprecated and "
+                    "will be removed in v0.15.0."
+                )
+            warnings.warn(
+                "Passing message_normalizer is deprecated. Use custom_configuration with "
+                "CapabilityHandlingPolicy instead. Will be removed in v0.15.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # The legacy message_normalizer was primarily used to handle system prompts
+            # for models that don't support them (e.g. GenericSystemSquashNormalizer).
+            # We translate it into a TargetConfiguration that marks system_prompt as
+            # unsupported + ADAPT so the pipeline invokes the user's normalizer.
+            default_caps = self._DEFAULT_CONFIGURATION.capabilities
+            default_behaviors = dict(self._DEFAULT_CONFIGURATION.policy.behaviors)
+            default_behaviors[CapabilityName.SYSTEM_PROMPT] = UnsupportedCapabilityBehavior.ADAPT
+            custom_configuration = TargetConfiguration(
+                capabilities=TargetCapabilities(
+                    supports_multi_message_pieces=default_caps.supports_multi_message_pieces,
+                    supports_editable_history=default_caps.supports_editable_history,
+                    supports_multi_turn=default_caps.supports_multi_turn,
+                    supports_system_prompt=False,
+                ),
+                policy=CapabilityHandlingPolicy(behaviors=default_behaviors),
+                normalizer_overrides={CapabilityName.SYSTEM_PROMPT: message_normalizer},
+            )
+
         PromptChatTarget.__init__(
             self,
             max_requests_per_minute=max_requests_per_minute,
@@ -119,7 +163,6 @@ class AzureMLChatTarget(PromptChatTarget):
         validate_temperature(temperature)
         validate_top_p(top_p)
 
-        self.message_normalizer = message_normalizer if message_normalizer is not None else ChatMessageNormalizer()
         self._max_new_tokens = max_new_tokens
         self._temperature = temperature
         self._top_p = top_p
@@ -139,11 +182,10 @@ class AzureMLChatTarget(PromptChatTarget):
                 "top_p": self._top_p,
                 "max_new_tokens": self._max_new_tokens,
                 "repetition_penalty": self._repetition_penalty,
-                "message_normalizer": self.message_normalizer.__class__.__name__,
             },
         )
 
-    def _initialize_vars(self, endpoint: Optional[str] = None, api_key: Optional[str] = None) -> None:
+    def _initialize_vars(self, endpoint: str | None = None, api_key: str | None = None) -> None:
         """
         Set the endpoint and key for accessing the Azure ML model. Use this function to manually
         pass in your own endpoint uri and api key. Defaults to the values in the .env file for the variables
@@ -164,12 +206,14 @@ class AzureMLChatTarget(PromptChatTarget):
         )
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the Azure ML chat target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
@@ -179,18 +223,14 @@ class AzureMLChatTarget(PromptChatTarget):
             RateLimitException: If the target rate limit is exceeded.
             HTTPStatusError: For any other HTTP errors during the process.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
-
-        # Get chat messages from memory and append the current message
-        messages = list(self._memory.get_conversation(conversation_id=request.conversation_id))
-        messages.append(message)
 
         logger.info(f"Sending the following prompt to the prompt target: {request}")
 
         try:
             resp_text = await self._complete_chat_async(
-                messages=messages,
+                messages=normalized_conversation,
             )
 
             if not resp_text:
@@ -259,8 +299,8 @@ class AzureMLChatTarget(PromptChatTarget):
         Returns:
             dict: The constructed HTTP request body.
         """
-        # Use the message normalizer to convert Messages to dict format
-        messages_dict = await self.message_normalizer.normalize_to_dicts_async(messages)
+        wire_format = ChatMessageNormalizer()
+        messages_dict = await wire_format.normalize_to_dicts_async(messages)
 
         # Parameters include additional ones passed in through **kwargs. Those not accepted by the model will
         # be ignored. We only include commonly supported parameters here - model-specific parameters like
@@ -292,5 +332,5 @@ class AzureMLChatTarget(PromptChatTarget):
 
         return headers
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass

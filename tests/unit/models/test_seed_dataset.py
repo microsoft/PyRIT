@@ -166,9 +166,3 @@ def test_seed_dataset_group_without_group_id():
     p2.prompt_group_id = None
     groups = SeedDataset.group_seed_prompts_by_prompt_group_id([p1, p2])
     assert len(groups) == 2
-
-
-def test_seed_dataset_is_objective_deprecated():
-    with pytest.warns(DeprecationWarning, match="is_objective"):
-        ds = SeedDataset(seeds=[{"value": "obj"}], is_objective=True)
-    assert isinstance(ds.seeds[0], SeedObjective)
