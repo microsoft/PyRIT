@@ -3,9 +3,9 @@
 
 """Unit tests for strategy composition validation."""
 
-import pytest
-
 import warnings
+
+import pytest
 
 from pyrit.scenario import ScenarioCompositeStrategy
 from pyrit.scenario.foundry import FoundryStrategy

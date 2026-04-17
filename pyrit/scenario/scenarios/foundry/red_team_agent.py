@@ -341,15 +341,15 @@ class RedTeamAgent(Scenario):
 
         Accepts bare FoundryStrategy members (each becomes its own composite) or
         FoundryComposite objects (used as-is, enabling attack+converter pairings).
-        None resolves to the default strategy aggregate.
+        None and [] both resolve to the default strategy aggregate.
 
         Args:
-            strategies: FoundryStrategy enums, FoundryComposite objects, or None for default.
+            strategies: FoundryStrategy enums, FoundryComposite objects, or None/[] for default.
 
         Returns:
             list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
-        if strategies is None:
+        if not strategies:
             resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self.get_default_strategy()))
             self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
             return list(resolved)

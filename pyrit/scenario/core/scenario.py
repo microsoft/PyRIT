@@ -191,14 +191,14 @@ class Scenario(ABC):
         Resolve strategy inputs into a concrete list for this scenario.
 
         The default implementation calls resolve() on the strategy class, which handles
-        None (use default), empty list (baseline-only), and aggregate expansion.
+        None (use default), empty list (also use default), and aggregate expansion.
 
         Subclasses with complex composition semantics (e.g., RedTeamAgent with
         FoundryComposite) should override this to build their own composite types.
 
         Args:
-            strategies: Strategy inputs from initialize_async. None means use default,
-                [] means baseline-only, otherwise a list of strategies to resolve.
+            strategies: Strategy inputs from initialize_async. None or [] both mean use
+                default; otherwise a list of strategies to resolve.
 
         Returns:
             list[ScenarioStrategy]: Ordered, deduplicated concrete strategies.

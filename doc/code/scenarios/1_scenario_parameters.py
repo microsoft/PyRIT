@@ -100,8 +100,9 @@ scenario_strategies = [
 # %% [markdown]
 # ## Baseline Execution
 #
-# Pass an empty `scenario_strategies` list to run a baseline-only scenario. The baseline sends each
-# objective directly to the target without any converters or multi-turn strategies. This is useful for:
+# The baseline sends each objective directly to the target without any converters or multi-turn
+# strategies. It is included automatically when `include_baseline=True` (the default). This is
+# useful for:
 #
 # - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
 # - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
@@ -111,7 +112,7 @@ scenario_strategies = [
 baseline_scenario = RedTeamAgent()
 await baseline_scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[],  # Empty list = baseline only
+    scenario_strategies=None,  # Uses default strategies; baseline is prepended automatically
     dataset_config=dataset_config,
 )
 baseline_result = await baseline_scenario.run_async()  # type: ignore

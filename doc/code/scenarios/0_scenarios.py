@@ -193,8 +193,8 @@ await print_scenarios_list_async(context=FrontendCore())  # type: ignore
 # each objective directly to the target without any converters or multi-turn techniques. This is
 # controlled by the `include_default_baseline` parameter (default: `True` for most scenarios).
 #
-# To run *only* the baseline (no attack strategies), pass `scenario_strategies=[]` programmatically.
-# This is useful for establishing a refusal rate before applying attacks. See
+# To run *only* the baseline (no attack strategies), create a `RedTeamAgent` with
+# `include_baseline=True` (the default) and pass `scenario_strategies=None`. See
 # [Scenario Parameters](./1_scenario_parameters.ipynb) for a working example.
 
 # %% [markdown]
