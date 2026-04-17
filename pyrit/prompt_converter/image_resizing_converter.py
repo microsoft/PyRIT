@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from urllib.parse import urlparse
 
 import aiohttp
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
@@ -17,13 +17,13 @@ from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConve
 logger = logging.getLogger(__name__)
 
 
-class ImageColorSaturationConverter(PromptConverter):
+class ImageResizingConverter(PromptConverter):
     """
-    Adjusts the color saturation level of an image.
+    Resizes an image by a given scale factor.
 
-    This converter uses PIL's ImageEnhance.Color to adjust an image's color saturation.
-    A level of 0.0 produces a grayscale (black-and-white) image, 1.0 preserves the original
-    colors, and values greater than 1.0 oversaturate the colors.
+    This converter uses PIL's Image.resize to scale an image by a specified factor.
+    A scale_factor of 1.0 preserves the original size, values less than 1.0 shrink
+    the image, and values greater than 1.0 enlarge it.
 
     When converting images with transparency (alpha channel) to JPEG format, the converter
     automatically composites the transparent areas onto a solid background color.
@@ -49,27 +49,27 @@ class ImageColorSaturationConverter(PromptConverter):
         self,
         *,
         output_format: Optional[Literal["JPEG", "PNG", "WEBP"]] = None,
-        level: float = 0.0,
+        scale_factor: float = 0.5,
     ) -> None:
         """
-        Initialize the converter with the specified color saturation level and output format.
+        Initialize the converter with the specified scale factor and output format.
 
         Args:
             output_format (str, optional): Output image format.
                 Must be one of 'JPEG', 'PNG', or 'WEBP'.
                 If None, keeps original format (if supported).
-            level (float): The color saturation level.
-                0.0 produces a grayscale image (black and white).
-                1.0 preserves the original colors.
-                Values greater than 1.0 oversaturate the colors.
-                Defaults to 0.0 (grayscale image).
+            scale_factor (float): The factor by which to scale the image dimensions.
+                1.0 preserves the original size.
+                Values less than 1.0 shrink the image.
+                Values greater than 1.0 enlarge the image.
+                Defaults to 0.5 (halve the image dimensions).
 
         Raises:
-            ValueError: If unsupported output format is specified, or if level is negative.
+            ValueError: If unsupported output format is specified, or if scale factor is not positive.
         """
-        if level < 0:
-            raise ValueError(f"Level must be non-negative, got {level}")
-        self._level = level
+        if scale_factor <= 0:
+            raise ValueError(f"Scale factor must be positive, got {scale_factor}")
+        self._scale_factor = scale_factor
 
         if output_format and output_format not in ("JPEG", "PNG", "WEBP"):
             raise ValueError("Output format must be one of 'JPEG', 'PNG', or 'WEBP'")
@@ -77,7 +77,7 @@ class ImageColorSaturationConverter(PromptConverter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build identifier with output format and color saturation level parameters.
+        Build identifier with output format and scale factor parameters.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
@@ -85,29 +85,27 @@ class ImageColorSaturationConverter(PromptConverter):
         return self._create_identifier(
             params={
                 "output_format": self._output_format,
-                "level": self._level,
+                "scale_factor": self._scale_factor,
             },
         )
 
-    def _adjust_saturation(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
+    def _resize_image(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
         """
-        Adjust the color saturation of the image. Returns the adjusted image bytes and output format.
+        Resize the image by the scale factor. Returns the resized image bytes and output format.
 
         Args:
-            image (PIL.Image.Image): The image to adjust.
+            image (PIL.Image.Image): The image to resize.
             original_format (str): The original format of the image.
 
         Returns:
-            tuple[BytesIO, str]: A tuple containing the adjusted image bytes and the output format.
+            tuple[BytesIO, str]: A tuple containing the resized image bytes and the output format.
         """
         original_format = original_format.upper()
         output_format = self._output_format or (
             original_format if original_format in ("JPEG", "PNG", "WEBP") else "JPEG"
         )
 
-        logger.info(
-            f"Adjusting image color saturation level: original format={original_format}, output format={output_format}"
-        )
+        logger.info(f"Resizing image: original format={original_format}, output format={output_format}")
 
         # Handle images with transparency when converting to JPEG
         if output_format == "JPEG":
@@ -119,10 +117,12 @@ class ImageColorSaturationConverter(PromptConverter):
             else:
                 image = image.convert("RGB")
 
-        adjusted_image = ImageEnhance.Color(image).enhance(self._level)
-        adjusted_bytes = BytesIO()  # in-memory buffer
-        adjusted_image.save(adjusted_bytes, output_format)
-        return adjusted_bytes, output_format
+        new_width = int(image.width * self._scale_factor)
+        new_height = int(image.height * self._scale_factor)
+        resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        resized_bytes = BytesIO()  # in-memory buffer
+        resized_image.save(resized_bytes, output_format)
+        return resized_bytes, output_format
 
     async def _read_image_from_url(self, url: str) -> bytes:
         """
@@ -146,14 +146,14 @@ class ImageColorSaturationConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
-        Convert the given prompt (image) by adjusting its color saturation level.
+        Convert the given prompt (image) by resizing it according to the scale factor.
 
         Args:
-            prompt (str): The image file path or URL pointing to the image to be adjusted.
+            prompt (str): The image file path or URL pointing to the image to be resized.
             input_type (PromptDataType): The type of input data.
 
         Returns:
-            ConverterResult: The result containing the path to the adjusted image.
+            ConverterResult: The result containing the path to the resized image.
 
         Raises:
             ValueError: If the input type is not supported.
@@ -173,21 +173,20 @@ class ImageColorSaturationConverter(PromptConverter):
 
         original_format = original_img.format or "JPEG"  # since PIL may not always provide a format
 
-        # Adjust the color saturation level of the image and get back a BytesIO buffer
-        # containing the adjusted data along with the actual output format used (which
-        # may differ from input format)
-        adjusted_bytes, output_format = self._adjust_saturation(original_img, original_format)
-        adjusted_bytes_value = adjusted_bytes.getvalue()
+        # Resize the image and get back a BytesIO buffer containing the resized data
+        # along with the actual output format used (which may differ from input format)
+        resized_bytes, output_format = self._resize_image(original_img, original_format)
+        resized_bytes_value = resized_bytes.getvalue()
 
         # This ensures the saved file has the correct extension for its actual format
         # Only currently supported output formats are taken into account
         format_extensions = {"JPEG": "jpeg", "PNG": "png", "WEBP": "webp"}
         img_serializer.file_extension = format_extensions.get(output_format, "jpeg")
 
-        # Convert adjusted image to base64 for storage via the serializer
-        image_str = base64.b64encode(adjusted_bytes_value)
+        # Convert resized image to base64 for storage via the serializer
+        image_str = base64.b64encode(resized_bytes_value)
         await img_serializer.save_b64_image(data=image_str.decode())
 
-        logger.info(f"Image color saturation level adjusted to {self._level}")
+        logger.info(f"Image resized by scale factor {self._scale_factor}")
 
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

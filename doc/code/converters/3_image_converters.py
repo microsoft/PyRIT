@@ -134,6 +134,40 @@ bw_img = Image.open(bw_result.output_text)
 display(bw_img)
 
 # %% [markdown]
+# ### ImageResizingConverter
+#
+# The `ImageResizingConverter` resizes an image by a given scale factor. The default is `0.5` (halve the size of the image).
+
+# %%
+from pyrit.prompt_converter import ImageResizingConverter
+
+# Resize the image by a scale factor of 0.5
+resize_converter = ImageResizingConverter(scale_factor=0.5)
+resize_result = await resize_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Resized image saved to: {resize_result.output_text}")
+
+resize_img = Image.open(resize_result.output_text)
+display(resize_img)
+
+# %% [markdown]
+# ### ImageRotationConverter
+#
+# The `ImageRotationConverter` rotates an image by a given angle. The default is `90.0` (positive values rotate counter-clockwise).
+
+# %%
+from pyrit.prompt_converter import ImageRotationConverter
+
+# Rotate the image by 90 degrees (counter-clockwise)
+rotate_converter = ImageRotationConverter(angle=90.0)
+rotate_result = await rotate_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Rotated image saved to: {rotate_result.output_text}")
+
+rotate_img = Image.open(rotate_result.output_text)
+display(rotate_img)
+
+# %% [markdown]
 # ### TransparencyAttackConverter
 #
 # The `TransparencyAttackConverter` creates dual-perception PNG images based on the research paper "Transparency Attacks" [@mckee2024transparency].

@@ -44,6 +44,8 @@ from pyrit.prompt_converter.flip_converter import FlipConverter
 from pyrit.prompt_converter.human_in_the_loop_converter import HumanInTheLoopConverter
 from pyrit.prompt_converter.image_color_saturation_converter import ImageColorSaturationConverter
 from pyrit.prompt_converter.image_compression_converter import ImageCompressionConverter
+from pyrit.prompt_converter.image_resizing_converter import ImageResizingConverter
+from pyrit.prompt_converter.image_rotation_converter import ImageRotationConverter
 from pyrit.prompt_converter.insert_punctuation_converter import InsertPunctuationConverter
 from pyrit.prompt_converter.json_string_converter import JsonStringConverter
 from pyrit.prompt_converter.leetspeak_converter import LeetspeakConverter
@@ -144,6 +146,8 @@ __all__ = [
     "HumanInTheLoopConverter",
     "ImageColorSaturationConverter",
     "ImageCompressionConverter",
+    "ImageResizingConverter",
+    "ImageRotationConverter",
     "IndexSelectionStrategy",
     "InsertPunctuationConverter",
     "JsonStringConverter",
