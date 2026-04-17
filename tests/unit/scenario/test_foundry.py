@@ -830,3 +830,65 @@ class TestFoundryProperties:
         result = scenario._scenario_composites[0]
         assert result.attack == FoundryStrategy.Crescendo
         assert result.converters == [FoundryStrategy.Base64]
+
+    @patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+        },
+    )
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    @pytest.mark.asyncio
+    async def test_initialize_converts_converter_first_composite_strategy(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
+    ):
+        """Converter-first ScenarioCompositeStrategy is routed by tags, not position."""
+        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.Crescendo])
+
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
+                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+                include_baseline=False,
+            )
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[legacy],  # type: ignore[arg-type]
+                dataset_config=mock_dataset_config,
+            )
+
+        result = scenario._scenario_composites[0]
+        assert result.attack == FoundryStrategy.Crescendo
+        assert result.converters == [FoundryStrategy.Base64]
+
+    @patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+        },
+    )
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    @pytest.mark.asyncio
+    async def test_initialize_converts_converter_only_composite_strategy(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
+    ):
+        """Converter-only ScenarioCompositeStrategy maps to attack=None."""
+        legacy = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Base64, FoundryStrategy.ROT13])
+
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
+                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+                include_baseline=False,
+            )
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[legacy],  # type: ignore[arg-type]
+                dataset_config=mock_dataset_config,
+            )
+
+        result = scenario._scenario_composites[0]
+        assert result.attack is None
+        assert set(result.converters) == {FoundryStrategy.Base64, FoundryStrategy.ROT13}

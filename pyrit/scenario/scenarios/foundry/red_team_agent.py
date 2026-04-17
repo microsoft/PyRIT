@@ -90,7 +90,13 @@ class FoundryComposite:
     converters: "list[FoundryStrategy]" = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Validate that attack and converter slots contain correctly tagged strategies."""
+        """
+        Validate that attack and converter slots contain correctly tagged strategies.
+
+        Raises:
+            ValueError: If attack slot contains a non-attack-tagged strategy, or if
+                converters list contains an attack-tagged strategy.
+        """
         if self.attack is not None and "attack" not in self.attack.tags:
             raise ValueError(
                 f"FoundryComposite.attack must be an attack-tagged strategy "
@@ -304,8 +310,7 @@ class RedTeamAgent(Scenario):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[FoundryStrategy | FoundryComposite |
-                ScenarioCompositeStrategy]]): The
+            scenario_strategies (Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None): The
                 strategies to execute. Accepts bare FoundryStrategy enum members, FoundryComposite
                 objects (for pairing an attack with converters), or a mix of both. Passing
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
@@ -345,7 +350,7 @@ class RedTeamAgent(Scenario):
             list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
         if strategies is None:
-            resolved = FoundryStrategy.resolve(None, default=cast(FoundryStrategy, self.get_default_strategy()))
+            resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self.get_default_strategy()))
             self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
             return list(resolved)
 
@@ -357,12 +362,15 @@ class RedTeamAgent(Scenario):
         for item in strategies:
             if isinstance(item, ScenarioCompositeStrategy):
                 # Legacy backward-compat: convert to FoundryComposite (ScenarioCompositeStrategy
-                # is deprecated — use FoundryComposite directly instead)
+                # is deprecated — use FoundryComposite directly instead).
+                # Route by tags rather than position: the first attack-tagged strategy
+                # becomes `attack`; all converter-tagged strategies become `converters`.
                 foundry_strats = [s for s in item.strategies if isinstance(s, FoundryStrategy)]
-                if foundry_strats:
-                    item = FoundryComposite(attack=foundry_strats[0], converters=foundry_strats[1:])
-                else:
+                if not foundry_strats:
                     continue
+                attack_strat = next((s for s in foundry_strats if "attack" in s.tags), None)
+                converter_strats = [s for s in foundry_strats if "attack" not in s.tags]
+                item = FoundryComposite(attack=attack_strat, converters=converter_strats)
 
             if isinstance(item, FoundryComposite):
                 composites.append(item)
@@ -370,7 +378,7 @@ class RedTeamAgent(Scenario):
                     flat.append(item.attack)
                 flat.extend(item.converters)
             else:
-                for s in FoundryStrategy.resolve([item], default=cast(FoundryStrategy, self.get_default_strategy())):
+                for s in FoundryStrategy.resolve([item], default=cast("FoundryStrategy", self.get_default_strategy())):
                     if s not in seen:
                         seen.add(s)
                         composites.append(self._strategy_to_composite(s))
