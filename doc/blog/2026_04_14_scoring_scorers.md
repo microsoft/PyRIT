@@ -6,11 +6,11 @@ In the earliest days of PyRIT, scoring was simple string matching. For example, 
 
 To move beyond that, we took a different approach (quite novel at the time but now much more widespread): using an LLM as a judge. Instead of pattern-matching against keywords, we could have an LLM decide whether a response was actually harmful. This led us to build out a set of LLM-powered scorers in PyRIT, powered by system prompts and scoring rubrics designed to automate jailbreak success decisions at scale.
 
-When we started using these scorers, they seemed to work reasonably well, but they were far from perfect. Nuanced responses sometimes tripped them up: off-topic replies could be flagged as harmful, and responses that merely *sounded* dangerous but were actually benign could fool the judge. The reverse was also true where harmful content masked by disclaimers and polite words could slip past the scorer. We noticed these issues through small-scale experimentation and real-world red teaming operations, but our observations were just anecdotal. This raised a fundamental question: how do we actually *measure* how well our scorers perform?
+When we started using these scorers, they seemed to work reasonably well, but they were far from perfect. Nuanced responses sometimes tripped them up: off-topic replies could be flagged as harmful, and responses that merely *sounded* dangerous but were actually benign could fool the judge. The reverse was also — harmful content masked by disclaimers and polite words could slip past the scorer. We noticed these issues through small-scale experimentation and real-world red teaming operations, but our observations were just anecdotal. This raised a fundamental question: how do we actually *measure* how well our scorers perform?
 
 ## Enter Scorer Evaluations
 
-As is common in AI/ML evaluation workflows, we needed high-quality ground-truth labels to test our scorers against. This meant manually collecting hundreds of prompt-response pairs and having humans grade each one according to the scoring rubrics we use in PyRIT. We enlisted help from members of our broader AI Red Team at Microsoft, as well as expert vendors, to generate and grade these pairs across a wide range of harm categories. After months of this process, we now have several hundred examples in this repository that we use for evaluation. See [here](https://github.com/microsoft/PyRIT/tree/main/pyrit/datasets/scorer_evals) to check out our datasets.
+As is common in AI/ML evaluation workflows, we needed high-quality ground-truth labels to test our scorers against. This meant manually collecting hundreds of prompt-response pairs and having humans grade each one according to the scoring rubrics we use in PyRIT. We enlisted help from members of our broader AI Red Team at Microsoft, as well as expert vendors, to generate and grade these pairs across a wide range of harm categories. After months of this process, we now have several hundred examples in this repository that we use for evaluation. Check out our complete set of datasets [here](https://github.com/microsoft/PyRIT/tree/main/pyrit/datasets/scorer_evals).
 
 ![Scorer evaluation datasets](2026_04_14_datasets.png)
 
@@ -108,9 +108,9 @@ flowchart TB
 
 There are a few different ways to view metrics for specific scoring configurations.
 
-**Directly on a scorer instance:** Call `get_scorer_metrics()` on any scorer object to look up its cached metrics (if they exist), as described at the bottom of the [Scorer Evaluation Identifier](#scorer-evaluation-identifier) section above.
+**Directly on a scorer instance:** Call `get_scorer_metrics()` on any scorer object to look up its saved metrics (if they exist), as described at the bottom of the [Scorer Evaluation Identifier](#scorer-evaluation-identifier) section above. See the [scorer metrics notebook](../code/scoring/8_scorer_metrics.ipynb) to try it yourself!
 
-**Automatically in scenario output:** When running scenarios and printing results, metrics are automatically fetched and displayed alongside the attack results (as long as the scoring configuration has been evaluated before):
+**Automatically in scenario output:** When running scenarios and printing results (i.e., in [pyrit_scan](../scanner/1_pyrit_scan.ipynb) or [pyrit_shell](../scanner/2_pyrit_shell.md)), metrics are automatically fetched and displayed alongside the attack results (as long as the scoring configuration has been evaluated before):
 
 ![Scenario output scoring info](2026_04_14_scenario_output_scoring_info.png)
 
@@ -118,19 +118,19 @@ You can also compare all evaluated scorer configurations side-by-side using `get
 
 ![Get all configuration metrics](2026_04_14_all_configurations_display.png)
 
-## Running Your Own Evaluations
+## Running Your OWN Evaluations
 
-If you want to evaluate a new scoring configuration — say, you've tweaked a system prompt, switched to a different model, adjusted the temperature — you can run your own evaluation using `evaluate_async()`:
+Want to know how accurate your own LLM judge is compared to human judgment? If you have your own scoring setup and want to see how it compares, you can run it against our human-labeled datasets. Whether you're tweaking a system prompt, trying a different model, adjusting the temperature, or bringing an entirely separate scoring approach, the process is the same: wrap your logic in a PyRIT scorer — normalizing the scores if needed — and call `evaluate_async()`. You'll get back the same metrics (F1, accuracy, MAE, etc.) that we use internally, scored against the same human ground truth, making it easy to compare your setup side-by-side with the ones we've tested in PyRIT.
 
 ```python
 metrics = await my_scorer.evaluate_async(num_scorer_trials=3)
 ```
 
-The framework checks the JSONL registry for an existing entry matching the scorer's evaluation hash before running. It only re-runs the evaluation if no entry exists, the dataset version changed, the harm definition version changed, or the requested number of trials exceeds what's stored. You can skip this registry check entirely with `update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE` if you're experimenting and don't want to write to the registry. (This should most often be the case since metrics saved to the registry are managed directly by Microsoft's AI Red Team. Please don't hesitate to reach out however if you'd like to add metrics for new scoring configurations to our registries.) The below shows a simple example of running an evaluation:
+The framework checks the JSONL registry for an existing entry matching the scorer's evaluation hash before running. It only re-runs the evaluation if no entry exists, the dataset version changed, the harm definition version changed, or the requested number of trials exceeds what's stored. You can skip this registry check entirely with `update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE` if you're experimenting and don't want to write to the registry. (This should often be the case since metrics saved to the registry are managed directly by Microsoft's AI Red Team. Please don't hesitate to reach out, however, if you'd like to add metrics for new scoring configurations to our registries.) The below shows a simple example of running an evaluation:
 
 ![alt text](2026_04_14_running_evaluation.png)
 
-For the full walkthrough — including running objective and harm evaluations, configuring custom datasets, and comparing results — see the [scorer metrics notebook](../code/scoring/8_scorer_metrics.ipynb).
+For the full walkthrough — including running objective and harm evaluations, configuring custom datasets, and comparing results — give the [scorer metrics notebook](../code/scoring/8_scorer_metrics.ipynb) a try!
 
 ## Closing Thoughts
 
