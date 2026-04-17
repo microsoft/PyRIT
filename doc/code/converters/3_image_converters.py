@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -115,6 +115,23 @@ print(f"Compressed image saved to: {compressed_image.output_text}")
 
 compressed_img = Image.open(compressed_image.output_text)
 display(compressed_img)
+
+# %% [markdown]
+# ### ImageColorSaturationConverter
+#
+# The `ImageColorSaturationConverter` adjusts the color saturation level of an image. A `level` of `0.0` (the default) converts to grayscale (black and white), `1.0` preserves original colors, and values greater than `1.0` oversaturate colors.
+
+# %%
+from pyrit.prompt_converter import ImageColorSaturationConverter
+
+# Convert image to black and white (grayscale)
+bw_converter = ImageColorSaturationConverter(level=0.0)
+bw_result = await bw_converter.convert_async(prompt=image_location)  # type: ignore
+
+print(f"Black & white image saved to: {bw_result.output_text}")
+
+bw_img = Image.open(bw_result.output_text)
+display(bw_img)
 
 # %% [markdown]
 # ### TransparencyAttackConverter

@@ -42,6 +42,7 @@ from pyrit.prompt_converter.emoji_converter import EmojiConverter
 from pyrit.prompt_converter.first_letter_converter import FirstLetterConverter
 from pyrit.prompt_converter.flip_converter import FlipConverter
 from pyrit.prompt_converter.human_in_the_loop_converter import HumanInTheLoopConverter
+from pyrit.prompt_converter.image_color_saturation_converter import ImageColorSaturationConverter
 from pyrit.prompt_converter.image_compression_converter import ImageCompressionConverter
 from pyrit.prompt_converter.insert_punctuation_converter import InsertPunctuationConverter
 from pyrit.prompt_converter.json_string_converter import JsonStringConverter
@@ -141,6 +142,7 @@ __all__ = [
     "FirstLetterConverter",
     "FlipConverter",
     "HumanInTheLoopConverter",
+    "ImageColorSaturationConverter",
     "ImageCompressionConverter",
     "IndexSelectionStrategy",
     "InsertPunctuationConverter",
