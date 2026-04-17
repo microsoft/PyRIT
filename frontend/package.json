@@ -1,6 +1,6 @@
 {
   "name": "pyrit-frontend",
-  "version": "0.13.0-dev.0",
+  "version": "0.14.0-dev.0",
   "private": true,
   "type": "module",
   "scripts": {
