@@ -96,7 +96,6 @@ from pyrit.scenario import (
     Scenario,
     ScenarioStrategy,
 )
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
 
@@ -150,19 +149,14 @@ class MyScenario(Scenario):
         Build atomic attacks based on selected strategies.
 
         This method is called by initialize_async() after strategies are prepared.
-        Use self._scenario_composites to access the selected strategies.
+        Use self._scenario_strategies to access the resolved strategy list.
         """
         atomic_attacks = []
 
         # objective_target is guaranteed to be non-None by parent class validation
         assert self._objective_target is not None
 
-        # Extract individual strategy values from the composites
-        selected_strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=MyStrategy
-        )
-
-        for strategy in selected_strategies:
+        for strategy in self._scenario_strategies:
             # self._dataset_config is set by the parent class
             seed_groups = self._dataset_config.get_all_seed_groups()
 
@@ -173,7 +167,7 @@ class MyScenario(Scenario):
             )
             atomic_attacks.append(
                 AtomicAttack(
-                    atomic_attack_name=strategy,
+                    atomic_attack_name=strategy.value,
                     attack=attack,
                     seed_groups=seed_groups,  # type: ignore[arg-type]
                     memory_labels=self._memory_labels,

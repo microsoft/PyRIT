@@ -89,6 +89,21 @@ class FoundryComposite:
     attack: "FoundryStrategy | None"
     converters: "list[FoundryStrategy]" = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        if self.attack is not None and "attack" not in self.attack.tags:
+            raise ValueError(
+                f"FoundryComposite.attack must be an attack-tagged strategy "
+                f"(e.g., Crescendo, MultiTurn), got '{self.attack.value}'. "
+                f"Converter strategies belong in the converters list."
+            )
+        attack_in_converters = [s for s in self.converters if "attack" in s.tags]
+        if attack_in_converters:
+            raise ValueError(
+                f"FoundryComposite.converters must only contain converter strategies, "
+                f"but got attack strategies: {[s.value for s in attack_in_converters]}. "
+                f"Pass an attack strategy via the attack parameter instead."
+            )
+
     @property
     def name(self) -> str:
         """Return a human-readable name for this composite."""

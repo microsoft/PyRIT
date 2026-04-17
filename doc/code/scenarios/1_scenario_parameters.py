@@ -79,13 +79,13 @@ single_strategy = [FoundryStrategy.Base64]
 aggregate_strategy = [FoundryStrategy.EASY]
 
 # %% [markdown]
-# **Composite strategies** — multiple converters applied together in sequence using
-# `ScenarioCompositeStrategy`:
+# **Composite strategies** — pair an attack with one or more converters using `FoundryComposite`.
+# For example, to run Crescendo with Base64 encoding applied:
 
 # %%
-from pyrit.scenario import ScenarioCompositeStrategy
+from pyrit.scenario.scenarios.foundry import FoundryComposite
 
-composite_strategy = [ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])]
+composite_strategy = [FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Base64])]
 
 # %% [markdown]
 # You can mix all three types in a single list:
@@ -94,7 +94,7 @@ composite_strategy = [ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caes
 scenario_strategies = [
     FoundryStrategy.Base64,
     FoundryStrategy.Binary,
-    ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap]),
+    FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar]),
 ]
 
 # %% [markdown]

@@ -331,7 +331,8 @@ class ScenarioCompositeStrategy:
         print_deprecation_message(
             old_item="ScenarioCompositeStrategy",
             new_item="FoundryComposite (from pyrit.scenario.scenarios.foundry)",
-            removed_in="0.15.0",
+            # Extended to 0.18.0 to give external callers (e.g. Foundry) time to migrate.
+            removed_in="0.18.0",
         )
 
         self._strategies = list(strategies)
@@ -431,7 +432,8 @@ class ScenarioCompositeStrategy:
         print_deprecation_message(
             old_item="ScenarioCompositeStrategy.get_composite_name",
             new_item="FoundryComposite.name",
-            removed_in="0.15.0",
+            # Extended to 0.18.0 to give external callers (e.g. Foundry) time to migrate.
+            removed_in="0.18.0",
         )
         if not strategies:
             raise ValueError("Cannot generate name for empty strategy list")
