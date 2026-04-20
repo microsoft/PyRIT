@@ -31,15 +31,13 @@ def test_add_image_text_converter_initialization(image_text_converter_sample_ima
         font_name="helvetica.ttf",
         color=(255, 255, 255),
         font_size=20,
-        x_pos=10,
-        y_pos=10,
     )
     assert converter._img_to_add == image_text_converter_sample_image
     assert converter._font_name == "helvetica.ttf"
     assert converter._color == (255, 255, 255)
-    assert converter._font_size == 20
-    assert converter._x_pos == 10
-    assert converter._y_pos == 10
+    assert converter._font_size_max == 20
+    assert converter._font_size_min == 20
+    assert converter._auto_font_size is False
     assert converter._font is not None
     assert type(converter._font) is ImageFont.FreeTypeFont
 
@@ -48,6 +46,21 @@ def test_add_image_text_converter_positional_arg_deprecation(image_text_converte
     with pytest.warns(FutureWarning, match="Passing 'img_to_add' as a positional argument is deprecated"):
         converter = AddImageTextConverter(image_text_converter_sample_image)
     assert converter._img_to_add == image_text_converter_sample_image
+
+
+def test_add_image_text_converter_positional_and_keyword_raises(image_text_converter_sample_image):
+    with pytest.raises(TypeError, match="Cannot pass 'img_to_add' as both positional and keyword"):
+        AddImageTextConverter(image_text_converter_sample_image, img_to_add=image_text_converter_sample_image)
+
+
+def test_add_image_text_converter_too_many_positional_args_raises(image_text_converter_sample_image):
+    with pytest.raises(TypeError, match="Expected at most 1 positional argument"):
+        AddImageTextConverter(image_text_converter_sample_image, "extra")
+
+
+def test_add_image_text_converter_x_pos_y_pos_deprecation(image_text_converter_sample_image):
+    with pytest.warns(FutureWarning, match="x_pos and y_pos are deprecated"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=50, y_pos=50)
 
 
 def test_add_image_text_converter_invalid_font(image_text_converter_sample_image):
@@ -66,12 +79,30 @@ def test_add_image_text_converter_fallback_to_default_font(image_text_converter_
         font_name="nonexistent_font.ttf",
         color=(255, 255, 255),
         font_size=20,
-        x_pos=10,
-        y_pos=10,
     )
     assert any(
         record.levelname == "WARNING" and "Cannot open font resource" in record.message for record in caplog.records
     )
+
+
+def test_add_image_text_converter_font_size_tuple(image_text_converter_sample_image):
+    converter = AddImageTextConverter(
+        img_to_add=image_text_converter_sample_image,
+        font_size=(10, 60),
+    )
+    assert converter._font_size_min == 10
+    assert converter._font_size_max == 60
+    assert converter._auto_font_size is True
+
+
+def test_add_image_text_converter_font_size_tuple_invalid(image_text_converter_sample_image):
+    with pytest.raises(ValueError, match="font_size tuple must be"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, font_size=(60, 10))
+
+
+def test_add_image_text_converter_font_size_tuple_zero_min(image_text_converter_sample_image):
+    with pytest.raises(ValueError, match="font_size tuple must be"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, font_size=(0, 10))
 
 
 def test_image_text_converter_add_text_to_image(image_text_converter_sample_image):
@@ -188,10 +219,8 @@ def test_add_image_text_converter_bounding_box_with_rotation(large_sample_image)
 def test_add_image_text_converter_auto_font_size(large_sample_image):
     converter = AddImageTextConverter(
         img_to_add=large_sample_image,
-        font_size=60,
-        min_font_size=10,
+        font_size=(10, 60),
         bounding_box=(100, 100, 300, 200),
-        auto_font_size=True,
         center_text=True,
     )
     updated_image = converter._add_text_to_image(
@@ -206,27 +235,48 @@ def test_add_image_text_converter_bounding_box_identifier(large_sample_image):
         bounding_box=(100, 100, 400, 300),
         rotation=10.0,
         center_text=True,
-        auto_font_size=True,
-        min_font_size=8,
+        font_size=(8, 15),
     )
     identifier = converter.get_identifier()
     params = identifier.params
     assert params["bounding_box"] == (100, 100, 400, 300)
     assert params["rotation"] == 10.0
     assert params["center_text"] is True
-    assert params["auto_font_size"] is True
-    assert params["min_font_size"] == 8
+    assert params["font_size_min"] == 8
+    assert params["font_size_max"] == 15
 
 
 @pytest.mark.asyncio
 async def test_add_image_text_converter_bounding_box_convert_async(large_sample_image, patch_central_database) -> None:
     converter = AddImageTextConverter(
         img_to_add=large_sample_image,
-        font_size=30,
+        font_size=(10, 30),
         bounding_box=(100, 100, 500, 400),
         center_text=True,
-        auto_font_size=True,
     )
     result = await converter.convert_async(prompt="Comic text in a box", input_type="text")
     assert result.output_type == "image_path"
     assert os.path.exists(result.output_text)
+
+
+def test_add_image_text_converter_no_bounding_box_uses_full_image(large_sample_image):
+    """When no bounding_box is given, the full image is used as the bounding box."""
+    converter = AddImageTextConverter(
+        img_to_add=large_sample_image,
+        font_size=20,
+    )
+    with Image.open(large_sample_image) as image:
+        pixels_before = list(image.get_flattened_data())
+    updated_image = converter._add_text_to_image("Full image text")
+    pixels_after = list(updated_image.get_flattened_data())
+    assert pixels_before != pixels_after
+
+
+def test_add_image_text_converter_auto_font_size_no_bounding_box(large_sample_image):
+    """Auto font sizing works without explicit bounding_box (uses full image)."""
+    converter = AddImageTextConverter(
+        img_to_add=large_sample_image,
+        font_size=(10, 60),
+    )
+    updated_image = converter._add_text_to_image("Auto-sized text on full image")
+    assert updated_image is not None

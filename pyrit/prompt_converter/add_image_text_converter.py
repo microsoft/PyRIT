@@ -25,12 +25,16 @@ class AddImageTextConverter(PromptConverter):
 
     Supports optional bounding box placement, text rotation, centering, and
     automatic font sizing to fit text within a specified region. When no
-    bounding_box is provided, text is placed at (x_pos, y_pos) and wraps
-    to the image width (original behavior).
+    bounding_box is provided, the full image is used as the bounding box.
+
+    Font size can be a fixed int or a (min, max) tuple for automatic sizing
+    that shrinks from max down to min to fit text within the bounding box.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("image_path",)
+
+    _DEFAULT_MARGIN = 5
 
     def __init__(
         self,
@@ -38,62 +42,80 @@ class AddImageTextConverter(PromptConverter):
         img_to_add: str = "",
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
-        font_size: int = 15,
+        font_size: int | tuple[int, int] = 15,
         x_pos: int = 10,
         y_pos: int = 10,
         bounding_box: tuple[int, int, int, int] | None = None,
         rotation: float = 0.0,
         center_text: bool = False,
-        auto_font_size: bool = False,
-        min_font_size: int = 10,
     ):
         """
         Initialize the converter with the image file path and text properties.
 
         Args:
             *args: Deprecated positional argument for img_to_add. Use img_to_add=... instead.
+                Will be removed in version 0.14.0.
             img_to_add (str): File path of image to add text to.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
-            font_size (int): Size of font to use. When auto_font_size is True, this is the maximum size.
-                Defaults to 15.
-            x_pos (int): X coordinate to place text in (ignored when bounding_box is set). Defaults to 10.
-            y_pos (int): Y coordinate to place text in (ignored when bounding_box is set). Defaults to 10.
+            font_size (int | tuple[int, int]): Font size as a fixed int, or a (min, max) tuple for automatic
+                sizing that shrinks from max down to min to fit text in the bounding box. Defaults to 15.
+            x_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.14.0.
+            y_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.14.0.
             bounding_box (tuple[int, int, int, int] | None): Optional (x1, y1, x2, y2) region to constrain
-                text within. When set, text wraps within the box width and x_pos/y_pos are ignored.
+                text within. When not set, the full image is used with a default margin.
                 Defaults to None.
-            rotation (float): Rotation angle in degrees for the text. Only used with bounding_box.
-                Defaults to 0.0.
+            rotation (float): Rotation angle in degrees for the text. Defaults to 0.0.
             center_text (bool): Whether to center text horizontally and vertically within the bounding box.
                 Defaults to False.
-            auto_font_size (bool): Whether to automatically shrink font size to fit text in the bounding box.
-                Shrinks from font_size down to min_font_size. Defaults to False.
-            min_font_size (int): Minimum font size when auto_font_size is True. Defaults to 10.
 
         Raises:
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
-                or bounding_box coordinates are invalid.
+                font_size tuple is invalid, or bounding_box coordinates are invalid.
+            TypeError: If more than one positional argument is passed, or if img_to_add
+                is provided as both positional and keyword argument.
         """
         if args:
             warnings.warn(
                 "Passing 'img_to_add' as a positional argument is deprecated. "
                 "Use img_to_add=... as a keyword argument. "
-                "It will be keyword-only starting in version 0.13.0.",
+                "It will be keyword-only starting in version 0.14.0.",
                 FutureWarning,
                 stacklevel=2,
             )
+            if len(args) > 1:
+                raise TypeError(f"Expected at most 1 positional argument, got {len(args)}")
+            if img_to_add:
+                raise TypeError("Cannot pass 'img_to_add' as both positional and keyword argument")
             img_to_add = args[0]
+        if x_pos != 10 or y_pos != 10:
+            warnings.warn(
+                "x_pos and y_pos are deprecated. Use bounding_box=(x, y, x2, y2) instead. "
+                "They will be removed in version 0.14.0.",
+                FutureWarning,
+                stacklevel=2,
+            )
         if not img_to_add:
             raise ValueError("Please provide valid image path")
         if not font_name.endswith(".ttf"):
             raise ValueError("The specified font must be a TrueType font with a .ttf extension")
+        if isinstance(font_size, tuple):
+            if len(font_size) != 2 or font_size[0] > font_size[1] or font_size[0] < 1:
+                raise ValueError("font_size tuple must be (min, max) with 1 <= min <= max")
+            self._font_size_min = font_size[0]
+            self._font_size_max = font_size[1]
+            self._auto_font_size = True
+        else:
+            self._font_size_min = font_size
+            self._font_size_max = font_size
+            self._auto_font_size = False
         if bounding_box is not None:
             x1, y1, x2, y2 = bounding_box
             if x2 <= x1 or y2 <= y1:
                 raise ValueError("bounding_box must have x2 > x1 and y2 > y1")
         self._img_to_add = img_to_add
         self._font_name = font_name
-        self._font_size = font_size
+        self._font_size = self._font_size_max
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos
@@ -101,8 +123,6 @@ class AddImageTextConverter(PromptConverter):
         self._bounding_box = bounding_box
         self._rotation = rotation
         self._center_text = center_text
-        self._auto_font_size = auto_font_size
-        self._min_font_size = min_font_size
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -115,16 +135,13 @@ class AddImageTextConverter(PromptConverter):
             "img_to_add_path": str(self._img_to_add),
             "font_name": self._font_name,
             "color": self._color,
-            "font_size": self._font_size,
-            "x_pos": self._x_pos,
-            "y_pos": self._y_pos,
+            "font_size_min": self._font_size_min,
+            "font_size_max": self._font_size_max,
         }
         if self._bounding_box:
             params["bounding_box"] = self._bounding_box
-            params["rotation"] = self._rotation
-            params["center_text"] = self._center_text
-            params["auto_font_size"] = self._auto_font_size
-            params["min_font_size"] = self._min_font_size
+        params["rotation"] = self._rotation
+        params["center_text"] = self._center_text
         return self._create_identifier(params=params)
 
     def _load_font(self) -> FreeTypeFont:
@@ -202,32 +219,32 @@ class AddImageTextConverter(PromptConverter):
         usable_width = int(box_width * 0.95)
         usable_height = int(box_height * 0.95)
 
-        font_cache: dict[int, FreeTypeFont] = {}
-        for size in range(self._font_size, self._min_font_size - 1, -1):
-            font = font_cache.get(size) or self._load_font_at_size(size)
-            font_cache[size] = font
+        for size in range(self._font_size_max, self._font_size_min - 1, -1):
+            font = self._load_font_at_size(size)
             lines = self._wrap_text(text=text, font=font, max_width=usable_width)
             line_height = self._get_line_height(font=font)
             if len(lines) * line_height <= usable_height:
                 return font, lines
 
-        min_font = font_cache.get(self._min_font_size) or self._load_font_at_size(self._min_font_size)
+        min_font = self._load_font_at_size(self._font_size_min)
         lines = self._wrap_text(text=text, font=min_font, max_width=usable_width)
         return min_font, lines
 
-    def _render_text_in_bounding_box(self, *, image: Image.Image, text: str) -> Image.Image:
+    def _render_text_in_bounding_box(
+        self, *, image: Image.Image, text: str, bounding_box: tuple[int, int, int, int]
+    ) -> Image.Image:
         """
         Render text within a bounding box with optional rotation and centering.
 
         Args:
             image (Image.Image): The base image to render text onto.
             text (str): The text to render.
+            bounding_box (tuple[int, int, int, int]): The (x1, y1, x2, y2) region.
 
         Returns:
             Image.Image: The image with text rendered in the bounding box.
         """
-        assert self._bounding_box is not None
-        x1, y1, x2, y2 = self._bounding_box
+        x1, y1, x2, y2 = bounding_box
         box_width = x2 - x1
         box_height = y2 - y1
 
@@ -342,28 +359,13 @@ class AddImageTextConverter(PromptConverter):
         image = Image.open(self._img_to_add)
 
         if self._bounding_box:
-            return self._render_text_in_bounding_box(image=image, text=text)
+            bounding_box = self._bounding_box
+        else:
+            # Default to full image with margin to preserve backward-compatible behavior
+            margin = self._DEFAULT_MARGIN
+            bounding_box = (self._x_pos, self._y_pos, image.width - margin, image.height - margin)
 
-        # Original behavior: place text at (x_pos, y_pos) and wrap to image width
-        draw = ImageDraw.Draw(image)
-        margin = 5
-        max_width_pixels = image.size[0] - margin
-
-        alphabet_letters = string.ascii_letters
-        bbox = draw.textbbox((0, 0), alphabet_letters, font=self._font)
-        avg_char_width = (bbox[2] - bbox[0]) / len(alphabet_letters)
-        max_chars_per_line = int(max_width_pixels // avg_char_width)
-
-        wrapped_text = textwrap.fill(text, width=max_chars_per_line)
-
-        y_offset = float(self._y_pos)
-        for line in wrapped_text.split("\n"):
-            draw.text((self._x_pos, y_offset), line, font=self._font, fill=self._color)
-            bbox = draw.textbbox((self._x_pos, y_offset), line, font=self._font)
-            line_height = bbox[3] - bbox[1]
-            y_offset += line_height
-
-        return image
+        return self._render_text_in_bounding_box(image=image, text=text, bounding_box=bounding_box)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
