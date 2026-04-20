@@ -4,6 +4,7 @@
 import base64
 import hashlib
 import logging
+import warnings
 from io import BytesIO
 from typing import cast
 
@@ -31,7 +32,8 @@ class AddTextImageConverter(_BaseImageTextConverter):
 
     def __init__(
         self,
-        text_to_add: str,
+        *args: str,
+        text_to_add: str = "",
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
@@ -42,16 +44,33 @@ class AddTextImageConverter(_BaseImageTextConverter):
         Initialize the converter with the text and text properties.
 
         Args:
-            text_to_add (str): Text to add to an image. Defaults to empty string.
+            *args: Deprecated positional argument for text_to_add. Use text_to_add=... instead.
+                Will be removed in version 0.15.0.
+            text_to_add (str): Text to add to an image.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
-            font_size (float): Size of font to use. Defaults to 15.
+            font_size (int): Size of font to use. Defaults to 15.
             x_pos (int): X coordinate to place text in (0 is left most). Defaults to 10.
             y_pos (int): Y coordinate to place text in (0 is upper most). Defaults to 10.
 
         Raises:
+            TypeError: If more than one positional argument is passed, or if text_to_add
+                is passed as both positional and keyword argument.
             ValueError: If ``text_to_add`` is empty, or if ``font_name`` does not end with ".ttf".
         """
+        if args:
+            if len(args) > 1:
+                raise TypeError(f"AddTextImageConverter() takes at most 1 positional argument, got {len(args)}")
+            if text_to_add:
+                raise TypeError("Cannot pass text_to_add as both positional and keyword argument")
+            warnings.warn(
+                "Passing 'text_to_add' as a positional argument is deprecated. "
+                "Use text_to_add=... as a keyword argument. "
+                "It will be keyword-only starting in version 0.15.0.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            text_to_add = args[0]
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
         if not font_name.endswith(".ttf"):
