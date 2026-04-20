@@ -426,10 +426,10 @@ class TestRapidResponseAttackGeneration:
         assert len(attacks) == 4
 
     @pytest.mark.asyncio
-    async def test_atomic_attack_names_group_by_harm_category(
+    async def test_atomic_attack_names_are_unique_compound_keys(
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
     ):
-        """_build_atomic_attack_name groups by dataset (harm category), not technique."""
+        """Each AtomicAttack has a unique compound atomic_attack_name for resume correctness."""
         two_datasets = {
             "hate": _make_seed_groups("hate"),
             "violence": _make_seed_groups("violence"),
@@ -440,8 +440,30 @@ class TestRapidResponseAttackGeneration:
             mock_objective_scorer=mock_objective_scorer,
             seed_groups=two_datasets,
         )
-        names = {a.atomic_attack_name for a in attacks}
-        assert names == {"hate", "violence"}
+        names = [a.atomic_attack_name for a in attacks]
+        # All names must be unique
+        assert len(names) == len(set(names))
+        # Names are compound: technique_dataset
+        for name in names:
+            assert "_" in name
+
+    @pytest.mark.asyncio
+    async def test_display_groups_by_harm_category(
+        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
+    ):
+        """display_group groups by dataset (harm category), not technique."""
+        two_datasets = {
+            "hate": _make_seed_groups("hate"),
+            "violence": _make_seed_groups("violence"),
+        }
+        attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            mock_adversarial_target=mock_adversarial_target,
+            mock_objective_scorer=mock_objective_scorer,
+            seed_groups=two_datasets,
+        )
+        display_groups = {a.display_group for a in attacks}
+        assert display_groups == {"hate", "violence"}
 
     @pytest.mark.asyncio
     async def test_raises_when_not_initialized(self, mock_adversarial_target, mock_objective_scorer):
@@ -504,18 +526,18 @@ class TestRapidResponseAttackGeneration:
 
 
 # ===========================================================================
-# _build_atomic_attack_name tests
+# _build_display_group tests
 # ===========================================================================
 
 
 @pytest.mark.usefixtures(*FIXTURES)
-class TestBuildAtomicAttackName:
+class TestBuildDisplayGroup:
     def test_rapid_response_groups_by_seed_group_name(self, mock_adversarial_target, mock_objective_scorer):
         scenario = RapidResponse(
             adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
-        result = scenario._build_atomic_attack_name(technique_name="prompt_sending", seed_group_name="hate")
+        result = scenario._build_display_group(technique_name="prompt_sending", seed_group_name="hate")
         assert result == "hate"
 
     def test_rapid_response_ignores_technique_name(self, mock_adversarial_target, mock_objective_scorer):
@@ -523,8 +545,8 @@ class TestBuildAtomicAttackName:
             adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
-        r1 = scenario._build_atomic_attack_name(technique_name="prompt_sending", seed_group_name="hate")
-        r2 = scenario._build_atomic_attack_name(technique_name="tap", seed_group_name="hate")
+        r1 = scenario._build_display_group(technique_name="prompt_sending", seed_group_name="hate")
+        r2 = scenario._build_display_group(technique_name="tap", seed_group_name="hate")
         assert r1 == r2 == "hate"
 
 

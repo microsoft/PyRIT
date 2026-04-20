@@ -128,7 +128,7 @@ class RapidResponse(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str) -> str:
+    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """Group results by harm category (dataset) rather than technique."""
         return seed_group_name
 
@@ -147,8 +147,9 @@ class RapidResponse(Scenario):
         Build atomic attacks from selected techniques × harm datasets.
 
         Iterates over every (technique, harm-dataset) pair and creates
-        an ``AtomicAttack`` for each.  The ``_build_atomic_attack_name``
-        override groups results by harm category.
+        an ``AtomicAttack`` for each.  Each has a unique compound
+        ``atomic_attack_name`` and a ``display_group`` for user-facing
+        aggregation by harm category.
         """
         if self._objective_target is None:
             raise ValueError(
@@ -191,17 +192,19 @@ class RapidResponse(Scenario):
             )
 
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
+                display_group = self._build_display_group(
+                    technique_name=technique_name,
+                    seed_group_name=dataset_name,
+                )
                 atomic_attacks.append(
                     AtomicAttack(
-                        atomic_attack_name=self._build_atomic_attack_name(
-                            technique_name=technique_name,
-                            seed_group_name=dataset_name,
-                        ),
+                        atomic_attack_name=f"{technique_name}_{dataset_name}",
                         attack_technique=attack_technique,
                         seed_groups=list(seed_groups),
                         adversarial_chat=adversarial_chat,
                         objective_scorer=self._objective_scorer,
                         memory_labels=self._memory_labels,
+                        display_group=display_group,
                     )
                 )
 

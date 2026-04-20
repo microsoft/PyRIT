@@ -82,7 +82,7 @@ DatasetConfiguration(
 class MyDatasetConfiguration(DatasetConfiguration):
     def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
         result = super().get_seed_groups()
-        # Filter by selected strategies via self._scenario_composites
+        # Filter by selected strategies via self._scenario_strategies
         return filtered_result
 ```
 
@@ -115,12 +115,12 @@ class MyStrategy(ScenarioStrategy):
 - Each member: `NAME = ("string_value", {tag_set})`
 - Aggregates expand to all strategies matching their tag
 
-### `_build_atomic_attack_name()` — Result Grouping
+### `_build_display_group()` — Result Grouping
 
-Override `_build_atomic_attack_name()` on the `Scenario` base class to control how attack results are grouped:
+Override `_build_display_group()` on the `Scenario` base class to control how attack results are grouped for display:
 
 ```python
-def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str) -> str:
+def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
     # Default: group by technique name (most common)
     return technique_name
 
@@ -128,6 +128,9 @@ def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str
     # Group by dataset/harm category: return seed_group_name
     # Cross-product: return f"{technique_name}_{seed_group_name}"
 ```
+
+Note: `atomic_attack_name` must remain unique per `AtomicAttack` for correct resume behaviour.
+`display_group` controls user-facing aggregation only.
 
 ## AtomicAttack Construction
 
@@ -150,7 +153,7 @@ New scenarios must be registered in `pyrit/scenario/__init__.py` as virtual pack
 
 ## Common Review Issues
 
-- Accessing `self._objective_target` or `self._scenario_composites` before `initialize_async()`
+- Accessing `self._objective_target` or `self._scenario_strategies` before `initialize_async()`
 - Forgetting `@apply_defaults` on `__init__`
 - Empty `seed_groups` passed to `AtomicAttack`
 - Missing `VERSION` class constant

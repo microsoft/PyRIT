@@ -49,16 +49,19 @@ def mock_atomic_attacks():
 
     run1 = MagicMock(spec=AtomicAttack)
     run1.atomic_attack_name = "attack_run_1"
+    run1.display_group = "attack_run_1"
     run1._attack = mock_attack
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
     run2.atomic_attack_name = "attack_run_2"
+    run2.display_group = "attack_run_2"
     run2._attack = mock_attack
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
     run3.atomic_attack_name = "attack_run_3"
+    run3.display_group = "attack_run_3"
     run3._attack = mock_attack
     type(run3).objectives = PropertyMock(return_value=["objective3"])
 
@@ -479,6 +482,7 @@ class TestScenarioProperties:
 
         single_run_mock = MagicMock(spec=AtomicAttack)
         single_run_mock.atomic_attack_name = "attack_1"
+        single_run_mock.display_group = "attack_1"
         single_run_mock._attack = mock_attack
         type(single_run_mock).objectives = PropertyMock(return_value=["obj1"])
         single_run = [single_run_mock]
@@ -495,6 +499,7 @@ class TestScenarioProperties:
         for i in range(10):
             run = MagicMock(spec=AtomicAttack)
             run.atomic_attack_name = f"attack_{i}"
+            run.display_group = f"attack_{i}"
             run._attack = mock_attack
             type(run).objectives = PropertyMock(return_value=[f"obj{i}"])
             many_runs.append(run)

@@ -6,6 +6,7 @@ from typing import Optional
 
 from colorama import Fore, Style
 
+from pyrit.models import AttackOutcome
 from pyrit.models.scenario_result import ScenarioResult
 from pyrit.scenario.printer.scenario_result_printer import ScenarioResultPrinter
 from pyrit.score.printer import ConsoleScorerPrinter, ScorerPrinter
@@ -147,17 +148,21 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
 
         # Per-strategy breakdown
         self._print_section_header("Per-Strategy Breakdown")
-        strategies = result.get_strategies_used()
+        display_groups = result.get_display_groups()
 
-        for strategy in strategies:
-            results_for_strategy = result.attack_results[strategy]
-            strategy_rate = result.objective_achieved_rate(atomic_attack_name=strategy)
+        for group_name, group_results in display_groups.items():
+            total_group = len(group_results)
+            if total_group == 0:
+                group_rate = 0
+            else:
+                successful = sum(1 for r in group_results if r.outcome == AttackOutcome.SUCCESS)
+                group_rate = int((successful / total_group) * 100)
 
             print()
-            self._print_colored(f"{self._indent}🔸 Strategy: {strategy}", Style.BRIGHT)
-            self._print_colored(f"{self._indent * 2}• Number of Results: {len(results_for_strategy)}", Fore.YELLOW)
+            self._print_colored(f"{self._indent}🔸 Strategy: {group_name}", Style.BRIGHT)
+            self._print_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW)
             self._print_colored(
-                f"{self._indent * 2}• Success Rate: {strategy_rate}%", self._get_rate_color(strategy_rate)
+                f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate)
             )
 
         # Print footer

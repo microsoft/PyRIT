@@ -119,6 +119,9 @@ class Scenario(ABC):
         # Key: atomic_attack_name, Value: tuple of original objectives
         self._original_objectives_map: dict[str, tuple[str, ...]] = {}
 
+        # Maps atomic_attack_name → display_group for user-facing aggregation
+        self._display_group_map: dict[str, str] = {}
+
     @property
     def name(self) -> str:
         """Get the name of the scenario."""
@@ -195,23 +198,26 @@ class Scenario(ABC):
 
         return AttackTechniqueRegistry.get_registry_singleton().get_factories()
 
-    def _build_atomic_attack_name(self, *, technique_name: str, seed_group_name: str) -> str:
+    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """
-        Build the grouping key for an atomic attack.
+        Build the display-group label for an atomic attack.
 
-        Controls how attacks are grouped for result storage, display, and resume
-        logic.  Override to customize grouping:
+        Controls how attacks are grouped in user-facing output (console
+        printer, reports).  Override to customize grouping:
 
         - **By technique** (default): ``return technique_name``
         - **By dataset/category**: ``return seed_group_name``
         - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
+
+        The display group is independent of ``atomic_attack_name``, which
+        must stay unique per ``AtomicAttack`` for correct resume behaviour.
 
         Args:
             technique_name: The name of the attack technique.
             seed_group_name: The dataset or category name for the seed group.
 
         Returns:
-            str: The atomic attack name used as a grouping key.
+            str: The display-group label.
         """
         return technique_name
 
@@ -339,6 +345,11 @@ class Scenario(ABC):
                 )
                 self._scenario_result_id = None
 
+        # Build display group mapping from atomic attacks
+        self._display_group_map = {
+            aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks
+        }
+
         # Create new scenario result
         attack_results: dict[str, list[AttackResult]] = {
             atomic_attack.atomic_attack_name: [] for atomic_attack in self._atomic_attacks
@@ -351,6 +362,7 @@ class Scenario(ABC):
             labels=self._memory_labels,
             attack_results=attack_results,
             scenario_run_state="CREATED",
+            display_group_map=self._display_group_map,
         )
 
         self._memory.add_scenario_results_to_memory(scenario_results=[result])
@@ -589,6 +601,12 @@ class Scenario(ABC):
             List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
 
+    def _apply_display_groups(self, result: ScenarioResult) -> ScenarioResult:
+        """Apply the in-memory display_group_map to a ScenarioResult loaded from storage."""
+        if hasattr(self, "_display_group_map"):
+            result._display_group_map = self._display_group_map
+        return result
+
     async def run_async(self) -> ScenarioResult:
         """
         Execute all atomic attacks in the scenario sequentially.
@@ -711,7 +729,7 @@ class Scenario(ABC):
             # Retrieve and return the current scenario result
             scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
             if scenario_results:
-                return scenario_results[0]
+                return self._apply_display_groups(scenario_results[0])
             raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
 
         logger.info(
@@ -815,7 +833,7 @@ class Scenario(ABC):
             if not scenario_results:
                 raise ValueError(f"Scenario result with ID {self._scenario_result_id} not found")
 
-            return scenario_results[0]
+            return self._apply_display_groups(scenario_results[0])
 
         except Exception as e:
             logger.error(f"Scenario '{self._name}' failed with error: {str(e)}")

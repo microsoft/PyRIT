@@ -121,6 +121,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
 
     attack = MagicMock(spec=AtomicAttack)
     attack.atomic_attack_name = name
+    attack.display_group = name
     attack._attack = mock_attack_strategy
     type(attack).objectives = PropertyMock(return_value=objectives)
 
