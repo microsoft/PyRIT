@@ -147,22 +147,24 @@ class OpenAIImageTarget(OpenAITarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(
+    async def _send_prompt_to_target_async(
         self,
         *,
-        message: Message,
+        normalized_conversation: list[Message],
     ) -> list[Message]:
         """
         Send a prompt to the OpenAI image target and return the response.
         Supports both image generation (text input) and image editing (text + images input).
 
         Args:
-            message (Message): The message to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the image target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
@@ -320,8 +322,9 @@ class OpenAIImageTarget(OpenAITarget):
 
         raise EmptyResponseException(message="The image generation returned an empty response.")
 
-    def _validate_request(self, *, message: Message) -> None:
-        super()._validate_request(message=message)
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
+        super()._validate_request(normalized_conversation=normalized_conversation)
+        message = normalized_conversation[-1]
 
         text_pieces = [p for p in message.message_pieces if p.converted_value_data_type == "text"]
         image_pieces = [p for p in message.message_pieces if p.converted_value_data_type == "image_path"]

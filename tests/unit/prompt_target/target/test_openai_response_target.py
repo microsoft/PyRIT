@@ -343,6 +343,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
         target._memory = MagicMock(MemoryInterface)
+        target._memory.get_conversation.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -485,6 +486,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
         target._memory = MagicMock(MemoryInterface)
+        target._memory.get_conversation.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -584,7 +586,7 @@ def test_validate_request_unsupported_data_types(target: OpenAIResponseTarget):
     )
 
     with pytest.raises(ValueError) as excinfo:
-        target._validate_request(message=message)
+        target._validate_request(normalized_conversation=[message])
 
     assert "This target supports only the following data types" in str(excinfo.value), (
         "Error not raised for unsupported data types"
@@ -657,7 +659,7 @@ def test_validate_request_allows_text_and_image(target: OpenAIResponseTarget):
             ),
         ]
     )
-    target._validate_request(message=req)
+    target._validate_request(normalized_conversation=[req])
 
 
 def test_validate_request_raises_for_invalid_type(target: OpenAIResponseTarget):
@@ -667,7 +669,7 @@ def test_validate_request_raises_for_invalid_type(target: OpenAIResponseTarget):
         ]
     )
     with pytest.raises(ValueError) as excinfo:
-        target._validate_request(message=req)
+        target._validate_request(normalized_conversation=[req])
     assert "This target supports only the following data types" in str(excinfo.value)
 
 

@@ -584,17 +584,18 @@ class WebSocketCopilotTarget(PromptTarget):
 
             return response
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
         Validate that the message meets target requirements.
 
         Args:
-            message (Message): The message to validate.
+            normalized_conversation (list[Message]): The normalized conversation to validate.
 
         Raises:
             ValueError: If message contains unsupported data types or invalid image formats.
         """
-        super()._validate_request(message=message)
+        super()._validate_request(normalized_conversation=normalized_conversation)
+        message = normalized_conversation[-1]
         for piece in message.message_pieces:
             piece_type = piece.converted_value_data_type
 
@@ -644,7 +645,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to Microsoft Copilot using WebSocket.
 
@@ -653,7 +654,9 @@ class WebSocketCopilotTarget(PromptTarget):
         state server-side, so only the current message is sent (no explicit history required).
 
         Args:
-            message (Message): A message to be sent to the target.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from Copilot.
@@ -663,7 +666,7 @@ class WebSocketCopilotTarget(PromptTarget):
             InvalidStatus: If the WebSocket handshake fails with an HTTP status error.
             RuntimeError: If any other error occurs during WebSocket communication.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         pyrit_conversation_id = message.message_pieces[0].conversation_id
         is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)

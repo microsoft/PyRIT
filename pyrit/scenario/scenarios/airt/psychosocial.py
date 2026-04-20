@@ -315,12 +315,11 @@ class Psychosocial(Scenario):
         Returns:
             Optional[str]: The harm category to filter by, or None if no filter is set.
         """
-        for composite in self._scenario_composites:
-            for strategy in composite.strategies:
-                if isinstance(strategy, PsychosocialStrategy):
-                    harm_filter = strategy.harm_category_filter
-                    if harm_filter:
-                        return harm_filter
+        for strategy in self._scenario_strategies:
+            if isinstance(strategy, PsychosocialStrategy):
+                harm_filter = strategy.harm_category_filter
+                if harm_filter:
+                    return harm_filter
         return None
 
     def _filter_by_harm_category(

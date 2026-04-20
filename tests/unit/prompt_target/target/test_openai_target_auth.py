@@ -20,7 +20,6 @@ class _ConcreteOpenAITarget(OpenAITarget):
         self.model_name_environment_variable = "TEST_MODEL"
         self.endpoint_environment_variable = "TEST_ENDPOINT"
         self.api_key_environment_variable = "TEST_API_KEY"
-        self.underlying_model_environment_variable = "TEST_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         return []
@@ -31,10 +30,10 @@ class _ConcreteOpenAITarget(OpenAITarget):
     async def _construct_message_from_response(self, response, request):
         raise NotImplementedError
 
-    def _validate_request(self, *, message) -> None:
+    def _validate_request(self, *, normalized_conversation) -> None:
         pass
 
-    async def send_prompt_async(self, *, message):
+    async def _send_prompt_to_target_async(self, *, normalized_conversation):
         raise NotImplementedError
 
 

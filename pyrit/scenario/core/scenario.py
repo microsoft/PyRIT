@@ -29,10 +29,7 @@ from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -114,8 +111,8 @@ class Scenario(ABC):
 
         self._include_baseline = include_default_baseline
 
-        # Store prepared strategy composites for use in _get_atomic_attacks_async
-        self._scenario_composites: list[ScenarioCompositeStrategy] = []
+        # Store prepared strategies for use in _get_atomic_attacks_async
+        self._scenario_strategies: list[ScenarioStrategy] = []
 
         # Store original objectives for each atomic attack (before any mutations)
         # Key: atomic_attack_name, Value: tuple of original objectives
@@ -186,12 +183,34 @@ class Scenario(ABC):
         logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
         return scorer
 
+    def _prepare_strategies(
+        self,
+        strategies: Optional[Sequence[ScenarioStrategy]],
+    ) -> list[ScenarioStrategy]:
+        """
+        Resolve strategy inputs into a concrete list for this scenario.
+
+        The default implementation calls resolve() on the strategy class, which handles
+        None (use default), empty list (also use default), and aggregate expansion.
+
+        Subclasses with complex composition semantics (e.g., RedTeamAgent with
+        FoundryComposite) should override this to build their own composite types.
+
+        Args:
+            strategies: Strategy inputs from initialize_async. None or [] both mean use
+                default; otherwise a list of strategies to resolve.
+
+        Returns:
+            list[ScenarioStrategy]: Ordered, deduplicated concrete strategies.
+        """
+        return self._strategy_class.resolve(strategies, default=self.get_default_strategy())
+
     @apply_defaults
     async def initialize_async(
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
-        scenario_strategies: Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]] = None,
+        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
         max_concurrency: int = 10,
         max_retries: int = 0,
@@ -210,10 +229,8 @@ class Scenario(ABC):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]]):
-                The strategies to execute. Can be a list of bare ScenarioStrategy enums or
-                ScenarioCompositeStrategy instances for advanced composition. Bare enums are
-                automatically wrapped into composites. If None, uses the default aggregate
+            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The strategies to execute.
+                Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
@@ -246,11 +263,7 @@ class Scenario(ABC):
         self._memory_labels = memory_labels or {}
 
         # Prepare scenario strategies using the stored configuration
-        # Allow empty strategies when include_baseline is True (baseline-only execution)
-        self._scenario_composites = self._strategy_class.prepare_scenario_strategies(
-            scenario_strategies,
-            default_aggregate=self.get_default_strategy(),
-        )
+        self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 

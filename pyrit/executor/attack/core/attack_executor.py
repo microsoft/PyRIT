@@ -176,7 +176,7 @@ class AttackExecutor:
         if not seed_groups:
             raise ValueError("At least one seed_group must be provided")
 
-        if field_overrides and len(field_overrides) != len(seed_groups):
+        if field_overrides is not None and len(field_overrides) != len(seed_groups):
             raise ValueError(
                 f"field_overrides length ({len(field_overrides)}) must match seed_groups length ({len(seed_groups)})"
             )
@@ -190,7 +190,7 @@ class AttackExecutor:
         async def build_params(i: int, sg: SeedAttackGroup) -> AttackParameters:
             async with semaphore:
                 combined_overrides = dict(broadcast_fields)
-                if field_overrides:
+                if field_overrides is not None:
                     combined_overrides.update(field_overrides[i])
                 return await params_type.from_seed_group_async(
                     seed_group=sg,
@@ -241,7 +241,7 @@ class AttackExecutor:
         if not objectives:
             raise ValueError("At least one objective must be provided")
 
-        if field_overrides and len(field_overrides) != len(objectives):
+        if field_overrides is not None and len(field_overrides) != len(objectives):
             raise ValueError(
                 f"field_overrides length ({len(field_overrides)}) must match objectives length ({len(objectives)})"
             )
@@ -255,7 +255,7 @@ class AttackExecutor:
             fields = dict(broadcast_fields)
 
             # Apply per-objective overrides
-            if field_overrides:
+            if field_overrides is not None:
                 fields.update(field_overrides[i])
 
             # Add objective

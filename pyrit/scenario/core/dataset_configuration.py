@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.models.seeds.seed import Seed
-    from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy
+    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 # Key used when seed_groups are provided directly (not from a named dataset)
 EXPLICIT_SEED_GROUPS_KEY = "_explicit_seed_groups"
@@ -38,7 +38,7 @@ class DatasetConfiguration:
         dataset_names (Optional[List[str]]): Names of datasets to load from memory.
         max_dataset_size (Optional[int]): If set, randomly samples up to this many SeedGroups
             from the configured dataset source (without replacement, so no duplicates).
-        scenario_composites (Optional[Sequence[ScenarioCompositeStrategy]]): The scenario
+        scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The scenario
             strategies being executed. Subclasses can use this to filter or customize
             which seed groups are loaded based on the selected strategies.
     """
@@ -49,7 +49,7 @@ class DatasetConfiguration:
         seed_groups: Optional[list[SeedGroup]] = None,
         dataset_names: Optional[list[str]] = None,
         max_dataset_size: Optional[int] = None,
-        scenario_composites: Optional[Sequence[ScenarioCompositeStrategy]] = None,
+        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
     ) -> None:
         """
         Initialize a DatasetConfiguration.
@@ -59,7 +59,7 @@ class DatasetConfiguration:
             dataset_names (Optional[List[str]]): Names of datasets to load from memory.
             max_dataset_size (Optional[int]): If set, randomly samples up to this many SeedGroups
                 (without replacement).
-            scenario_composites (Optional[Sequence[ScenarioCompositeStrategy]]): The scenario
+            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The scenario
                 strategies being executed. Subclasses can use this to filter or customize
                 which seed groups are loaded.
 
@@ -82,7 +82,7 @@ class DatasetConfiguration:
         self._seed_groups = list(seed_groups) if seed_groups is not None else None
         self.max_dataset_size = max_dataset_size
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
-        self._scenario_composites = scenario_composites
+        self._scenario_strategies = scenario_strategies
 
     def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
         """

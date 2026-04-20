@@ -13,7 +13,6 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.scenario import ScenarioCompositeStrategy
 from pyrit.scenario.airt import (
     ContentHarms,
     ContentHarmsStrategy,
@@ -276,7 +275,7 @@ class TestContentHarmsBasic:
         await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=strategies)
 
         # Prepared composites should match provided strategies
-        assert len(scenario._scenario_composites) == 2
+        assert len(scenario._scenario_strategies) == 2
 
     def test_initialization_with_custom_scorer(
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
@@ -356,7 +355,7 @@ class TestContentHarmsBasic:
         await scenario.initialize_async(objective_target=mock_objective_target)
 
         # Should have strategies from the ALL aggregate
-        assert len(scenario._scenario_composites) > 0
+        assert len(scenario._scenario_strategies) > 0
 
     def test_get_default_strategy_returns_all(self):
         """Test that get_default_strategy returns ALL strategy."""
@@ -548,7 +547,7 @@ class TestContentHarmsDatasetConfiguration:
 
         config = ContentHarmsDatasetConfiguration(
             dataset_names=["airt_hate", "airt_violence", "airt_sexual"],
-            scenario_composites=[ScenarioCompositeStrategy(strategies=[ContentHarmsStrategy.Hate])],
+            scenario_strategies=[ContentHarmsStrategy.Hate],
         )
 
         with patch.object(config, "_load_seed_groups_for_dataset") as mock_load:
@@ -571,10 +570,7 @@ class TestContentHarmsDatasetConfiguration:
 
         config = ContentHarmsDatasetConfiguration(
             dataset_names=["airt_hate", "airt_fairness"],
-            scenario_composites=[
-                ScenarioCompositeStrategy(strategies=[ContentHarmsStrategy.Hate]),
-                ScenarioCompositeStrategy(strategies=[ContentHarmsStrategy.Fairness]),
-            ],
+            scenario_strategies=[ContentHarmsStrategy.Hate, ContentHarmsStrategy.Fairness],
         )
 
         with patch.object(config, "_load_seed_groups_for_dataset") as mock_load:
@@ -603,11 +599,11 @@ class TestContentHarmsDatasetConfiguration:
 
         # ALL strategy expands to all individual harm strategies
         all_harms = ["hate", "fairness", "violence", "sexual", "harassment", "misinformation", "leakage"]
-        composites = [ScenarioCompositeStrategy(strategies=[ContentHarmsStrategy(harm)]) for harm in all_harms]
+        composites = [ContentHarmsStrategy(harm) for harm in all_harms]
 
         config = ContentHarmsDatasetConfiguration(
             dataset_names=all_datasets,
-            scenario_composites=composites,
+            scenario_strategies=composites,
         )
 
         with patch.object(config, "_load_seed_groups_for_dataset") as mock_load:
@@ -630,7 +626,7 @@ class TestContentHarmsDatasetConfiguration:
         config = ContentHarmsDatasetConfiguration(
             dataset_names=["airt_hate"],
             max_dataset_size=2,
-            scenario_composites=[ScenarioCompositeStrategy(strategies=[ContentHarmsStrategy.Hate])],
+            scenario_strategies=[ContentHarmsStrategy.Hate],
         )
 
         with patch.object(config, "_load_seed_groups_for_dataset") as mock_load:

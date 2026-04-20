@@ -202,6 +202,7 @@ project:
         - file: api/pyrit_ui.md
     - file: blog/README.md
       children:
+        - file: blog/2026_04_14_scoring_scorers.md
         - file: blog/2025_06_06.md
         - file: blog/2025_03_03.md
         - file: blog/2025_02_11.md

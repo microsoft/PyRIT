@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import warnings
+from dataclasses import fields
 
 import pytest
 
@@ -221,3 +222,85 @@ def test_resolve_configuration_compat_wraps_capabilities_with_warning():
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert len(deprecation_warnings) == 1
     assert "custom_capabilities" in str(deprecation_warnings[0].message)
+
+
+# ---------------------------------------------------------------------------
+# TargetConfiguration._capabilities_to_identifier_params
+# ---------------------------------------------------------------------------
+
+
+def test_capabilities_to_identifier_params_includes_all_fields():
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        supports_json_schema=False,
+        supports_json_output=True,
+        supports_editable_history=False,
+        supports_system_prompt=True,
+    )
+
+    params = TargetConfiguration._capabilities_to_identifier_params(caps)
+
+    # Every dataclass field on TargetCapabilities must appear in the params.
+    assert set(params.keys()) == {f.name for f in fields(caps)}
+
+
+def test_capabilities_to_identifier_params_scalar_fields_passthrough():
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_json_output=False,
+        supports_system_prompt=True,
+    )
+
+    params = TargetConfiguration._capabilities_to_identifier_params(caps)
+
+    assert params["supports_multi_turn"] is True
+    assert params["supports_json_output"] is False
+    assert params["supports_system_prompt"] is True
+
+
+def test_capabilities_to_identifier_params_modality_sets_are_sorted():
+    caps = TargetCapabilities(
+        input_modalities=frozenset({frozenset({"image_path", "text"}), frozenset({"text"}), frozenset({"image_path"})}),
+        output_modalities=frozenset({frozenset({"text"})}),
+    )
+
+    params = TargetConfiguration._capabilities_to_identifier_params(caps)
+
+    assert params["input_modalities"] == [["image_path"], ["image_path", "text"], ["text"]]
+    assert params["output_modalities"] == [["text"]]
+
+
+def test_capabilities_to_identifier_params_is_deterministic_across_calls():
+    caps = TargetCapabilities(
+        input_modalities=frozenset({frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}),
+    )
+
+    first = TargetConfiguration._capabilities_to_identifier_params(caps)
+    second = TargetConfiguration._capabilities_to_identifier_params(caps)
+
+    assert first == second
+
+
+def test_capabilities_to_identifier_params_equal_caps_produce_equal_params():
+    caps_a = TargetCapabilities(
+        supports_multi_turn=True,
+        input_modalities=frozenset({frozenset({"text"}), frozenset({"image_path"})}),
+    )
+    caps_b = TargetCapabilities(
+        supports_multi_turn=True,
+        input_modalities=frozenset({frozenset({"image_path"}), frozenset({"text"})}),
+    )
+
+    assert TargetConfiguration._capabilities_to_identifier_params(
+        caps_a
+    ) == TargetConfiguration._capabilities_to_identifier_params(caps_b)
+
+
+def test_capabilities_to_identifier_params_differing_caps_produce_differing_params():
+    caps_a = TargetCapabilities(supports_json_output=True)
+    caps_b = TargetCapabilities(supports_json_output=False)
+
+    assert TargetConfiguration._capabilities_to_identifier_params(
+        caps_a
+    ) != TargetConfiguration._capabilities_to_identifier_params(caps_b)

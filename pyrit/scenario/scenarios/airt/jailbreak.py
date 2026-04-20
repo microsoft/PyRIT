@@ -25,7 +25,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import (
     TrueFalseScorer,
 )
@@ -315,9 +315,7 @@ class Jailbreak(Scenario):
         # Retrieve seed prompts based on selected strategies
         self._seed_groups = self._resolve_seed_groups()
 
-        strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            composites=self._scenario_composites, strategy_type=JailbreakStrategy
-        )
+        strategies = {s.value for s in self._scenario_strategies}
 
         for strategy in strategies:
             for template_name in self._jailbreaks:

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from pyrit.models import Message
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
@@ -145,13 +146,9 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
 
 @pytest.mark.asyncio
 async def test_send_prompt_async_validation(mock_http_target):
-    # Create an invalid message (missing message_pieces)
-    invalid_message = MagicMock()
-    invalid_message.message_pieces = []
-    with pytest.raises(ValueError) as value_error:
-        await mock_http_target.send_prompt_async(message=invalid_message)
-
-    assert str(value_error.value) == "Message must contain at least one message piece. Received: 0 pieces."
+    # Creating a Message with no pieces raises immediately
+    with pytest.raises(ValueError, match="must have at least one message piece"):
+        Message(message_pieces=[])
 
 
 @pytest.mark.asyncio

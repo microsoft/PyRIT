@@ -42,7 +42,7 @@ class ConversationAnalytics:
         return [
             ConversationMessageWithSimilarity(
                 score=1.0,
-                role=memory.role,
+                role=memory.api_role,
                 content=memory.converted_value,
                 metric="exact_match",  # Exact match
             )

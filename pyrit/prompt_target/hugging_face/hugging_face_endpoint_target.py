@@ -87,13 +87,14 @@ class HuggingFaceEndpointTarget(PromptTarget):
         )
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send a normalized prompt asynchronously to a cloud-based HuggingFace model endpoint.
 
         Args:
-            message (Message): The message containing the input data and associated details
-            such as conversation ID and role.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response object with generated text pieces.
@@ -102,7 +103,7 @@ class HuggingFaceEndpointTarget(PromptTarget):
             ValueError: If the response from the Hugging Face API is not successful.
             Exception: If an error occurs during the HTTP request to the Hugging Face endpoint.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
         headers = {"Authorization": f"Bearer {self.hf_token}"}
         payload: dict[str, object] = {
@@ -146,16 +147,17 @@ class HuggingFaceEndpointTarget(PromptTarget):
             logger.error(f"Error occurred during HTTP request to the Hugging Face endpoint: {e}")
             raise
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
         Validate the provided message.
 
         Args:
-            message (Message): The message to validate.
+            normalized_conversation: The normalized conversation to validate.
 
         Raises:
             ValueError: If the request is not valid for this target.
         """
+        message = normalized_conversation[-1]
         n_pieces = len(message.message_pieces)
         if n_pieces != 1:
             raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
