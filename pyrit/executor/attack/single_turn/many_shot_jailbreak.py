@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Optional
+from typing import Any, Optional, cast
 
 import requests
 
@@ -33,7 +33,7 @@ def fetch_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
     source = "https://raw.githubusercontent.com/KutalVolkan/many-shot-jailbreaking-dataset/5eac855/examples.json"
     response = requests.get(source)
     response.raise_for_status()
-    return response.json()
+    return cast(list[dict[str, str]], response.json())
 
 
 class ManyShotJailbreakAttack(PromptSendingAttack):
@@ -93,7 +93,7 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         if not self._examples:
             raise ValueError("Many shot examples must be provided.")
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Perform the ManyShotJailbreakAttack.
 

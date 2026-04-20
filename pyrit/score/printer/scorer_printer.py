@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 
-from pyrit.score.scorer_identifier import ScorerIdentifier
+from pyrit.identifiers import ScorerIdentifier
 
 
 class ScorerPrinter(ABC):

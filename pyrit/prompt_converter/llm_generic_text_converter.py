@@ -3,7 +3,7 @@
 
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.models import (
@@ -33,10 +33,10 @@ class LLMGenericTextConverter(PromptConverter):
         converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         system_prompt_template: Optional[SeedPrompt] = None,
         user_prompt_template_with_objective: Optional[SeedPrompt] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
-        Initializes the converter with a target and optional prompt templates.
+        Initialize the converter with a target and optional prompt templates.
 
         Args:
             converter_target (PromptChatTarget): The endpoint that converts the prompt.
@@ -63,7 +63,7 @@ class LLMGenericTextConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt using an LLM via the specified converter target.
+        Convert the given prompt using an LLM via the specified converter target.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -71,6 +71,9 @@ class LLMGenericTextConverter(PromptConverter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         conversation_id = str(uuid.uuid4())
 

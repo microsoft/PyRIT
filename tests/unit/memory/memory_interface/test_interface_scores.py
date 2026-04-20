@@ -10,12 +10,23 @@ from uuid import uuid4
 import pytest
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
     MessagePiece,
     Score,
     SeedPrompt,
 )
+
+
+def _test_scorer_id(name: str = "TestScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="tests.unit.memory",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 def test_get_scores_by_attack_id_and_label(
@@ -36,7 +47,7 @@ def test_get_scores_by_attack_id_and_label(
         score_category=["test"],
         score_rationale="Test score",
         score_metadata={"test": "metadata"},
-        scorer_class_identifier={"__type__": "TestScorer"},
+        scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=prompt_id,
     )
 
@@ -98,7 +109,7 @@ def test_add_score_get_score(
         score_category=["test"],
         score_rationale="Test score",
         score_metadata={"test": "metadata"},
-        scorer_class_identifier={"__type__": "TestScorer"},
+        scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=prompt_id,
     )
 
@@ -114,7 +125,8 @@ def test_add_score_get_score(
     assert db_score[0].score_category == ["test"]
     assert db_score[0].score_rationale == "Test score"
     assert db_score[0].score_metadata == {"test": "metadata"}
-    assert db_score[0].scorer_class_identifier == {"__type__": "TestScorer"}
+    # scorer_class_identifier is now a ScorerIdentifier object, check the class_name
+    assert db_score[0].scorer_class_identifier.class_name == "TestScorer"
     assert db_score[0].message_piece_id == prompt_id
 
 
@@ -152,7 +164,7 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
         score_category=["test"],
         score_rationale="Test score",
         score_metadata={"test": "metadata"},
-        scorer_class_identifier={"__type__": "TestScorer"},
+        scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=dupe_id,
     )
     sqlite_instance.add_scores_to_memory(scores=[score])
@@ -183,7 +195,7 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
         score_category=["test"],
         score_rationale="Test score",
         score_metadata={"test": "metadata"},
-        scorer_class_identifier={"__type__": "TestScorer"},
+        scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=prompt_id,
     )
     sqlite_instance.add_scores_to_memory(scores=[score])

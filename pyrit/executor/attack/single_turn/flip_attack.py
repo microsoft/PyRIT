@@ -4,7 +4,7 @@
 import logging
 import pathlib
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -72,7 +72,7 @@ class FlipAttack(PromptSendingAttack):
 
         self._system_prompt = Message.from_system_prompt(system_prompt=system_prompt)
 
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Set up the FlipAttack by preparing conversation context.
 
@@ -91,7 +91,7 @@ class FlipAttack(PromptSendingAttack):
             memory_labels=self._memory_labels,
         )
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Perform the FlipAttack.
 

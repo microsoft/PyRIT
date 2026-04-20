@@ -8,11 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
+
+# Reusable test scorer identifier
+_TEST_SCORER_ID = ScorerIdentifier(
+    class_name="MockScorer",
+    class_module="tests.unit.scenarios",
+    class_description="",
+    identifier_type="instance",
+)
 
 
 def save_attack_results_to_memory(attack_results):
@@ -30,14 +39,6 @@ def create_mock_run_async(attack_results):
         return AttackExecutorResult(completed_results=attack_results, incomplete_objectives=[])
 
     return AsyncMock(side_effect=mock_run_async)
-
-
-def create_mock_scorer():
-    """Create a mock scorer for testing ScenarioResult."""
-    mock_scorer = MagicMock(spec=Scorer)
-    mock_scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test"}
-    mock_scorer.get_scorer_metrics.return_value = None
-    return mock_scorer
 
 
 @pytest.fixture
@@ -111,7 +112,7 @@ class ConcreteScenario(Scenario):
         # Add a mock scorer if not provided
         if "objective_scorer" not in kwargs:
             mock_scorer = MagicMock(spec=Scorer)
-            mock_scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test"}
+            mock_scorer.get_identifier.return_value = _TEST_SCORER_ID
             mock_scorer.get_scorer_metrics.return_value = None
             kwargs["objective_scorer"] = mock_scorer
 
@@ -508,12 +509,11 @@ class TestScenarioResult:
     def test_scenario_result_initialization(self, sample_attack_results):
         """Test ScenarioResult initialization."""
         identifier = ScenarioIdentifier(name="Test", scenario_version=1)
-        mock_scorer = create_mock_scorer()
         result = ScenarioResult(
             scenario_identifier=identifier,
             objective_target_identifier={"__type__": "TestTarget", "__module__": "test"},
             attack_results={"base64": sample_attack_results[:3], "rot13": sample_attack_results[3:]},
-            objective_scorer=mock_scorer,
+            objective_scorer_identifier=_TEST_SCORER_ID,
         )
 
         assert result.scenario_identifier == identifier
@@ -525,12 +525,11 @@ class TestScenarioResult:
     def test_scenario_result_with_empty_results(self):
         """Test ScenarioResult with empty attack results."""
         identifier = ScenarioIdentifier(name="TestScenario", scenario_version=1)
-        mock_scorer = create_mock_scorer()
         result = ScenarioResult(
             scenario_identifier=identifier,
             objective_target_identifier={"__type__": "TestTarget", "__module__": "test"},
             attack_results={"base64": []},
-            objective_scorer=mock_scorer,
+            objective_scorer_identifier=_TEST_SCORER_ID,
         )
 
         assert len(result.attack_results["base64"]) == 0
@@ -539,14 +538,13 @@ class TestScenarioResult:
     def test_scenario_result_objective_achieved_rate(self, sample_attack_results):
         """Test objective_achieved_rate calculation."""
         identifier = ScenarioIdentifier(name="Test", scenario_version=1)
-        mock_scorer = create_mock_scorer()
 
         # All successful
         result = ScenarioResult(
             scenario_identifier=identifier,
             objective_target_identifier={"__type__": "TestTarget", "__module__": "test"},
             attack_results={"base64": sample_attack_results},
-            objective_scorer=mock_scorer,
+            objective_scorer_identifier=_TEST_SCORER_ID,
         )
         assert result.objective_achieved_rate() == 100
 
@@ -571,7 +569,7 @@ class TestScenarioResult:
             scenario_identifier=identifier,
             objective_target_identifier={"__type__": "TestTarget", "__module__": "test"},
             attack_results={"base64": mixed_results},
-            objective_scorer=mock_scorer,
+            objective_scorer_identifier=_TEST_SCORER_ID,
         )
         assert result2.objective_achieved_rate() == 60  # 3 out of 5
 

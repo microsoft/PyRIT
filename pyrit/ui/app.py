@@ -9,22 +9,27 @@ import traceback
 GLOBAL_MUTEX_NAME = "PyRIT-Gradio"
 
 
-def launch_app(open_browser=False):
+def launch_app(open_browser: bool = False) -> None:
     # Launch a new process to run the gradio UI.
     # Locate the python executable and run this file.
     current_path = os.path.abspath(__file__)
     python_path = sys.executable
 
     # Start a new process to run it
-    subprocess.Popen([python_path, current_path, str(open_browser)], creationflags=subprocess.CREATE_NEW_CONSOLE)
+    if sys.platform == "win32":
+        subprocess.Popen(
+            [python_path, current_path, str(open_browser)],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,  # type: ignore[attr-defined, unused-ignore]
+        )
+    else:
+        subprocess.Popen([python_path, current_path, str(open_browser)])
 
 
-def is_app_running():
+def is_app_running() -> bool:
     if sys.platform != "win32":
         raise NotImplementedError("This function is only supported on Windows.")
-        return True
 
-    import ctypes.wintypes
+    import ctypes.wintypes  # noqa: F401
 
     SYNCHRONIZE = 0x00100000
     mutex = ctypes.windll.kernel32.OpenMutexW(SYNCHRONIZE, False, GLOBAL_MUTEX_NAME)
@@ -38,7 +43,7 @@ def is_app_running():
 
 if __name__ == "__main__":
 
-    def create_mutex():
+    def create_mutex() -> bool:
         if sys.platform != "win32":
             raise NotImplementedError("This function is only supported on Windows.")
 

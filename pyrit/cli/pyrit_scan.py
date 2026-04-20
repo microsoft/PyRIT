@@ -10,11 +10,12 @@ This module provides the main entry point for the pyrit_scan command.
 import asyncio
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
+from typing import Optional
 
 from pyrit.cli import frontend_core
 
 
-def parse_args(args=None) -> Namespace:
+def parse_args(args: Optional[list[str]] = None) -> Namespace:
     """
     Parse command-line arguments for the PyRIT scanner.
 
@@ -144,7 +145,7 @@ Examples:
     return parser.parse_args(args)
 
 
-def main(args=None) -> int:
+def main(args: Optional[list[str]] = None) -> int:
     """
     Start the PyRIT scanner CLI.
 

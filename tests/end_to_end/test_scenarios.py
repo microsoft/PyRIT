@@ -11,7 +11,7 @@ using the pyrit_scan command with standard initializers.
 import pytest
 
 from pyrit.cli.pyrit_scan import main as pyrit_scan_main
-from pyrit.cli.scenario_registry import ScenarioRegistry
+from pyrit.registry import ScenarioRegistry
 
 
 def get_all_scenarios():
@@ -21,8 +21,8 @@ def get_all_scenarios():
     Returns:
         List[str]: Sorted list of scenario names.
     """
-    registry = ScenarioRegistry()
-    return registry.get_scenario_names()
+    registry = ScenarioRegistry.get_registry_singleton()
+    return registry.get_names()
 
 
 @pytest.mark.timeout(7200)  # 2 hour timeout per scenario

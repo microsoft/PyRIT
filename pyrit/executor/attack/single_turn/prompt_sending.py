@@ -3,7 +3,7 @@
 
 import logging
 import uuid
-from typing import Optional, Type
+from typing import Any, Optional, Type
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.utils import warn_if_set
@@ -129,7 +129,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             auxiliary_scorers=self._auxiliary_scorers,
         )
 
-    def _validate_context(self, *, context: SingleTurnAttackContext) -> None:
+    def _validate_context(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Validate the context before executing the attack.
 
@@ -142,7 +142,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         if not context.objective or context.objective.isspace():
             raise ValueError("Attack objective must be provided and non-empty in the context")
 
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Set up the attack by preparing conversation context.
 
@@ -162,7 +162,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             memory_labels=self._memory_labels,
         )
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Perform the prompt injection attack.
 
@@ -241,7 +241,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         return result
 
     def _determine_attack_outcome(
-        self, *, response: Optional[Message], score: Optional[Score], context: SingleTurnAttackContext
+        self, *, response: Optional[Message], score: Optional[Score], context: SingleTurnAttackContext[Any]
     ) -> tuple[AttackOutcome, Optional[str]]:
         """
         Determine the outcome of the attack based on the response and score.
@@ -272,12 +272,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # No response at all (all attempts filtered/failed)
         return AttackOutcome.FAILURE, "All attempts were filtered or failed to get a response"
 
-    async def _teardown_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _teardown_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
         pass
 
-    def _get_message(self, context: SingleTurnAttackContext) -> Message:
+    def _get_message(self, context: SingleTurnAttackContext[Any]) -> Message:
         """
         Prepare the message for the attack.
 
@@ -298,7 +298,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         return Message.from_prompt(prompt=context.objective, role="user")
 
     async def _send_prompt_to_objective_target_async(
-        self, *, message: Message, context: SingleTurnAttackContext
+        self, *, message: Message, context: SingleTurnAttackContext[Any]
     ) -> Optional[Message]:
         """
         Send the prompt to the target and return the response.

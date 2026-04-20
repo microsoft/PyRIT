@@ -19,10 +19,10 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 try:
-    import termcolor  # type: ignore
+    import termcolor
 
     HAS_TERMCOLOR = True
 except ImportError:
@@ -39,9 +39,13 @@ except ImportError:
 
 
 if TYPE_CHECKING:
-    from pyrit.cli.initializer_registry import InitializerInfo, InitializerRegistry
-    from pyrit.cli.scenario_registry import ScenarioRegistry
     from pyrit.models.scenario_result import ScenarioResult
+    from pyrit.registry import (
+        InitializerMetadata,
+        InitializerRegistry,
+        ScenarioMetadata,
+        ScenarioRegistry,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +53,6 @@ logger = logging.getLogger(__name__)
 IN_MEMORY = "InMemory"
 SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
-
-
-class ScenarioInfo(TypedDict):
-    """Type definition for scenario information dictionary."""
-
-    name: str
-    class_name: str
-    description: str
-    default_strategy: str
-    all_strategies: list[str]
-    aggregate_strategies: list[str]
-    default_datasets: list[str]
-    max_dataset_size: Optional[int]
 
 
 class FrontendCore:
@@ -114,8 +105,7 @@ class FrontendCore:
         if self._initialized:
             return
 
-        from pyrit.cli.initializer_registry import InitializerRegistry
-        from pyrit.cli.scenario_registry import ScenarioRegistry
+        from pyrit.registry import InitializerRegistry, ScenarioRegistry
         from pyrit.setup import initialize_pyrit_async
 
         # Initialize PyRIT without initializers (they run per-scenario)
@@ -126,8 +116,8 @@ class FrontendCore:
             env_files=self._env_files,
         )
 
-        # Load registries
-        self._scenario_registry = ScenarioRegistry()
+        # Load registries (use singleton pattern for shared access)
+        self._scenario_registry = ScenarioRegistry.get_registry_singleton()
         if self._initialization_scripts:
             print("Discovering user scenarios...")
             sys.stdout.flush()
@@ -168,43 +158,43 @@ class FrontendCore:
         return self._initializer_registry
 
 
-async def list_scenarios_async(*, context: FrontendCore) -> list[ScenarioInfo]:
+async def list_scenarios_async(*, context: FrontendCore) -> list[ScenarioMetadata]:
     """
-    List all available scenarios.
+    List metadata for all available scenarios.
 
     Args:
         context: PyRIT context with loaded registries.
 
     Returns:
-        List of scenario info dictionaries.
+        List of scenario metadata dictionaries describing each scenario class.
     """
     if not context._initialized:
         await context.initialize_async()
-    return context.scenario_registry.list_scenarios()
+    return context.scenario_registry.list_metadata()
 
 
 async def list_initializers_async(
     *, context: FrontendCore, discovery_path: Optional[Path] = None
-) -> "Sequence[InitializerInfo]":
+) -> "Sequence[InitializerMetadata]":
     """
-    List all available initializers.
+    List metadata for all available initializers.
 
     Args:
         context: PyRIT context with loaded registries.
         discovery_path: Optional path to discover initializers from.
 
     Returns:
-        Sequence of initializer info dictionaries.
+        Sequence of initializer metadata dictionaries describing each initializer class.
     """
     if discovery_path:
-        from pyrit.cli.initializer_registry import InitializerRegistry
+        from pyrit.registry import InitializerRegistry
 
         registry = InitializerRegistry(discovery_path=discovery_path)
-        return registry.list_initializers()
+        return registry.list_metadata()
 
     if not context._initialized:
         await context.initialize_async()
-    return context.initializer_registry.list_initializers()
+    return context.initializer_registry.list_metadata()
 
 
 async def run_scenario_async(
@@ -263,7 +253,7 @@ async def run_scenario_async(
         initializer_instances = []
 
         for name in context._initializer_names:
-            initializer_class = context.initializer_registry.get_initializer_class(name=name)
+            initializer_class = context.initializer_registry.get_class(name)
             initializer_instances.append(initializer_class())
 
     # Re-initialize PyRIT with the scenario-specific initializers
@@ -276,10 +266,10 @@ async def run_scenario_async(
     )
 
     # Get scenario class
-    scenario_class = context.scenario_registry.get_scenario(scenario_name)
+    scenario_class = context.scenario_registry.get_class(scenario_name)
 
     if scenario_class is None:
-        available = ", ".join(context.scenario_registry.get_scenario_names())
+        available = ", ".join(context.scenario_registry.get_names())
         raise ValueError(f"Scenario '{scenario_name}' not found.\nAvailable scenarios: {available}")
 
     # Build initialization kwargs (these go to initialize_async, not __init__)
@@ -387,39 +377,39 @@ def _print_header(*, text: str) -> None:
         print(f"\n  {text}")
 
 
-def format_scenario_info(*, scenario_info: ScenarioInfo) -> None:
+def format_scenario_metadata(*, scenario_metadata: ScenarioMetadata) -> None:
     """
-    Print formatted information about a scenario.
+    Print formatted information about a scenario class.
 
     Args:
-        scenario_info: Dictionary containing scenario information.
+        scenario_metadata: Dataclass containing scenario metadata.
     """
-    _print_header(text=scenario_info["name"])
-    print(f"    Class: {scenario_info['class_name']}")
+    _print_header(text=scenario_metadata.snake_class_name)
+    print(f"    Class: {scenario_metadata.class_name}")
 
-    description = scenario_info.get("description", "")
+    description = scenario_metadata.class_description
     if description:
         print("    Description:")
         print(_format_wrapped_text(text=description, indent="      "))
 
-    if scenario_info.get("aggregate_strategies"):
-        agg_strategies = scenario_info["aggregate_strategies"]
+    if scenario_metadata.aggregate_strategies:
+        agg_strategies = scenario_metadata.aggregate_strategies
         print("    Aggregate Strategies:")
         formatted = _format_wrapped_text(text=", ".join(agg_strategies), indent="      - ")
         print(formatted)
 
-    if scenario_info.get("all_strategies"):
-        strategies = scenario_info["all_strategies"]
+    if scenario_metadata.all_strategies:
+        strategies = scenario_metadata.all_strategies
         print(f"    Available Strategies ({len(strategies)}):")
         formatted = _format_wrapped_text(text=", ".join(strategies), indent="      ")
         print(formatted)
 
-    if scenario_info.get("default_strategy"):
-        print(f"    Default Strategy: {scenario_info['default_strategy']}")
+    if scenario_metadata.default_strategy:
+        print(f"    Default Strategy: {scenario_metadata.default_strategy}")
 
-    if scenario_info.get("default_datasets"):
-        datasets = scenario_info["default_datasets"]
-        max_size = scenario_info.get("max_dataset_size")
+    if scenario_metadata.default_datasets:
+        datasets = scenario_metadata.default_datasets
+        max_size = scenario_metadata.max_dataset_size
         if datasets:
             size_suffix = f", max {max_size} per dataset" if max_size else ""
             print(f"    Default Datasets ({len(datasets)}{size_suffix}):")
@@ -429,28 +419,28 @@ def format_scenario_info(*, scenario_info: ScenarioInfo) -> None:
             print("    Default Datasets: None")
 
 
-def format_initializer_info(*, initializer_info: "InitializerInfo") -> None:
+def format_initializer_metadata(*, initializer_metadata: "InitializerMetadata") -> None:
     """
-    Print formatted information about an initializer.
+    Print formatted information about an initializer class.
 
     Args:
-        initializer_info: Dictionary containing initializer information.
+        initializer_metadata: Dataclass containing initializer metadata.
     """
-    _print_header(text=initializer_info["name"])
-    print(f"    Class: {initializer_info['class_name']}")
-    print(f"    Name: {initializer_info['initializer_name']}")
-    print(f"    Execution Order: {initializer_info['execution_order']}")
+    _print_header(text=initializer_metadata.snake_class_name)
+    print(f"    Class: {initializer_metadata.class_name}")
+    print(f"    Name: {initializer_metadata.display_name}")
+    print(f"    Execution Order: {initializer_metadata.execution_order}")
 
-    if initializer_info.get("required_env_vars"):
+    if initializer_metadata.required_env_vars:
         print("    Required Environment Variables:")
-        for env_var in initializer_info["required_env_vars"]:
+        for env_var in initializer_metadata.required_env_vars:
             print(f"      - {env_var}")
     else:
         print("    Required Environment Variables: None")
 
-    if initializer_info.get("description"):
+    if initializer_metadata.class_description:
         print("    Description:")
-        print(_format_wrapped_text(text=initializer_info["description"], indent="      "))
+        print(_format_wrapped_text(text=initializer_metadata.class_description, indent="      "))
 
 
 def validate_database(*, database: str) -> str:
@@ -577,7 +567,7 @@ def _argparse_validator(validator_func: Callable[..., Any]) -> Callable[[Any], A
         raise ValueError(f"Validator function {validator_func.__name__} must have at least one parameter")
     first_param = params[0]
 
-    def wrapper(value):
+    def wrapper(value: Any) -> Any:
         import argparse as ap
 
         try:
@@ -605,7 +595,7 @@ def resolve_initialization_scripts(script_paths: list[str]) -> list[Path]:
     Raises:
         FileNotFoundError: If a script path does not exist.
     """
-    from pyrit.cli.initializer_registry import InitializerRegistry
+    from pyrit.registry import InitializerRegistry
 
     return InitializerRegistry.resolve_script_paths(script_paths=script_paths)
 
@@ -709,8 +699,8 @@ async def print_scenarios_list_async(*, context: FrontendCore) -> int:
 
     print("\nAvailable Scenarios:")
     print("=" * 80)
-    for scenario_info in scenarios:
-        format_scenario_info(scenario_info=scenario_info)
+    for scenario_metadata in scenarios:
+        format_scenario_metadata(scenario_metadata=scenario_metadata)
     print("\n" + "=" * 80)
     print(f"\nTotal scenarios: {len(scenarios)}")
     return 0
@@ -735,8 +725,8 @@ async def print_initializers_list_async(*, context: FrontendCore, discovery_path
 
     print("\nAvailable Initializers:")
     print("=" * 80)
-    for initializer_info in initializers:
-        format_initializer_info(initializer_info=initializer_info)
+    for initializer_metadata in initializers:
+        format_initializer_metadata(initializer_metadata=initializer_metadata)
     print("\n" + "=" * 80)
     print(f"\nTotal initializers: {len(initializers)}")
     return 0

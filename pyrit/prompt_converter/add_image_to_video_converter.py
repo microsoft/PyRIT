@@ -38,11 +38,11 @@ class AddImageVideoConverter(PromptConverter):
         self,
         video_path: str,
         output_path: Optional[str] = None,
-        img_position: tuple = (10, 10),
-        img_resize_size: tuple = (500, 500),
+        img_position: tuple[int, int] = (10, 10),
+        img_resize_size: tuple[int, int] = (500, 500),
     ):
         """
-        Initializes the converter with the video path and image properties.
+        Initialize the converter with the video path and image properties.
 
         Args:
             video_path (str): File path of video to add image to.
@@ -63,7 +63,7 @@ class AddImageVideoConverter(PromptConverter):
 
     async def _add_image_to_video(self, image_path: str, output_path: str) -> str:
         """
-        Adds an image to video.
+        Add an image to video.
 
         Args:
             image_path (str): The image path to add to video.
@@ -71,6 +71,10 @@ class AddImageVideoConverter(PromptConverter):
 
         Returns:
             str: The output video path.
+
+        Raises:
+            ModuleNotFoundError: If OpenCV is not installed.
+            ValueError: If the image path is invalid or unsupported video format.
         """
         try:
             import cv2  # noqa: F401
@@ -112,7 +116,7 @@ class AddImageVideoConverter(PromptConverter):
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             file_extension = video_path.split(".")[-1].lower()
             if file_extension in video_encoding_map:
-                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])  # type: ignore
+                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])  # type: ignore[attr-defined, misc, unused-ignore]
                 output_video = cv2.VideoWriter(output_path, video_char_code, fps, (width, height))
             else:
                 raise ValueError(f"Unsupported video format: {file_extension}")
@@ -167,7 +171,7 @@ class AddImageVideoConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
-        Converts the given prompt (image) by adding it to a video.
+        Convert the given prompt (image) by adding it to a video.
 
         Args:
             prompt (str): The image path to be added to the video.
@@ -185,7 +189,7 @@ class AddImageVideoConverter(PromptConverter):
         output_video_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="video_path")
 
         if not self._output_path:
-            output_video_serializer.value = await output_video_serializer.get_data_filename()
+            output_video_serializer.value = str(await output_video_serializer.get_data_filename())
         else:
             output_video_serializer.value = self._output_path
 

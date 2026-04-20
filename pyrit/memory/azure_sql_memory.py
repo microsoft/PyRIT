@@ -115,7 +115,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Optional[str]: Resolved SAS token or None if not provided.
         """
         try:
-            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
+            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)  # type: ignore[no-any-return]
         except ValueError:
             return None
 

@@ -41,6 +41,9 @@ class BinAsciiConverter(WordLevelConverter):
                 If None, all words will be converted.
             word_split_separator (Optional[str]): Separator used to split words in the input text.
                 Defaults to " ".
+
+        Raises:
+            ValueError: If an invalid ``encoding_func`` is provided.
         """
         super().__init__(
             word_selection_strategy=word_selection_strategy,
@@ -63,6 +66,9 @@ class BinAsciiConverter(WordLevelConverter):
 
         Returns:
             str: The encoded word.
+
+        Raises:
+            ValueError: If an unsupported encoding function is encountered.
         """
         if self._encoding_func == "hex":
             return word.encode("utf-8").hex().upper()

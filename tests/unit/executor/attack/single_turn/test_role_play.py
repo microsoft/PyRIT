@@ -25,6 +25,7 @@ from pyrit.prompt_converter import Base64Converter, StringJoinConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import Scorer, TrueFalseScorer
+from tests.unit.mocks import get_mock_scorer_identifier
 
 
 @pytest.fixture
@@ -271,6 +272,7 @@ class TestRolePlayAttack:
             score_rationale="Test rationale for success",
             score_metadata={},
             message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         # Mock the attack execution to return a successful result

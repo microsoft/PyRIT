@@ -24,10 +24,13 @@ class SmugglerConverter(PromptConverter, abc.ABC):
 
     def __init__(self, action: Literal["encode", "decode"] = "encode") -> None:
         """
-        Initializes the converter with options for encoding/decoding.
+        Initialize the converter with options for encoding/decoding.
 
         Args:
             action (Literal["encode", "decode"]): The action to perform.
+
+        Raises:
+            ValueError: If the action is not 'encode' or 'decode'.
         """
         if action not in ["encode", "decode"]:
             raise ValueError("Action must be either 'encode' or 'decode'")
@@ -35,7 +38,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by either encoding or decoding it based on the specified action.
+        Convert the given prompt by either encoding or decoding it based on the specified action.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -58,15 +61,33 @@ class SmugglerConverter(PromptConverter, abc.ABC):
             return ConverterResult(output_text=decoded, output_type="text")
 
     def input_supported(self, input_type: PromptDataType) -> bool:
+        """
+        Check if the input type is supported by the converter.
+
+        Args:
+            input_type (PromptDataType): The input type to check.
+
+        Returns:
+            bool: True if the input type is supported, False otherwise.
+        """
         return input_type == "text"
 
     def output_supported(self, output_type: PromptDataType) -> bool:
+        """
+        Check if the output type is supported.
+
+        Args:
+            output_type (PromptDataType): The type of output data.
+
+        Returns:
+            bool: True if the output type is supported, False otherwise.
+        """
         return output_type == "text"
 
     @abc.abstractmethod
     def encode_message(self, *, message: str) -> Tuple[str, str]:
         """
-        Encodes the given message.
+        Encode the given message.
 
         Must be implemented by subclasses.
 
@@ -81,7 +102,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
     @abc.abstractmethod
     def decode_message(self, *, message: str) -> str:
         """
-        Decodes the given message.
+        Decode the given message.
 
         Must be implemented by subclasses.
 

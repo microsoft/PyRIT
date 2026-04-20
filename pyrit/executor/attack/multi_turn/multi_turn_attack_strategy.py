@@ -7,7 +7,7 @@ import logging
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Optional, Type, TypeVar
+from typing import Any, Optional, Type, TypeVar
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -22,7 +22,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 
-MultiTurnAttackStrategyContextT = TypeVar("MultiTurnAttackStrategyContextT", bound="MultiTurnAttackContext")
+MultiTurnAttackStrategyContextT = TypeVar("MultiTurnAttackStrategyContextT", bound="MultiTurnAttackContext[Any]")
 
 
 @dataclass

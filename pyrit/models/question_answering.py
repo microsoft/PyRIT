@@ -56,7 +56,7 @@ class QuestionAnsweringEntry(BaseModel):
                 f"Available choices are: {[f'{i}: {c.text}' for i, c in enumerate(self.choices)]}"
             )
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.model_dump_json())
 
 

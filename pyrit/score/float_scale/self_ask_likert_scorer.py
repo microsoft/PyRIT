@@ -139,12 +139,12 @@ class LikertScalePaths(enum.Enum):
     @property
     def path(self) -> Path:
         """Get the path to the Likert scale YAML file."""
-        return self.value[0]
+        return self.value[0]  # type: ignore[no-any-return]
 
     @property
     def evaluation_files(self) -> Optional[LikertScaleEvalFiles]:
         """Get the evaluation file configuration, or None if no evaluation dataset exists."""
-        return self.value[1]
+        return self.value[1]  # type: ignore[no-any-return]
 
 
 class SelfAskLikertScorer(FloatScaleScorer):
@@ -189,14 +189,14 @@ class SelfAskLikertScorer(FloatScaleScorer):
 
         self._set_likert_scale_system_prompt(likert_scale_path=likert_scale.path)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
+        self._set_identifier(
             system_prompt_template=self._system_prompt,
             prompt_target=self._prompt_target,
         )
 
-    def _set_likert_scale_system_prompt(self, likert_scale_path: Path):
+    def _set_likert_scale_system_prompt(self, likert_scale_path: Path) -> None:
         """
         Set the Likert scale to use for scoring.
 

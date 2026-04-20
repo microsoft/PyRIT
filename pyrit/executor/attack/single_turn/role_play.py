@@ -4,7 +4,7 @@
 import enum
 import logging
 import pathlib
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -120,7 +120,7 @@ class RolePlayAttack(PromptSendingAttack):
             ]
         )
 
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Set up the attack by preparing conversation context with role-play start
         and converting the objective to role-play format.
@@ -176,7 +176,7 @@ class RolePlayAttack(PromptSendingAttack):
             ),
         ]
 
-    def _parse_role_play_definition(self, role_play_definition: SeedDataset):
+    def _parse_role_play_definition(self, role_play_definition: SeedDataset) -> None:
         """
         Parse and validate the role-play definition structure.
 

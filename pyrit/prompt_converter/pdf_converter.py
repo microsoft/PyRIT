@@ -4,7 +4,7 @@
 import ast
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pypdf import PageObject, PdfReader, PdfWriter
 from reportlab.lib.units import mm
@@ -13,6 +13,7 @@ from reportlab.pdfgen import canvas
 
 from pyrit.common.logger import logger
 from pyrit.models import PromptDataType, SeedPrompt, data_serializer_factory
+from pyrit.models.data_type_serializer import DataTypeSerializer
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -32,23 +33,23 @@ class PDFConverter(PromptConverter):
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
-    SUPPORTED_OUTPUT_TYPES = ("url",)
+    SUPPORTED_OUTPUT_TYPES = ("binary_path",)
 
     def __init__(
         self,
         prompt_template: Optional[SeedPrompt] = None,
         font_type: str = "Helvetica",
         font_size: int = 12,
-        font_color: tuple = (255, 255, 255),
+        font_color: tuple[int, int, int] = (255, 255, 255),
         page_width: int = 210,
         page_height: int = 297,
         column_width: int = 0,
         row_height: int = 10,
         existing_pdf: Optional[Path] = None,
-        injection_items: Optional[List[Dict]] = None,
+        injection_items: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
-        Initializes the converter with the specified parameters.
+        Initialize the converter with the specified parameters.
 
         Args:
             prompt_template (Optional[SeedPrompt], optional): A ``SeedPrompt`` object representing a template.
@@ -104,8 +105,10 @@ class PDFConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into a PDF. If a template is provided, it injects the prompt into the template,
-        otherwise, it generates a simple PDF with the prompt as the content. Further it can modify existing PDFs.
+        Convert the given prompt into a PDF.
+
+        If a template is provided, it injects the prompt into the template, otherwise, it generates
+        a simple PDF with the prompt as the content. Further it can modify existing PDFs.
 
         Args:
             prompt (str): The prompt to be embedded in the PDF.
@@ -113,6 +116,9 @@ class PDFConverter(PromptConverter):
 
         Returns:
             ConverterResult: The result containing the full file path to the generated PDF.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
@@ -130,17 +136,22 @@ class PDFConverter(PromptConverter):
         pdf_serializer = await self._serialize_pdf(pdf_bytes, content)
 
         # Return the result
-        return ConverterResult(output_text=pdf_serializer.value, output_type="url")
+        return ConverterResult(output_text=pdf_serializer.value, output_type="binary_path")
 
     def _prepare_content(self, prompt: str) -> str:
         """
-        Prepares the content for the PDF, either from a template or directly from the prompt.
+        Prepare the content for the PDF, either from a template or directly from the prompt.
 
         Args:
             prompt (str): The input prompt.
 
         Returns:
             str: The prepared content.
+
+        Raises:
+            ValueError: If the parsed dynamic data is not a dictionary.
+            ValueError: If rendering the prompt fails.
+            ValueError: If the prompt is not a string when no template is provided.
         """
         if self._prompt_template:
             logger.debug(f"Preparing content with template: {self._prompt_template.value}")
@@ -171,7 +182,7 @@ class PDFConverter(PromptConverter):
 
     def _generate_pdf(self, content: str) -> bytes:
         """
-        Generates a PDF with the given content using ReportLab.
+        Generate a PDF with the given content using ReportLab.
 
         Args:
             content (str): The text content to include in the PDF.
@@ -242,8 +253,7 @@ class PDFConverter(PromptConverter):
 
     def _modify_existing_pdf(self) -> bytes:
         """
-        The method loops over each page, checks for matching injection items, and merges
-        a small "overlay PDF" for each item.
+        Loop over each page, check for matching injection items, and merge a small "overlay PDF" for each item.
 
         Returns:
             bytes: The modified PDF content in bytes.
@@ -312,10 +322,17 @@ class PDFConverter(PromptConverter):
         return output_pdf.getvalue()
 
     def _inject_text_into_page(
-        self, page: PageObject, x: float, y: float, text: str, font: str, font_size: int, font_color: tuple
+        self,
+        page: PageObject,
+        x: float,
+        y: float,
+        text: str,
+        font: str,
+        font_size: int,
+        font_color: tuple[int, int, int],
     ) -> tuple[PageObject, BytesIO]:
         """
-        Generates an overlay PDF with the given text using ReportLab.
+        Generate an overlay PDF with the given text using ReportLab.
 
         Args:
             page (PageObject): The original PDF page to overlay on.
@@ -328,6 +345,9 @@ class PDFConverter(PromptConverter):
 
         Returns:
             tuple[PageObject, BytesIO]: The overlay page object and its corresponding buffer.
+
+        Raises:
+            ValueError: If the coordinates are out of bounds.
         """
         from reportlab.pdfgen import canvas
 
@@ -380,9 +400,9 @@ class PDFConverter(PromptConverter):
 
         return overlay_page, overlay_buffer
 
-    async def _serialize_pdf(self, pdf_bytes: bytes, content: str):
+    async def _serialize_pdf(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
         """
-        Serializes the generated PDF using a data serializer.
+        Serialize the generated PDF using a data serializer.
 
         Args:
             pdf_bytes (bytes): The generated PDF content in bytes.
@@ -400,8 +420,7 @@ class PDFConverter(PromptConverter):
 
         pdf_serializer = data_serializer_factory(
             category="prompt-memory-entries",
-            data_type="url",
-            value=content,
+            data_type="binary_path",
             extension=extension,
         )
         await pdf_serializer.save_data(pdf_bytes)

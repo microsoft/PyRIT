@@ -27,7 +27,7 @@ class BrailleConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given text into Braille Unicode representation.
+        Convert the given text into Braille Unicode representation.
 
         Args:
             prompt (str): The text to be converted to Braille.
@@ -46,11 +46,17 @@ class BrailleConverter(PromptConverter):
 
         return ConverterResult(output_text=brail_text, output_type="text")
 
-    def _get_braile(self, text) -> str:
+    def _get_braile(self, text: str) -> str:
         """
-        This retrieves the braille representation of the input text.
+        Retrieve the braille representation of the input text.
 
         Taken from Garak https://github.com/NVIDIA/garak/blob/main/garak/probes/encoding.py
+
+        Args:
+            text (str): The input text to be converted to braille.
+
+        Returns:
+            str: The braille representation of the input text.
         """
         characterUnicodes = {
             "a": "\u2801",

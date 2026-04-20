@@ -36,15 +36,19 @@ def text_message_piece() -> MessagePiece:
 
 
 @pytest.mark.asyncio
-async def test_score_piece_async_invalid_type(patch_central_database, audio_message_piece: MessagePiece):
+async def test_score_async_unsupported_data_type_returns_empty_list(
+    patch_central_database, audio_message_piece: MessagePiece
+):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
     request = Message(
         message_pieces=[audio_message_piece],
     )
 
-    # Should raise ValueError for unsupported data type
-    with pytest.raises(ValueError, match="There are no valid pieces to score"):
-        await scorer.score_async(message=request)
+    # With raise_on_no_valid_pieces=False (default), returns empty list for unsupported data types
+    # (FloatScaleScorer does not create synthetic scores like TrueFalseScorer)
+    scores = await scorer.score_async(message=request)
+    assert len(scores) == 0
+
     os.remove(audio_message_piece.converted_value)
 
 

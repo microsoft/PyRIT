@@ -78,7 +78,7 @@ async def test_gandalf_scorer_score(
         assert scores[0].score_rationale == "Password SUNSHINE found! Gandalf response: Message"
     else:
         assert scores[0].score_rationale == "Invalid password found in text. [value=SUNSHINE]"
-    assert scores[0].scorer_class_identifier["__type__"] == "GandalfScorer"
+    assert scores[0].scorer_class_identifier.class_name == "GandalfScorer"
 
 
 @patch("requests.post")

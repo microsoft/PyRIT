@@ -20,12 +20,18 @@ def image_message_piece() -> MessagePiece:
 
 
 @pytest.mark.asyncio
-async def test_substring_scorer_validate(patch_central_database, image_message_piece: MessagePiece):
+async def test_score_async_unsupported_data_type_returns_false(
+    patch_central_database, image_message_piece: MessagePiece
+):
     image_message_piece.id = None
     request = image_message_piece.to_message()
     scorer = SubStringScorer(substring="test", categories=["new_category"])
-    with pytest.raises(ValueError, match="There are no valid pieces to score"):
-        await scorer.score_async(request)
+
+    # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
+    scores = await scorer.score_async(request)
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert "No supported pieces" in scores[0].score_rationale
 
     os.remove(image_message_piece.converted_value)
 

@@ -29,13 +29,16 @@ class BinaryConverter(WordLevelConverter):
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with the specified bits per character and selection strategy.
+        Initialize the converter with the specified bits per character and selection strategy.
 
         Args:
             bits_per_char (BinaryConverter.BitsPerChar): Number of bits to use for each character (8, 16, or 32).
                 Default is 16 bits.
             word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
                 If None, all words will be converted.
+
+        Raises:
+            TypeError: If ``bits_per_char`` is not an instance of BinaryConverter.BitsPerChar Enum.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)
 
@@ -43,8 +46,16 @@ class BinaryConverter(WordLevelConverter):
             raise TypeError("bits_per_char must be an instance of BinaryConverter.BitsPerChar Enum.")
         self.bits_per_char = bits_per_char
 
-    def validate_input(self, prompt):
-        """Checks if ``bits_per_char`` is sufficient for the characters in the prompt."""
+    def validate_input(self, prompt: str) -> None:
+        """
+        Check if ``bits_per_char`` is sufficient for the characters in the prompt.
+
+        Args:
+            prompt (str): The input text prompt to validate.
+
+        Raises:
+            ValueError: If ``bits_per_char`` is too small to represent any character in the prompt.
+        """
         bits = self.bits_per_char.value
         max_code_point = max((ord(char) for char in prompt), default=0)
         min_bits_required = max_code_point.bit_length()
@@ -55,11 +66,27 @@ class BinaryConverter(WordLevelConverter):
             )
 
     async def convert_word_async(self, word: str) -> str:
-        """Converts each character in the word to its binary representation."""
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         bits = self.bits_per_char.value
         return " ".join(format(ord(char), f"0{bits}b") for char in word)
 
     def join_words(self, words: list[str]) -> str:
-        """Joins the converted words with the binary representation of a space."""
+        """
+        Join the converted words with the binary representation of a space.
+
+        Args:
+            words (list[str]): The list of converted words.
+
+        Returns:
+            str: The final joined string with spaces in binary format.
+        """
         space_binary = format(ord(" "), f"0{self.bits_per_char.value}b")
         return f" {space_binary} ".join(words)

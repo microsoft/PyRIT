@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -34,6 +35,26 @@ def generate_test_id() -> str:
         str: A unique 8-character identifier
     """
     return str(uuid4())[:8]
+
+
+def get_test_scorer_identifier(**kwargs) -> ScorerIdentifier:
+    """
+    Returns a test ScorerIdentifier for use in integration tests.
+
+    Args:
+        **kwargs: Optional overrides for ScorerIdentifier fields.
+
+    Returns:
+        ScorerIdentifier: A test scorer identifier with all required fields.
+    """
+    return ScorerIdentifier(
+        class_name=kwargs.get("class_name", "TestScorer"),
+        class_module=kwargs.get("class_module", "tests.integration.memory.test_azure_sql_memory_integration"),
+        class_description=kwargs.get("class_description", "Test scorer for integration testing"),
+        identifier_type=kwargs.get("identifier_type", "instance"),
+        scorer_type=kwargs.get("scorer_type", "true_false"),
+        system_prompt_template=kwargs.get("system_prompt_template"),
+    )
 
 
 @contextmanager
@@ -369,6 +390,50 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
 
 
 @pytest.mark.asyncio
+async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: AzureSQLMemory):
+    """
+    Integration test for storing and retrieving objective_scorer_identifier in ScenarioResult.
+
+    Verifies that ScorerIdentifier is correctly serialized to JSON when stored
+    and deserialized back to ScorerIdentifier when retrieved from Azure SQL.
+    """
+    test_id = generate_test_id()
+
+    with cleanup_scenario_data(azuresql_instance, test_id):
+        # Create a ScorerIdentifier with various fields
+        scorer_identifier = get_test_scorer_identifier(
+            scorer_type="true_false",
+            system_prompt_template="Test prompt template for {objective}",
+        )
+
+        # Create scenario with scorer identifier
+        scenario = ScenarioResult(
+            scenario_identifier=ScenarioIdentifier(
+                name=f"Scorer Test Scenario {test_id}",
+                scenario_version=1,
+            ),
+            objective_target_identifier={"endpoint": f"https://test-{test_id}.example.com"},
+            attack_results={},
+            objective_scorer_identifier=scorer_identifier,
+            labels={"test_id": test_id},
+        )
+
+        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+
+        # Retrieve and verify
+        results = azuresql_instance.get_scenario_results(labels={"test_id": test_id})
+        assert len(results) == 1
+
+        retrieved = results[0]
+        assert retrieved.objective_scorer_identifier is not None
+        assert isinstance(retrieved.objective_scorer_identifier, ScorerIdentifier)
+        assert retrieved.objective_scorer_identifier.scorer_type == "true_false"
+        assert retrieved.objective_scorer_identifier.system_prompt_template == "Test prompt template for {objective}"
+        assert retrieved.objective_scorer_identifier.class_name == scorer_identifier.class_name
+        assert retrieved.objective_scorer_identifier.hash == scorer_identifier.hash
+
+
+@pytest.mark.asyncio
 async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on scenario result labels.
@@ -381,22 +446,26 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
 
     with cleanup_scenario_data(azuresql_instance, test_id):
         # Create scenario results with labels
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Test Scenario 1 {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": "https://api.openai.com"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "high", "team": "red", "test_id": test_id},
         )
         scenario2 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Test Scenario 2 {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": "https://api.azure.com"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "high", "test_id": test_id},
         )
         scenario3 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Test Scenario 3 {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": "https://api.anthropic.com"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "test_id": test_id},
         )
 
@@ -439,25 +508,30 @@ async def test_get_scenario_results_by_target_endpoint(azuresql_instance: AzureS
 
     with cleanup_scenario_data_by_field(azuresql_instance, test_id, "endpoint"):
         # Create scenario results with different endpoints
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"OpenAI Test {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": f"https://api-{test_id}.openai.com/v1/chat"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario2 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Azure OpenAI Test {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": f"https://myresource-{test_id}.openai.azure.com/openai"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario3 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Anthropic Test {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": f"https://api-{test_id}.anthropic.com/v1/messages"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario4 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Azure Other {test_id}", scenario_version=1),
             objective_target_identifier={"endpoint": f"https://myresource-{test_id}.cognitiveservices.azure.com"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
 
         azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3, scenario4])
@@ -504,25 +578,30 @@ async def test_get_scenario_results_by_target_model_name(azuresql_instance: Azur
 
     with cleanup_scenario_data_by_field(azuresql_instance, test_id, "model_name"):
         # Create scenario results with different model names
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"GPT-4 Test {test_id}", scenario_version=1),
             objective_target_identifier={"model_name": f"gpt-4-turbo-{test_id}"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario2 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"GPT-4 Omni Test {test_id}", scenario_version=1),
             objective_target_identifier={"model_name": f"gpt-4o-{test_id}"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario3 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"GPT-3.5 Test {test_id}", scenario_version=1),
             objective_target_identifier={"model_name": f"gpt-3.5-turbo-{test_id}"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario4 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Claude Test {test_id}", scenario_version=1),
             objective_target_identifier={"model_name": f"claude-3-opus-{test_id}"},
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
 
         azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3, scenario4])
@@ -574,6 +653,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
 
     with cleanup_scenario_data(azuresql_instance, test_id):
         # Create scenario results with various attributes
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(
                 name=f"Production Test {test_id}", scenario_version=1, pyrit_version="0.4.0"
@@ -583,6 +663,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
                 "model_name": f"gpt-4-turbo-{test_id}",
             },
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "priority": "high", "test_id": test_id},
             completion_time=now,
         )
@@ -595,6 +676,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
                 "model_name": f"gpt-4-turbo-{test_id}",
             },
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "low", "test_id": test_id},
             completion_time=yesterday,
         )
@@ -607,6 +689,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
                 "model_name": f"gpt-3.5-turbo-{test_id}",
             },
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "test_id": test_id},
             completion_time=yesterday,
         )

@@ -119,7 +119,7 @@ class PromptShieldTarget(PromptTarget):
             "api-version": self._api_version,
         }
 
-        parsed_prompt: dict = self._input_parser(request.original_value)
+        parsed_prompt: dict[str, Any] = self._input_parser(request.original_value)
 
         body = {"userPrompt": parsed_prompt["userPrompt"], "documents": parsed_prompt["documents"]}
 
@@ -157,7 +157,7 @@ class PromptShieldTarget(PromptTarget):
         if piece_type != "text":
             raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
 
-    def _validate_response(self, request_body: dict, response_body: dict) -> None:
+    def _validate_response(self, request_body: dict[str, Any], response_body: dict[str, Any]) -> None:
         """
         Ensure that every field sent to the Prompt Shield was analyzed.
 
@@ -212,7 +212,7 @@ class PromptShieldTarget(PromptTarget):
 
                 return {"userPrompt": user_prompt, "documents": documents if documents else []}
 
-    def _add_auth_param_to_headers(self, headers: dict) -> None:
+    def _add_auth_param_to_headers(self, headers: dict[str, str]) -> None:
         """
         Add the API key or token to the headers.
 

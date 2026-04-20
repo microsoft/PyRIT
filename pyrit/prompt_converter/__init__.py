@@ -1,6 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+Prompt converters for transforming prompts before sending them to targets in red teaming workflows.
+
+Converters are organized into categories: Text-to-Text (encoding, obfuscation, translation, variation),
+Audio (text-to-audio, audio-to-text, audio-to-audio), Image (text-to-image, image-to-image),
+Video (image-to-video), File (text-to-PDF/URL), Selective Converting (partial prompt transformation),
+and Human-in-the-Loop (interactive review). Converters can be stacked together to create complex
+transformation pipelines for testing AI system robustness.
+"""
+
 from pyrit.prompt_converter.add_image_text_converter import AddImageTextConverter
 from pyrit.prompt_converter.add_image_to_video_converter import AddImageVideoConverter
 from pyrit.prompt_converter.add_text_image_converter import AddTextImageConverter

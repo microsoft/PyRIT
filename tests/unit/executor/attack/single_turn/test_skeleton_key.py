@@ -24,6 +24,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
+from tests.unit.mocks import get_mock_scorer_identifier
 
 
 @pytest.fixture
@@ -93,6 +94,7 @@ def success_score():
         score_rationale="Test rationale for success",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -107,6 +109,7 @@ def failure_score():
         score_rationale="Test rationale for failure",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 

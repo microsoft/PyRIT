@@ -156,13 +156,13 @@ class Message:
             if message_piece._role != role:
                 raise ValueError("Inconsistent roles within the same message entry.")
 
-    def __str__(self):
+    def __str__(self) -> str:
         ret = ""
         for message_piece in self.message_pieces:
             ret += str(message_piece) + "\n"
         return "\n".join([str(message_piece) for message_piece in self.message_pieces])
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """
         Convert the message to a dictionary representation.
 

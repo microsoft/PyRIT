@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from httpx import HTTPStatusError
 
@@ -45,13 +45,13 @@ class AzureMLChatTarget(PromptChatTarget):
         endpoint: Optional[str] = None,
         api_key: Optional[str] = None,
         model_name: str = "",
-        message_normalizer: Optional[MessageListNormalizer] = None,
+        message_normalizer: Optional[MessageListNormalizer[Any]] = None,
         max_new_tokens: int = 400,
         temperature: float = 1.0,
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
         max_requests_per_minute: Optional[int] = None,
-        **param_kwargs,
+        **param_kwargs: Any,
     ) -> None:
         """
         Initialize an instance of the AzureMLChatTarget class.
@@ -197,7 +197,7 @@ class AzureMLChatTarget(PromptChatTarget):
         )
 
         try:
-            return response.json()["output"]
+            return str(response.json()["output"])
         except Exception as e:
             if response.json() == {}:
                 raise EmptyResponseException(message="The chat returned an empty response.")
@@ -209,7 +209,7 @@ class AzureMLChatTarget(PromptChatTarget):
     async def _construct_http_body_async(
         self,
         messages: list[Message],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Construct the HTTP request body for the AML online endpoint.
 
@@ -240,14 +240,14 @@ class AzureMLChatTarget(PromptChatTarget):
 
         return data
 
-    def _get_headers(self) -> dict:
+    def _get_headers(self) -> dict[str, str]:
         """
         Headers for accessing inference endpoint deployed in AML.
 
         Returns:
             headers(dict): contains bearer token as AML key and content-type: JSON
         """
-        headers: dict = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
             "Authorization": ("Bearer " + self._api_key),
         }

@@ -8,7 +8,7 @@ import random
 import textwrap
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union, overload
+from typing import Any, Dict, List, Optional, Tuple, Union, overload
 
 import numpy as np
 from colorama import Fore, Style
@@ -150,7 +150,7 @@ class _MCTSExplorer:
 
         exploitation = node.rewards / (node.visited_num + 1)
         exploration = self.frequency_weight * np.sqrt(2 * np.log(step) / (node.visited_num + 0.01))
-        return exploitation + exploration
+        return float(exploitation + exploration)
 
     def update_rewards(self, path: List[_PromptNode], reward: float, last_node: Optional[_PromptNode] = None) -> None:
         """
@@ -197,7 +197,7 @@ class FuzzerContext(PromptGeneratorStrategyContext):
     # Optional memory labels to apply to the prompts
     memory_labels: Dict[str, str] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """
         Calculate the query limit after initialization if not provided.
         """
@@ -1116,7 +1116,7 @@ class FuzzerGenerator(PromptGeneratorStrategy[FuzzerContext, FuzzerResult]):
             path=context.mcts_selected_path, reward=reward, last_node=context.last_choice_node
         )
 
-    def _normalize_score_to_float(self, score_value) -> float:
+    def _normalize_score_to_float(self, score_value: Any) -> float:
         """
         Normalize a score value to a float between 0.0 and 1.0.
 
@@ -1163,18 +1163,18 @@ class FuzzerGenerator(PromptGeneratorStrategy[FuzzerContext, FuzzerResult]):
         prompt_templates: List[str],
         max_query_limit: Optional[int] = None,
         memory_labels: Optional[dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> FuzzerResult: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> FuzzerResult: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> FuzzerResult:
         """
         Execute the Fuzzer generation strategy asynchronously.

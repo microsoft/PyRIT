@@ -51,9 +51,9 @@ class DecodingScorer(TrueFalseScorer):
 
         super().__init__(score_aggregator=aggregator, validator=validator or self._default_validator)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
+        self._set_identifier(
             score_aggregator=self._score_aggregator.__name__,
             scorer_specific_params={
                 "text_matcher": self._text_matcher.__class__.__name__,

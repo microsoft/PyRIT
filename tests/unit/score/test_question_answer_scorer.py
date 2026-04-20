@@ -33,17 +33,23 @@ def text_message_piece(patch_central_database) -> MessagePiece:
 
 
 @pytest.mark.asyncio
-async def test_question_answer_scorer_validate_image(image_message_piece: MessagePiece):
+async def test_score_async_unsupported_image_type_returns_false(
+    patch_central_database, image_message_piece: MessagePiece
+):
     scorer = QuestionAnswerScorer(category=["new_category"])
     message = Message(message_pieces=[image_message_piece])
-    with pytest.raises(ValueError, match="There are no valid pieces to score."):
-        await scorer.score_async(message)
+
+    # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
+    scores = await scorer.score_async(message)
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert "No supported pieces" in scores[0].score_rationale
 
     os.remove(image_message_piece.converted_value)
 
 
 @pytest.mark.asyncio
-async def test_question_answer_scorer_validate_missing_metadata():
+async def test_score_async_missing_metadata_returns_false(patch_central_database):
     request = MessagePiece(
         id="test_id",
         role="user",
@@ -53,8 +59,12 @@ async def test_question_answer_scorer_validate_missing_metadata():
         prompt_metadata={},
     ).to_message()
     scorer = QuestionAnswerScorer(category=["new_category"])
-    with pytest.raises(ValueError, match="There are no valid pieces to score."):
-        await scorer.score_async(request)
+
+    # With raise_on_no_valid_pieces=False (default), returns False for missing metadata
+    scores = await scorer.score_async(request)
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert "No supported pieces" in scores[0].score_rationale
 
 
 @pytest.mark.asyncio

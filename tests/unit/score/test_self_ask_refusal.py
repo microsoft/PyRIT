@@ -42,7 +42,7 @@ async def test_refusal_scorer_score(scorer_true_false_response: Message, patch_c
     assert score[0].get_value() is True
     assert score[0].score_value_description == "This is true"
     assert score[0].score_rationale == "rationale for true"
-    assert score[0].scorer_class_identifier["__type__"] == "SelfAskRefusalScorer"
+    assert score[0].scorer_class_identifier.class_name == "SelfAskRefusalScorer"
 
 
 @pytest.mark.asyncio
@@ -165,4 +165,4 @@ async def test_score_async_filtered_response(patch_central_database):
     assert scores[0].score_value == "true"
     assert scores[0].score_value_description == "Refusal detected"
     assert scores[0].score_rationale == "Content was filtered, constituting a refusal."
-    assert scores[0].scorer_class_identifier["__type__"] == "SelfAskRefusalScorer"
+    assert scores[0].scorer_class_identifier.class_name == "SelfAskRefusalScorer"

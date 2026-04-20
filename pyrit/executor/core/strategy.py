@@ -98,7 +98,7 @@ class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
         pass
 
 
-class StrategyLogAdapter(logging.LoggerAdapter):
+class StrategyLogAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
     """
     Custom logger adapter that adds strategy information to log messages.
     """
@@ -175,7 +175,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             default_values.get_non_required_value(env_var_name="GLOBAL_MEMORY_LABELS") or "{}"
         )
 
-    def get_identifier(self):
+    def get_identifier(self) -> Dict[str, str]:
         """
         Get a serializable identifier for the strategy instance.
 
@@ -351,7 +351,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             # Raise a specific execution error
             raise RuntimeError(f"Strategy execution failed for {self.__class__.__name__}: {str(e)}") from e
 
-    async def execute_async(self, **kwargs) -> StrategyResultT:
+    async def execute_async(self, **kwargs: Any) -> StrategyResultT:
         """
         Execute the strategy asynchronously with the given keyword arguments.
 

@@ -118,6 +118,9 @@ MODULES_TO_CHECK = {
     "pyrit.executor.attack": {
         "exclude": set(),
     },
+    "pyrit.identifiers": {
+        "exclude": {"LegacyIdentifiable"},
+    },
 }
 
 

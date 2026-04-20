@@ -4,7 +4,7 @@
 import base64
 import json
 import os
-from typing import Any, List, Union, cast
+from typing import Any, List, Union
 
 from pyrit.common import convert_local_image_to_data_url
 from pyrit.message_normalizer.message_normalizer import (
@@ -13,7 +13,8 @@ from pyrit.message_normalizer.message_normalizer import (
     SystemMessageBehavior,
     apply_system_message_behavior,
 )
-from pyrit.models import ChatMessage, ChatMessageRole, DataTypeSerializer, Message
+from pyrit.models import ChatMessage, DataTypeSerializer, Message
+from pyrit.models.literals import ChatMessageRole
 from pyrit.models.message_piece import MessagePiece
 
 # Supported audio formats for OpenAI input_audio
@@ -80,7 +81,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         chat_messages: List[ChatMessage] = []
         for message in processed_messages:
             pieces = message.message_pieces
-            role = cast(ChatMessageRole, pieces[0].api_role)
+            role: ChatMessageRole = pieces[0].api_role
 
             # Translate system -> developer for newer OpenAI models
             if self.use_developer_role and role == "system":

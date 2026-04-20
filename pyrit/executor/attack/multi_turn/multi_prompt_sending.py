@@ -99,7 +99,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
         )
 
 
-class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackResult]):
+class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], AttackResult]):
     """
     Implementation of multi-prompt sending attack strategy.
 
@@ -160,7 +160,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._objective_scorer = attack_scoring_config.objective_scorer
-        self._successful_objective_threshold = attack_scoring_config.successful_objective_threshold
 
         # Initialize prompt normalizer and conversation manager
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -179,10 +178,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
             auxiliary_scorers=self._auxiliary_scorers,
-            successful_objective_threshold=self._successful_objective_threshold,
         )
 
-    def _validate_context(self, *, context: MultiTurnAttackContext) -> None:
+    def _validate_context(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """
         Validate the context before executing the attack.
 
@@ -198,7 +196,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
         if not context.params.user_messages or len(context.params.user_messages) == 0:
             raise ValueError("User messages must be provided and non-empty in the params")
 
-    async def _setup_async(self, *, context: MultiTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """
         Set up the attack by preparing conversation context.
 
@@ -217,7 +215,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
             memory_labels=self._memory_labels,
         )
 
-    async def _perform_async(self, *, context: MultiTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: MultiTurnAttackContext[Any]) -> AttackResult:
         """
         Perform the multi-prompt sending attack.
 
@@ -286,7 +284,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
         *,
         response: Optional[Message],
         score: Optional[Score],
-        context: MultiTurnAttackContext,
+        context: MultiTurnAttackContext[Any],
     ) -> tuple[AttackOutcome, Optional[str]]:
         """
         Determine the outcome of the attack based on the response and score.
@@ -317,13 +315,13 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
         # At least one prompt was filtered or failed to get a response
         return AttackOutcome.FAILURE, "At least one prompt was filtered or failed to get a response"
 
-    async def _teardown_async(self, *, context: MultiTurnAttackContext) -> None:
+    async def _teardown_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
         pass
 
     async def _send_prompt_to_objective_target_async(
-        self, *, current_message: Message, context: MultiTurnAttackContext
+        self, *, current_message: Message, context: MultiTurnAttackContext[Any]
     ) -> Optional[Message]:
         """
         Send the prompt to the target and return the response.
@@ -379,7 +377,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, A
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult:
         """
         Execute the attack strategy asynchronously with the provided parameters.

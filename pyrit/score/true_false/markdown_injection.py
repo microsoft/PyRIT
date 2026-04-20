@@ -42,9 +42,9 @@ class MarkdownInjectionScorer(TrueFalseScorer):
 
         super().__init__(validator=validator or self._default_validator, score_aggregator=score_aggregator)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
+        self._set_identifier(
             score_aggregator=self._score_aggregator.__name__,
         )
 

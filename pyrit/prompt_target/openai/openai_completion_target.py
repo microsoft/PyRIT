@@ -25,9 +25,9 @@ class OpenAICompletionTarget(OpenAITarget):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         n: Optional[int] = None,
-        *args,
-        **kwargs,
-    ):
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the OpenAICompletionTarget with the given parameters.
 
@@ -72,7 +72,7 @@ class OpenAICompletionTarget(OpenAITarget):
         self._presence_penalty = presence_penalty
         self._n = n
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_COMPLETION_MODEL"
         self.endpoint_environment_variable = "OPENAI_COMPLETION_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_COMPLETION_API_KEY"

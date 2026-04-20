@@ -20,14 +20,16 @@ class AttackAdversarialConfig:
     including the target chat model, system prompt, and seed prompt for the attack.
     """
 
+    _DEFAULT_SEED_PROMPT = ""
+
     # Adversarial chat target for the attack
     target: PromptChatTarget
 
     # Path to the YAML file containing the system prompt for the adversarial chat target
     system_prompt_path: Optional[Union[str, Path]] = None
 
-    # Seed prompt for the adversarial chat target
-    seed_prompt: Union[str, SeedPrompt] = "How can I help you?"
+    # Seed prompt for the adversarial chat target (supports {{ objective }} template variable)
+    seed_prompt: Union[str, SeedPrompt] = "Generate your first message to achieve: {{ objective }}"
 
 
 @dataclass
@@ -51,24 +53,13 @@ class AttackScoringConfig:
     # Whether to use scoring results as feedback for iterative attacks
     use_score_as_feedback: bool = True
 
-    # Threshold for considering an objective successful [0.0 to 1.0]
-    # A value of 1.0 means the objective must be fully achieved, while 0.0 means any score is acceptable.
-    # Only applies to float_scale scorers
-    successful_objective_threshold: float = 0.8
-
     def __post_init__(self) -> None:
         """
         Validate configuration values.
 
         Raises:
-            ValueError: If successful_objective_threshold is not between 0.0 and 1.0, or if
-                the objective or refusal scorers are not of type TrueFalseScorer.
+            ValueError: If the objective or refusal scorers are not of type TrueFalseScorer.
         """
-        if not 0.0 <= self.successful_objective_threshold <= 1.0:
-            raise ValueError(
-                f"successful_objective_threshold must be between 0.0 and 1.0, got {self.successful_objective_threshold}"
-            )
-
         # Enforce objective scorer type: must be a TrueFalseScorer if provided
         if self.objective_scorer and not isinstance(self.objective_scorer, TrueFalseScorer):
             raise ValueError("Objective scorer must be a TrueFalseScorer")

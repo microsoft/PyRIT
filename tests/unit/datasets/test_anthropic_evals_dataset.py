@@ -347,8 +347,7 @@ class TestFetchAnthropicEvalsDataset:
                         "name": "lm_generated_evals",
                         "type": "dir",
                         "url": (
-                            "https://api.github.com/repos/anthropics/evals/contents/"
-                            "advanced-ai-risk/lm_generated_evals"
+                            "https://api.github.com/repos/anthropics/evals/contents/advanced-ai-risk/lm_generated_evals"
                         ),
                     },
                 ]

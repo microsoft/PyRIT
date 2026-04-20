@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, cast
 
 from pyrit.common import get_non_required_value
 from pyrit.message_normalizer.chat_message_normalizer import ChatMessageNormalizer
@@ -122,9 +122,12 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         Returns:
             The loaded tokenizer.
         """
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
-        return AutoTokenizer.from_pretrained(model_name, token=token or None)
+        return cast(
+            PreTrainedTokenizerBase,
+            AutoTokenizer.from_pretrained(model_name, token=token or None),  # type: ignore[no-untyped-call]
+        )
 
     @classmethod
     def from_model(

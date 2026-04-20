@@ -29,9 +29,9 @@ class OpenAIImageTarget(OpenAITarget):
         image_size: Literal["256x256", "512x512", "1024x1024", "1536x1024", "1024x1536"] = "1024x1024",
         quality: Optional[Literal["standard", "hd", "low", "medium", "high"]] = None,
         style: Optional[Literal["natural", "vivid"]] = None,
-        *args,
-        **kwargs,
-    ):
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the image target with specified parameters.
 
@@ -68,7 +68,7 @@ class OpenAIImageTarget(OpenAITarget):
 
         super().__init__(*args, **kwargs)
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_IMAGE_MODEL"
         self.endpoint_environment_variable = "OPENAI_IMAGE_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_IMAGE_API_KEY"

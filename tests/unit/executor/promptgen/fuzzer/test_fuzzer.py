@@ -29,6 +29,7 @@ from pyrit.score import (
     Scorer,
     TrueFalseScorer,
 )
+from tests.unit.mocks import get_mock_scorer_identifier
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -271,6 +272,7 @@ class TestFuzzerGenerator:
             score_rationale="",
             score_metadata={},
             message_piece_id="",
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
         assert generator._is_jailbreak(true_score) is True
 
@@ -283,6 +285,7 @@ class TestFuzzerGenerator:
             score_rationale="",
             score_metadata={},
             message_piece_id="",
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
         assert generator._is_jailbreak(false_score) is False
 
@@ -308,6 +311,7 @@ class TestFuzzerGenerator:
             score_rationale="",
             score_metadata={},
             message_piece_id="",
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
         assert generator._is_jailbreak(high_score) is True
 
@@ -320,6 +324,7 @@ class TestFuzzerGenerator:
             score_rationale="",
             score_metadata={},
             message_piece_id="",
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
         assert generator._is_jailbreak(low_score) is False
 

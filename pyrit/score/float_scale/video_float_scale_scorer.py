@@ -61,9 +61,9 @@ class VideoFloatScaleScorer(FloatScaleScorer, _BaseVideoScorer):
         )
         self._score_aggregator = score_aggregator
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
+        self._set_identifier(
             sub_scorers=[self.image_scorer],
             score_aggregator=self._score_aggregator.__name__,
             scorer_specific_params={

@@ -21,7 +21,7 @@ class MorseConverter(PromptConverter):
 
     def __init__(self, *, append_description: bool = False) -> None:
         """
-        Initializes the converter with an option to append a description to the prompt.
+        Initialize the converter with an option to append a description to the prompt.
 
         Args:
             append_description (bool): Append plaintext "expert" text to the prompt. Includes instructions to only
@@ -36,7 +36,17 @@ class MorseConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt to morse code.
+        Convert the given prompt to morse code.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType, optional): Type of input data. Defaults to "text".
+
+        Returns:
+            ConverterResult: The result containing the morse code representation of the prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")

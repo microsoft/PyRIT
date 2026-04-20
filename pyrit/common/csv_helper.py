@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import csv
-from typing import Dict, List
+from typing import IO, Any, Dict, List
 
 
-def read_csv(file) -> List[Dict[str, str]]:
+def read_csv(file: IO[Any]) -> List[Dict[str, str]]:
     """
     Read a CSV file and return its rows as dictionaries.
 
@@ -16,7 +16,7 @@ def read_csv(file) -> List[Dict[str, str]]:
     return [row for row in reader]
 
 
-def write_csv(file, examples: List[Dict[str, str]]):
+def write_csv(file: IO[Any], examples: List[Dict[str, str]]) -> None:
     """
     Write a list of dictionaries to a CSV file.
 

@@ -136,3 +136,65 @@ result = await attack.execute_async(objective=objective)  # type: ignore
 
 printer = ConsoleAttackResultPrinter()
 await printer.print_conversation_async(result=result)  # type: ignore
+
+# %% [markdown]
+# ## Response Converters
+#
+# So far, we've focused on **request converters** that transform prompts before sending them to the target. PyRIT also supports **response converters** that transform the target's response before returning it. This is useful in scenarios like:
+#
+# - Translating responses back to the original language after sending prompts in a different language
+# - Decoding encoded responses
+# - Normalizing or cleaning up response text
+#
+# Response converters use the same `PromptConverterConfiguration` class as request converters. They are configured via the `response_converters` parameter in `AttackConverterConfig`.
+#
+# ### Translation Round-Trip Example
+#
+# A common use case is sending prompts in a different language to test how the target handles non-English input. In this example, we:
+#
+# 1. Use a **request converter** to translate the prompt from English to French
+# 2. Send the translated prompt to the target
+# 3. Use a **response converter** to translate the response back to English
+
+# %%
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    ConsoleAttackResultPrinter,
+    PromptSendingAttack,
+)
+from pyrit.prompt_converter import TranslationConverter
+from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_target import OpenAIChatTarget
+
+objective = "What is the capital of France?"
+
+# Create an LLM target for the converters
+converter_target = OpenAIChatTarget()
+
+# Create an LLM target to send prompts to
+prompt_target = OpenAIChatTarget()
+
+# Request converter: translate English to French
+request_converter = TranslationConverter(converter_target=converter_target, language="French")
+request_converter_config = PromptConverterConfiguration(converters=[request_converter])
+
+# Response converter: translate response back to English
+response_converter = TranslationConverter(converter_target=converter_target, language="English")
+response_converter_config = PromptConverterConfiguration(converters=[response_converter])
+
+# Configure the attack with both request and response converters
+converter_config = AttackConverterConfig(
+    request_converters=[request_converter_config],
+    response_converters=[response_converter_config],
+)
+
+attack = PromptSendingAttack(
+    objective_target=prompt_target,
+    attack_converter_config=converter_config,
+)
+
+result = await attack.execute_async(objective=objective)  # type: ignore
+
+# Print the conversation showing both original and converted values
+printer = ConsoleAttackResultPrinter()
+await printer.print_conversation_async(result=result)  # type: ignore

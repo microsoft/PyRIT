@@ -7,7 +7,7 @@ from typing import List
 
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackResult, Message, MessagePiece, Score
+from pyrit.models import AttackResult, ConversationType, Message, MessagePiece, Score
 
 
 class MarkdownAttackResultPrinter(AttackResultPrinter):
@@ -47,7 +47,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             try:
                 from IPython.display import Markdown, display
 
-                display(Markdown(full_markdown))
+                display(Markdown(full_markdown))  # type: ignore[no-untyped-call]
             except (ImportError, NameError):
                 # Fallback to print if IPython is not available
                 print(full_markdown)
@@ -82,7 +82,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         lines.append(f"{indent}- **Score Type:** {score.score_type}")
         lines.append(f"{indent}- **Value:** {value_str}")
-        lines.append(f"{indent}- **Category:** {score.score_category or 'N/A'}")
+        category_str = ", ".join(score.score_category) if score.score_category else "N/A"
+        lines.append(f"{indent}- **Category:** {category_str}")
 
         if score.score_rationale:
             # Handle multi-line rationale
@@ -99,7 +100,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return "\n".join(lines)
 
-    async def print_result_async(self, result: AttackResult, *, include_auxiliary_scores: bool = False) -> None:
+    async def print_result_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> None:
         """
         Print the complete attack result as formatted markdown.
 
@@ -111,6 +119,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             result (AttackResult): The attack result to print.
             include_auxiliary_scores (bool): Whether to include auxiliary scores
                 in the conversation display. Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations.
+                For each pruned conversation, only the last message and its score are shown.
+                Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial
+                conversation (the red teaming LLM's reasoning). Only shown for successful
+                attacks to avoid overwhelming output. Defaults to False.
         """
         markdown_lines = []
 
@@ -130,6 +144,18 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             result=result, include_scores=include_auxiliary_scores
         )
         markdown_lines.extend(conversation_lines)
+
+        # Pruned conversations if requested
+        if include_pruned_conversations:
+            pruned_lines = await self._get_pruned_conversations_markdown_async(result)
+            if pruned_lines:
+                markdown_lines.extend(pruned_lines)
+
+        # Adversarial conversation if requested (only for successful attacks)
+        if include_adversarial_conversation:
+            adversarial_lines = await self._get_adversarial_conversation_markdown_async(result)
+            if adversarial_lines:
+                markdown_lines.extend(adversarial_lines)
 
         # Metadata if available
         if result.metadata:
@@ -201,6 +227,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
                 conversation history.
         """
         markdown_lines = []
+
+        if not result.conversation_id:
+            markdown_lines.append("*No conversation ID available*\n")
+            return markdown_lines
+
         messages = self._memory.get_conversation(conversation_id=result.conversation_id)
 
         if not messages:
@@ -486,5 +517,130 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         if result.last_score:
             markdown_lines.append("\n### Final Score\n")
             markdown_lines.append(self._format_score(result.last_score))
+
+        return markdown_lines
+
+    async def _get_pruned_conversations_markdown_async(self, result: AttackResult) -> List[str]:
+        """
+        Generate markdown lines for pruned conversations.
+
+        For each pruned conversation, displays only the last message and its
+        associated score to provide context without overwhelming output.
+
+        Args:
+            result (AttackResult): The attack result containing related conversations.
+
+        Returns:
+            List[str]: List of markdown strings for pruned conversations, or empty list if none.
+        """
+        pruned_refs = result.get_conversations_by_type(ConversationType.PRUNED)
+
+        if not pruned_refs:
+            return []
+
+        markdown_lines = []
+        markdown_lines.append(f"\n## Pruned Conversations ({len(pruned_refs)} total)\n")
+        markdown_lines.append("*Showing only the last message and score for each pruned branch.*\n")
+
+        for idx, ref in enumerate(pruned_refs, 1):
+            # Header for this pruned conversation
+            label = f"### 🗑️ Pruned #{idx}"
+            if ref.description:
+                label += f" - {ref.description}"
+            markdown_lines.append(f"\n{label}\n")
+
+            # Get the conversation messages
+            messages = list(self._memory.get_conversation(conversation_id=ref.conversation_id))
+
+            if not messages:
+                markdown_lines.append(f"*No messages found for conversation: `{ref.conversation_id}`*\n")
+                continue
+
+            # Get only the last message
+            last_message = messages[-1]
+            role_label = last_message.api_role.upper()
+
+            markdown_lines.append(f"**Last Message ({role_label}):**\n")
+
+            for piece in last_message.message_pieces:
+                # Format the message content
+                content = piece.converted_value or ""
+                if "\n" in content:
+                    markdown_lines.append("```")
+                    markdown_lines.append(content)
+                    markdown_lines.append("```")
+                else:
+                    markdown_lines.append(f"> {content}\n")
+
+                # Get and format associated scores
+                scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
+                if scores:
+                    markdown_lines.append("\n**Score:**\n")
+                    for score in scores:
+                        markdown_lines.append(self._format_score(score, indent=""))
+
+        return markdown_lines
+
+    async def _get_adversarial_conversation_markdown_async(self, result: AttackResult) -> List[str]:
+        """
+        Generate markdown lines for the adversarial conversation.
+
+        The adversarial conversation shows the red teaming LLM's reasoning.
+        For attacks with multiple adversarial conversations (e.g., TAP), only the
+        best-scoring branch's adversarial conversation is shown if available.
+
+        Args:
+            result (AttackResult): The attack result containing related conversations.
+
+        Returns:
+            List[str]: List of markdown strings for the adversarial conversation, or empty list.
+        """
+        adversarial_refs = result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+
+        if not adversarial_refs:
+            return []
+
+        markdown_lines = []
+        markdown_lines.append("\n## Adversarial Conversation (Red Team LLM)\n")
+        markdown_lines.append("*This shows the reasoning and strategy of the red teaming LLM.*\n")
+
+        # Check if result has a best_adversarial_conversation_id (e.g., TAP attack)
+        # If so, only show that conversation instead of all adversarial conversations
+        best_adversarial_id = result.metadata.get("best_adversarial_conversation_id")
+        if best_adversarial_id:
+            # Filter to only the best adversarial conversation
+            adversarial_refs = [ref for ref in adversarial_refs if ref.conversation_id == best_adversarial_id]
+            if adversarial_refs:
+                markdown_lines.append("*📌 Showing best-scoring branch's adversarial conversation*\n")
+
+        for ref in adversarial_refs:
+            if ref.description:
+                markdown_lines.append(f"*📝 {ref.description}*\n")
+
+            messages = list(self._memory.get_conversation(conversation_id=ref.conversation_id))
+
+            if not messages:
+                markdown_lines.append(f"*No messages found for conversation: `{ref.conversation_id}`*\n")
+                continue
+
+            # Format each message in the adversarial conversation
+            turn_number = 0
+            for message in messages:
+                if message.api_role == "user":
+                    turn_number += 1
+                    markdown_lines.append(f"\n#### Turn {turn_number} - USER\n")
+                elif message.api_role == "system":
+                    markdown_lines.append("\n#### SYSTEM\n")
+                else:
+                    markdown_lines.append(f"\n#### {message.api_role.upper()}\n")
+
+                for piece in message.message_pieces:
+                    content = piece.converted_value or ""
+                    if len(content) > 200 or "\n" in content:
+                        markdown_lines.append("```")
+                        markdown_lines.append(content)
+                        markdown_lines.append("```")
+                    else:
+                        markdown_lines.append(f"> {content}\n")
 
         return markdown_lines

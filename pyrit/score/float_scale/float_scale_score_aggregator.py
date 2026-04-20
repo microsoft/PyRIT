@@ -5,11 +5,11 @@ from collections import defaultdict
 from typing import Callable, Dict, Iterable, List
 
 from pyrit.models import Score
-from pyrit.score.aggregator_utils import (
+from pyrit.score.score_aggregator_result import ScoreAggregatorResult
+from pyrit.score.score_utils import (
     combine_metadata_and_categories,
     format_score_for_rationale,
 )
-from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 
 FloatScaleOp = Callable[[List[float]], float]
 FloatScaleAggregatorFunc = Callable[[Iterable[Score]], List[ScoreAggregatorResult]]

@@ -56,7 +56,7 @@ class TestSeedGroupInit:
         """Test initialization with dictionary seeds."""
         group = SeedGroup(
             seeds=[
-                {"value": "Test objective", "is_objective": True},
+                {"value": "Test objective", "seed_type": "objective"},
                 {"value": "Test prompt", "data_type": "text"},
             ]
         )

@@ -109,19 +109,19 @@ class PyRITShell(cmd.Cmd):
         self._init_complete = threading.Event()
         self._init_thread.start()
 
-    def _background_init(self):
+    def _background_init(self) -> None:
         """Initialize PyRIT modules in the background. This dramatically speeds up shell startup."""
         asyncio.run(self.context.initialize_async())
         self._init_complete.set()
 
-    def _ensure_initialized(self):
+    def _ensure_initialized(self) -> None:
         """Wait for initialization to complete if not already done."""
         if not self._init_complete.is_set():
             print("Waiting for PyRIT initialization to complete...")
             sys.stdout.flush()
             self._init_complete.wait()
 
-    def do_list_scenarios(self, arg):
+    def do_list_scenarios(self, arg: str) -> None:
         """List all available scenarios."""
         self._ensure_initialized()
         try:
@@ -129,7 +129,7 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error listing scenarios: {e}")
 
-    def do_list_initializers(self, arg):
+    def do_list_initializers(self, arg: str) -> None:
         """List all available initializers."""
         self._ensure_initialized()
         try:
@@ -141,7 +141,7 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
-    def do_run(self, line):
+    def do_run(self, line: str) -> None:
         """
         Run a scenario.
 
@@ -264,7 +264,7 @@ class PyRITShell(cmd.Cmd):
 
             traceback.print_exc()
 
-    def do_scenario_history(self, arg):
+    def do_scenario_history(self, arg: str) -> None:
         """
         Display history of scenario runs.
 
@@ -286,7 +286,7 @@ class PyRITShell(cmd.Cmd):
         print("\nUse 'print-scenario <number>' to view detailed results for a specific run.")
         print("Use 'print-scenario' to view detailed results for all runs.")
 
-    def do_print_scenario(self, arg):
+    def do_print_scenario(self, arg: str) -> None:
         """
         Print detailed results for scenario runs.
 
@@ -340,7 +340,7 @@ class PyRITShell(cmd.Cmd):
             except ValueError:
                 print(f"Error: Invalid scenario number '{arg}'. Must be an integer.")
 
-    def do_help(self, arg):
+    def do_help(self, arg: str) -> None:
         """Show help. Usage: help [command]."""
         if not arg:
             # Show general help
@@ -391,7 +391,7 @@ class PyRITShell(cmd.Cmd):
             # Show help for specific command
             super().do_help(arg)
 
-    def do_exit(self, arg):
+    def do_exit(self, arg: str) -> bool:
         """
         Exit the shell. Aliases: quit, q.
 
@@ -401,7 +401,7 @@ class PyRITShell(cmd.Cmd):
         print("\nGoodbye!")
         return True
 
-    def do_clear(self, arg):
+    def do_clear(self, arg: str) -> None:
         """Clear the screen."""
         import os
 
@@ -421,13 +421,8 @@ class PyRITShell(cmd.Cmd):
         """
         return False
 
-    def default(self, line):
-        """
-        Handle unknown commands and convert hyphens to underscores.
-
-        Returns:
-            None
-        """
+    def default(self, line: str) -> None:
+        """Handle unknown commands and convert hyphens to underscores."""
         # Try converting hyphens to underscores for command lookup
         parts = line.split(None, 1)
         if parts:
@@ -437,13 +432,14 @@ class PyRITShell(cmd.Cmd):
             if hasattr(self, method_name):
                 # Call the method with the rest of the line as argument
                 arg = parts[1] if len(parts) > 1 else ""
-                return getattr(self, method_name)(arg)
+                getattr(self, method_name)(arg)
+                return
 
         print(f"Unknown command: {line}")
         print("Type 'help' or '?' for available commands")
 
 
-def main():
+def main() -> int:
     """
     Entry point for pyrit_shell.
 

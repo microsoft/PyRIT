@@ -19,10 +19,11 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.models import Message, MessagePiece, SeedGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.score import TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
 
 @pytest.fixture
@@ -76,13 +77,13 @@ ATTACK_TEST_PARAMS = [
             "objective": "test objective",
             "seed_group": SeedGroup(seeds=[SeedPrompt(value="test", data_type="text")]),
         },
-        "pyrit.executor.attack.single_turn.prompt_sending.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         MultiPromptSendingAttack,
         {},
         lambda: {"objective": "test objective", "prompt_sequence": [SeedPrompt(value="test", data_type="text")]},
-        "pyrit.executor.attack.multi_turn.multi_prompt_sending.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         RedTeamingAttack,
@@ -92,7 +93,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_turns": 1,
         },
-        "pyrit.executor.attack.multi_turn.red_teaming.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         CrescendoAttack,
@@ -102,7 +103,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_turns": 1,
         },
-        "pyrit.executor.attack.multi_turn.crescendo.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         TreeOfAttacksWithPruningAttack,
@@ -112,7 +113,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_iterations": 1,
         },
-        "pyrit.executor.attack.multi_turn.tree_of_attacks.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
 ]
 
@@ -145,10 +146,21 @@ async def test_attack_executor_skips_scoring_on_error(
     mock_memory_instance.return_value = mock_memory
 
     # Setup scoring config with objective scorer
-    attack_scoring_config = AttackScoringConfig(
-        objective_scorer=mock_scorer,
-        use_score_as_feedback=False,
-    )
+    # TAP requires FloatScaleThresholdScorer, so use TAPAttackScoringConfig for it
+    if attack_class == TreeOfAttacksWithPruningAttack:
+        tap_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        tap_scorer.score_async = AsyncMock()
+        tap_scorer.get_identifier.return_value = {"id": "mock_tap_scorer_id"}
+        tap_scorer.threshold = 0.7
+        attack_scoring_config = TAPAttackScoringConfig(
+            objective_scorer=tap_scorer,
+            use_score_as_feedback=False,
+        )
+    else:
+        attack_scoring_config = AttackScoringConfig(
+            objective_scorer=mock_scorer,
+            use_score_as_feedback=False,
+        )
 
     # Setup additional configs for multi-turn attacks that need adversarial config
     if attack_class in [RedTeamingAttack, CrescendoAttack, TreeOfAttacksWithPruningAttack]:

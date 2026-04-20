@@ -20,7 +20,7 @@ class DiacriticConverter(PromptConverter):
 
     def __init__(self, target_chars: str = "aeiou", accent: str = "acute"):
         """
-        Initializes the converter with specified target characters and diacritic accent.
+        Initialize the converter with specified target characters and diacritic accent.
 
         Args:
             target_chars (str): Characters to apply the diacritic to. Defaults to "aeiou".
@@ -45,7 +45,13 @@ class DiacriticConverter(PromptConverter):
 
     def _get_accent_mark(self) -> str:
         """
-        Retrieves the Unicode character for the specified diacritic accent.
+        Retrieve the Unicode character for the specified diacritic accent.
+
+        Returns:
+            str: The Unicode diacritic character.
+
+        Raises:
+            ValueError: If the specified accent is not recognized.
         """
         diacritics = {
             "acute": "\u0301",  # Acute accent
@@ -62,7 +68,7 @@ class DiacriticConverter(PromptConverter):
 
     def _add_diacritic(self, text: str) -> str:
         """
-        Applies the diacritic to each specified target character in the text.
+        Apply the diacritic to each specified target character in the text.
 
         Args:
             text (str): The input text in which diacritics will be added.
@@ -78,7 +84,19 @@ class DiacriticConverter(PromptConverter):
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt by applying diacritics to specified characters."""
+        """
+        Convert the given prompt by applying diacritics to specified characters.
+
+        Args:
+            prompt (str): The text prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the modified text.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Only 'text' input type is supported.")
 

@@ -16,11 +16,11 @@ class FirstLetterConverter(WordLevelConverter):
     def __init__(
         self,
         *,
-        letter_separator=" ",
+        letter_separator: str = " ",
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
-        Initializes the converter with the specified letter separator and selection strategy.
+        Initialize the converter with the specified letter separator and selection strategy.
 
         Args:
             letter_separator (str): The string used to join the first letters.
@@ -31,9 +31,27 @@ class FirstLetterConverter(WordLevelConverter):
         self.letter_separator = letter_separator
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         stripped_word = "".join(filter(str.isalnum, word))
         return stripped_word[:1]
 
     def join_words(self, words: list[str]) -> str:
+        """
+        Join the converted words using the specified letter separator.
+
+        Args:
+            words (list[str]): The list of converted words.
+
+        Returns:
+            str: The joined string of converted words.
+        """
         cleaned_words = list(filter(None, words))
         return self.letter_separator.join(cleaned_words)

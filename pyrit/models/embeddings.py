@@ -64,7 +64,7 @@ class EmbeddingResponse(BaseModel):
 
 class EmbeddingSupport(ABC):
     @abstractmethod
-    def generate_text_embedding(self, text: str, **kwargs) -> EmbeddingResponse:
+    def generate_text_embedding(self, text: str, **kwargs: object) -> EmbeddingResponse:
         """
         Generate text embedding synchronously.
 
@@ -78,7 +78,7 @@ class EmbeddingSupport(ABC):
         raise NotImplementedError("generate_text_embedding method not implemented")
 
     @abstractmethod
-    async def generate_text_embedding_async(self, text: str, **kwargs) -> EmbeddingResponse:
+    async def generate_text_embedding_async(self, text: str, **kwargs: object) -> EmbeddingResponse:
         """
         Generate text embedding asynchronously.
 

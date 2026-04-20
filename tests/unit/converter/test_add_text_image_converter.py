@@ -54,9 +54,9 @@ def test_add_text_image_converter_fallback_to_default_font(text_image_converter_
         y_pos=10,
     )
     image = Image.open(BytesIO(text_image_converter_sample_image_bytes))
-    pixels_before = list(image.get_flattened_data())
+    pixels_before = list(image.getdata())
     updated_image = converter._add_text_to_image(image)
-    pixels_after = list(updated_image.get_flattened_data())
+    pixels_after = list(updated_image.getdata())
     assert any(
         record.levelname == "WARNING" and "Cannot open font resource" in record.message for record in caplog.records
     )
@@ -66,9 +66,9 @@ def test_add_text_image_converter_fallback_to_default_font(text_image_converter_
 def test_text_image_converter_add_text_to_image(text_image_converter_sample_image_bytes):
     converter = AddTextImageConverter(text_to_add="Hello, World!", font_name="helvetica.ttf", color=(255, 255, 255))
     image = Image.open(BytesIO(text_image_converter_sample_image_bytes))
-    pixels_before = list(image.get_flattened_data())
+    pixels_before = list(image.getdata())
     updated_image = converter._add_text_to_image(image)
-    pixels_after = list(updated_image.get_flattened_data())
+    pixels_after = list(updated_image.getdata())
     assert updated_image
     # Check if at least one pixel changed, indicating that text was added
     assert pixels_before != pixels_after

@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -100,7 +100,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return SeedDataset.from_yaml_file(self.DEFAULT_SKELETON_KEY_PROMPT_PATH).prompts[0].value
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Execute the skeleton key attack by first sending the skeleton key prompt,
         then sending the objective prompt and evaluating the response.
@@ -135,7 +135,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return result
 
-    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext) -> Optional[Message]:
+    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext[Any]) -> Optional[Message]:
         """
         Send the skeleton key prompt to the target to prime it for the attack.
 
@@ -162,7 +162,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return skeleton_response
 
-    def _create_skeleton_key_failure_result(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    def _create_skeleton_key_failure_result(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Create an attack result for when the skeleton key prompt fails.
 

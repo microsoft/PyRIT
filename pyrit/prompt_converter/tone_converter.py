@@ -30,7 +30,7 @@ class ToneConverter(LLMGenericTextConverter):
         prompt_template: Optional[SeedPrompt] = None,
     ):
         """
-        Initializes the converter with the target chat support, tone, and optional prompt template.
+        Initialize the converter with the target chat support, tone, and optional prompt template.
 
         Args:
             converter_target (PromptChatTarget): The target chat support for the conversion which will translate.

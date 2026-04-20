@@ -131,6 +131,10 @@ chapters:
     - file: code/scenarios/0_scenarios
       sections:
       - file: code/scenarios/1_configuring_scenarios
+    - file: code/registry/0_registry
+      sections:
+      - file: code/registry/1_class_registry
+      - file: code/registry/2_instance_registry
     - file: code/front_end/0_front_end
       sections:
       - file: code/front_end/1_pyrit_scan

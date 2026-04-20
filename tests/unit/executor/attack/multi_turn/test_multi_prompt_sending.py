@@ -15,6 +15,7 @@ from pyrit.executor.attack import (
     MultiPromptSendingAttackParameters,
     MultiTurnAttackContext,
 )
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -26,6 +27,16 @@ from pyrit.prompt_converter import Base64Converter, StringJoinConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test_module",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 @pytest.fixture
@@ -103,7 +114,7 @@ def success_score():
         score_rationale="Test rationale for success",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -118,7 +129,7 @@ def failure_score():
         score_rationale="Test rationale for failure",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -174,7 +185,6 @@ class TestMultiPromptSendingAttackInitialization:
         scoring_config = AttackScoringConfig(
             objective_scorer=mock_true_false_scorer,
             auxiliary_scorers=[MagicMock(spec=Scorer)],
-            successful_objective_threshold=0.85,
         )
 
         attack = MultiPromptSendingAttack(objective_target=mock_target, attack_scoring_config=scoring_config)
@@ -183,7 +193,6 @@ class TestMultiPromptSendingAttackInitialization:
 
         assert result.objective_scorer == mock_true_false_scorer
         assert len(result.auxiliary_scorers) == 1
-        assert result.successful_objective_threshold == 0.85
 
 
 @pytest.mark.usefixtures("patch_central_database")

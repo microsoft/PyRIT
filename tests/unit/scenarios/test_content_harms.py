@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
@@ -21,6 +22,16 @@ from pyrit.scenario.scenarios.airt.content_harms import (
     ContentHarmsDatasetConfiguration,
 )
 from pyrit.score import TrueFalseScorer
+
+
+def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 @pytest.fixture
@@ -43,7 +54,7 @@ def mock_adversarial_target():
 def mock_objective_scorer():
     """Create a mock objective scorer for testing."""
     mock = MagicMock(spec=TrueFalseScorer)
-    mock.get_identifier.return_value = {"__type__": "MockObjectiveScorer", "__module__": "test"}
+    mock.get_identifier.return_value = _mock_scorer_id("MockObjectiveScorer")
     return mock
 
 

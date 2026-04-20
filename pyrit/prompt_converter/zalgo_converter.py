@@ -28,7 +28,7 @@ class ZalgoConverter(WordLevelConverter):
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with the specified selection parameters.
+        Initialize the converter with the specified selection parameters.
 
         Args:
             intensity (int): Number of combining marks per character (higher = more cursed). Default is 10.
@@ -55,6 +55,15 @@ class ZalgoConverter(WordLevelConverter):
         return normalized_intensity
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         if self._intensity <= 0:
             return word
 
@@ -64,6 +73,7 @@ class ZalgoConverter(WordLevelConverter):
         return "".join(glitch(c) if c.isalnum() else c for c in word)
 
     def validate_input(self, prompt: str) -> None:
+        """Validate the input prompt before conversion."""
         # Initialize the random seed before processing any words
         if self._seed is not None:
             random.seed(self._seed)

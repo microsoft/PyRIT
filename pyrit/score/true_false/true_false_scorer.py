@@ -57,7 +57,7 @@ class TrueFalseScorer(Scorer):
 
         super().__init__(validator=validator)
 
-    def validate_return_scores(self, scores: list[Score]):
+    def validate_return_scores(self, scores: list[Score]) -> None:
         """
         Validate the scores returned by the scorer.
 
@@ -89,13 +89,12 @@ class TrueFalseScorer(Scorer):
         if self.evaluation_file_mapping is None:
             return None
 
-        scorer_hash = self.scorer_identifier.compute_hash()
         result_file = SCORER_EVALS_PATH / self.evaluation_file_mapping.result_file
 
         if not result_file.exists():
             return None
 
-        return find_objective_metrics_by_hash(hash=scorer_hash, file_path=result_file)
+        return find_objective_metrics_by_hash(hash=self.get_identifier().hash, file_path=result_file)
 
     async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
         """
@@ -117,20 +116,32 @@ class TrueFalseScorer(Scorer):
         score_list = await super()._score_async(message, objective=objective)
 
         if not score_list:
-            # If no pieces matched (e.g., due to role filter), return False
+            # If no pieces matched (e.g., due to role filter or if all pieces filtered), return False
             # Use the first message piece's ID (or original_prompt_id as fallback)
             first_piece = message.message_pieces[0]
             piece_id = first_piece.id or first_piece.original_prompt_id
             if piece_id is None:
                 raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
+            # Determine specific rationale based on message piece status
+            if first_piece.is_blocked():
+                rationale = "The request was blocked by the target; returning false."
+                description = "Blocked response; returning false."
+            elif first_piece.has_error():
+                rationale = f"Response had an error: {first_piece.response_error}; returning false."
+                description = "Error response; returning false."
+            else:
+                # this can happen with multi-modal responses if no supported pieces are present
+                rationale = "No supported pieces to score after filtering; returning false."
+                description = "No pieces to score after filtering; returning false."
+
             return_score = Score(
                 score_value=str(False).lower(),
-                score_value_description="No pieces to score after filtering; returning false.",
+                score_value_description=description,
                 score_type="true_false",
                 score_category=None,
                 score_metadata=None,
-                score_rationale="No supported pieces (possibly filtered by role).",
+                score_rationale=rationale,
                 scorer_class_identifier=self.get_identifier(),
                 message_piece_id=piece_id,
                 objective=objective,

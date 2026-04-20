@@ -5,7 +5,7 @@ import logging
 import textwrap
 from dataclasses import dataclass, field
 from string import Formatter
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.component import ConversationManager
@@ -38,7 +38,7 @@ ChunkedRequestAttackParameters = AttackParameters.excluding("next_message")
 
 
 @dataclass
-class ChunkedRequestAttackContext(MultiTurnAttackContext):
+class ChunkedRequestAttackContext(MultiTurnAttackContext[Any]):
     """Context for the ChunkedRequest attack strategy."""
 
     # Collected chunk responses

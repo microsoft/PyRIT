@@ -187,7 +187,6 @@ API Reference
     MultiPromptSendingAttackParameters
     MultiTurnAttackContext
     MultiTurnAttackStrategy
-    ObjectiveEvaluator
     PrependedConversationConfig
     PromptSendingAttack
     RTASystemPromptPaths
@@ -261,6 +260,25 @@ API Reference
     XPIAProcessingCallback
     XPIAStatus
 
+:py:mod:`pyrit.identifiers`
+===========================
+
+.. automodule:: pyrit.identifiers
+    :no-members:
+    :no-inherited-members:
+
+.. autosummary::
+    :nosignatures:
+    :toctree: _autosummary/
+
+    class_name_to_snake_case
+    Identifiable
+    Identifier
+    IdentifierT
+    IdentifierType
+    ScorerIdentifier
+    snake_case_to_class_name
+
 :py:mod:`pyrit.memory`
 ======================
 
@@ -315,6 +333,7 @@ API Reference
     ALLOWED_CHAT_MESSAGE_ROLES
     AudioPathDataTypeSerializer
     AzureBlobStorageIO
+    BinaryPathDataTypeSerializer
     ChatMessage
     ChatMessagesDataset
     ChatMessageRole
@@ -334,7 +353,6 @@ API Reference
     group_conversation_message_pieces_by_sequence
     group_message_pieces_into_conversations
     HarmDefinition
-    Identifier
     ImagePathDataTypeSerializer
     AllowedCategories
     AttackOutcome
@@ -366,6 +384,7 @@ API Reference
     StrategyResult
     TextDataTypeSerializer
     UnvalidatedScore
+    VideoPathDataTypeSerializer
 
 
 :py:mod:`pyrit.prompt_converter`
@@ -504,6 +523,7 @@ API Reference
     HuggingFaceEndpointTarget
     limit_requests_per_minute
     OpenAICompletionTarget
+    OpenAIChatAudioConfig
     OpenAIImageTarget
     OpenAIChatTarget
     OpenAIResponseTarget
@@ -564,7 +584,6 @@ API Reference
     Scorer
     ScorerEvalDatasetFiles
     ScorerEvaluator
-    ScorerIdentifier
     ScorerMetrics
     ScorerMetricsWithIdentity
     ScorerPrinter
@@ -634,9 +653,9 @@ API Reference
     :nosignatures:
     :toctree: _autosummary/
 
-    Foundry
     FoundryScenario
     FoundryStrategy
+    RedTeamAgent
 
 :py:mod:`pyrit.scenario.garak`
 ==============================

@@ -10,7 +10,7 @@ Core classes can be imported directly from this module:
 Specific scenarios should be imported from their subpackages:
     from pyrit.scenario.airt import ContentHarms, Cyber
     from pyrit.scenario.garak import Encoding
-    from pyrit.scenario.foundry import Foundry
+    from pyrit.scenario.foundry import RedTeamAgent
 """
 
 import sys

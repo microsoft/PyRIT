@@ -55,7 +55,7 @@ class SelectiveTextConverter(PromptConverter):
         word_separator: str = " ",
     ) -> None:
         """
-        Initializes the selective text converter.
+        Initialize the selective text converter.
 
         Args:
             converter (PromptConverter): The converter to apply to the selected text.
@@ -96,7 +96,7 @@ class SelectiveTextConverter(PromptConverter):
         selection_strategy: TextSelectionStrategy,
     ) -> None:
         """
-        Validates the converter and selection strategy combination.
+        Validate the converter and selection strategy combination.
 
         Args:
             converter (PromptConverter): The converter to validate.
@@ -127,7 +127,7 @@ class SelectiveTextConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts selected portions of the prompt using the wrapped converter.
+        Convert selected portions of the prompt using the wrapped converter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -165,7 +165,15 @@ class SelectiveTextConverter(PromptConverter):
             return await self._convert_char_level_async(prompt=prompt)
 
     async def _convert_word_level_async(self, *, prompt: str) -> ConverterResult:
-        """Converts selected words using word-level selection strategy."""
+        """
+        Convert selected words using word-level selection strategy.
+
+        Args:
+            prompt (str): The prompt to be converted.
+
+        Returns:
+            ConverterResult: The result containing the converted output and its type.
+        """
         words = prompt.split(self._word_separator)
 
         # Get selected word indices
@@ -189,7 +197,15 @@ class SelectiveTextConverter(PromptConverter):
         return ConverterResult(output_text=final_text, output_type="text")
 
     async def _convert_char_level_async(self, *, prompt: str) -> ConverterResult:
-        """Converts a character range using character-level selection strategy."""
+        """
+        Convert a character range using character-level selection strategy.
+
+        Args:
+            prompt (str): The prompt to be converted.
+
+        Returns:
+            ConverterResult: The result containing the converted output and its type.
+        """
         start_idx, end_idx = self._selection_strategy.select_range(text=prompt)
 
         # If no region selected, return original prompt

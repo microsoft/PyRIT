@@ -30,7 +30,7 @@ app = FastAPI(
 
 # Initialize PyRIT on startup to load .env and .env.local files
 @app.on_event("startup")
-async def startup_event_async():
+async def startup_event_async() -> None:
     """Initialize PyRIT on application startup."""
     # Use in-memory to avoid database initialization delays
     await initialize_pyrit_async(memory_db_type="SQLite")
@@ -51,7 +51,7 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(version.router, tags=["version"])
 
 
-def setup_frontend():
+def setup_frontend() -> None:
     """Set up frontend static file serving (only called when running as main script)."""
     frontend_path = Path(__file__).parent / "frontend"
 
@@ -72,7 +72,7 @@ def setup_frontend():
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler_async(request, exc):
+async def global_exception_handler_async(request: object, exc: Exception) -> JSONResponse:
     """
     Handle all unhandled exceptions globally.
 

@@ -41,7 +41,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with a target, an optional system prompt template, and language options.
+        Initialize the converter with a target, an optional system prompt template, and language options.
 
         Args:
             converter_target (PromptChatTarget): The target for the prompt conversion.
@@ -86,7 +86,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into the target format supported by the converter.
+        Convert the given prompt into the target format supported by the converter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -112,7 +112,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
     async def convert_word_async(self, word: str) -> str:
         """
-        Converts a single word into the target format supported by the converter.
+        Convert a single word into the target format supported by the converter.
 
         Args:
             word (str): The word to be converted.

@@ -17,11 +17,11 @@ class LeetspeakConverter(WordLevelConverter):
         self,
         *,
         deterministic: bool = True,
-        custom_substitutions: Optional[dict] = None,
+        custom_substitutions: Optional[dict[str, list[str]]] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with optional deterministic mode and custom substitutions.
+        Initialize the converter with optional deterministic mode and custom substitutions.
 
         Args:
             deterministic (bool): If True, use the first substitution for each character.
@@ -51,6 +51,15 @@ class LeetspeakConverter(WordLevelConverter):
         self._deterministic = deterministic
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         converted_word = []
         for char in word:
             lower_char = char.lower()

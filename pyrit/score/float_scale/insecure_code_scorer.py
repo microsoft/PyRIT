@@ -55,9 +55,9 @@ class InsecureCodeScorer(FloatScaleScorer):
         # Render the system prompt with the harm category
         self._system_prompt = scoring_instructions_template.render_template_value(harm_categories=self._harm_category)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
+        self._set_identifier(
             system_prompt_template=self._system_prompt,
             prompt_target=self._prompt_target,
         )

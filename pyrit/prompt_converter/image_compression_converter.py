@@ -4,7 +4,7 @@
 import base64
 import logging
 from io import BytesIO
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
 import aiohttp
@@ -61,7 +61,7 @@ class ImageCompressionConverter(PromptConverter):
         fallback_to_original: bool = True,
     ):
         """
-        Initializes the converter with specified compression settings.
+        Initialize the converter with specified compression settings.
 
         Args:
             output_format (str, optional): Output image format. If None, keeps original format (if supported).
@@ -124,13 +124,31 @@ class ImageCompressionConverter(PromptConverter):
             )
 
     def _should_compress(self, original_size: int) -> bool:
-        """Determines if image should be compressed."""
+        """
+        Determine if image should be compressed.
+
+        Args:
+            original_size (int): The size of the original image in bytes.
+
+        Returns:
+            bool: True if the image should be compressed, False otherwise.
+        """
         if original_size < self._min_compression_threshold:
             return False  # skip compression for small images
         return True
 
     def _compress_image(self, image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
-        """Compresses the image with the specified settings. Returns the compressed image bytes and output format."""
+        """
+        Compress the image with the specified settings. Returns the compressed image bytes and output format.
+
+        Args:
+            image (PIL.Image.Image): The image to be compressed.
+            original_format (str): The original format of the image.
+            original_size (int): The size of the original image in bytes.
+
+        Returns:
+            tuple[BytesIO, str]: A tuple containing the compressed image bytes and the output format.
+        """
         original_format = original_format.upper()
         output_format = self._output_format or (
             original_format if original_format in ("JPEG", "PNG", "WEBP") else "JPEG"
@@ -151,7 +169,7 @@ class ImageCompressionConverter(PromptConverter):
             else:
                 image = image.convert("RGB")
 
-        save_kwargs: dict = {}
+        save_kwargs: dict[str, Any] = {}
 
         # Format-specific options for currently supported output types
         if output_format == "JPEG":
@@ -182,9 +200,26 @@ class ImageCompressionConverter(PromptConverter):
         return compressed_bytes, output_format
 
     async def _handle_original_image_fallback(
-        self, prompt: str, input_type: PromptDataType, img_serializer, original_img_bytes: bytes, original_format: str
+        self,
+        prompt: str,
+        input_type: PromptDataType,
+        img_serializer: Any,
+        original_img_bytes: bytes,
+        original_format: str,
     ) -> ConverterResult:
-        """Handles fallback to original image for both URL and file path inputs."""
+        """
+        Handle fallback to original image for both URL and file path inputs.
+
+        Args:
+            prompt (str): The original prompt (image path or URL).
+            input_type (PromptDataType): The type of input data.
+            img_serializer: The data serializer for the image.
+            original_img_bytes (bytes): The original image bytes.
+            original_format (str): The original image format.
+
+        Returns:
+            ConverterResult: The result containing path to the original image.
+        """
         if input_type == "url":
             # We need to save the downloaded content locally and return the local path
             img_serializer.file_extension = original_format.lower()
@@ -193,7 +228,18 @@ class ImageCompressionConverter(PromptConverter):
         return ConverterResult(output_text=prompt, output_type="image_path")
 
     async def _read_image_from_url(self, url: str) -> bytes:
-        """Downloads data from URL and returns the content as bytes."""
+        """
+        Download data from URL and returns the content as bytes.
+
+        Args:
+            url (str): The URL to download the image from.
+
+        Returns:
+            bytes: The content of the image as bytes.
+
+        Raises:
+            RuntimeError: If there is an error during the download process.
+        """
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
@@ -204,7 +250,7 @@ class ImageCompressionConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
-        Converts the given prompt (image) by compressing it.
+        Convert the given prompt (image) by compressing it.
 
         Args:
             prompt (str): The image file path or URL pointing to the image to be compressed.

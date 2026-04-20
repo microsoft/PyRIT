@@ -5,9 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.18.1
 #   kernelspec:
-#     display_name: pyrit
+#     display_name: pyrit (3.13.5)
 #     language: python
 #     name: python3
 # ---
@@ -134,24 +134,36 @@ prepended_prompt = Message.from_system_prompt(system_prompt)
 
 
 objectives = []
-seed_prompt_list = []
-prepended_prompts = []
-
+field_overrides = []
 
 # Configure this to load the prompts loaded in the previous step.
 # In the last section, they were in the illegal.prompt file (which has a configured name of "airt_illegal")
 prompt_groups = memory.get_seed_groups(dataset_name="airt_illegal")
 
-for prompt_group in prompt_groups:
-    prepended_prompts.append(prompt_group.prepended_conversation)
-    objectives.append(prompt_group.objective.value if prompt_group.objective else None)
-    seed_prompt_list.append(prompt_group.next_message)
 
-results = await AttackExecutor().execute_single_turn_attacks_async(  # type: ignore
+for prompt_group in prompt_groups:
+    # Build the objective from the seed group
+    objectives.append(prompt_group.objective.value if prompt_group.objective else "Generate harmful content")
+
+    # Build field overrides for each objective
+    override = {}
+
+    # Add prepended_conversation if the seed group has one, otherwise use default system prompt
+    if prompt_group.prepended_conversation:
+        override["prepended_conversation"] = prompt_group.prepended_conversation
+    else:
+        override["prepended_conversation"] = [prepended_prompt]
+
+    # Add next_message if the seed group has one
+    if prompt_group.next_message:
+        override["next_message"] = prompt_group.next_message
+
+    field_overrides.append(override)
+
+results = await AttackExecutor().execute_attack_async(  # type: ignore
     attack=attack,
     objectives=objectives,
-    messages=seed_prompt_list,
-    prepended_conversations=prepended_prompts,
+    field_overrides=field_overrides,
     memory_labels=memory_labels,
 )
 
@@ -181,7 +193,7 @@ for piece in result_pieces:
     for score in piece.scores:
         positive_float_scale_score = score.score_type == "float_scale" and score.get_value() > 0
         no_refusal_score = (
-            score.scorer_class_identifier["__type__"] == "SelfAskRefusalScorer" and score.get_value() == False
+            score.scorer_class_identifier.class_name == "SelfAskRefusalScorer" and score.get_value() == False
         )
         if positive_float_scale_score or no_refusal_score:
             interesting_prompts.append(piece.to_message())

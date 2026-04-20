@@ -69,9 +69,9 @@ def test_image_text_converter_add_text_to_image(image_text_converter_sample_imag
         img_to_add=image_text_converter_sample_image, font_name="helvetica.ttf", color=(255, 255, 255)
     )
     image = Image.open("test.png")
-    pixels_before = list(image.get_flattened_data())
+    pixels_before = list(image.getdata())
     updated_image = converter._add_text_to_image("Sample Text!")
-    pixels_after = list(updated_image.get_flattened_data())
+    pixels_after = list(updated_image.getdata())
     assert updated_image
     # Check if at least one pixel changed, indicating that text was added
     assert pixels_before != pixels_after
@@ -121,8 +121,8 @@ async def test_add_image_text_converter_equal_to_add_text_image(
     converted_image = await converter.convert_async(prompt="Sample Text!", input_type="text")
     text_image_converter = AddTextImageConverter(text_to_add="Sample Text!")
     converted_text_image = await text_image_converter.convert_async(prompt="test.png", input_type="image_path")
-    pixels_image_text = list(Image.open(converted_image.output_text).get_flattened_data())
-    pixels_text_image = list(Image.open(converted_text_image.output_text).get_flattened_data())
+    pixels_image_text = list(Image.open(converted_image.output_text).getdata())
+    pixels_text_image = list(Image.open(converted_text_image.output_text).getdata())
     assert pixels_image_text == pixels_text_image
     os.remove(converted_image.output_text)
     if os.path.exists(converted_text_image.output_text):

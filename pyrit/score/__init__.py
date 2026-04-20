@@ -47,7 +47,6 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_harm_metrics,
     get_all_objective_metrics,
 )
-from pyrit.score.scorer_identifier import ScorerIdentifier
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
@@ -105,7 +104,6 @@ __all__ = [
     "QuestionAnswerScorer",
     "RegistryUpdateBehavior",
     "Scorer",
-    "ScorerIdentifier",
     "ScorerEvalDatasetFiles",
     "ScorerEvaluator",
     "ScorerMetrics",

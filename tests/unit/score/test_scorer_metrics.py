@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -15,7 +16,6 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_objective_metrics,
     replace_evaluation_results,
 )
-from pyrit.score.scorer_identifier import ScorerIdentifier
 
 
 class TestScorerMetricsSerialization:
@@ -69,7 +69,12 @@ class TestScorerMetricsWithIdentity:
     """Tests for ScorerMetricsWithIdentity dataclass."""
 
     def test_creation_with_objective_metrics(self):
-        scorer_id = ScorerIdentifier(type="TestScorer")
+        scorer_id = ScorerIdentifier(
+            class_name="TestScorer",
+            class_module="test.module",
+            class_description="Test scorer",
+            identifier_type="instance",
+        )
         metrics = ObjectiveScorerMetrics(
             num_responses=10,
             num_human_raters=2,
@@ -85,12 +90,17 @@ class TestScorerMetricsWithIdentity:
             metrics=metrics,
         )
 
-        assert result.scorer_identifier.type == "TestScorer"
+        assert result.scorer_identifier.class_name == "TestScorer"
         assert result.metrics.accuracy == 0.9
         assert result.metrics.f1_score == 0.85
 
     def test_creation_with_harm_metrics(self):
-        scorer_id = ScorerIdentifier(type="HarmScorer")
+        scorer_id = ScorerIdentifier(
+            class_name="HarmScorer",
+            class_module="test.module",
+            class_description="Harm scorer",
+            identifier_type="instance",
+        )
         metrics = HarmScorerMetrics(
             num_responses=20,
             num_human_raters=3,
@@ -107,12 +117,17 @@ class TestScorerMetricsWithIdentity:
             metrics=metrics,
         )
 
-        assert result.scorer_identifier.type == "HarmScorer"
+        assert result.scorer_identifier.class_name == "HarmScorer"
         assert result.metrics.mean_absolute_error == 0.15
         assert result.metrics.harm_category == "hate_speech"
 
     def test_repr(self):
-        scorer_id = ScorerIdentifier(type="MyScorer")
+        scorer_id = ScorerIdentifier(
+            class_name="MyScorer",
+            class_module="test.module",
+            class_description="My scorer",
+            identifier_type="instance",
+        )
         metrics = ObjectiveScorerMetrics(
             num_responses=5,
             num_human_raters=1,
@@ -140,7 +155,10 @@ class TestGetAllObjectiveMetrics:
         """Helper to create a test objective metrics JSONL file."""
         entries = [
             {
-                "__type__": "SelfAskRefusalScorer",
+                "class_name": "SelfAskRefusalScorer",
+                "class_module": "pyrit.score",
+                "class_description": "Refusal scorer",
+                "identifier_type": "instance",
                 "system_prompt_template": "test prompt",
                 "hash": "abc123",
                 "metrics": {
@@ -155,7 +173,10 @@ class TestGetAllObjectiveMetrics:
                 },
             },
             {
-                "__type__": "SelfAskTrueFalseScorer",
+                "class_name": "SelfAskTrueFalseScorer",
+                "class_module": "pyrit.score",
+                "class_description": "True/False scorer",
+                "identifier_type": "instance",
                 "system_prompt_template": "another prompt",
                 "hash": "def456",
                 "metrics": {
@@ -189,7 +210,7 @@ class TestGetAllObjectiveMetrics:
 
         # Check first entry
         first = results[0]
-        assert first.scorer_identifier.type == "SelfAskRefusalScorer"
+        assert first.scorer_identifier.class_name == "SelfAskRefusalScorer"
         assert first.metrics.accuracy == 0.92
         assert first.metrics.f1_score == 0.88
 
@@ -232,7 +253,10 @@ class TestGetAllObjectiveMetrics:
         with open(file_path, "w") as f:
             # Valid entry
             valid = {
-                "__type__": "ValidScorer",
+                "class_name": "ValidScorer",
+                "class_module": "test.module",
+                "class_description": "A valid scorer for testing",
+                "identifier_type": "instance",
                 "metrics": {
                     "num_responses": 10,
                     "num_human_raters": 1,
@@ -245,7 +269,7 @@ class TestGetAllObjectiveMetrics:
             }
             f.write(json.dumps(valid) + "\n")
             # Malformed entry (missing required fields)
-            malformed = {"__type__": "BadScorer", "metrics": {"accuracy": 0.5}}
+            malformed = {"class_name": "BadScorer", "metrics": {"accuracy": 0.5}}
             f.write(json.dumps(malformed) + "\n")
 
         with patch("pyrit.score.scorer_evaluation.scorer_metrics_io.SCORER_EVALS_PATH", tmp_path):
@@ -253,7 +277,7 @@ class TestGetAllObjectiveMetrics:
 
         # Only the valid entry should be loaded
         assert len(results) == 1
-        assert results[0].scorer_identifier.type == "ValidScorer"
+        assert results[0].scorer_identifier.class_name == "ValidScorer"
 
     def test_get_all_objective_metrics_sortable_by_metric(self, tmp_path):
         """Test that results can be sorted by metrics attributes."""
@@ -278,7 +302,10 @@ class TestGetAllObjectiveMetrics:
         file_path = objective_dir / "objective_achieved_metrics.jsonl"
 
         entry = {
-            "__type__": "ComplexScorer",
+            "class_name": "ComplexScorer",
+            "class_module": "pyrit.score.complex_scorer",
+            "class_description": "A complex scorer for testing",
+            "identifier_type": "instance",
             "system_prompt_template": "sha256:abcd1234",
             "user_prompt_template": "user template",
             "target_info": {"model": "gpt-4", "temperature": 0.7},
@@ -303,7 +330,7 @@ class TestGetAllObjectiveMetrics:
         assert len(results) == 1
         scorer_id = results[0].scorer_identifier
 
-        assert scorer_id.type == "ComplexScorer"
+        assert scorer_id.class_name == "ComplexScorer"
         assert scorer_id.system_prompt_template == "sha256:abcd1234"
         assert scorer_id.user_prompt_template == "user template"
         assert scorer_id.target_info == {"model": "gpt-4", "temperature": 0.7}
@@ -317,7 +344,10 @@ class TestGetAllHarmMetrics:
         """Helper to create a test harm metrics JSONL file."""
         entries = [
             {
-                "__type__": "SelfAskLikertScorer",
+                "class_name": "SelfAskLikertScorer",
+                "class_module": "pyrit.score",
+                "class_description": "Likert scorer",
+                "identifier_type": "instance",
                 "system_prompt_template": "likert prompt",
                 "hash": "harm123",
                 "harm_category": "hate_speech",
@@ -350,7 +380,7 @@ class TestGetAllHarmMetrics:
 
         assert len(results) == 1
         assert isinstance(results[0].metrics, HarmScorerMetrics)
-        assert results[0].scorer_identifier.type == "SelfAskLikertScorer"
+        assert results[0].scorer_identifier.class_name == "SelfAskLikertScorer"
         assert results[0].metrics.mean_absolute_error == 0.12
         assert results[0].metrics.harm_category == "hate_speech"
 
@@ -395,7 +425,10 @@ class TestReplaceEvaluationResults:
         result_file = tmp_path / "test_results.jsonl"
 
         scorer_identifier = ScorerIdentifier(
-            type="TestScorer",
+            class_name="TestScorer",
+            class_module="test.module",
+            class_description="Test scorer",
+            identifier_type="instance",
             sub_identifier=[],
             target_info=None,
         )
@@ -412,12 +445,11 @@ class TestReplaceEvaluationResults:
             dataset_version="1.0",
         )
 
-        with patch.object(scorer_identifier, "compute_hash", return_value="abc123"):
-            replace_evaluation_results(
-                file_path=result_file,
-                scorer_identifier=scorer_identifier,
-                metrics=metrics,
-            )
+        replace_evaluation_results(
+            file_path=result_file,
+            scorer_identifier=scorer_identifier,
+            metrics=metrics,
+        )
 
         # Verify the file contains the entry
         with open(result_file) as f:
@@ -425,7 +457,7 @@ class TestReplaceEvaluationResults:
 
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["hash"] == "abc123"
+        assert entry["hash"] == scorer_identifier.hash
         assert entry["metrics"]["accuracy"] == 0.9
 
     def test_replace_replaces_existing_entry(self, tmp_path):
@@ -433,7 +465,10 @@ class TestReplaceEvaluationResults:
         result_file = tmp_path / "test_results.jsonl"
 
         scorer_identifier = ScorerIdentifier(
-            type="TestScorer",
+            class_name="TestScorer",
+            class_module="test.module",
+            class_description="Test scorer",
+            identifier_type="instance",
             sub_identifier=[],
             target_info=None,
         )
@@ -451,31 +486,30 @@ class TestReplaceEvaluationResults:
             dataset_version="1.0",
         )
 
-        with patch.object(scorer_identifier, "compute_hash", return_value="abc123"):
-            replace_evaluation_results(
-                file_path=result_file,
-                scorer_identifier=scorer_identifier,
-                metrics=initial_metrics,
-            )
+        replace_evaluation_results(
+            file_path=result_file,
+            scorer_identifier=scorer_identifier,
+            metrics=initial_metrics,
+        )
 
-            # Replace with updated metrics
-            updated_metrics = ObjectiveScorerMetrics(
-                num_responses=10,
-                num_human_raters=3,
-                accuracy=0.9,
-                accuracy_standard_error=0.02,
-                f1_score=0.85,
-                precision=0.88,
-                recall=0.82,
-                num_scorer_trials=5,
-                dataset_version="1.0",
-            )
+        # Replace with updated metrics
+        updated_metrics = ObjectiveScorerMetrics(
+            num_responses=10,
+            num_human_raters=3,
+            accuracy=0.9,
+            accuracy_standard_error=0.02,
+            f1_score=0.85,
+            precision=0.88,
+            recall=0.82,
+            num_scorer_trials=5,
+            dataset_version="1.0",
+        )
 
-            replace_evaluation_results(
-                file_path=result_file,
-                scorer_identifier=scorer_identifier,
-                metrics=updated_metrics,
-            )
+        replace_evaluation_results(
+            file_path=result_file,
+            scorer_identifier=scorer_identifier,
+            metrics=updated_metrics,
+        )
 
         # Verify only one entry exists with updated values
         with open(result_file) as f:
@@ -483,7 +517,7 @@ class TestReplaceEvaluationResults:
 
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["hash"] == "abc123"
+        assert entry["hash"] == scorer_identifier.hash
         assert entry["metrics"]["accuracy"] == 0.9
         assert entry["metrics"]["num_scorer_trials"] == 5
 
@@ -493,7 +527,10 @@ class TestReplaceEvaluationResults:
 
         # Add first scorer
         scorer1 = ScorerIdentifier(
-            type="TestScorer1",
+            class_name="TestScorer1",
+            class_module="test.module",
+            class_description="Test scorer 1",
+            identifier_type="instance",
             sub_identifier=[],
             target_info=None,
         )
@@ -508,16 +545,18 @@ class TestReplaceEvaluationResults:
             num_scorer_trials=3,
             dataset_version="1.0",
         )
-        with patch.object(scorer1, "compute_hash", return_value="hash111"):
-            replace_evaluation_results(
-                file_path=result_file,
-                scorer_identifier=scorer1,
-                metrics=metrics1,
-            )
+        replace_evaluation_results(
+            file_path=result_file,
+            scorer_identifier=scorer1,
+            metrics=metrics1,
+        )
 
         # Add second scorer
         scorer2 = ScorerIdentifier(
-            type="TestScorer2",
+            class_name="TestScorer2",
+            class_module="test.module",
+            class_description="Test scorer 2",
+            identifier_type="instance",
             sub_identifier=[],
             target_info=None,
         )
@@ -532,12 +571,11 @@ class TestReplaceEvaluationResults:
             num_scorer_trials=3,
             dataset_version="1.0",
         )
-        with patch.object(scorer2, "compute_hash", return_value="hash222"):
-            replace_evaluation_results(
-                file_path=result_file,
-                scorer_identifier=scorer2,
-                metrics=metrics2,
-            )
+        replace_evaluation_results(
+            file_path=result_file,
+            scorer_identifier=scorer2,
+            metrics=metrics2,
+        )
 
         # Now replace scorer1 with updated metrics
         updated_metrics1 = ObjectiveScorerMetrics(
@@ -551,12 +589,11 @@ class TestReplaceEvaluationResults:
             num_scorer_trials=5,
             dataset_version="2.0",
         )
-        with patch.object(scorer1, "compute_hash", return_value="hash111"):
-            replace_evaluation_results(
-                file_path=result_file,
-                scorer_identifier=scorer1,
-                metrics=updated_metrics1,
-            )
+        replace_evaluation_results(
+            file_path=result_file,
+            scorer_identifier=scorer1,
+            metrics=updated_metrics1,
+        )
 
         # Verify both entries exist, scorer1 updated, scorer2 preserved
         with open(result_file) as f:
@@ -566,7 +603,7 @@ class TestReplaceEvaluationResults:
         entries = [json.loads(line) for line in lines]
         hashes = {e["hash"]: e for e in entries}
 
-        assert "hash111" in hashes
-        assert "hash222" in hashes
-        assert hashes["hash111"]["metrics"]["accuracy"] == 0.95
-        assert hashes["hash222"]["metrics"]["accuracy"] == 0.85
+        assert scorer1.hash in hashes
+        assert scorer2.hash in hashes
+        assert hashes[scorer1.hash]["metrics"]["accuracy"] == 0.95
+        assert hashes[scorer2.hash]["metrics"]["accuracy"] == 0.85

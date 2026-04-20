@@ -38,7 +38,7 @@ class ToxicSentenceGeneratorConverter(LLMGenericTextConverter):
         prompt_template: Optional[SeedPrompt] = None,
     ):
         """
-        Initializes the converter with a specific target and template.
+        Initialize the converter with a specific target and template.
 
         Args:
             converter_target (PromptChatTarget): The endpoint that converts the prompt.
@@ -57,7 +57,7 @@ class ToxicSentenceGeneratorConverter(LLMGenericTextConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into a toxic sentence starter.
+        Convert the given prompt into a toxic sentence starter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -71,7 +71,25 @@ class ToxicSentenceGeneratorConverter(LLMGenericTextConverter):
         return await super().convert_async(prompt=prompt, input_type=input_type)
 
     def input_supported(self, input_type: PromptDataType) -> bool:
+        """
+        Check if the input type is supported.
+
+        Args:
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            bool: True if the input type is supported, False otherwise.
+        """
         return input_type == "text"
 
     def output_supported(self, output_type: PromptDataType) -> bool:
+        """
+        Check if the output type is supported.
+
+        Args:
+            output_type (PromptDataType): The type of output data.
+
+        Returns:
+            bool: True if the output type is supported, False otherwise.
+        """
         return output_type == "text"

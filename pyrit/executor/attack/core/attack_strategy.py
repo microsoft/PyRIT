@@ -8,7 +8,7 @@ import logging
 import time
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Dict, Generic, List, Optional, Type, TypeVar, cast, overload
+from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, overload
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -29,7 +29,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 
-AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext")
+AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
 
 
@@ -299,18 +299,18 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], AB
         next_message: Optional[Message] = None,
         prepended_conversation: Optional[List[Message]] = None,
         memory_labels: Optional[dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackStrategyResultT:
         """
         Execute the attack strategy asynchronously with the provided parameters.
@@ -370,6 +370,6 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], AB
         # Create context with params and context-specific kwargs
         # Note: We use cast here because the type checker doesn't know that _context_type
         # (which is AttackContext or a subclass) always accepts 'params' as a keyword argument.
-        context = cast(AttackStrategyContextT, self._context_type(params=params, **context_kwargs))  # type: ignore[call-arg]
+        context = self._context_type(params=params, **context_kwargs)
 
         return await self.execute_with_context_async(context=context)

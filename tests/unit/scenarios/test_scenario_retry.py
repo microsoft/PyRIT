@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
@@ -21,11 +22,21 @@ OBJECTIVE_PREFIX = "objective"
 ATTACK_NAME_PREFIX = "attack_"
 
 
+def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module=TEST_MODULE,
+        class_description="",
+        identifier_type="instance",
+    )
+
+
 @pytest.fixture
 def mock_objective_scorer():
     """Create a mock objective scorer for testing."""
     scorer = MagicMock()
-    scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": TEST_MODULE}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
 
 
@@ -137,7 +148,7 @@ class ConcreteScenario(Scenario):
         # Create a default mock scorer if not provided
         if objective_scorer is None:
             objective_scorer = MagicMock()
-            objective_scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test"}
+            objective_scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
 
         super().__init__(strategy_class=strategy_class, objective_scorer=objective_scorer, **kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []

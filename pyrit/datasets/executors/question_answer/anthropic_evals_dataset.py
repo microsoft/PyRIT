@@ -3,7 +3,7 @@
 
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -137,7 +137,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         return files
 
     @staticmethod
-    def _parse_answer_choices(item: Dict) -> Tuple[List[QuestionChoice], int]:
+    def _parse_answer_choices(item: Dict[str, Any]) -> Tuple[List[QuestionChoice], int]:
         """
         Parse a single eval item into MC choices and the correct-answer index.
 
@@ -157,7 +157,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         return _AnthropicEvalsDataset._parse_matching_behavior(item)
 
     @staticmethod
-    def _parse_pronoun_options(item: Dict) -> Tuple[List[QuestionChoice], int]:
+    def _parse_pronoun_options(item: Dict[str, Any]) -> Tuple[List[QuestionChoice], int]:
         """
         Parse a winogenerated item (``pronoun_options`` format).
 
@@ -180,7 +180,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
             return choices, 0
 
     @staticmethod
-    def _parse_matching_behavior(item: Dict) -> Tuple[List[QuestionChoice], int]:
+    def _parse_matching_behavior(item: Dict[str, Any]) -> Tuple[List[QuestionChoice], int]:
         """
         Parse a standard item with ``answer_matching_behavior`` / ``answer_not_matching_behavior``.
 
@@ -210,7 +210,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         return choices, correct_index if correct_index is not None else 0
 
     @staticmethod
-    def _normalize_answer_field(value) -> List[str]:
+    def _normalize_answer_field(value: Any) -> List[str]:
         """
         Normalize a matching/not-matching answer field to a list of strings.
 

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import frontend_core
+from pyrit.registry import InitializerMetadata, ScenarioMetadata
 
 
 class TestFrontendCore:
@@ -53,8 +54,8 @@ class TestFrontendCore:
         with pytest.raises(ValueError, match="Invalid log level"):
             frontend_core.FrontendCore(log_level="INVALID")
 
-    @patch("pyrit.cli.scenario_registry.ScenarioRegistry")
-    @patch("pyrit.cli.initializer_registry.InitializerRegistry")
+    @patch("pyrit.registry.ScenarioRegistry")
+    @patch("pyrit.registry.InitializerRegistry")
     @patch("pyrit.setup.initialize_pyrit_async", new_callable=AsyncMock)
     def test_initialize_loads_registries(
         self,
@@ -70,11 +71,11 @@ class TestFrontendCore:
 
         assert context._initialized is True
         mock_init_pyrit.assert_called_once()
-        mock_scenario_registry.assert_called_once()
+        mock_scenario_registry.get_registry_singleton.assert_called_once()
         mock_init_registry.assert_called_once()
 
-    @patch("pyrit.cli.scenario_registry.ScenarioRegistry")
-    @patch("pyrit.cli.initializer_registry.InitializerRegistry")
+    @patch("pyrit.registry.ScenarioRegistry")
+    @patch("pyrit.registry.InitializerRegistry")
     @patch("pyrit.setup.initialize_pyrit_async", new_callable=AsyncMock)
     async def test_scenario_registry_property_initializes(
         self,
@@ -92,8 +93,8 @@ class TestFrontendCore:
         assert context._initialized is True
         assert registry is not None
 
-    @patch("pyrit.cli.scenario_registry.ScenarioRegistry")
-    @patch("pyrit.cli.initializer_registry.InitializerRegistry")
+    @patch("pyrit.registry.ScenarioRegistry")
+    @patch("pyrit.registry.InitializerRegistry")
     @patch("pyrit.setup.initialize_pyrit_async", new_callable=AsyncMock)
     async def test_initializer_registry_property_initializes(
         self,
@@ -249,7 +250,7 @@ class TestParseMemoryLabels:
 class TestResolveInitializationScripts:
     """Tests for resolve_initialization_scripts function."""
 
-    @patch("pyrit.cli.initializer_registry.InitializerRegistry.resolve_script_paths")
+    @patch("pyrit.registry.InitializerRegistry.resolve_script_paths")
     def test_resolve_initialization_scripts(self, mock_resolve: MagicMock):
         """Test resolve_initialization_scripts calls InitializerRegistry."""
         mock_resolve.return_value = [Path("/test/script.py")]
@@ -277,7 +278,7 @@ class TestListFunctions:
     async def test_list_scenarios(self):
         """Test list_scenarios_async returns scenarios from registry."""
         mock_registry = MagicMock()
-        mock_registry.list_scenarios.return_value = [{"name": "test_scenario"}]
+        mock_registry.list_metadata.return_value = [{"name": "test_scenario"}]
 
         context = frontend_core.FrontendCore()
         context._scenario_registry = mock_registry
@@ -286,12 +287,12 @@ class TestListFunctions:
         result = await frontend_core.list_scenarios_async(context=context)
 
         assert result == [{"name": "test_scenario"}]
-        mock_registry.list_scenarios.assert_called_once()
+        mock_registry.list_metadata.assert_called_once()
 
     async def test_list_initializers_without_discovery_path(self):
         """Test list_initializers_async without discovery path."""
         mock_registry = MagicMock()
-        mock_registry.list_initializers.return_value = [{"name": "test_init"}]
+        mock_registry.list_metadata.return_value = [{"name": "test_init"}]
 
         context = frontend_core.FrontendCore()
         context._initializer_registry = mock_registry
@@ -300,13 +301,13 @@ class TestListFunctions:
         result = await frontend_core.list_initializers_async(context=context)
 
         assert result == [{"name": "test_init"}]
-        mock_registry.list_initializers.assert_called_once()
+        mock_registry.list_metadata.assert_called_once()
 
-    @patch("pyrit.cli.initializer_registry.InitializerRegistry")
+    @patch("pyrit.registry.InitializerRegistry")
     async def test_list_initializers_with_discovery_path(self, mock_init_registry_class: MagicMock):
         """Test list_initializers_async with discovery path."""
         mock_registry = MagicMock()
-        mock_registry.list_initializers.return_value = [{"name": "custom_init"}]
+        mock_registry.list_metadata.return_value = [{"name": "custom_init"}]
         mock_init_registry_class.return_value = mock_registry
 
         context = frontend_core.FrontendCore()
@@ -325,12 +326,18 @@ class TestPrintFunctions:
         """Test print_scenarios_list with scenarios."""
         context = frontend_core.FrontendCore()
         mock_registry = MagicMock()
-        mock_registry.list_scenarios.return_value = [
-            {
-                "name": "test_scenario",
-                "class_name": "TestScenario",
-                "description": "Test description",
-            }
+        mock_registry.list_metadata.return_value = [
+            ScenarioMetadata(
+                identifier_type="class",
+                class_name="TestScenario",
+                class_module="test.scenarios",
+                class_description="Test description",
+                default_strategy="default",
+                all_strategies=(),
+                aggregate_strategies=(),
+                default_datasets=(),
+                max_dataset_size=None,
+            )
         ]
         context._scenario_registry = mock_registry
         context._initialized = True
@@ -340,13 +347,14 @@ class TestPrintFunctions:
         assert result == 0
         captured = capsys.readouterr()
         assert "Available Scenarios" in captured.out
+        # snake_class_name no longer strips suffix, so TestScenario -> test_scenario
         assert "test_scenario" in captured.out
 
     async def test_print_scenarios_list_empty(self, capsys):
         """Test print_scenarios_list with no scenarios."""
         context = frontend_core.FrontendCore()
         mock_registry = MagicMock()
-        mock_registry.list_scenarios.return_value = []
+        mock_registry.list_metadata.return_value = []
         context._scenario_registry = mock_registry
         context._initialized = True
 
@@ -360,13 +368,16 @@ class TestPrintFunctions:
         """Test print_initializers_list_async with initializers."""
         context = frontend_core.FrontendCore()
         mock_registry = MagicMock()
-        mock_registry.list_initializers.return_value = [
-            {
-                "name": "test_init",
-                "class_name": "TestInit",
-                "initializer_name": "test",
-                "execution_order": 100,
-            }
+        mock_registry.list_metadata.return_value = [
+            InitializerMetadata(
+                identifier_type="class",
+                class_name="TestInit",
+                class_module="test.initializers",
+                class_description="Test initializer",
+                display_name="test",
+                execution_order=100,
+                required_env_vars=(),
+            )
         ]
         context._initializer_registry = mock_registry
         context._initialized = True
@@ -382,7 +393,7 @@ class TestPrintFunctions:
         """Test print_initializers_list_async with no initializers."""
         context = frontend_core.FrontendCore()
         mock_registry = MagicMock()
-        mock_registry.list_initializers.return_value = []
+        mock_registry.list_metadata.return_value = []
         context._initializer_registry = mock_registry
         context._initialized = True
 
@@ -394,103 +405,121 @@ class TestPrintFunctions:
 
 
 class TestFormatFunctions:
-    """Tests for format_scenario_info and format_initializer_info."""
+    """Tests for format_scenario_metadata and format_initializer_metadata."""
 
-    def test_format_scenario_info_basic(self, capsys):
-        """Test format_scenario_info with basic info."""
-        scenario_info = {
-            "name": "test_scenario",
-            "class_name": "TestScenario",
-        }
+    def test_format_scenario_metadata_basic(self, capsys):
+        """Test format_scenario_metadata with basic metadata."""
 
-        frontend_core.format_scenario_info(scenario_info=scenario_info)
+        scenario_metadata = ScenarioMetadata(
+            identifier_type="class",
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="",
+            default_strategy="",
+            all_strategies=(),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+        )
+
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
 
         captured = capsys.readouterr()
+        # snake_class_name no longer strips suffix, so TestScenario -> test_scenario
         assert "test_scenario" in captured.out
         assert "TestScenario" in captured.out
 
-    def test_format_scenario_info_with_description(self, capsys):
-        """Test format_scenario_info with description."""
-        scenario_info = {
-            "name": "test_scenario",
-            "class_name": "TestScenario",
-            "description": "This is a test scenario",
-        }
+    def test_format_scenario_metadata_with_description(self, capsys):
+        """Test format_scenario_metadata with description."""
 
-        frontend_core.format_scenario_info(scenario_info=scenario_info)
+        scenario_metadata = ScenarioMetadata(
+            identifier_type="class",
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="This is a test scenario",
+            default_strategy="",
+            all_strategies=(),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+        )
+
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
 
         captured = capsys.readouterr()
         assert "This is a test scenario" in captured.out
 
-    def test_format_scenario_info_with_strategies(self, capsys):
-        """Test format_scenario_info with strategies."""
-        scenario_info = {
-            "name": "test_scenario",
-            "class_name": "TestScenario",
-            "all_strategies": ["strategy1", "strategy2"],
-            "default_strategy": "strategy1",
-        }
+    def test_format_scenario_metadata_with_strategies(self, capsys):
+        """Test format_scenario_metadata with strategies."""
+        scenario_metadata = ScenarioMetadata(
+            identifier_type="class",
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="",
+            default_strategy="strategy1",
+            all_strategies=("strategy1", "strategy2"),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+        )
 
-        frontend_core.format_scenario_info(scenario_info=scenario_info)
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
 
         captured = capsys.readouterr()
         assert "strategy1" in captured.out
         assert "strategy2" in captured.out
         assert "Default Strategy" in captured.out
 
-    def test_format_initializer_info_basic(self, capsys) -> None:
-        """Test format_initializer_info with basic info."""
-        from pyrit.cli.initializer_registry import InitializerInfo
+    def test_format_initializer_metadata_basic(self, capsys) -> None:
+        """Test format_initializer_metadata with basic metadata."""
+        initializer_metadata = InitializerMetadata(
+            identifier_type="class",
+            class_name="TestInit",
+            class_module="test.initializers",
+            class_description="",
+            display_name="test",
+            required_env_vars=(),
+            execution_order=100,
+        )
 
-        initializer_info: InitializerInfo = {
-            "name": "test_init",
-            "class_name": "TestInit",
-            "initializer_name": "test",
-            "description": "",
-            "required_env_vars": [],
-            "execution_order": 100,
-        }
-
-        frontend_core.format_initializer_info(initializer_info=initializer_info)
+        frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
 
         captured = capsys.readouterr()
         assert "test_init" in captured.out
         assert "TestInit" in captured.out
         assert "100" in captured.out
 
-    def test_format_initializer_info_with_env_vars(self, capsys) -> None:
-        """Test format_initializer_info with environment variables."""
-        from pyrit.cli.initializer_registry import InitializerInfo
+    def test_format_initializer_metadata_with_env_vars(self, capsys) -> None:
+        """Test format_initializer_metadata with environment variables."""
+        initializer_metadata = InitializerMetadata(
+            identifier_type="class",
+            class_name="TestInit",
+            class_module="test.initializers",
+            class_description="",
+            display_name="test",
+            required_env_vars=("VAR1", "VAR2"),
+            execution_order=100,
+        )
 
-        initializer_info: InitializerInfo = {
-            "name": "test_init",
-            "class_name": "TestInit",
-            "initializer_name": "test",
-            "description": "",
-            "required_env_vars": ["VAR1", "VAR2"],
-            "execution_order": 100,
-        }
-
-        frontend_core.format_initializer_info(initializer_info=initializer_info)
+        frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
 
         captured = capsys.readouterr()
         assert "VAR1" in captured.out
         assert "VAR2" in captured.out
 
-    def test_format_initializer_info_with_description(self, capsys) -> None:
-        """Test format_initializer_info with description."""
-        from pyrit.cli.initializer_registry import InitializerInfo
+    def test_format_initializer_metadata_with_description(self, capsys) -> None:
+        """Test format_initializer_metadata with description."""
+        initializer_metadata = InitializerMetadata(
+            identifier_type="class",
+            class_name="TestInit",
+            class_module="test.initializers",
+            class_description="Test description",
+            display_name="test",
+            required_env_vars=(),
+            execution_order=100,
+        )
 
-        initializer_info: InitializerInfo = {
-            "name": "test_init",
-            "class_name": "TestInit",
-            "initializer_name": "test",
-            "description": "Test description",
-            "required_env_vars": [],
-            "execution_order": 100,
-        }
-
-        frontend_core.format_initializer_info(initializer_info=initializer_info)
+        frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
 
         captured = capsys.readouterr()
         assert "Test description" in captured.out
@@ -620,7 +649,7 @@ class TestRunScenarioAsync:
         mock_scenario_instance.initialize_async = AsyncMock()
         mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
         mock_scenario_class.return_value = mock_scenario_instance
-        mock_scenario_registry.get_scenario.return_value = mock_scenario_class
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
         mock_printer_class.return_value = mock_printer
 
         context._scenario_registry = mock_scenario_registry
@@ -645,8 +674,8 @@ class TestRunScenarioAsync:
         """Test running non-existent scenario raises ValueError."""
         context = frontend_core.FrontendCore()
         mock_scenario_registry = MagicMock()
-        mock_scenario_registry.get_scenario.return_value = None
-        mock_scenario_registry.get_scenario_names.return_value = ["other_scenario"]
+        mock_scenario_registry.get_class.return_value = None
+        mock_scenario_registry.get_names.return_value = ["other_scenario"]
 
         context._scenario_registry = mock_scenario_registry
         context._initializer_registry = MagicMock()
@@ -684,7 +713,7 @@ class TestRunScenarioAsync:
         mock_scenario_instance.initialize_async = AsyncMock()
         mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
         mock_scenario_class.return_value = mock_scenario_instance
-        mock_scenario_registry.get_scenario.return_value = mock_scenario_class
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
         mock_printer_class.return_value = mock_printer
 
         context._scenario_registry = mock_scenario_registry
@@ -722,12 +751,12 @@ class TestRunScenarioAsync:
         mock_printer.print_summary_async = AsyncMock()
 
         mock_initializer_class = MagicMock()
-        mock_initializer_registry.get_initializer_class.return_value = mock_initializer_class
+        mock_initializer_registry.get_class.return_value = mock_initializer_class
 
         mock_scenario_instance.initialize_async = AsyncMock()
         mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
         mock_scenario_class.return_value = mock_scenario_instance
-        mock_scenario_registry.get_scenario.return_value = mock_scenario_class
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
         mock_printer_class.return_value = mock_printer
 
         context._scenario_registry = mock_scenario_registry
@@ -741,7 +770,7 @@ class TestRunScenarioAsync:
         )
 
         # Verify initializer was retrieved
-        mock_initializer_registry.get_initializer_class.assert_called_once_with(name="test_init")
+        mock_initializer_registry.get_class.assert_called_once_with("test_init")
 
     @patch("pyrit.setup.initialize_pyrit_async", new_callable=AsyncMock)
     @patch("pyrit.scenario.printer.console_printer.ConsoleScenarioResultPrinter")
@@ -762,7 +791,7 @@ class TestRunScenarioAsync:
         mock_scenario_instance.initialize_async = AsyncMock()
         mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
         mock_scenario_class.return_value = mock_scenario_instance
-        mock_scenario_registry.get_scenario.return_value = mock_scenario_class
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
         mock_printer_class.return_value = mock_printer
 
         context._scenario_registry = mock_scenario_registry
@@ -800,7 +829,7 @@ class TestRunScenarioAsync:
         mock_scenario_instance.initialize_async = AsyncMock()
         mock_scenario_instance.run_async = AsyncMock(return_value=mock_result)
         mock_scenario_class.return_value = mock_scenario_instance
-        mock_scenario_registry.get_scenario.return_value = mock_scenario_class
+        mock_scenario_registry.get_class.return_value = mock_scenario_class
         mock_printer_class.return_value = mock_printer
 
         context._scenario_registry = mock_scenario_registry

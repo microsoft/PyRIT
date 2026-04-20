@@ -29,7 +29,8 @@ def _extract_request_id_from_exception(exc: Exception) -> Optional[str]:
         resp = getattr(exc, "response", None)
         if resp is not None:
             # Try both common header name variants
-            return resp.headers.get("x-request-id") or resp.headers.get("X-Request-Id")
+            request_id = resp.headers.get("x-request-id") or resp.headers.get("X-Request-Id")
+            return str(request_id) if request_id is not None else None
     except Exception:
         pass
     return None
@@ -60,7 +61,7 @@ def _extract_retry_after_from_exception(exc: Exception) -> Optional[float]:
     return None
 
 
-def _is_content_filter_error(data: Union[dict, str]) -> bool:
+def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
     """
     Check if error data indicates content filtering.
 
@@ -72,7 +73,8 @@ def _is_content_filter_error(data: Union[dict, str]) -> bool:
     """
     if isinstance(data, dict):
         # Check for explicit content_filter or moderation_blocked codes
-        code = (data.get("error") or {}).get("code")
+        error_obj = data.get("error")
+        code = error_obj.get("code") if isinstance(error_obj, dict) else None
         if code in ["content_filter", "moderation_blocked"]:
             return True
         # Heuristic: Azure sometimes uses other codes with policy-related content
@@ -83,7 +85,7 @@ def _is_content_filter_error(data: Union[dict, str]) -> bool:
         return "content_filter" in lower or "policy_violation" in lower or "moderation_blocked" in lower
 
 
-def _extract_error_payload(exc: Exception) -> Tuple[Union[dict, str], bool]:
+def _extract_error_payload(exc: Exception) -> Tuple[Union[dict[str, object], str], bool]:
     """
     Extract error payload and detect content filter from an OpenAI SDK exception.
 

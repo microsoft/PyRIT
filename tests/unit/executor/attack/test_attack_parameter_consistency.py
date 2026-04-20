@@ -22,6 +22,8 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     ChatMessageRole,
@@ -32,7 +34,18 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
-from pyrit.score import TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test_module",
+        class_description="",
+        identifier_type="instance",
+    )
+
 
 # =============================================================================
 # Multi-Modal Message Fixtures
@@ -152,7 +165,7 @@ def mock_objective_scorer() -> MagicMock:
     """Create a mock true/false scorer."""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
-    scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test_module"}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
 
 
@@ -181,7 +194,7 @@ def success_score() -> Score:
         score_rationale="The objective was achieved.",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -196,7 +209,7 @@ def failure_score() -> Score:
         score_rationale="The objective was not achieved.",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -219,11 +232,11 @@ def mock_refusal_scorer() -> MagicMock:
                 score_rationale="Response was not a refusal",
                 score_metadata={},
                 message_piece_id=str(uuid.uuid4()),
-                scorer_class_identifier={"__type__": "MockRefusalScorer", "__module__": "test_module"},
+                scorer_class_identifier=_mock_scorer_id("MockRefusalScorer"),
             )
         ]
     )
-    scorer.get_identifier.return_value = {"__type__": "MockRefusalScorer", "__module__": "test_module"}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockRefusalScorer")
     return scorer
 
 
@@ -295,8 +308,15 @@ def tap_attack(
     """Create a pre-configured TreeOfAttacksWithPruningAttack with mocked normalizer."""
     mock_objective_scorer.score_async.return_value = [success_score]
 
+    # TAP requires a FloatScaleThresholdScorer for objective_scorer
+    mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+    mock_threshold_scorer.threshold = 0.8
+    mock_threshold_scorer.scorer_type = "true_false"
+    mock_threshold_scorer.score_async = AsyncMock(return_value=[success_score])
+    mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
+
     adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-    scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
     attack = TreeOfAttacksWithPruningAttack(
         objective_target=mock_chat_target,
@@ -427,14 +447,11 @@ class TestNextMessageSentFirst:
                     score_rationale="Response was not a refusal",
                     score_metadata={},
                     message_piece_id=str(uuid.uuid4()),
-                    scorer_class_identifier={"__type__": "MockRefusalScorer", "__module__": "test_module"},
+                    scorer_class_identifier=_mock_scorer_id("MockRefusalScorer"),
                 )
             ]
         )
-        mock_refusal_scorer.get_identifier.return_value = {
-            "__type__": "MockRefusalScorer",
-            "__module__": "test_module",
-        }
+        mock_refusal_scorer.get_identifier.return_value = _mock_scorer_id("MockRefusalScorer")
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer, refusal_scorer=mock_refusal_scorer)
@@ -481,8 +498,15 @@ class TestNextMessageSentFirst:
         """Test that TreeOfAttacksWithPruningAttack uses next_message for the first turn on all nodes."""
         mock_objective_scorer.score_async.return_value = [success_score]
 
+        # TAP requires a FloatScaleThresholdScorer for objective_scorer
+        mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        mock_threshold_scorer.threshold = 0.8
+        mock_threshold_scorer.scorer_type = "true_false"
+        mock_threshold_scorer.score_async = AsyncMock(return_value=[success_score])
+        mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
+
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=mock_chat_target,
@@ -700,8 +724,15 @@ class TestPrependedConversationInMemory:
         """Test that TreeOfAttacksWithPruningAttack preserves prepended conversation in memory."""
         mock_objective_scorer.score_async.return_value = [success_score]
 
+        # TAP requires a FloatScaleThresholdScorer for objective_scorer
+        mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        mock_threshold_scorer.threshold = 0.8
+        mock_threshold_scorer.scorer_type = "true_false"
+        mock_threshold_scorer.score_async = AsyncMock(return_value=[success_score])
+        mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
+
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
 
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=mock_chat_target,

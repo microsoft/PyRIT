@@ -8,6 +8,7 @@ from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import PromptDataType, Score, UnvalidatedScore
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.score.scorer import Scorer
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
@@ -22,7 +23,7 @@ class FloatScaleScorer(Scorer):
     is scored independently, returning one score per piece.
     """
 
-    def __init__(self, *, validator) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator) -> None:
         """
         Initialize the FloatScaleScorer.
 
@@ -31,7 +32,7 @@ class FloatScaleScorer(Scorer):
         """
         super().__init__(validator=validator)
 
-    def validate_return_scores(self, scores: list[Score]):
+    def validate_return_scores(self, scores: list[Score]) -> None:
         """
         Validate that the returned scores are within the valid range [0, 1].
 
@@ -55,8 +56,7 @@ class FloatScaleScorer(Scorer):
 
         if self.evaluation_file_mapping is None or self.evaluation_file_mapping.harm_category is None:
             return None
-
-        scorer_hash = self.scorer_identifier.compute_hash()
+        scorer_hash = self.get_identifier().hash
 
         return find_harm_metrics_by_hash(hash=scorer_hash, harm_category=self.evaluation_file_mapping.harm_category)
 

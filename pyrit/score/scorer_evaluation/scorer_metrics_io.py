@@ -11,18 +11,18 @@ import logging
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from pyrit.common.path import (
     SCORER_EVALS_PATH,
 )
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
     ScorerMetrics,
     ScorerMetricsWithIdentity,
 )
-from pyrit.score.scorer_identifier import ScorerIdentifier
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ _file_write_locks: Dict[str, threading.Lock] = {}
 M = TypeVar("M", bound=ScorerMetrics)
 
 
-def _metrics_to_registry_dict(metrics: ScorerMetrics) -> Dict:
+def _metrics_to_registry_dict(metrics: ScorerMetrics) -> Dict[str, Any]:
     """
     Convert metrics to a dictionary suitable for registry storage.
 
@@ -70,7 +70,7 @@ def get_all_objective_metrics(
     Returns:
         List[ScorerMetricsWithIdentity[ObjectiveScorerMetrics]]: List of metrics with scorer identity.
             Access metrics via `entry.metrics.accuracy`, `entry.metrics.f1_score`, etc.
-            Access scorer info via `entry.scorer_identifier.type`, etc.
+            Access scorer info via `entry.scorer_identifier.class_name`, etc.
     """
     if file_path is None:
         file_path = SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
@@ -94,7 +94,7 @@ def get_all_harm_metrics(
     Returns:
         List[ScorerMetricsWithIdentity[HarmScorerMetrics]]: List of metrics with scorer identity.
             Access metrics via `entry.metrics.mean_absolute_error`, `entry.metrics.harm_category`, etc.
-            Access scorer info via `entry.scorer_identifier.type`, etc.
+            Access scorer info via `entry.scorer_identifier.class_name`, etc.
     """
     file_path = SCORER_EVALS_PATH / "harm" / f"{harm_category}_metrics.jsonl"
     return _load_metrics_from_file(file_path=file_path, metrics_class=HarmScorerMetrics)
@@ -129,8 +129,8 @@ def _load_metrics_from_file(
         identity_dict = {k: v for k, v in entry.items() if k != "metrics"}
 
         try:
-            # Reconstruct ScorerIdentifier from the compact dict
-            scorer_identifier = ScorerIdentifier.from_compact_dict(identity_dict)
+            # Reconstruct ScorerIdentifier from the stored dict
+            scorer_identifier = ScorerIdentifier.from_dict(identity_dict)
 
             # Create the metrics object
             metrics = metrics_class(**metrics_dict)
@@ -248,7 +248,7 @@ def add_evaluation_results(
         _file_write_locks[file_path_str] = threading.Lock()
 
     # Build entry dictionary
-    entry = scorer_identifier.to_compact_dict()
+    entry = scorer_identifier.to_dict()
     entry["metrics"] = _metrics_to_registry_dict(metrics)
 
     # Write to file with thread safety
@@ -258,10 +258,10 @@ def add_evaluation_results(
         entry=entry,
     )
 
-    logger.info(f"Added metrics for {scorer_identifier.type} to {file_path.name}")
+    logger.info(f"Added metrics for {scorer_identifier.class_name} to {file_path.name}")
 
 
-def _load_jsonl(file_path: Path) -> List[Dict]:
+def _load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
     """
     Load entries from a JSONL file.
 
@@ -291,7 +291,7 @@ def _load_jsonl(file_path: Path) -> List[Dict]:
     return entries
 
 
-def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: Dict) -> None:
+def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: Dict[str, Any]) -> None:
     """
     Append an entry to a JSONL file with thread safety.
 
@@ -333,10 +333,10 @@ def replace_evaluation_results(
     if file_path_str not in _file_write_locks:
         _file_write_locks[file_path_str] = threading.Lock()
 
-    scorer_hash = scorer_identifier.compute_hash()
+    scorer_hash = scorer_identifier.hash
 
     # Build new entry dictionary
-    new_entry = scorer_identifier.to_compact_dict()
+    new_entry = scorer_identifier.to_dict()
     new_entry["metrics"] = _metrics_to_registry_dict(metrics)
 
     with _file_write_locks[file_path_str]:
@@ -359,7 +359,7 @@ def replace_evaluation_results(
             replaced = len(existing_entries) != len(filtered_entries)
             action = "Replaced" if replaced else "Added"
             logger.info(
-                f"{action} metrics for {scorer_identifier.type} (hash={scorer_hash[:8]}...) in {file_path.name}"
+                f"{action} metrics for {scorer_identifier.class_name} (hash={scorer_hash[:8]}...) in {file_path.name}"
             )
 
         except Exception as e:

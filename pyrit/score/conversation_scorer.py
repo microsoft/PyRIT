@@ -7,8 +7,6 @@ from typing import Optional, Type, cast
 from uuid import UUID
 
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.models.literals import PromptResponseError
-from pyrit.models.message_piece import Originator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -90,8 +88,8 @@ class ConversationScorer(Scorer, ABC):
                     attack_identifier=original_piece.attack_identifier,
                     original_value_data_type=original_piece.original_value_data_type,
                     converted_value_data_type=original_piece.converted_value_data_type,
-                    response_error=cast(PromptResponseError, original_piece.response_error),
-                    originator=cast(Originator, original_piece.originator),
+                    response_error=original_piece.response_error,
+                    originator=original_piece.originator,
                     original_prompt_id=(
                         cast(UUID, original_piece.original_prompt_id)
                         if isinstance(original_piece.original_prompt_id, str)
@@ -188,7 +186,7 @@ def create_conversation_scorer(
     class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore
         """Dynamic ConversationScorer that inherits from both ConversationScorer and the wrapped scorer's base class."""
 
-        def __init__(self):
+        def __init__(self) -> None:
             # Initialize with the validator and wrapped scorer
             Scorer.__init__(self, validator=validator or ConversationScorer._default_validator)
             self._wrapped_scorer = scorer
@@ -197,9 +195,9 @@ def create_conversation_scorer(
             """Return the wrapped scorer."""
             return self._wrapped_scorer
 
-        def _build_scorer_identifier(self) -> None:
+        def _build_identifier(self) -> None:
             """Build the scorer evaluation identifier for this conversation scorer."""
-            self._set_scorer_identifier(
+            self._set_identifier(
                 sub_scorers=[self._wrapped_scorer],
             )
 

@@ -74,7 +74,7 @@ class SeedSimulatedConversation(Seed):
         num_turns: int = 3,
         sequence: int = 0,
         pyrit_version: Optional[str] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize a SeedSimulatedConversation.

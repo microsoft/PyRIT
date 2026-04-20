@@ -25,7 +25,7 @@ class AtbashConverter(PromptConverter):
 
     def __init__(self, *, append_description: bool = False) -> None:
         """
-        Initializes the converter with an option to append a description.
+        Initialize the converter with an option to append a description.
 
         Args:
             append_description (bool): If True, appends plaintext "expert" text to the prompt.
@@ -40,7 +40,19 @@ class AtbashConverter(PromptConverter):
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt using the Atbash cipher."""
+        """
+        Convert the given prompt using the Atbash cipher.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the encoded prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from pyrit.exceptions import PyritException
 
@@ -35,7 +35,7 @@ def validate_top_p(top_p: Optional[float]) -> None:
         raise PyritException(message="top_p must be between 0 and 1 (inclusive).")
 
 
-def limit_requests_per_minute(func: Callable) -> Callable:
+def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Enforce rate limit of the target through setting requests per minute.
     This should be applied to all send_prompt_async() functions on PromptTarget and PromptChatTarget.
@@ -47,7 +47,7 @@ def limit_requests_per_minute(func: Callable) -> Callable:
         Callable: The decorated function with a sleep introduced.
     """
 
-    async def set_max_rpm(*args, **kwargs):
+    async def set_max_rpm(*args: Any, **kwargs: Any) -> Any:
         self = args[0]
         rpm = getattr(self, "_max_requests_per_minute", None)
         if rpm and rpm > 0:

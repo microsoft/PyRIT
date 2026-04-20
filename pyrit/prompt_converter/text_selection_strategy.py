@@ -16,7 +16,7 @@ class TextSelectionStrategy(abc.ABC):
     @abc.abstractmethod
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects a range of characters in the text to be converted.
+        Select a range of characters in the text to be converted.
 
         Args:
             text (str): The input text to select from.
@@ -54,7 +54,7 @@ class TokenSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        This method is not used for TokenSelectionStrategy.
+        Do not use this method for TokenSelectionStrategy.
         SelectiveTextConverter handles token detection separately.
 
         Args:
@@ -78,7 +78,7 @@ class WordSelectionStrategy(TextSelectionStrategy):
     @abc.abstractmethod
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects word indices to be converted.
+        Select word indices to be converted.
 
         Args:
             words (List[str]): The list of words to select from.
@@ -90,7 +90,7 @@ class WordSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str, word_separator: str = " ") -> tuple[int, int]:
         """
-        Selects a character range by first selecting words, then converting to character positions.
+        Select a character range by first selecting words, then converting to character positions.
 
         This implementation splits the text by word_separator, gets selected word indices,
         then calculates the character range that spans those words.
@@ -136,7 +136,7 @@ class IndexSelectionStrategy(TextSelectionStrategy):
 
     def __init__(self, *, start: int = 0, end: Optional[int] = None) -> None:
         """
-        Initializes the index selection strategy.
+        Initialize the index selection strategy.
 
         Args:
             start (int): The starting character index (inclusive). Defaults to 0.
@@ -147,7 +147,7 @@ class IndexSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects a range based on absolute character indices.
+        Select a range based on absolute character indices.
 
         Args:
             text (str): The input text to select from.
@@ -166,18 +166,18 @@ class RegexSelectionStrategy(TextSelectionStrategy):
     Selects text based on the first regex match.
     """
 
-    def __init__(self, *, pattern: Union[str, Pattern]) -> None:
+    def __init__(self, *, pattern: Union[str, Pattern[str]]) -> None:
         """
-        Initializes the regex selection strategy.
+        Initialize the regex selection strategy.
 
         Args:
-            pattern (Union[str, Pattern]): The regex pattern to match.
+            pattern (Union[str, Pattern[str]]): The regex pattern to match.
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects the range of the first regex match.
+        Select the range of the first regex match.
 
         Args:
             text (str): The input text to select from.
@@ -206,7 +206,7 @@ class KeywordSelectionStrategy(TextSelectionStrategy):
         case_sensitive: bool = True,
     ) -> None:
         """
-        Initializes the keyword selection strategy.
+        Initialize the keyword selection strategy.
 
         Args:
             keyword (str): The keyword to search for.
@@ -221,7 +221,7 @@ class KeywordSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects the range around the first occurrence of the keyword.
+        Select the range around the first occurrence of the keyword.
 
         Args:
             text (str): The input text to select from.
@@ -249,7 +249,7 @@ class PositionSelectionStrategy(TextSelectionStrategy):
 
     def __init__(self, *, start_proportion: float, end_proportion: float) -> None:
         """
-        Initializes the position selection strategy.
+        Initialize the position selection strategy.
 
         Args:
             start_proportion (float): The starting position as a proportion (0.0 to 1.0).
@@ -272,7 +272,7 @@ class PositionSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects a range based on the relative position in the text.
+        Select a range based on the relative position in the text.
 
         Args:
             text (str): The input text to select from.
@@ -293,7 +293,7 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
 
     def __init__(self, *, proportion: float, anchor: str = "start", seed: Optional[int] = None) -> None:
         """
-        Initializes the proportion selection strategy.
+        Initialize the proportion selection strategy.
 
         Args:
             proportion (float): The proportion of text to select (0.0 to 1.0).
@@ -320,7 +320,7 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects a proportion of text based on the anchor position.
+        Select a proportion of text based on the anchor position.
 
         Args:
             text (str): The input text to select from.
@@ -353,7 +353,7 @@ class RangeSelectionStrategy(TextSelectionStrategy):
 
     def __init__(self, *, start_proportion: float = 0.0, end_proportion: float = 1.0) -> None:
         """
-        Initializes the range selection strategy.
+        Initialize the range selection strategy.
 
         Args:
             start_proportion (float): The starting position as a proportion (0.0 to 1.0). Defaults to 0.0.
@@ -376,7 +376,7 @@ class RangeSelectionStrategy(TextSelectionStrategy):
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
-        Selects a range based on proportional positions.
+        Select a range based on proportional positions.
 
         Args:
             text (str): The input text to select from.
@@ -402,7 +402,7 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
 
     def __init__(self, *, indices: List[int]) -> None:
         """
-        Initializes the word index selection strategy.
+        Initialize the word index selection strategy.
 
         Args:
             indices (List[int]): The list of word indices to select.
@@ -411,7 +411,7 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
 
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects words at the specified indices.
+        Select words at the specified indices.
 
         Args:
             words (List[str]): The list of words to select from.
@@ -441,7 +441,7 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
 
     def __init__(self, *, keywords: List[str], case_sensitive: bool = True) -> None:
         """
-        Initializes the word keyword selection strategy.
+        Initialize the word keyword selection strategy.
 
         Args:
             keywords (List[str]): The list of keywords to match.
@@ -452,7 +452,7 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
 
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects words that match the keywords.
+        Select words that match the keywords.
 
         Args:
             words (List[str]): The list of words to select from.
@@ -477,7 +477,7 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
 
     def __init__(self, *, proportion: float, seed: Optional[int] = None) -> None:
         """
-        Initializes the word proportion selection strategy.
+        Initialize the word proportion selection strategy.
 
         Args:
             proportion (float): The proportion of words to select (0.0 to 1.0).
@@ -494,7 +494,7 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
 
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects a random proportion of words.
+        Select a random proportion of words.
 
         Args:
             words (List[str]): The list of words to select from.
@@ -517,18 +517,18 @@ class WordRegexSelectionStrategy(WordSelectionStrategy):
     Selects words that match a regex pattern.
     """
 
-    def __init__(self, *, pattern: Union[str, Pattern]) -> None:
+    def __init__(self, *, pattern: Union[str, Pattern[str]]) -> None:
         """
-        Initializes the word regex selection strategy.
+        Initialize the word regex selection strategy.
 
         Args:
-            pattern (Union[str, Pattern]): The regex pattern to match against words.
+            pattern (Union[str, Pattern[str]]): The regex pattern to match against words.
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
 
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects words that match the regex pattern.
+        Select words that match the regex pattern.
 
         Args:
             words (List[str]): The list of words to select from.
@@ -549,7 +549,7 @@ class WordPositionSelectionStrategy(WordSelectionStrategy):
 
     def __init__(self, *, start_proportion: float, end_proportion: float) -> None:
         """
-        Initializes the word position selection strategy.
+        Initialize the word position selection strategy.
 
         Args:
             start_proportion (float): The starting position as a proportion (0.0 to 1.0).
@@ -572,7 +572,7 @@ class WordPositionSelectionStrategy(WordSelectionStrategy):
 
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects words based on the relative position.
+        Select words based on the relative position.
 
         Args:
             words (List[str]): The list of words to select from.
@@ -597,7 +597,7 @@ class AllWordsSelectionStrategy(WordSelectionStrategy):
 
     def select_words(self, *, words: List[str]) -> List[int]:
         """
-        Selects all words.
+        Select all words.
 
         Args:
             words (List[str]): The list of words to select from.

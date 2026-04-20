@@ -19,7 +19,6 @@ from pyrit.score import (
     ObjectiveScorerMetrics,
     RegistryUpdateBehavior,
     ScorerEvaluator,
-    ScorerIdentifier,
     TrueFalseScorer,
 )
 
@@ -29,10 +28,11 @@ def mock_harm_scorer():
     scorer = MagicMock(spec=FloatScaleScorer)
     scorer._memory = MagicMock()
     scorer._memory.add_message_to_memory = MagicMock()
-    scorer.scorer_identifier = ScorerIdentifier(
-        type="FloatScaleScorer",
-        system_prompt_template="test_system_prompt",
-    )
+    # Create a mock identifier with a controllable hash property
+    mock_identifier = MagicMock()
+    mock_identifier.hash = "test_hash_456"
+    mock_identifier.system_prompt_template = "test_system_prompt"
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
     return scorer
 
 
@@ -41,10 +41,11 @@ def mock_objective_scorer():
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer._memory = MagicMock()
     scorer._memory.add_message_to_memory = MagicMock()
-    scorer.scorer_identifier = ScorerIdentifier(
-        type="TrueFalseScorer",
-        user_prompt_template="test_user_prompt",
-    )
+    # Create a mock identifier with a controllable hash property
+    mock_identifier = MagicMock()
+    mock_identifier.hash = "test_hash_123"
+    mock_identifier.user_prompt_template = "test_user_prompt"
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
     return scorer
 
 
@@ -118,7 +119,7 @@ async def test__run_evaluation_async_objective_returns_metrics(mock_objective_sc
         name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=[entry], version="1.0"
     )
     mock_objective_scorer.score_prompts_batch_async = AsyncMock(return_value=[MagicMock(get_value=lambda: True)])
-    mock_objective_scorer.scorer_identifier = MagicMock()
+    mock_objective_scorer.get_identifier = MagicMock(return_value=MagicMock(hash="test_hash"))
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
 
     metrics = await evaluator._run_evaluation_async(labeled_dataset=mock_dataset, num_scorer_trials=1)
@@ -192,36 +193,35 @@ def test_should_skip_evaluation_objective_found(mock_find, mock_objective_scorer
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    # Mock the compute_hash method on the scorer_identifier
-    with patch.object(mock_objective_scorer.scorer_identifier, "compute_hash", return_value="test_hash_123"):
-        # Create expected metrics with same version and sufficient trials
-        expected_metrics = ObjectiveScorerMetrics(
-            num_responses=10,
-            num_human_raters=3,
-            accuracy=0.95,
-            accuracy_standard_error=0.02,
-            precision=0.96,
-            recall=0.94,
-            f1_score=0.95,
-            num_scorer_trials=3,
-            dataset_name="test_dataset",
-            dataset_version="1.0",
-        )
-        mock_find.return_value = expected_metrics
+    # Hash is already set in the fixture mock_objective_scorer.identifier.hash = "test_hash_123"
+    # Create expected metrics with same version and sufficient trials
+    expected_metrics = ObjectiveScorerMetrics(
+        num_responses=10,
+        num_human_raters=3,
+        accuracy=0.95,
+        accuracy_standard_error=0.02,
+        precision=0.96,
+        recall=0.94,
+        f1_score=0.95,
+        num_scorer_trials=3,
+        dataset_name="test_dataset",
+        dataset_version="1.0",
+    )
+    mock_find.return_value = expected_metrics
 
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=3,
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,
+        harm_category=None,
+        result_file_path=result_file,
+    )
 
-        assert should_skip is True
-        assert result == expected_metrics
-        mock_find.assert_called_once_with(
-            file_path=result_file,
-            hash="test_hash_123",
-        )
+    assert should_skip is True
+    assert result == expected_metrics
+    mock_find.assert_called_once_with(
+        file_path=result_file,
+        hash="test_hash_123",
+    )
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
@@ -230,22 +230,21 @@ def test_should_skip_evaluation_objective_not_found(mock_find, mock_objective_sc
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_objective_scorer.scorer_identifier, "compute_hash", return_value="test_hash_123"):
-        mock_find.return_value = None
+    mock_find.return_value = None
 
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=3,
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,
+        harm_category=None,
+        result_file_path=result_file,
+    )
 
-        assert should_skip is False
-        assert result is None
-        mock_find.assert_called_once_with(
-            file_path=result_file,
-            hash="test_hash_123",
-        )
+    assert should_skip is False
+    assert result is None
+    mock_find.assert_called_once_with(
+        file_path=result_file,
+        hash="test_hash_123",
+    )
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
@@ -254,32 +253,31 @@ def test_should_skip_evaluation_version_changed_runs_evaluation(mock_find, mock_
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_objective_scorer.scorer_identifier, "compute_hash", return_value="test_hash_123"):
-        # Metrics exist but with different dataset version
-        existing_metrics = ObjectiveScorerMetrics(
-            num_responses=10,
-            num_human_raters=3,
-            accuracy=0.95,
-            accuracy_standard_error=0.02,
-            precision=0.96,
-            recall=0.94,
-            f1_score=0.95,
-            num_scorer_trials=3,
-            dataset_name="test_dataset",
-            dataset_version="2.0",  # Different version
-        )
-        mock_find.return_value = existing_metrics
+    # Metrics exist but with different dataset version
+    existing_metrics = ObjectiveScorerMetrics(
+        num_responses=10,
+        num_human_raters=3,
+        accuracy=0.95,
+        accuracy_standard_error=0.02,
+        precision=0.96,
+        recall=0.94,
+        f1_score=0.95,
+        num_scorer_trials=3,
+        dataset_name="test_dataset",
+        dataset_version="2.0",  # Different version
+    )
+    mock_find.return_value = existing_metrics
 
-        # When version differs, should NOT skip (run and replace)
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",  # Looking for version 1.0
-            num_scorer_trials=3,
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    # When version differs, should NOT skip (run and replace)
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",  # Looking for version 1.0
+        num_scorer_trials=3,
+        harm_category=None,
+        result_file_path=result_file,
+    )
 
-        assert should_skip is False
-        assert result is None
+    assert should_skip is False
+    assert result is None
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
@@ -288,32 +286,31 @@ def test_should_skip_evaluation_fewer_trials_requested_skips(mock_find, mock_obj
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_objective_scorer.scorer_identifier, "compute_hash", return_value="test_hash_123"):
-        # Metrics exist with more trials than requested
-        existing_metrics = ObjectiveScorerMetrics(
-            num_responses=10,
-            num_human_raters=3,
-            accuracy=0.95,
-            accuracy_standard_error=0.02,
-            precision=0.96,
-            recall=0.94,
-            f1_score=0.95,
-            num_scorer_trials=5,  # Existing has 5 trials
-            dataset_name="test_dataset",
-            dataset_version="1.0",
-        )
-        mock_find.return_value = existing_metrics
+    # Metrics exist with more trials than requested
+    existing_metrics = ObjectiveScorerMetrics(
+        num_responses=10,
+        num_human_raters=3,
+        accuracy=0.95,
+        accuracy_standard_error=0.02,
+        precision=0.96,
+        recall=0.94,
+        f1_score=0.95,
+        num_scorer_trials=5,  # Existing has 5 trials
+        dataset_name="test_dataset",
+        dataset_version="1.0",
+    )
+    mock_find.return_value = existing_metrics
 
-        # Requesting only 3 trials - should skip since existing has more
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=3,  # Requesting fewer trials
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    # Requesting only 3 trials - should skip since existing has more
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,  # Requesting fewer trials
+        harm_category=None,
+        result_file_path=result_file,
+    )
 
-        assert should_skip is True
-        assert result == existing_metrics
+    assert should_skip is True
+    assert result == existing_metrics
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
@@ -322,32 +319,31 @@ def test_should_skip_evaluation_more_trials_requested_runs(mock_find, mock_objec
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_objective_scorer.scorer_identifier, "compute_hash", return_value="test_hash_123"):
-        # Metrics exist with fewer trials than requested
-        existing_metrics = ObjectiveScorerMetrics(
-            num_responses=10,
-            num_human_raters=3,
-            accuracy=0.95,
-            accuracy_standard_error=0.02,
-            precision=0.96,
-            recall=0.94,
-            f1_score=0.95,
-            num_scorer_trials=2,  # Existing has only 2 trials
-            dataset_name="test_dataset",
-            dataset_version="1.0",
-        )
-        mock_find.return_value = existing_metrics
+    # Metrics exist with fewer trials than requested
+    existing_metrics = ObjectiveScorerMetrics(
+        num_responses=10,
+        num_human_raters=3,
+        accuracy=0.95,
+        accuracy_standard_error=0.02,
+        precision=0.96,
+        recall=0.94,
+        f1_score=0.95,
+        num_scorer_trials=2,  # Existing has only 2 trials
+        dataset_name="test_dataset",
+        dataset_version="1.0",
+    )
+    mock_find.return_value = existing_metrics
 
-        # Requesting 5 trials - should NOT skip (run and replace)
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=5,  # Requesting more trials
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    # Requesting 5 trials - should NOT skip (run and replace)
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=5,  # Requesting more trials
+        harm_category=None,
+        result_file_path=result_file,
+    )
 
-        assert should_skip is False
-        assert result is None
+    assert should_skip is False
+    assert result is None
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
@@ -356,38 +352,37 @@ def test_should_skip_evaluation_harm_found(mock_find, mock_harm_scorer, tmp_path
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_harm_scorer.scorer_identifier, "compute_hash", return_value="test_hash_456"):
-        # Create expected harm metrics
-        expected_metrics = HarmScorerMetrics(
-            num_responses=15,
-            num_human_raters=4,
-            mean_absolute_error=0.05,
-            mae_standard_error=0.01,
-            t_statistic=1.5,
-            p_value=0.15,
-            krippendorff_alpha_combined=0.85,
-            krippendorff_alpha_humans=0.88,
-            krippendorff_alpha_model=0.82,
-            num_scorer_trials=3,
-            dataset_name="harm_dataset",
-            dataset_version="1.0",
-            harm_category="hate_speech",
-        )
-        mock_find.return_value = expected_metrics
+    # Create expected harm metrics
+    expected_metrics = HarmScorerMetrics(
+        num_responses=15,
+        num_human_raters=4,
+        mean_absolute_error=0.05,
+        mae_standard_error=0.01,
+        t_statistic=1.5,
+        p_value=0.15,
+        krippendorff_alpha_combined=0.85,
+        krippendorff_alpha_humans=0.88,
+        krippendorff_alpha_model=0.82,
+        num_scorer_trials=3,
+        dataset_name="harm_dataset",
+        dataset_version="1.0",
+        harm_category="hate_speech",
+    )
+    mock_find.return_value = expected_metrics
 
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=3,
-            harm_category="hate_speech",
-            result_file_path=result_file,
-        )
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,
+        harm_category="hate_speech",
+        result_file_path=result_file,
+    )
 
-        assert should_skip is True
-        assert result == expected_metrics
-        mock_find.assert_called_once_with(
-            hash="test_hash_456",
-            harm_category="hate_speech",
-        )
+    assert should_skip is True
+    assert result == expected_metrics
+    mock_find.assert_called_once_with(
+        hash="test_hash_456",
+        harm_category="hate_speech",
+    )
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
@@ -396,18 +391,17 @@ def test_should_skip_evaluation_harm_missing_category(mock_find, mock_harm_score
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_harm_scorer.scorer_identifier, "compute_hash", return_value="test_hash_456"):
-        # No harm_category provided
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=3,
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    # No harm_category provided
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,
+        harm_category=None,
+        result_file_path=result_file,
+    )
 
-        assert should_skip is False
-        assert result is None
-        mock_find.assert_not_called()
+    assert should_skip is False
+    assert result is None
+    mock_find.assert_not_called()
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_hash")
@@ -416,20 +410,24 @@ def test_should_skip_evaluation_exception_handling(mock_find, mock_objective_sco
     evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    # Make compute_hash raise an exception
-    with patch.object(
-        mock_objective_scorer.scorer_identifier, "compute_hash", side_effect=Exception("Hash computation failed")
-    ):
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            num_scorer_trials=3,
-            harm_category=None,
-            result_file_path=result_file,
-        )
+    # Make get_identifier() raise an exception
+    mock_objective_scorer.get_identifier = MagicMock(side_effect=Exception("Identifier computation failed"))
 
-        assert should_skip is False
-        assert result is None
-        mock_find.assert_not_called()
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,
+        harm_category=None,
+        result_file_path=result_file,
+    )
+
+    assert should_skip is False
+    assert result is None
+    mock_find.assert_not_called()
+
+    # Restore get_identifier for other tests
+    mock_identifier = MagicMock()
+    mock_identifier.hash = "test_hash_123"
+    mock_objective_scorer.get_identifier = MagicMock(return_value=mock_identifier)
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
@@ -438,38 +436,37 @@ def test_should_skip_evaluation_harm_definition_version_changed_runs_evaluation(
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_harm_scorer.scorer_identifier, "compute_hash", return_value="test_hash_456"):
-        # Create existing metrics with older harm_definition_version
-        existing_metrics = HarmScorerMetrics(
-            num_responses=15,
-            num_human_raters=4,
-            mean_absolute_error=0.05,
-            mae_standard_error=0.01,
-            t_statistic=1.5,
-            p_value=0.15,
-            krippendorff_alpha_combined=0.85,
-            krippendorff_alpha_humans=0.88,
-            krippendorff_alpha_model=0.82,
-            num_scorer_trials=3,
-            dataset_name="harm_dataset",
-            dataset_version="1.0",
-            harm_category="hate_speech",
-            harm_definition="hate_speech.yaml",
-            harm_definition_version="1.0",
-        )
-        mock_find.return_value = existing_metrics
+    # Create existing metrics with older harm_definition_version
+    existing_metrics = HarmScorerMetrics(
+        num_responses=15,
+        num_human_raters=4,
+        mean_absolute_error=0.05,
+        mae_standard_error=0.01,
+        t_statistic=1.5,
+        p_value=0.15,
+        krippendorff_alpha_combined=0.85,
+        krippendorff_alpha_humans=0.88,
+        krippendorff_alpha_model=0.82,
+        num_scorer_trials=3,
+        dataset_name="harm_dataset",
+        dataset_version="1.0",
+        harm_category="hate_speech",
+        harm_definition="hate_speech.yaml",
+        harm_definition_version="1.0",
+    )
+    mock_find.return_value = existing_metrics
 
-        # Request evaluation with newer harm_definition_version
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            harm_definition_version="2.0",  # Different version
-            num_scorer_trials=3,
-            harm_category="hate_speech",
-            result_file_path=result_file,
-        )
+    # Request evaluation with newer harm_definition_version
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        harm_definition_version="2.0",  # Different version
+        num_scorer_trials=3,
+        harm_category="hate_speech",
+        result_file_path=result_file,
+    )
 
-        assert should_skip is False
-        assert result is None
+    assert should_skip is False
+    assert result is None
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
@@ -478,38 +475,37 @@ def test_should_skip_evaluation_harm_definition_version_same_skips(mock_find, mo
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_harm_scorer.scorer_identifier, "compute_hash", return_value="test_hash_456"):
-        # Create existing metrics with same harm_definition_version
-        existing_metrics = HarmScorerMetrics(
-            num_responses=15,
-            num_human_raters=4,
-            mean_absolute_error=0.05,
-            mae_standard_error=0.01,
-            t_statistic=1.5,
-            p_value=0.15,
-            krippendorff_alpha_combined=0.85,
-            krippendorff_alpha_humans=0.88,
-            krippendorff_alpha_model=0.82,
-            num_scorer_trials=3,
-            dataset_name="harm_dataset",
-            dataset_version="1.0",
-            harm_category="hate_speech",
-            harm_definition="hate_speech.yaml",
-            harm_definition_version="1.0",
-        )
-        mock_find.return_value = existing_metrics
+    # Create existing metrics with same harm_definition_version
+    existing_metrics = HarmScorerMetrics(
+        num_responses=15,
+        num_human_raters=4,
+        mean_absolute_error=0.05,
+        mae_standard_error=0.01,
+        t_statistic=1.5,
+        p_value=0.15,
+        krippendorff_alpha_combined=0.85,
+        krippendorff_alpha_humans=0.88,
+        krippendorff_alpha_model=0.82,
+        num_scorer_trials=3,
+        dataset_name="harm_dataset",
+        dataset_version="1.0",
+        harm_category="hate_speech",
+        harm_definition="hate_speech.yaml",
+        harm_definition_version="1.0",
+    )
+    mock_find.return_value = existing_metrics
 
-        # Request evaluation with same harm_definition_version
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            harm_definition_version="1.0",  # Same version
-            num_scorer_trials=3,
-            harm_category="hate_speech",
-            result_file_path=result_file,
-        )
+    # Request evaluation with same harm_definition_version
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        harm_definition_version="1.0",  # Same version
+        num_scorer_trials=3,
+        harm_category="hate_speech",
+        result_file_path=result_file,
+    )
 
-        assert should_skip is True
-        assert result == existing_metrics
+    assert should_skip is True
+    assert result == existing_metrics
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_harm_metrics_by_hash")
@@ -520,38 +516,37 @@ def test_should_skip_evaluation_harm_definition_version_none_in_existing_runs_ev
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     result_file = tmp_path / "test_results.jsonl"
 
-    with patch.object(mock_harm_scorer.scorer_identifier, "compute_hash", return_value="test_hash_456"):
-        # Create existing metrics without harm_definition_version (legacy)
-        existing_metrics = HarmScorerMetrics(
-            num_responses=15,
-            num_human_raters=4,
-            mean_absolute_error=0.05,
-            mae_standard_error=0.01,
-            t_statistic=1.5,
-            p_value=0.15,
-            krippendorff_alpha_combined=0.85,
-            krippendorff_alpha_humans=0.88,
-            krippendorff_alpha_model=0.82,
-            num_scorer_trials=3,
-            dataset_name="harm_dataset",
-            dataset_version="1.0",
-            harm_category="hate_speech",
-            harm_definition="hate_speech.yaml",
-            harm_definition_version=None,  # Legacy: no version
-        )
-        mock_find.return_value = existing_metrics
+    # Create existing metrics without harm_definition_version (legacy)
+    existing_metrics = HarmScorerMetrics(
+        num_responses=15,
+        num_human_raters=4,
+        mean_absolute_error=0.05,
+        mae_standard_error=0.01,
+        t_statistic=1.5,
+        p_value=0.15,
+        krippendorff_alpha_combined=0.85,
+        krippendorff_alpha_humans=0.88,
+        krippendorff_alpha_model=0.82,
+        num_scorer_trials=3,
+        dataset_name="harm_dataset",
+        dataset_version="1.0",
+        harm_category="hate_speech",
+        harm_definition="hate_speech.yaml",
+        harm_definition_version=None,  # Legacy: no version
+    )
+    mock_find.return_value = existing_metrics
 
-        # Request evaluation with harm_definition_version
-        should_skip, result = evaluator._should_skip_evaluation(
-            dataset_version="1.0",
-            harm_definition_version="1.0",  # New: has version
-            num_scorer_trials=3,
-            harm_category="hate_speech",
-            result_file_path=result_file,
-        )
+    # Request evaluation with harm_definition_version
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        harm_definition_version="1.0",  # New: has version
+        num_scorer_trials=3,
+        harm_category="hate_speech",
+        result_file_path=result_file,
+    )
 
-        assert should_skip is False
-        assert result is None
+    assert should_skip is False
+    assert result is None
 
 
 @pytest.mark.asyncio

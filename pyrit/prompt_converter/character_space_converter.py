@@ -19,7 +19,19 @@ class CharacterSpaceConverter(PromptConverter):
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt by removing punctuation and spacing out characters."""
+        """
+        Convert the given prompt by removing punctuation and spacing out characters.
+
+        Args:
+            prompt (str): The input text prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted text.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
         converted_text = re.sub("[!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~]", "", " ".join(prompt))

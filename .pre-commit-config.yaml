@@ -55,15 +55,8 @@ repos:
     hooks:
       - id: mypy
         name: mypy (strict)
-        files: &strict_modules ^pyrit/(auth|analytics|embedding|exceptions|memory|prompt_normalizer)/
+        files: &strict_modules ^pyrit/
         args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache, --strict]
-        entry: mypy
-        language: system
-        types: [ python ]
-      - id: mypy
-        name: mypy (regular)
-        exclude: *strict_modules
-        args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache]
         entry: mypy
         language: system
         types: [ python ]

@@ -25,7 +25,10 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
 
-RealTimeVoice = Literal["alloy", "echo", "shimmer"]
+# Voices supported by the OpenAI Realtime API.
+# See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
+# For best quality, OpenAI recommends using "marin" or "cedar".
+RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
 
 
 @dataclass
@@ -66,8 +69,8 @@ class RealtimeTarget(OpenAITarget):
         self,
         *,
         voice: Optional[RealTimeVoice] = None,
-        existing_convo: Optional[dict] = None,
-        **kwargs,
+        existing_convo: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the Realtime target with specified parameters.
@@ -96,9 +99,9 @@ class RealtimeTarget(OpenAITarget):
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
-        self._realtime_client = None
+        self._realtime_client: Optional[AsyncOpenAI] = None
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"
         self.endpoint_environment_variable = "OPENAI_REALTIME_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_REALTIME_API_KEY"
@@ -136,7 +139,7 @@ class RealtimeTarget(OpenAITarget):
         # Call parent validation with the wss URL
         super()._validate_url_for_target(check_url)
 
-    def _warn_if_irregular_endpoint(self, endpoint: str) -> None:
+    def _warn_if_irregular_realtime_endpoint(self, endpoint: str) -> None:
         """
         Warns if the endpoint URL does not match expected patterns.
 
@@ -172,7 +175,7 @@ class RealtimeTarget(OpenAITarget):
                 "Expected formats: 'wss://resource.openai.azure.com/openai/v1' or 'wss://api.openai.com/v1'"
             )
 
-    def _get_openai_client(self):
+    def _get_openai_client(self) -> AsyncOpenAI:
         """
         Create or return the AsyncOpenAI client configured for Realtime API.
         Uses the Azure GA approach with websocket_base_url.
@@ -197,7 +200,7 @@ class RealtimeTarget(OpenAITarget):
 
         return self._realtime_client
 
-    async def connect(self, conversation_id: str):
+    async def connect(self, conversation_id: str) -> Any:
         """
         Connect to Realtime API using AsyncOpenAI client and return the realtime connection.
 
@@ -212,7 +215,7 @@ class RealtimeTarget(OpenAITarget):
         logger.info("Successfully connected to AzureOpenAI Realtime API")
         return connection
 
-    def _set_system_prompt_and_config_vars(self, system_prompt: str):
+    def _set_system_prompt_and_config_vars(self, system_prompt: str) -> dict[str, Any]:
         """
         Create session configuration for OpenAI client.
         Uses the Azure GA format with nested audio config.
@@ -251,7 +254,7 @@ class RealtimeTarget(OpenAITarget):
 
         return session_config
 
-    async def send_config(self, conversation_id: str):
+    async def send_config(self, conversation_id: str) -> None:
         """
         Send the session configuration using OpenAI client.
 
@@ -374,7 +377,7 @@ class RealtimeTarget(OpenAITarget):
 
         return data.value
 
-    async def cleanup_target(self):
+    async def cleanup_target(self) -> None:
         """
         Disconnects from the Realtime API connections.
         """
@@ -394,7 +397,7 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
 
-    async def cleanup_conversation(self, conversation_id: str):
+    async def cleanup_conversation(self, conversation_id: str) -> None:
         """
         Disconnects from the Realtime API for a specific conversation.
 
@@ -411,7 +414,7 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing connection for {conversation_id}: {e}")
             del self._existing_conversation[conversation_id]
 
-    async def send_response_create(self, conversation_id: str):
+    async def send_response_create(self, conversation_id: str) -> None:
         """
         Send response.create using OpenAI client.
 
@@ -552,7 +555,7 @@ class RealtimeTarget(OpenAITarget):
         )
         return result
 
-    def _get_connection(self, *, conversation_id: str):
+    def _get_connection(self, *, conversation_id: str) -> Any:
         """
         Get and validate the Realtime API connection for a conversation.
 

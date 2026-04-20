@@ -2,12 +2,12 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Generator, List, Optional, Sequence
 
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
-def _get_chunks(*args, batch_size: int):
+def _get_chunks(*args: Sequence[Any], batch_size: int) -> Generator[List[Sequence[Any]], None, None]:
     """
     Split provided lists into chunks of specified batch size.
 
@@ -30,7 +30,7 @@ def _get_chunks(*args, batch_size: int):
         yield [arg[i : i + batch_size] for arg in args]
 
 
-def _validate_rate_limit_parameters(prompt_target: Optional[PromptTarget], batch_size: int):
+def _validate_rate_limit_parameters(prompt_target: Optional[PromptTarget], batch_size: int) -> None:
     """
     Validate the constraints between Rate Limit (Requests Per Minute) and batch size.
 
@@ -51,10 +51,10 @@ async def batch_task_async(
     prompt_target: Optional[PromptTarget] = None,
     batch_size: int,
     items_to_batch: Sequence[Sequence[Any]],
-    task_func: Callable,
+    task_func: Callable[..., Any],
     task_arguments: list[str],
-    **task_kwargs,
-):
+    **task_kwargs: Any,
+) -> list[Any]:
     """
     Perform provided task in batches and validate parameters using helpers.
 

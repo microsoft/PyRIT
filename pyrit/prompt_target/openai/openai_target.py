@@ -65,7 +65,7 @@ class OpenAITarget(PromptChatTarget):
         api_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
         headers: Optional[str] = None,
         max_requests_per_minute: Optional[int] = None,
-        httpx_client_kwargs: Optional[dict] = None,
+        httpx_client_kwargs: Optional[dict[str, Any]] = None,
         underlying_model: Optional[str] = None,
     ) -> None:
         """
@@ -91,7 +91,7 @@ class OpenAITarget(PromptChatTarget):
                 If it is not there either, the identifier "model_name" attribute will use the model_name.
                 Defaults to None.
         """
-        self._headers: dict = {}
+        self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
 
         request_headers = default_values.get_non_required_value(
@@ -125,7 +125,7 @@ class OpenAITarget(PromptChatTarget):
         )
 
         # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(  # type: ignore[assignment]
+        self._api_key = default_values.get_required_value(
             env_var_name=self.api_key_environment_variable, passed_value=api_key
         )
 
@@ -360,7 +360,7 @@ class OpenAITarget(PromptChatTarget):
     async def _handle_openai_request(
         self,
         *,
-        api_call: Callable,
+        api_call: Callable[..., Any],
         request: Message,
     ) -> Message:
         """
@@ -419,7 +419,7 @@ class OpenAITarget(PromptChatTarget):
             error_str = str(e)
 
             class _ErrorResponse:
-                def model_dump_json(self):
+                def model_dump_json(self) -> str:
                     return error_str
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
@@ -603,7 +603,7 @@ class OpenAITarget(PromptChatTarget):
                 f"Recommended: {base_url}"
             )
 
-    def _warn_if_irregular_endpoint(self, expected_url_regex) -> None:
+    def _warn_if_irregular_endpoint(self, expected_url_regex: list[str]) -> None:
         """
         Validate that the endpoint URL ends with one of the expected routes for this OpenAI target.
 

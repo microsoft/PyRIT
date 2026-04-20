@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import hashlib
 import logging
 import math
@@ -37,7 +39,9 @@ def verify_and_resolve_path(path: Union[str, Path]) -> Path:
     return path_obj
 
 
-def combine_dict(existing_dict: Optional[dict] = None, new_dict: Optional[dict] = None) -> dict:
+def combine_dict(
+    existing_dict: Optional[dict[str, Any]] = None, new_dict: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
     """
     Combine two dictionaries containing string keys and values into one.
 
@@ -54,7 +58,7 @@ def combine_dict(existing_dict: Optional[dict] = None, new_dict: Optional[dict] 
     return result
 
 
-def combine_list(list1: Union[str, List[str]], list2: Union[str, List[str]]) -> list:
+def combine_list(list1: Union[str, List[str]], list2: Union[str, List[str]]) -> list[str]:
     """
     Combine two lists or strings into a single list with unique values.
 
@@ -123,7 +127,7 @@ def to_sha256(data: str) -> str:
 
 
 def warn_if_set(
-    *, config: Any, unused_fields: List[str], log: Union[logging.Logger, logging.LoggerAdapter] = logger
+    *, config: Any, unused_fields: List[str], log: Union[logging.Logger, logging.LoggerAdapter[logging.Logger]] = logger
 ) -> None:
     """
     Warn about unused parameters in configurations.

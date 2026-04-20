@@ -14,11 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional, Union, get_args
 from urllib.parse import urlparse
 
-import aiofiles  # type: ignore[import-untyped]
+import aiofiles
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.models.literals import PromptDataType
-from pyrit.models.storage_io import DiskStorageIO
+from pyrit.models.storage_io import DiskStorageIO, StorageIO
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
@@ -33,7 +33,7 @@ def data_serializer_factory(
     value: Optional[str] = None,
     extension: Optional[str] = None,
     category: AllowedCategories,
-):
+) -> "DataTypeSerializer":
     """
     Factory method to create a DataTypeSerializer instance.
 
@@ -62,6 +62,8 @@ def data_serializer_factory(
             return AudioPathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
         elif data_type == "video_path":
             return VideoPathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
+        elif data_type == "binary_path":
+            return BinaryPathDataTypeSerializer(category=category, prompt_text=value, extension=extension)
         elif data_type == "error":
             return ErrorDataTypeSerializer(prompt_text=value)
         elif data_type == "url":
@@ -75,6 +77,8 @@ def data_serializer_factory(
             return AudioPathDataTypeSerializer(category=category, extension=extension)
         elif data_type == "video_path":
             return VideoPathDataTypeSerializer(category=category, extension=extension)
+        elif data_type == "binary_path":
+            return BinaryPathDataTypeSerializer(category=category, extension=extension)
         elif data_type == "error":
             return ErrorDataTypeSerializer(prompt_text="")
         else:
@@ -102,7 +106,7 @@ class DataTypeSerializer(abc.ABC):
 
         return CentralMemory.get_memory_instance()
 
-    def _get_storage_io(self):
+    def _get_storage_io(self) -> StorageIO:
         """
         Retrieve the input datasets storage handle.
 
@@ -136,12 +140,12 @@ class DataTypeSerializer(abc.ABC):
         await self._memory.results_storage_io.write_file(file_path, data)
         self.value = str(file_path)
 
-    async def save_b64_image(self, data: str, output_filename: str = None) -> None:
+    async def save_b64_image(self, data: str | bytes, output_filename: str = None) -> None:
         """
         Saves the base64 encoded image to storage.
 
         Arguments:
-            data: string with base64 data
+            data: string or bytes with base64 data
             output_filename (optional, str): filename to store image as. Defaults to UUID if not provided
         """
         file_path = await self.get_data_filename(file_name=output_filename)
@@ -179,8 +183,8 @@ class DataTypeSerializer(abc.ABC):
                 wav_file.writeframes(data)
 
             async with aiofiles.open(local_temp_path, "rb") as f:
-                data = await f.read()
-                await self._memory.results_storage_io.write_file(file_path, data)
+                audio_data = await f.read()
+                await self._memory.results_storage_io.write_file(file_path, audio_data)
             os.remove(local_temp_path)
 
         # If local, we can just save straight to disk and do not need to delete temp file after
@@ -379,6 +383,37 @@ class VideoPathDataTypeSerializer(DataTypeSerializer):
         self.data_type = "video_path"
         self.data_sub_directory = f"/{category}/videos"
         self.file_extension = extension if extension else "mp4"
+
+        if prompt_text:
+            self.value = prompt_text
+
+    def data_on_disk(self) -> bool:
+        return True
+
+
+class BinaryPathDataTypeSerializer(DataTypeSerializer):
+    def __init__(
+        self,
+        *,
+        category: str,
+        prompt_text: Optional[str] = None,
+        extension: Optional[str] = None,
+    ):
+        """
+        Serializer for arbitrary binary data paths.
+
+        This serializer handles generic binary data that doesn't fit into specific
+        categories like images, audio, or video. Useful for XPIA attacks and
+        storing files like PDFs, documents, or other binary formats.
+
+        Args:
+            category (str): The category or context for the data.
+            prompt_text (Optional[str]): The binary file path or identifier.
+            extension (Optional[str]): The file extension, defaults to 'bin'.
+        """
+        self.data_type = "binary_path"
+        self.data_sub_directory = f"/{category}/binaries"
+        self.file_extension = extension if extension else "bin"
 
         if prompt_text:
             self.value = prompt_text

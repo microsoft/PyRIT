@@ -78,29 +78,29 @@
 # Or concretely:
 #
 # ```shell
-# !pyrit_scan foundry --initializers simple openai_objective_target --scenario-strategies base64
+# !pyrit_scan foundry.red_team_agent --initializers simple openai_objective_target --scenario-strategies base64
 # ```
 #
 # Example with a basic configuration that runs the Foundry scenario against the objective target defined in `openai_objective_target` (which just is an OpenAIChatTarget with `DEFAULT_OPENAI_FRONTEND_ENDPOINT` and `DEFAULT_OPENAI_FRONTEND_KEY`).
 
 # %%
-# !pyrit_scan foundry --initializers openai_objective_target --strategies base64
+# !pyrit_scan foundry.red_team_agent --initializers openai_objective_target --strategies base64
 
 # %% [markdown]
 # Or with all options and multiple initializers and multiple strategies:
 #
 # ```shell
-# pyrit_scan foundry --database InMemory --initializers simple objective_target objective_list --scenario-strategies easy crescendo
+# pyrit_scan foundry.red_team_agent --database InMemory --initializers simple objective_target objective_list --scenario-strategies easy crescendo
 # ```
 #
 # You can also override scenario execution parameters:
 #
 # ```shell
 # # Override concurrency and retry settings
-# pyrit_scan foundry --initializers simple objective_target --max-concurrency 10 --max-retries 3
+# pyrit_scan foundry.red_team_agent --initializers simple objective_target --max-concurrency 10 --max-retries 3
 #
 # # Add custom memory labels for tracking (must be valid JSON)
-# pyrit_scan foundry --initializers simple objective_target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
+# pyrit_scan foundry.red_team_agent --initializers simple objective_target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
 # ```
 #
 # Available CLI parameter overrides:
@@ -111,7 +111,7 @@
 # You can also use custom initialization scripts by passing file paths. It is relative to your current working directory, but to avoid confusion, full paths are always better:
 #
 # ```shell
-# pyrit_scan encoding_scenario --initialization-scripts ./my_custom_config.py
+# pyrit_scan garak.encoding --initialization-scripts ./my_custom_config.py
 # ```
 
 # %% [markdown]
@@ -120,12 +120,13 @@
 # You can define your own scenarios in initialization scripts. The CLI will automatically discover any `Scenario` subclasses and make them available:
 #
 
-from pyrit.common import apply_defaults
-from pyrit.scenario import DatasetConfiguration, Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-
 # %%
 # my_custom_scenarios.py
+
+from pyrit.common import apply_defaults
+from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+from pyrit.scenario import DatasetConfiguration, Scenario, ScenarioStrategy
+from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
 
 
@@ -159,6 +160,7 @@ class MyCustomScenario(Scenario):
         super().__init__(
             name="My Custom Scenario",
             version=1,
+            objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             strategy_class=MyCustomStrategy,
             scenario_result_id=scenario_result_id,
         )

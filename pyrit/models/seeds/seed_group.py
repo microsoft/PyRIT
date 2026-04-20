@@ -17,7 +17,8 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.models.message import Message, MessagePiece
+from pyrit.models.message import Message
+from pyrit.models.message_piece import MessagePiece
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -410,7 +411,7 @@ class SeedGroup(YamlLoadable):
     # Utility Methods
     # =========================================================================
 
-    def render_template_value(self, **kwargs) -> None:
+    def render_template_value(self, **kwargs: Any) -> None:
         """
         Renders seed values as templates with provided parameters.
 

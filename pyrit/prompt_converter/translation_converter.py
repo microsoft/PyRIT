@@ -47,7 +47,7 @@ class TranslationConverter(PromptConverter):
         max_wait_time_in_seconds: int = 60,
     ):
         """
-        Initializes the converter with the target chat support, language, and optional prompt template.
+        Initialize the converter with the target chat support, language, and optional prompt template.
 
         Args:
             converter_target (PromptChatTarget): The target chat support for the conversion which will translate.
@@ -83,10 +83,11 @@ class TranslationConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by translating it using the converter target.
+        Convert the given prompt by translating it using the converter target.
 
         Args:
             prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
 
         Returns:
             ConverterResult: The result containing the generated version of the prompt.
@@ -129,7 +130,7 @@ class TranslationConverter(PromptConverter):
         translation = await self._send_translation_prompt_async(request)
         return ConverterResult(output_text=translation, output_type="text")
 
-    async def _send_translation_prompt_async(self, request) -> str:
+    async def _send_translation_prompt_async(self, request: Message) -> str:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
             wait=wait_exponential(multiplier=1, min=1, max=self._max_wait_time_in_seconds),

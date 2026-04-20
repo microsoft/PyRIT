@@ -12,12 +12,12 @@ GRADIO_POLLING_RATE = 0.5  # Polling Rate by the Gradio UI
 class GradioApp:
     connect_status: ConnectionStatusHandler
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.i = 0
         self.rpc_client = RPCClient(self._disconnected_rpc_callback)
         self.url = ""
 
-    def start_gradio(self, open_browser=False):
+    def start_gradio(self, open_browser: bool = False) -> None:
         with gr.Blocks() as demo:
             is_connected = gr.State(False)
             next_prompt_state = gr.State("")
@@ -67,18 +67,18 @@ class GradioApp:
         if self.rpc_client:
             self.rpc_client.stop()
 
-    def _safe_clicked(self):
+    def _safe_clicked(self) -> str:
         return self._send_message(True)
 
-    def _unsafe_clicked(self):
+    def _unsafe_clicked(self) -> str:
         return self._send_message(False)
 
-    def _send_message(self, value):
+    def _send_message(self, value: bool) -> str:
         self.rpc_client.send_message(value)
         message_piece = self.rpc_client.wait_for_prompt()
         return str(message_piece.converted_value)
 
-    def _on_next_prompt_change(self, next_prompt):
+    def _on_next_prompt_change(self, next_prompt: str) -> list[object]:
         if next_prompt == "":
             return [
                 gr.Markdown("Waiting for next prompt..."),
@@ -87,14 +87,14 @@ class GradioApp:
             ]
         return [gr.Markdown("Prompt: " + next_prompt), gr.update(interactive=True), gr.update(interactive=True)]
 
-    def _loading_dots(self):
+    def _loading_dots(self) -> gr.Markdown:
         self.i = (self.i + 1) % 4
         return gr.Markdown("Connecting to PyRIT" + "." * self.i)
 
-    def _disconnected_rpc_callback(self):
+    def _disconnected_rpc_callback(self) -> None:
         self.connect_status.set_disconnected()
 
-    def _main_interface_loaded(self):
+    def _main_interface_loaded(self) -> list[object]:
         print("Showing main interface")
         self.rpc_client.start()
         message = self.rpc_client.wait_for_prompt()

@@ -13,7 +13,7 @@ import hashlib
 import io
 import tempfile
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, cast
 
 import requests
 
@@ -22,7 +22,7 @@ from pyrit.common.json_helper import read_json, read_jsonl, write_json, write_js
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 
-FILE_TYPE_HANDLERS: Dict[str, Dict[str, Callable]] = {
+FILE_TYPE_HANDLERS: Dict[str, Dict[str, Callable[..., Any]]] = {
     "json": {"read": read_json, "write": write_json},
     "jsonl": {"read": read_jsonl, "write": write_jsonl},
     "csv": {"read": read_csv, "write": write_csv},
@@ -75,7 +75,7 @@ def read_cache(*, cache_file: Path, file_type: str) -> List[Dict[str, str]]:
     """
     validate_file_type(file_type)
     with cache_file.open("r", encoding="utf-8") as file:
-        return FILE_TYPE_HANDLERS[file_type]["read"](file)
+        return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](file))
 
 
 def write_cache(*, cache_file: Path, examples: List[Dict[str, str]], file_type: str) -> None:
@@ -107,8 +107,11 @@ def fetch_from_public_url(*, source: str, file_type: str) -> List[Dict[str, str]
     if response.status_code != 200:
         raise Exception(f"Failed to fetch examples from public URL. Status code: {response.status_code}")
     if file_type == "json":
-        return FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text))
-    return FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines())))
+        return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text)))
+    return cast(
+        List[Dict[str, str]],
+        FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines()))),
+    )
 
 
 def fetch_from_file(*, source: str, file_type: str) -> List[Dict[str, str]]:
@@ -123,7 +126,7 @@ def fetch_from_file(*, source: str, file_type: str) -> List[Dict[str, str]]:
     """
     validate_file_type(file_type)
     with open(source, "r", encoding="utf-8") as file:
-        return FILE_TYPE_HANDLERS[file_type]["read"](file)
+        return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](file))
 
 
 def fetch_with_cache(
@@ -170,9 +173,7 @@ def fetch_with_cache(
     if cache:
         write_cache(cache_file=cache_file, examples=examples, file_type=file_type)
     else:
-        with tempfile.NamedTemporaryFile(
-            delete=False, mode="w", suffix=f".{file_type}", encoding="utf-8"
-        ) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=f".{file_type}", encoding="utf-8") as temp_file:
             FILE_TYPE_HANDLERS[file_type]["write"](temp_file, examples)
 
     return examples

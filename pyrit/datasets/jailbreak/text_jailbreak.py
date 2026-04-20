@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import random
+from typing import Any, Optional
 
 from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.models import SeedPrompt
@@ -15,11 +16,11 @@ class TextJailBreak:
     def __init__(
         self,
         *,
-        template_path=None,
-        template_file_name=None,
-        string_template=None,
-        random_template=False,
-        **kwargs,
+        template_path: Optional[str] = None,
+        template_file_name: Optional[str] = None,
+        string_template: Optional[str] = None,
+        random_template: bool = False,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize a Jailbreak instance with exactly one template source.
@@ -102,7 +103,7 @@ class TextJailBreak:
             # Apply remaining kwargs to the template while preserving template variables
             self.template.value = self.template.render_template_value_silent(**kwargs)
 
-    def get_jailbreak_system_prompt(self):
+    def get_jailbreak_system_prompt(self) -> str:
         """
         Get the jailbreak template as a system prompt without a specific user prompt.
 
@@ -111,7 +112,7 @@ class TextJailBreak:
         """
         return self.get_jailbreak(prompt="")
 
-    def get_jailbreak(self, prompt: str):
+    def get_jailbreak(self, prompt: str) -> str:
         """
         Render the jailbreak template with the provided user prompt.
 

@@ -90,7 +90,7 @@ class ConversationAnalytics:
         return similar_messages
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:  # type: ignore[type-arg, unused-ignore]
     """
     Calculate the cosine similarity between two 1D vectors.
 

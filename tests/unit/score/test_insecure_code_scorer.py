@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import MessagePiece, Score, UnvalidatedScore
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import InsecureCodeScorer
@@ -30,7 +31,12 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
         score_category=["security"],
         score_rationale="This code has potential vulnerabilities.",
         score_metadata=None,
-        scorer_class_identifier={"scorer_name": "InsecureCodeScorer"},
+        scorer_class_identifier=ScorerIdentifier(
+            class_name="InsecureCodeScorer",
+            class_module="pyrit.score",
+            class_description="",
+            identifier_type="instance",
+        ),
         message_piece_id="12345",
         objective=None,
     )
@@ -74,7 +80,7 @@ async def test_insecure_code_scorer_invalid_json(mock_chat_target):
 
 
 @pytest.mark.asyncio
-async def test_insecure_code_scorer_validate(mock_chat_target):
+async def test_score_async_unsupported_data_type_returns_empty_list(mock_chat_target, patch_central_database):
     scorer = InsecureCodeScorer(
         chat_target=mock_chat_target,
     )
@@ -86,5 +92,7 @@ async def test_insecure_code_scorer_validate(mock_chat_target):
         converted_value_data_type="image_path",
     ).to_message()
 
-    with pytest.raises(ValueError, match="There are no valid pieces to score"):
-        await scorer.score_async(request)
+    # With raise_on_no_valid_pieces=False (default), returns empty list for unsupported data types
+    # (FloatScaleScorer does not create synthetic scores like TrueFalseScorer)
+    scores = await scorer.score_async(request)
+    assert len(scores) == 0

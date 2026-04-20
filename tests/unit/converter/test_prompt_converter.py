@@ -539,7 +539,7 @@ def is_speechsdk_installed():
         (HumanInTheLoopConverter(), ["text"], ["text"]),
         (LeetspeakConverter(), ["text"], ["text"]),
         (MorseConverter(), ["text"], ["text"]),
-        (PDFConverter(), ["text"], ["url"]),
+        (PDFConverter(), ["text"], ["binary_path"]),
         (QRCodeConverter(), ["text"], ["image_path"]),
         (RandomCapitalLettersConverter(), ["text"], ["text"]),
         (RepeatTokenConverter(token_to_repeat="test", times_to_repeat=2), ["text"], ["text"]),

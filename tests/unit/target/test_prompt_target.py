@@ -91,6 +91,8 @@ async def test_send_prompt_with_system_calls_chat_complete(
     mock_choice.finish_reason = "stop"
     mock_message = MagicMock()
     mock_message.content = "hi"
+    mock_message.audio = None  # Explicitly set to avoid MagicMock auto-creation
+    mock_message.tool_calls = None
     mock_choice.message = mock_message
     mock_response.choices = [mock_choice]
 
@@ -129,6 +131,8 @@ async def test_send_prompt_async_with_delay(
     mock_choice.finish_reason = "stop"
     mock_message = MagicMock()
     mock_message.content = "hi"
+    mock_message.audio = None  # Explicitly set to avoid MagicMock auto-creation
+    mock_message.tool_calls = None
     mock_choice.message = mock_message
     mock_response.choices = [mock_choice]
 

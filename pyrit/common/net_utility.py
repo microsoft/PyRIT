@@ -1,14 +1,28 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, overload
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 
-def get_httpx_client(use_async: bool = False, debug: bool = False, **httpx_client_kwargs: Optional[Any]):
+@overload
+def get_httpx_client(
+    use_async: Literal[True], debug: bool = False, **httpx_client_kwargs: Optional[Any]
+) -> httpx.AsyncClient: ...
+
+
+@overload
+def get_httpx_client(
+    use_async: Literal[False] = False, debug: bool = False, **httpx_client_kwargs: Optional[Any]
+) -> httpx.Client: ...
+
+
+def get_httpx_client(
+    use_async: bool = False, debug: bool = False, **httpx_client_kwargs: Optional[Any]
+) -> httpx.Client | httpx.AsyncClient:
     """
     Get the httpx client for making requests.
 
@@ -76,7 +90,7 @@ async def make_request_and_raise_if_error_async(
     debug: bool = False,
     extra_url_parameters: Optional[dict[str, str]] = None,
     request_body: Optional[dict[str, object]] = None,
-    files: Optional[dict[str, tuple]] = None,
+    files: Optional[dict[str, tuple[str, bytes, str]]] = None,
     headers: Optional[dict[str, str]] = None,
     **httpx_client_kwargs: Optional[Any],
 ) -> httpx.Response:
@@ -105,7 +119,7 @@ async def make_request_and_raise_if_error_async(
     # Get clean URL without query string (we'll pass params separately to httpx)
     clean_url = remove_url_parameters(endpoint_uri)
 
-    async with get_httpx_client(debug=debug, use_async=True, **httpx_client_kwargs) as async_client:
+    async with get_httpx_client(use_async=True, debug=debug, **httpx_client_kwargs) as async_client:
         response = await async_client.request(
             method=method,
             params=merged_params if merged_params else None,

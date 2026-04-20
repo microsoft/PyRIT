@@ -4,8 +4,9 @@
 import logging
 import time
 from threading import Semaphore, Thread
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import MessagePiece, Score
 from pyrit.ui.app import is_app_running, launch_app
 
@@ -25,7 +26,7 @@ class RPCAlreadyRunningException(RPCAppException):
     This exception is thrown when an RPC server is already running and the user tries to start another one.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("RPC server is already running.")
 
 
@@ -34,7 +35,7 @@ class RPCClientNotReadyException(RPCAppException):
     This exception is thrown when the RPC client is not ready to receive messages.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("RPC client is not ready.")
 
 
@@ -43,7 +44,7 @@ class RPCServerStoppedException(RPCAppException):
     This exception is thrown when the RPC server is stopped.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("RPC server is stopped.")
 
 
@@ -52,7 +53,7 @@ class AppRPCServer:
     import rpyc
 
     # RPC Service
-    class RPCService(rpyc.Service):
+    class RPCService(rpyc.Service):  # type: ignore[misc]
         """
         RPC service is the service that RPyC is using. RPC (Remote Procedure Call) is a way to interact with code that
         is hosted in another process or on an other machine. RPyC is a library that implements RPC and we are using to
@@ -60,46 +61,46 @@ class AppRPCServer:
         independent of which PyRIT code is running the process.
         """
 
-        def __init__(self, *, score_received_semaphore: Semaphore, client_ready_semaphore: Semaphore):
+        def __init__(self, *, score_received_semaphore: Semaphore, client_ready_semaphore: Semaphore) -> None:
             super().__init__()
-            self._callback_score_prompt = None  # type: Optional[Callable[[MessagePiece, Optional[str]], None]]
-            self._last_ping = None  # type: Optional[float]
-            self._scores_received = []  # type: list[Score]
+            self._callback_score_prompt: Optional[Callable[[MessagePiece, Optional[str]], None]] = None
+            self._last_ping: Optional[float] = None
+            self._scores_received: list[Score] = []
             self._score_received_semaphore = score_received_semaphore
             self._client_ready_semaphore = client_ready_semaphore
 
-        def on_connect(self, conn):
+        def on_connect(self, conn: Any) -> None:
             logger.info("Client connected")
 
-        def on_disconnect(self, conn):
+        def on_disconnect(self, conn: Any) -> None:
             logger.info("Client disconnected")
 
-        def exposed_receive_score(self, score: Score):
+        def exposed_receive_score(self, score: Score) -> None:
             logger.info(f"Score received: {score}")
             self._scores_received.append(score)
             self._score_received_semaphore.release()
 
-        def exposed_receive_ping(self):
+        def exposed_receive_ping(self) -> None:
             # A ping should be received every 2s from the client. If a client misses a ping then the server should
             # stopped
             self._last_ping = time.time()
             logger.debug("Ping received")
 
-        def exposed_callback_score_prompt(self, callback: Callable[[MessagePiece, Optional[str]], None]):
+        def exposed_callback_score_prompt(self, callback: Callable[[MessagePiece, Optional[str]], None]) -> None:
             self._callback_score_prompt = callback
             self._client_ready_semaphore.release()
 
-        def is_client_ready(self):
+        def is_client_ready(self) -> bool:
             if self._callback_score_prompt is None:
                 return False
             return True
 
-        def send_score_prompt(self, prompt: MessagePiece, task: Optional[str] = None):
+        def send_score_prompt(self, prompt: MessagePiece, task: Optional[str] = None) -> None:
             if not self.is_client_ready():
                 raise RPCClientNotReadyException()
             self._callback_score_prompt(prompt, task)
 
-        def is_ping_missed(self):
+        def is_ping_missed(self) -> bool:
             if self._last_ping is None:
                 return False
 
@@ -111,18 +112,18 @@ class AppRPCServer:
             except IndexError:
                 return None
 
-    def __init__(self, open_browser: bool = False):
-        self._server = None
-        self._server_thread = None
-        self._rpc_service = None
-        self._is_alive_thread = None
+    def __init__(self, open_browser: bool = False) -> None:
+        self._server: Any = None
+        self._server_thread: Optional[Thread] = None
+        self._rpc_service: Optional[AppRPCServer.RPCService] = None
+        self._is_alive_thread: Optional[Thread] = None
         self._is_alive_stop = False
-        self._score_received_semaphore = None
-        self._client_ready_semaphore = None
+        self._score_received_semaphore: Optional[Semaphore] = None
+        self._client_ready_semaphore: Optional[Semaphore] = None
         self._server_is_running = False
         self._open_browser = open_browser
 
-    def start(self):
+    def start(self) -> None:
         """
         Attempt to start the RPC server. If the server is already running, this method will throw an exception.
         """
@@ -159,7 +160,7 @@ class AppRPCServer:
         else:
             logger.info("Gradio UI is already running. Will not launch another instance.")
 
-    def stop(self):
+    def stop(self) -> None:
         """
         Stop the RPC server and free up the listening port.
         """
@@ -172,7 +173,7 @@ class AppRPCServer:
 
         logger.info("RPC server stopped")
 
-    def stop_request(self):
+    def stop_request(self) -> None:
         """
         Request the RPC server to stop. This method is does not block while waiting for the server to stop.
         """
@@ -192,7 +193,7 @@ class AppRPCServer:
         if self._score_received_semaphore is not None:
             self._score_received_semaphore.release()
 
-    def send_score_prompt(self, prompt: MessagePiece, task: Optional[str] = None):
+    def send_score_prompt(self, prompt: MessagePiece, task: Optional[str] = None) -> None:
         """
         Send a score prompt to the client.
         """
@@ -226,11 +227,17 @@ class AppRPCServer:
             score_rationale=score_ref.score_rationale,
             score_metadata=score_ref.score_metadata,
             message_piece_id=score_ref.message_piece_id,
+            scorer_class_identifier=ScorerIdentifier(
+                class_name="RPCScorer",
+                class_module="pyrit.ui.rpc",
+                class_description="Score received from RPC client",
+                identifier_type="instance",
+            ),
         )
 
         return score
 
-    def wait_for_client(self):
+    def wait_for_client(self) -> None:
         """
         Wait for the client to be ready to receive messages.
         """
@@ -245,7 +252,7 @@ class AppRPCServer:
 
         logger.info("Client is ready")
 
-    def _is_instance_running(self):
+    def _is_instance_running(self) -> bool:
         """
         Check if the RPC server is running.
         """
@@ -254,12 +261,12 @@ class AppRPCServer:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             return s.connect_ex(("localhost", DEFAULT_PORT)) == 0
 
-    def _is_alive(self):
+    def _is_alive(self) -> None:
         """
         Check if a ping has been missed. If a ping has been missed, stop the server.
         """
         while not self._is_alive_stop:
-            if self._rpc_service.is_ping_missed():
+            if self._rpc_service is not None and self._rpc_service.is_ping_missed():
                 logger.error("Ping missed. Stopping server.")
                 self.stop_request()
                 break

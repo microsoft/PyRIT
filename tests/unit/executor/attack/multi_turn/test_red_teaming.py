@@ -19,6 +19,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -27,12 +28,21 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
-    ScoreType,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test_module",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 @pytest.fixture
@@ -56,7 +66,7 @@ def mock_adversarial_chat() -> MagicMock:
 def mock_objective_scorer() -> MagicMock:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
-    scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test_module"}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
 
 
@@ -100,7 +110,7 @@ def success_score() -> Score:
         score_rationale="Test rationale for success",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -114,7 +124,7 @@ def failure_score() -> Score:
         score_rationale="Test rationale for failure",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -128,7 +138,7 @@ def float_score() -> Score:
         score_rationale="Test rationale for high score",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+        scorer_class_identifier=_mock_scorer_id("MockScorer"),
     )
 
 
@@ -297,7 +307,6 @@ class TestRedTeamingAttackInitialization:
         scoring_config = AttackScoringConfig(
             objective_scorer=mock_objective_scorer,
             use_score_as_feedback=True,
-            successful_objective_threshold=0.9,
         )
 
         attack = RedTeamingAttack(
@@ -310,7 +319,6 @@ class TestRedTeamingAttackInitialization:
 
         assert result.objective_scorer == mock_objective_scorer
         assert result.use_score_as_feedback is True
-        assert result.successful_objective_threshold == 0.9
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -711,14 +719,26 @@ class TestSetupPhase:
             score_rationale="Other rationale",
             score_metadata={},
             message_piece_id=str(uuid.uuid4()),
-            scorer_class_identifier={"__type__": "OtherScorer", "__module__": "test_module"},
+            scorer_class_identifier=_mock_scorer_id("OtherScorer"),
         )
 
         mock_state = ConversationState(
             turn_count=1,
             last_assistant_message_scores=[other_score, success_score],
         )
-        with patch.object(attack._conversation_manager, "initialize_context_async", return_value=mock_state):
+
+        # The mock needs to also set context.last_score as a side effect (simulating what the real method does)
+        async def mock_initialize(context, **kwargs):
+            # Simulate the side effect of initialize_context_async setting the first true_false score
+            for score in mock_state.last_assistant_message_scores:
+                if score.score_type == "true_false":
+                    context.last_score = score
+                    break
+            return mock_state
+
+        with patch.object(
+            attack._conversation_manager, "initialize_context_async", side_effect=mock_initialize
+        ) as mock_init:
             await attack._setup_async(context=basic_context)
 
         assert basic_context.last_score == success_score
@@ -1124,13 +1144,10 @@ class TestResponseScoring:
         basic_context.last_response = sample_response
         # basic_context fixture already has objective="Test objective"
 
-        # Mock the Scorer.score_response_async method
-        with patch(
-            "pyrit.score.Scorer.score_response_async",
-            new_callable=AsyncMock,
-            return_value={"objective_scores": [success_score], "auxiliary_scores": []},
-        ):
-            result = await attack._score_response_async(context=basic_context)
+        # Configure the mock scorer to return the success_score
+        mock_objective_scorer.score_async = AsyncMock(return_value=[success_score])
+
+        result = await attack._score_response_async(context=basic_context)
 
         assert result == success_score
 
@@ -1157,6 +1174,9 @@ class TestResponseScoring:
 
         basic_context.last_response = MagicMock(spec=Message)
         basic_context.last_response.get_piece.return_value = response_piece
+
+        # Configure the mock scorer to return empty list for blocked response
+        mock_objective_scorer.score_async = AsyncMock(return_value=[])
 
         result = await attack._score_response_async(context=basic_context)
 
@@ -1285,17 +1305,14 @@ class TestAttackExecution:
         assert mock_prompt_normalizer.send_prompt_async.call_count == 1
 
     @pytest.mark.parametrize(
-        "scorer_type,score_value,threshold,expected_achieved",
+        "score_value,expected_achieved",
         [
-            ("true_false", "true", 0.8, True),
-            ("true_false", "false", 0.8, False),
-            ("float_scale", "0.9", 0.8, True),
-            ("float_scale", "0.7", 0.8, False),
-            ("float_scale", "0.8", 0.8, True),  # Edge case: equal to threshold
+            ("true", True),
+            ("false", False),
         ],
     )
     @pytest.mark.asyncio
-    async def test_perform_attack_with_different_scoring_thresholds(
+    async def test_perform_attack_with_different_score_outcomes(
         self,
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
@@ -1303,17 +1320,17 @@ class TestAttackExecution:
         mock_prompt_normalizer: MagicMock,
         basic_context: MultiTurnAttackContext,
         sample_response: Message,
-        scorer_type: ScoreType,
         score_value: str,
-        threshold: float,
         expected_achieved: bool,
     ):
-        """Test attack execution with different scoring thresholds."""
+        """Test attack execution with different score outcomes.
+
+        The threshold logic is now handled by the scorer (e.g., FloatScaleThresholdScorer),
+        which returns true_false scores. The attack checks the score value directly.
+        """
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = AttackScoringConfig(
-            objective_scorer=mock_objective_scorer, successful_objective_threshold=threshold
-        )
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
         attack = RedTeamingAttack(
             objective_target=mock_objective_target,
@@ -1322,16 +1339,16 @@ class TestAttackExecution:
             prompt_normalizer=mock_prompt_normalizer,
         )
 
-        # Create appropriate score
+        # Create true_false score (threshold comparison is done by the scorer)
         score = Score(
-            score_type=scorer_type,
+            score_type="true_false",
             score_value=score_value,
             score_category=["test"],
             score_value_description=f"Score: {score_value}",
             score_rationale="Test rationale",
             score_metadata={},
             message_piece_id=str(uuid.uuid4()),
-            scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+            scorer_class_identifier=_mock_scorer_id("MockScorer"),
         )
 
         # Mock methods

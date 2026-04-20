@@ -208,7 +208,7 @@ class AttackParameters:
             raise ValueError(f"Cannot exclude non-existent fields: {invalid}. Valid fields: {current_fields}")
 
         # Build new fields list excluding the specified ones
-        new_fields: List[tuple] = []
+        new_fields: List[Any] = []
         for f in dataclasses.fields(cls):
             if f.name not in field_names:
                 # Preserve field defaults
@@ -238,11 +238,13 @@ class AttackParameters:
         _classmethod_descriptor = cls.__dict__["from_seed_group_async"]
         original_method = _classmethod_descriptor.__func__
 
-        async def from_seed_group_async_wrapper(c, *, seed_group, adversarial_chat=None, objective_scorer=None, **ov):
+        async def from_seed_group_async_wrapper(
+            c: Any, /, *, seed_group: Any, adversarial_chat: Any = None, objective_scorer: Any = None, **ov: Any
+        ) -> Any:
             return await original_method(
                 c, seed_group=seed_group, adversarial_chat=adversarial_chat, objective_scorer=objective_scorer, **ov
             )
 
         new_cls.from_seed_group_async = classmethod(from_seed_group_async_wrapper)  # type: ignore[attr-defined]
 
-        return new_cls  # type: ignore[return-value]
+        return new_cls

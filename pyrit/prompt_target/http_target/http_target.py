@@ -43,7 +43,7 @@ class HTTPTarget(PromptTarget):
         http_request: str,
         prompt_regex_string: str = "{PROMPT}",
         use_tls: bool = True,
-        callback_function: Optional[Callable] = None,
+        callback_function: Optional[Callable[..., Any]] = None,
         max_requests_per_minute: Optional[int] = None,
         client: Optional[httpx.AsyncClient] = None,
         model_name: str = "",
@@ -88,7 +88,7 @@ class HTTPTarget(PromptTarget):
         client: httpx.AsyncClient,
         http_request: str,
         prompt_regex_string: str = "{PROMPT}",
-        callback_function: Callable | None = None,
+        callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: Optional[int] = None,
     ) -> "HTTPTarget":
         """

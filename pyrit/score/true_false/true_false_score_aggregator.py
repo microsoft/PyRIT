@@ -6,11 +6,11 @@ import operator
 from typing import Callable, Iterable, List
 
 from pyrit.models import Score
-from pyrit.score.aggregator_utils import (
+from pyrit.score.score_aggregator_result import ScoreAggregatorResult
+from pyrit.score.score_utils import (
     combine_metadata_and_categories,
     format_score_for_rationale,
 )
-from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 
 BinaryBoolOp = Callable[[bool, bool], bool]
 TrueFalseAggregatorFunc = Callable[[Iterable[Score]], ScoreAggregatorResult]

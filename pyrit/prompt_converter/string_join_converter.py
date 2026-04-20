@@ -15,11 +15,11 @@ class StringJoinConverter(WordLevelConverter):
     def __init__(
         self,
         *,
-        join_value="-",
+        join_value: str = "-",
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
-        Initializes the converter with the specified join value and selection strategy.
+        Initialize the converter with the specified join value and selection strategy.
 
         Args:
             join_value (str): The string used to join characters of each word.
@@ -30,4 +30,13 @@ class StringJoinConverter(WordLevelConverter):
         self.join_value = join_value
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         return self.join_value.join(word)

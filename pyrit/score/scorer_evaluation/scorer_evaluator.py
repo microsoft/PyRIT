@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import abc
 import logging
 import time
@@ -12,6 +14,7 @@ import numpy as np
 from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
+from pyrit.models import Message
 from pyrit.score import Scorer
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
@@ -270,7 +273,7 @@ class ScorerEvaluator(abc.ABC):
                 - (False, None) if should run evaluation
         """
         try:
-            scorer_hash = self.scorer.scorer_identifier.compute_hash()
+            scorer_hash = self.scorer.get_identifier().hash
 
             # Determine if this is a harm or objective evaluation
             metrics_type = MetricsType.OBJECTIVE if isinstance(self.scorer, TrueFalseScorer) else MetricsType.HARM
@@ -418,7 +421,7 @@ class ScorerEvaluator(abc.ABC):
     def _validate_and_extract_data(
         self,
         labeled_dataset: HumanLabeledDataset,
-    ) -> Tuple[List, List[List[float]], Optional[List[str]]]:
+    ) -> Tuple[List[Message], List[List[float]], Optional[List[str]]]:
         """
         Validate the dataset and extract data for evaluation.
 
@@ -438,8 +441,8 @@ class ScorerEvaluator(abc.ABC):
     def _compute_metrics(
         self,
         *,
-        all_human_scores: np.ndarray,
-        all_model_scores: np.ndarray,
+        all_human_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+        all_model_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
         num_scorer_trials: int,
         dataset_name: Optional[str] = None,
         dataset_version: Optional[str] = None,
@@ -481,7 +484,7 @@ class ScorerEvaluator(abc.ABC):
         try:
             replace_evaluation_results(
                 file_path=result_file_path,
-                scorer_identifier=self.scorer.scorer_identifier,
+                scorer_identifier=self.scorer.get_identifier(),
                 metrics=metrics,
             )
         except Exception as e:
@@ -498,7 +501,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
     def _validate_and_extract_data(
         self,
         labeled_dataset: HumanLabeledDataset,
-    ) -> Tuple[List, List[List[float]], Optional[List[str]]]:
+    ) -> Tuple[List[Message], List[List[float]], Optional[List[str]]]:
         """
         Validate harm dataset and extract evaluation data.
 
@@ -517,7 +520,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
         labeled_dataset.validate()
 
-        assistant_responses: List = []
+        assistant_responses: List[Message] = []
         human_scores_list: List[List[float]] = []
 
         for entry in labeled_dataset.entries:
@@ -532,8 +535,8 @@ class HarmScorerEvaluator(ScorerEvaluator):
     def _compute_metrics(
         self,
         *,
-        all_human_scores: np.ndarray,
-        all_model_scores: np.ndarray,
+        all_human_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+        all_model_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
         num_scorer_trials: int,
         dataset_name: Optional[str] = None,
         dataset_version: Optional[str] = None,
@@ -599,7 +602,7 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
     def _validate_and_extract_data(
         self,
         labeled_dataset: HumanLabeledDataset,
-    ) -> Tuple[List, List[List[float]], Optional[List[str]]]:
+    ) -> Tuple[List[Message], List[List[float]], Optional[List[str]]]:
         """
         Validate objective dataset and extract evaluation data.
 
@@ -617,7 +620,7 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
 
         labeled_dataset.validate()
 
-        assistant_responses: List = []
+        assistant_responses: List[Message] = []
         human_scores_list: List[List[float]] = []
         objectives: List[str] = []
 
@@ -634,8 +637,8 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
     def _compute_metrics(
         self,
         *,
-        all_human_scores: np.ndarray,
-        all_model_scores: np.ndarray,
+        all_human_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+        all_model_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
         num_scorer_trials: int,
         dataset_name: Optional[str] = None,
         dataset_version: Optional[str] = None,

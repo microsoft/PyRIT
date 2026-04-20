@@ -124,7 +124,7 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
         self._print_colored(f"{self._indent * 2}• Target Endpoint: {target_endpoint}", Fore.CYAN)
 
         # Scorer information - use ScorerIdentifier from result
-        scorer_identifier = result.get_objective_scorer_identifier()
+        scorer_identifier = result.objective_scorer_identifier
         if scorer_identifier:
             self._scorer_printer.print_objective_scorer(scorer_identifier=scorer_identifier)
 
@@ -194,10 +194,10 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
             str: Colorama color constant
         """
         if rate >= 75:
-            return Fore.RED  # High success (bad for security)
+            return str(Fore.RED)  # High success (bad for security)
         elif rate >= 50:
-            return Fore.YELLOW  # Medium success
+            return str(Fore.YELLOW)  # Medium success
         elif rate >= 25:
-            return Fore.CYAN  # Low success
+            return str(Fore.CYAN)  # Low success
         else:
-            return Fore.GREEN  # Very low success (good for security)
+            return str(Fore.GREEN)  # Very low success (good for security)

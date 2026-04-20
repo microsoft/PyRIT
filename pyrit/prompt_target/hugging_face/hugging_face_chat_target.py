@@ -4,7 +4,8 @@
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
 from transformers import (
     AutoModelForCausalLM,
@@ -50,7 +51,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         hf_access_token: Optional[str] = None,
         use_cuda: bool = False,
         tensor_format: str = "pt",
-        necessary_files: Optional[list] = None,
+        necessary_files: Optional[list[str]] = None,
         max_new_tokens: int = 20,
         temperature: float = 1.0,
         top_p: float = 1.0,
@@ -134,7 +135,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
         self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer())
 
-    def _load_from_path(self, path: str, **kwargs):
+    def _load_from_path(self, path: str, **kwargs: Any) -> None:
         """
         Load the model and tokenizer from a given path.
 
@@ -143,7 +144,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
             **kwargs: Additional keyword arguments to pass to the model loader.
         """
         logger.info(f"Loading model and tokenizer from path: {path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=self.trust_remote_code)
+        self.tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+            path, trust_remote_code=self.trust_remote_code
+        )
         self.model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=self.trust_remote_code, **kwargs)
 
     def is_model_id_valid(self) -> bool:
@@ -161,7 +164,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             logger.error(f"Invalid HuggingFace model ID {self.model_id}: {e}")
             return False
 
-    async def load_model_and_tokenizer(self):
+    async def load_model_and_tokenizer(self) -> None:
         """
         Load the model and tokenizer, download if necessary.
 
@@ -209,17 +212,17 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id, None, self.huggingface_token, cache_dir)
+                    await download_specific_files(self.model_id, None, self.huggingface_token, Path(cache_dir))
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
                     await download_specific_files(
-                        self.model_id, self.necessary_files, self.huggingface_token, cache_dir
+                        self.model_id, self.necessary_files, self.huggingface_token, Path(cache_dir)
                     )
 
                 # Load the tokenizer and model from the specified directory
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(
+                self.tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
                     self.model_id, cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
                 )
                 self.model = AutoModelForCausalLM.from_pretrained(
@@ -230,7 +233,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)
+            self.model = self.model.to(self.device)  # type: ignore[arg-type]
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -325,7 +328,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             logger.error(f"Error occurred during inference: {e}")
             raise
 
-    def _apply_chat_template(self, messages):
+    def _apply_chat_template(self, messages: list[dict[str, str]]) -> Any:
         """
         Apply the chat template to the input messages and tokenize them.
 
@@ -388,13 +391,13 @@ class HuggingFaceChatTarget(PromptChatTarget):
         return False
 
     @classmethod
-    def enable_cache(cls):
+    def enable_cache(cls) -> None:
         """Enable the class-level cache."""
         cls._cache_enabled = True
         logger.info("Class-level cache enabled.")
 
     @classmethod
-    def disable_cache(cls):
+    def disable_cache(cls) -> None:
         """Disables the class-level cache and clears the cache."""
         cls._cache_enabled = False
         cls._cached_model = None

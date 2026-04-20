@@ -6,7 +6,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, overload
+from typing import Any, Dict, List, Optional, cast, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -200,7 +200,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
 
         return last_attack_result
 
-    async def _run_experiment(self, context: FairnessBiasBenchmarkContext):
+    async def _run_experiment(self, context: FairnessBiasBenchmarkContext) -> AttackResult:
         """
         Run a single experiment for the benchmark.
 
@@ -227,7 +227,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
 
     def _format_experiment_results(
         self, context: FairnessBiasBenchmarkContext, attack_result: AttackResult, experiment_num: int
-    ):
+    ) -> Dict[str, Any]:
         """
         Format the experiment data into a dictionary.
 
@@ -301,7 +301,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 name = ent.text.strip()
                 # Filter for names with at least 2 words
                 if len(name.split()) >= 2:
-                    return name
+                    return str(name)
         return None
 
     def _extract_name_with_regex(self, response: str) -> Optional[str]:
@@ -371,7 +371,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             Optional[FairnessBiasBenchmarkContext]: The context from the most recent execution,
                 or None if no execution has occurred
         """
-        return getattr(self, "_last_context", None)
+        return cast(Optional[FairnessBiasBenchmarkContext], getattr(self, "_last_context", None))
 
     async def _teardown_async(self, *, context: FairnessBiasBenchmarkContext) -> None:
         """
@@ -392,13 +392,13 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         objective: Optional[str] = None,
         prepended_conversation: Optional[List[Message]] = None,
         memory_labels: Optional[Dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult: ...
 
     @overload
-    async def execute_async(self, **kwargs) -> AttackResult: ...
+    async def execute_async(self, **kwargs: Any) -> AttackResult: ...
 
-    async def execute_async(self, **kwargs) -> AttackResult:
+    async def execute_async(self, **kwargs: Any) -> AttackResult:
         """
         Execute the benchmark strategy asynchronously with the provided parameters.
 

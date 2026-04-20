@@ -46,7 +46,7 @@ class ScenarioStrategy(Enum):
 
     _tags: set[str]
 
-    def __new__(cls, value: str, tags: set[str] | None = None):
+    def __new__(cls, value: str, tags: set[str] | None = None) -> "ScenarioStrategy":
         """
         Create a new ScenarioStrategy with value and tags.
 
@@ -59,7 +59,7 @@ class ScenarioStrategy(Enum):
         """
         obj = object.__new__(cls)
         obj._value_ = value
-        obj._tags = tags or set()  # type: ignore[misc]
+        obj._tags = tags or set()
         return obj
 
     @property
@@ -463,7 +463,7 @@ class ScenarioCompositeStrategy:
             raise ValueError("Cannot generate name for empty strategy list")
 
         if len(strategies) == 1:
-            return strategies[0].value
+            return str(strategies[0].value)
 
         strategy_names = ", ".join(s.value for s in strategies)
         return f"ComposedStrategy({strategy_names})"

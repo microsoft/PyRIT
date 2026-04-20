@@ -6,15 +6,13 @@ from __future__ import annotations
 import enum
 import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.common.utils import warn_if_set
 from pyrit.executor.attack.component import (
     ConversationManager,
-    ConversationState,
-    ObjectiveEvaluator,
     get_adversarial_chat_messages,
 )
 from pyrit.executor.attack.core.attack_config import (
@@ -39,7 +37,6 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +51,7 @@ class RTASystemPromptPaths(enum.Enum):
     CRUCIBLE = Path(EXECUTOR_RED_TEAM_PATH, "crucible.yaml").resolve()
 
 
-class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackResult]):
+class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], AttackResult]):
     """
     Implementation of multi-turn red teaming attack strategy.
 
@@ -132,7 +129,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
 
         self._objective_scorer = attack_scoring_config.objective_scorer
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
-        self._successful_objective_threshold = attack_scoring_config.successful_objective_threshold
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
@@ -150,11 +146,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
         self._conversation_manager = ConversationManager(attack_identifier=self.get_identifier())
-        self._score_evaluator = ObjectiveEvaluator(
-            use_score_as_feedback=self._use_score_as_feedback,
-            scorer=self._objective_scorer,
-            successful_objective_threshold=self._successful_objective_threshold,
-        )
 
         # set the maximum number of turns for the attack
         if max_turns <= 0:
@@ -168,16 +159,15 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective scorer,
-                use_score_as_feedback, and threshold.
+            Optional[AttackScoringConfig]: The scoring configuration with objective scorer
+                and use_score_as_feedback.
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
             use_score_as_feedback=self._use_score_as_feedback,
-            successful_objective_threshold=self._successful_objective_threshold,
         )
 
-    def _validate_context(self, *, context: MultiTurnAttackContext) -> None:
+    def _validate_context(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """
         Validate the context before executing the attack.
 
@@ -187,7 +177,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
         Raises:
             ValueError: If the context is invalid.
         """
-        validators = [
+        validators: list[tuple[Callable[[], bool], str]] = [
             # conditions that must be met for the attack to proceed
             (lambda: bool(context.objective), "Attack objective must be provided"),
             (lambda: context.executed_turns < self._max_turns, "Already exceeded max turns"),
@@ -197,7 +187,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             if not validator():
                 raise ValueError(error_msg)
 
-    async def _setup_async(self, *, context: MultiTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """
         Prepare the strategy for execution.
 
@@ -226,8 +216,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             )
         )
 
-        # Initialize context with prepended conversation (handles memory labels, turns, next_message)
-        conversation_state: ConversationState = await self._conversation_manager.initialize_context_async(
+        # Initialize context with prepended conversation (handles memory labels, turns, next_message, last_score)
+        await self._conversation_manager.initialize_context_async(
             context=context,
             target=self._objective_target,
             conversation_id=context.session.conversation_id,
@@ -235,10 +225,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             max_turns=self._max_turns,
             memory_labels=self._memory_labels,
         )
-
-        # Get the last assistant message evaluation score if available
-        score = self._retrieve_last_assistant_message_evaluation_score(state=conversation_state)
-        context.last_score = score
 
         # Set up adversarial chat with prepended conversation
         if context.prepended_conversation:
@@ -268,7 +254,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             labels=context.memory_labels,
         )
 
-    async def _perform_async(self, *, context: MultiTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: MultiTurnAttackContext[Any]) -> AttackResult:
         """
         Execute the red teaming attack by iteratively generating prompts,
         sending them to the target, and scoring the responses in a loop
@@ -313,7 +299,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             if not self._score_last_turn_only or is_last_turn:
                 context.last_score = await self._score_response_async(context=context)
                 # Check if objective achieved
-                achieved_objective = self._score_evaluator.is_objective_achieved(score=context.last_score)
+                achieved_objective = bool(context.last_score.get_value()) if context.last_score else False
             else:
                 # Skip scoring on intermediate turns when score_last_turn_only is True
                 context.last_score = None
@@ -333,12 +319,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             related_conversations=context.related_conversations,
         )
 
-    async def _teardown_async(self, *, context: MultiTurnAttackContext) -> None:
+    async def _teardown_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
         pass
 
-    async def _generate_next_prompt_async(self, context: MultiTurnAttackContext) -> Message:
+    async def _generate_next_prompt_async(self, context: MultiTurnAttackContext[Any]) -> Message:
         """
         Generate the next prompt to be sent to the target during the red teaming attack.
 
@@ -392,7 +378,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
 
     async def _build_adversarial_prompt(
         self,
-        context: MultiTurnAttackContext,
+        context: MultiTurnAttackContext[Any],
     ) -> str:
         """
         Build a prompt for the adversarial chat based on the last response.
@@ -403,9 +389,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
         Returns:
             str: The prompt to be sent to the adversarial chat.
         """
-        # If no last response, return the seed prompt
+        # If no last response, return the seed prompt (rendered with objective if template exists)
         if not context.last_response:
-            return self._adversarial_chat_seed_prompt.value
+            return self._adversarial_chat_seed_prompt.render_template_value_silent(objective=context.objective)
 
         # Get the last assistant piece from the response
         response_piece = context.last_response.get_piece()
@@ -420,7 +406,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
 
         return handler(context=context)
 
-    def _handle_adversarial_text_response(self, *, context: MultiTurnAttackContext) -> str:
+    def _handle_adversarial_text_response(self, *, context: MultiTurnAttackContext[Any]) -> str:
         """
         Handle the text response from the target by appending any
         available scoring feedback to the returned text. If the response
@@ -436,7 +422,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             return "No response available. Please continue."
 
         response_piece = context.last_response.get_piece()
-        feedback = self._score_evaluator.get_feedback(context.last_score) if context.last_score else None
 
         if not response_piece.has_error():
             # if response has no error, we can use the converted value
@@ -447,8 +432,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
 
             # if we have feedback, append it to the prompt
             # to provide more context to the adversarial chat
-            if feedback:
-                prompt_text += f"\n\n{feedback}"
+            if self._use_score_as_feedback and context.last_score:
+                prompt_text += f"\n\n{context.last_score.score_rationale}"
             return prompt_text
 
         elif response_piece.is_blocked():
@@ -456,7 +441,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
 
         return f"Request to target failed: {response_piece.response_error}"
 
-    def _handle_adversarial_file_response(self, *, context: MultiTurnAttackContext) -> str:
+    def _handle_adversarial_file_response(self, *, context: MultiTurnAttackContext[Any]) -> str:
         """
         Handle the file response from the target.
 
@@ -493,7 +478,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
                 "However, the use_score_as_feedback flag is set to False so it cannot be utilized."
             )
 
-        feedback = self._score_evaluator.get_feedback(context.last_score) if context.last_score else None
+        feedback = context.last_score.score_rationale if context.last_score else None
         if not feedback:
             raise ValueError(
                 f"{RedTeamingAttack.DEFAULT_ERR_MSG_IF_OBJECTIVE_TARGET_HAS_NON_TEXT_RESPONSE}"
@@ -505,7 +490,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
     async def _send_prompt_to_objective_target_async(
         self,
         *,
-        context: MultiTurnAttackContext,
+        context: MultiTurnAttackContext[Any],
         message: Message,
     ) -> Message:
         """
@@ -550,9 +535,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
 
         return response
 
-    async def _score_response_async(self, *, context: MultiTurnAttackContext) -> Optional[Score]:
+    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Optional[Score]:
         """
-        Evaluate the target's response with the objective scorer.
+        Evaluate the objective target's response with the objective scorer.
 
         Checks if the response is blocked before scoring.
         Returns the resulting Score object or None if the response was blocked.
@@ -567,52 +552,14 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             logger.warning("No response available in context to score")
             return None
 
-        # Get the first assistant piece to check for blocked status
-        response_piece = context.last_response.get_piece()
-
-        # Special handling for blocked responses
-        if response_piece.is_blocked():
-            return None
-
-        # Use the built-in scorer method for objective scoring
-        # This method already handles error responses internally via skip_on_error_result=True
-        scoring_results = await Scorer.score_response_async(
-            response=context.last_response,
-            objective_scorer=self._objective_scorer,
-            auxiliary_scorers=None,  # No auxiliary scorers for red teaming by default
+        # score_async handles blocked, filtered, other errors
+        scoring_results = await self._objective_scorer.score_async(
+            message=context.last_response,
             role_filter="assistant",
             objective=context.objective,
-            skip_on_error_result=True,
         )
-        objective_scores = scoring_results["objective_scores"]
+        objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
-
-    def _retrieve_last_assistant_message_evaluation_score(self, state: ConversationState) -> Optional[Score]:
-        """
-        Retrieve the last assistant message evaluation score.
-
-        Searches through the last assistant message scores to find one that matches
-        the objective scorer type (based on the scorer class identifier).
-
-        Args:
-            state (ConversationState): The conversation state.
-
-        Returns:
-            Optional[Score]: The score of the last assistant message that matches
-                           the objective scorer type, or None if not found.
-        """
-        if not state.last_assistant_message_scores:
-            return None
-
-        objective_score: Optional[Score] = None
-        # Find the score that matches the objective scorer type
-        # This is necessary to ensure we are using the correct score for evaluation
-        for score in state.last_assistant_message_scores:
-            if score.scorer_class_identifier["__type__"] == self._score_evaluator.scorer_type:
-                objective_score = score
-                break
-
-        return objective_score
 
     def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: Union[str, SeedPrompt]) -> None:
         """

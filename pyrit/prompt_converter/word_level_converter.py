@@ -34,7 +34,7 @@ class WordLevelConverter(PromptConverter):
         word_split_separator: Optional[str] = " ",
     ):
         """
-        Initializes the converter with the specified selection strategy.
+        Initialize the converter with the specified selection strategy.
 
         Args:
             word_selection_strategy (Optional[WordSelectionStrategy]): The strategy for selecting which
@@ -49,7 +49,7 @@ class WordLevelConverter(PromptConverter):
     @abc.abstractmethod
     async def convert_word_async(self, word: str) -> str:
         """
-        Converts a single word into the target format supported by the converter.
+        Convert a single word into the target format supported by the converter.
 
         Args:
             word (str): The word to be converted.
@@ -60,16 +60,24 @@ class WordLevelConverter(PromptConverter):
         pass
 
     def validate_input(self, prompt: str) -> None:
-        """Validates the input before processing (can be overridden by subclasses)."""
+        """Validate the input before processing (can be overridden by subclasses)."""
         pass
 
     def join_words(self, words: list[str]) -> str:
-        """Provides a way for subclasses to override the default behavior of joining words."""
+        """
+        Provide a way for subclasses to override the default behavior of joining words.
+
+        Args:
+            words (list[str]): List of words to join.
+
+        Returns:
+            str: The joined string.
+        """
         return " ".join(words)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into the target format supported by the converter.
+        Convert the given prompt into the target format supported by the converter.
 
         Args:
             prompt (str): The prompt to be converted.

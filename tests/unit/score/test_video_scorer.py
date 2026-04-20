@@ -15,6 +15,7 @@ from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScor
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
+from tests.unit.mocks import get_mock_scorer_identifier
 
 
 def is_opencv_installed():
@@ -67,9 +68,9 @@ class MockTrueFalseScorer(TrueFalseScorer):
         validator = ScorerPromptValidator(supported_data_types=["image_path"])
         super().__init__(validator=validator)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this mock scorer."""
-        self._set_scorer_identifier()
+        self._set_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return [
@@ -82,6 +83,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
                 score_value_description="test_description",
                 message_piece_id=message_piece.id or uuid.uuid4(),
                 objective=objective,
+                scorer_class_identifier=get_mock_scorer_identifier(),
             )
         ]
 
@@ -94,9 +96,9 @@ class MockFloatScaleScorer(FloatScaleScorer):
         validator = ScorerPromptValidator(supported_data_types=["image_path"])
         super().__init__(validator=validator)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this mock scorer."""
-        self._set_scorer_identifier()
+        self._set_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return [
@@ -109,6 +111,7 @@ class MockFloatScaleScorer(FloatScaleScorer):
                 score_value_description="test_description",
                 message_piece_id=message_piece.id or uuid.uuid4(),
                 objective=objective,
+                scorer_class_identifier=get_mock_scorer_identifier(),
             )
         ]
 

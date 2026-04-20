@@ -123,7 +123,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         )
 
         # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(  # type: ignore[assignment]
+        self._api_key = default_values.get_required_value(
             env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
         )
 
@@ -146,9 +146,9 @@ class AzureContentFilterScorer(FloatScaleScorer):
         """Get the string values of the configured harm categories for API calls."""
         return [category.value for category in self._harm_categories]
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
+        self._set_identifier(
             scorer_specific_params={
                 "score_categories": self._category_values,
             }
@@ -159,7 +159,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior" = None,  # type: ignore[assignment]
+        update_registry_behavior: "RegistryUpdateBehavior" = None,
         max_concurrency: int = 10,
     ) -> Optional["ScorerMetrics"]:
         """
@@ -259,8 +259,8 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     categories=self._category_values,
                     output_type="EightSeverityLevels",
                 )
-                filter_result = self._azure_cf_client.analyze_text(text_request_options)  # type: ignore
-                filter_results.append(filter_result)
+                text_result = self._azure_cf_client.analyze_text(text_request_options)
+                filter_results.append(text_result)
 
         elif message_piece.converted_value_data_type == "image_path":
             base64_encoded_data = await self._get_base64_image_data(message_piece)
@@ -269,12 +269,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
             image_request_options = AnalyzeImageOptions(
                 image=image_data, categories=self._category_values, output_type="FourSeverityLevels"
             )
-            filter_result = self._azure_cf_client.analyze_image(image_request_options)  # type: ignore
-            filter_results.append(filter_result)
+            image_result = self._azure_cf_client.analyze_image(image_request_options)
+            filter_results.append(image_result)
 
         # Collect all scores from all chunks/images
         all_scores = []
-        for filter_result in filter_results:  # type: ignore[assignment]
+        for filter_result in filter_results:
             for score in filter_result["categoriesAnalysis"]:
                 value = score["severity"]
                 category = score["category"]
@@ -282,7 +282,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
                 # Severity as defined here
                 # https://learn.microsoft.com/en-us/azure/ai-services/content-safety/concepts/harm-categories?tabs=definitions#severity-levels
-                metadata: dict[str, str | int] = {"azure_severity": int(value)}
+                metadata: dict[str, str | int | float] = {"azure_severity": int(value)}
 
                 score_obj = Score(
                     score_type="float_scale",

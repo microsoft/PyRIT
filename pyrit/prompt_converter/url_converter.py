@@ -17,7 +17,17 @@ class UrlConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into a URL-encoded string.
+        Convert the given prompt into a URL-encoded string.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the URL-encoded prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")

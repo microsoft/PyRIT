@@ -26,7 +26,7 @@ class HumanInTheLoopConverter(PromptConverter):
         converters: Optional[list[PromptConverter]] = None,
     ):
         """
-        Initializes the converter with a list of possible converters to run input through.
+        Initialize the converter with a list of possible converters to run input through.
 
         Args:
             converters (List[PromptConverter], Optional): List of possible converters to run input through.
@@ -35,7 +35,7 @@ class HumanInTheLoopConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by allowing user interaction before sending it to a target.
+        Convert the given prompt by allowing user interaction before sending it to a target.
 
         User is given three options to choose from:
             (1) Proceed with sending the prompt as is.

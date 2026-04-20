@@ -60,24 +60,6 @@ class TestAttackScoringConfig:
         assert config.objective_scorer is None
         assert config.refusal_scorer is None
 
-    def test_init_with_invalid_threshold_too_high(self):
-        """Test that initialization raises ValueError for threshold > 1.0."""
-        with pytest.raises(ValueError, match="successful_objective_threshold must be between 0.0 and 1.0, got 1.5"):
-            AttackScoringConfig(successful_objective_threshold=1.5)
-
-    def test_init_with_invalid_threshold_too_low(self):
-        """Test that initialization raises ValueError for threshold < 0.0."""
-        with pytest.raises(ValueError, match="successful_objective_threshold must be between 0.0 and 1.0, got -0.1"):
-            AttackScoringConfig(successful_objective_threshold=-0.1)
-
-    def test_init_with_valid_threshold_boundaries(self):
-        """Test initialization with valid threshold boundary values."""
-        config_zero = AttackScoringConfig(successful_objective_threshold=0.0)
-        config_one = AttackScoringConfig(successful_objective_threshold=1.0)
-
-        assert config_zero.successful_objective_threshold == 0.0
-        assert config_one.successful_objective_threshold == 1.0
-
     def test_init_with_auxiliary_scorers(self):
         """Test initialization with auxiliary scorers."""
         mock_aux_scorer_1 = MagicMock(spec=Scorer)

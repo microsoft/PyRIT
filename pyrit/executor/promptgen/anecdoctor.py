@@ -7,7 +7,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, overload
+from typing import Any, Dict, List, Optional, overload
 
 import yaml
 
@@ -293,7 +293,7 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH, self._ANECDOCTOR_PROMPT_PATH, yaml_filename)
         prompt_data = prompt_path.read_text(encoding="utf-8")
         yaml_data = yaml.safe_load(prompt_data)
-        return yaml_data["value"]
+        return str(yaml_data["value"])
 
     def _format_few_shot_examples(self, *, evaluation_data: List[str]) -> str:
         """
@@ -370,18 +370,18 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         language: str,
         evaluation_data: List[str],
         memory_labels: Optional[dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AnecdoctorResult: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AnecdoctorResult: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AnecdoctorResult:
         """
         Execute the prompt generation strategy asynchronously with the provided parameters.

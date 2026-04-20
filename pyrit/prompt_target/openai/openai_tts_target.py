@@ -32,8 +32,8 @@ class OpenAITTSTarget(OpenAITarget):
         response_format: TTSResponseFormat = "mp3",
         language: str = "en",
         speed: Optional[float] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the TTS target with specified parameters.
 
@@ -64,7 +64,7 @@ class OpenAITTSTarget(OpenAITarget):
         self._language = language
         self._speed = speed
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_TTS_MODEL"
         self.endpoint_environment_variable = "OPENAI_TTS_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_TTS_KEY"

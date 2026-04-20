@@ -196,8 +196,8 @@ class TestPlagiarismScorer:
             memory.add_scores_to_memory.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_validate_non_text_data_type_raises_error(self):
-        """Test validation with non-text data type raises ValueError."""
+    async def test_score_async_unsupported_data_type_returns_empty_list(self, patch_central_database):
+        """Test that unsupported data types return empty list with default settings."""
         reference_text = "Test reference text"
         scorer = PlagiarismScorer(reference_text=reference_text)
 
@@ -208,8 +208,10 @@ class TestPlagiarismScorer:
             converted_value_data_type="image_path",
         ).to_message()
 
-        with pytest.raises(ValueError, match="There are no valid pieces to score"):
-            await scorer.score_async(request)
+        # With raise_on_no_valid_pieces=False (default), returns empty list for unsupported data types
+        # (FloatScaleScorer does not create synthetic scores like TrueFalseScorer)
+        scores = await scorer.score_async(request)
+        assert len(scores) == 0
 
     @pytest.mark.asyncio
     async def test_score_text_async_integration(self):

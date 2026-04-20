@@ -26,6 +26,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
+from pyrit.identifiers import Identifiable, ScorerIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -38,8 +39,10 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.score.scorer_identifier import ScorerIdentifier
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+
+if TYPE_CHECKING:
+    from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -47,22 +50,20 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import (
         ScorerEvalDatasetFiles,
-        ScorerMetrics,
     )
+    from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 
-class Scorer(abc.ABC):
+class Scorer(Identifiable[ScorerIdentifier], abc.ABC):
     """
     Abstract base class for scorers.
     """
-
-    scorer_type: ScoreType
 
     # Evaluation configuration - maps input dataset files to a result file
     # Specifies glob patterns for datasets and a result file name
     evaluation_file_mapping: Optional["ScorerEvalDatasetFiles"] = None
 
-    _scorer_identifier: Optional[ScorerIdentifier] = None
+    _identifier: Optional[ScorerIdentifier] = None
 
     def __init__(self, *, validator: ScorerPromptValidator):
         """
@@ -73,33 +74,44 @@ class Scorer(abc.ABC):
         """
         self._validator = validator
 
-    @abstractmethod
-    def _build_scorer_identifier(self) -> None:
-        """
-        Build the scorer evaluation identifier for this scorer.
-
-        Subclasses must implement this method to call `_set_scorer_identifier()` with their
-        specific parameters (system_prompt_template, sub_scorers, scorer_specific_params, prompt_target).
-        """
-        raise NotImplementedError("Subclasses must implement _build_scorer_identifier")
-
     @property
-    def scorer_identifier(self) -> ScorerIdentifier:
+    def scorer_type(self) -> ScoreType:
+        """
+        Get the scorer type based on class hierarchy.
+
+        Returns:
+            ScoreType: "true_false" for TrueFalseScorer subclasses,
+                      "float_scale" for FloatScaleScorer subclasses,
+                      "unknown" for other scorers.
+        """
+        # Import here to avoid circular imports
+        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+        from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+        if isinstance(self, TrueFalseScorer):
+            return "true_false"
+        elif isinstance(self, FloatScaleScorer):
+            return "float_scale"
+        else:
+            return "unknown"
+
+    def get_identifier(self) -> ScorerIdentifier:
         """
         Get the scorer identifier. Built lazily on first access.
 
         Returns:
             ScorerIdentifier: The identifier containing all configuration parameters.
         """
-        if self._scorer_identifier is None:
-            self._build_scorer_identifier()
-        return self._scorer_identifier  # type: ignore[return-value]
+        if self._identifier is None:
+            self._build_identifier()
+            assert self._identifier is not None, "_build_identifier must set _identifier"
+        return self._identifier
 
     @property
     def _memory(self) -> MemoryInterface:
         return CentralMemory.get_memory_instance()
 
-    def _set_scorer_identifier(
+    def _set_identifier(
         self,
         *,
         system_prompt_template: Optional[str] = None,
@@ -121,10 +133,10 @@ class Scorer(abc.ABC):
                 Defaults to None.
             prompt_target (Optional[PromptTarget]): The prompt target used by this scorer. Defaults to None.
         """
-        # Build sub_identifier from sub_scorers
+        # Build sub_identifier from sub_scorers (store as dicts for storage)
         sub_identifier: Optional[List[ScorerIdentifier]] = None
         if sub_scorers:
-            sub_identifier = [scorer.scorer_identifier for scorer in sub_scorers]
+            sub_identifier = [scorer.get_identifier() for scorer in sub_scorers]
         # Extract target_info from prompt_target
         target_info: Optional[Dict[str, Any]] = None
         if prompt_target:
@@ -135,8 +147,12 @@ class Scorer(abc.ABC):
                 if key in target_id:
                     target_info[key] = target_id[key]
 
-        self._scorer_identifier = ScorerIdentifier(
-            type=self.__class__.__name__,
+        self._identifier = ScorerIdentifier(
+            class_name=self.__class__.__name__,
+            class_module=self.__class__.__module__,
+            class_description=self.__class__.__doc__ or "",
+            identifier_type="instance",
+            scorer_type=self.scorer_type,
             system_prompt_template=system_prompt_template,
             user_prompt_template=user_prompt_template,
             sub_identifier=sub_identifier,
@@ -255,7 +271,7 @@ class Scorer(abc.ABC):
         ]
 
     @abstractmethod
-    def validate_return_scores(self, scores: list[Score]):
+    def validate_return_scores(self, scores: list[Score]) -> None:
         """
         Validate the scores returned by the scorer. Because some scorers may require
         specific Score types or values.
@@ -270,7 +286,7 @@ class Scorer(abc.ABC):
         file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior" = None,  # type: ignore[assignment]
+        update_registry_behavior: "RegistryUpdateBehavior" = None,
         max_concurrency: int = 10,
     ) -> Optional["ScorerMetrics"]:
         """
@@ -494,18 +510,6 @@ class Scorer(abc.ABC):
         normalized_value = (value - min_value) / (max_value - min_value)
         return normalized_value
 
-    def get_identifier(self) -> Dict[str, Any]:
-        """
-        Get an identifier dictionary for the scorer for database storage.
-
-        Large fields (system_prompt_template, user_prompt_template) are shortened for compact storage.
-        Includes the computed hash of the configuration.
-
-        Returns:
-            dict: The identifier dictionary containing configuration details and hash.
-        """
-        return self.scorer_identifier.to_compact_dict()
-
     @pyrit_json_retry
     async def _score_value_with_llm(
         self,
@@ -643,16 +647,16 @@ class Scorer(abc.ABC):
                 # JSON must yield either a string or a list of strings
                 raise ValueError("'category' must be a string or a list of strings")
 
-            # Normalize metadata to a dictionary with string keys and string/int values
+            # Normalize metadata to a dictionary with string keys and string/int/float values
             raw_md = parsed_response.get(metadata_output_key)
-            normalized_md: Optional[Dict[str, Union[str, int]]]
+            normalized_md: Optional[Dict[str, Union[str, int, float]]]
             if raw_md is None:
                 normalized_md = None
             elif isinstance(raw_md, dict):
-                # Coerce keys to str and filter to str/int values only
-                normalized_md = {str(k): v for k, v in raw_md.items() if isinstance(v, (str, int))}
+                # Coerce keys to str and filter to str/int/float values only
+                normalized_md = {str(k): v for k, v in raw_md.items() if isinstance(v, (str, int, float))}
                 # If dictionary becomes empty after filtering, keep as empty dict
-            elif isinstance(raw_md, (str, int)):
+            elif isinstance(raw_md, (str, int, float)):
                 # Wrap primitive metadata into a namespaced field
                 normalized_md = {"metadata": raw_md}
             else:

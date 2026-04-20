@@ -61,7 +61,7 @@ class NatoConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given text into NATO phonetic alphabet representation.
+        Convert the given text into NATO phonetic alphabet representation.
 
         Args:
             prompt (str): The text to be converted to NATO phonetic alphabet.
@@ -82,7 +82,7 @@ class NatoConverter(PromptConverter):
 
     def _convert_to_nato(self, text: str) -> str:
         """
-        Converts text to NATO phonetic alphabet representation.
+        Convert text to NATO phonetic alphabet representation.
 
         Args:
             text (str): The text to convert.

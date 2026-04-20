@@ -12,6 +12,7 @@ from typing import (
     List,
     MutableSequence,
     Optional,
+    cast,
 )
 
 from pyrit.common import convert_local_image_to_data_url
@@ -75,8 +76,8 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         top_p: Optional[float] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
         fail_on_missing_function: bool = False,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the OpenAIResponseTarget with the provided parameters.
 
@@ -155,7 +156,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_RESPONSES_MODEL"
         self.endpoint_environment_variable = "OPENAI_RESPONSES_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_RESPONSES_KEY"
@@ -316,7 +317,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
     async def _construct_request_body(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Construct the request body to send to the Responses API.
 
@@ -530,7 +531,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         return True
 
     def _parse_response_output_section(
-        self, *, section, message_piece: MessagePiece, error: Optional[PromptResponseError]
+        self, *, section: Any, message_piece: MessagePiece, error: Optional[PromptResponseError]
     ) -> MessagePiece | None:
         """
         Parse model output sections, forwarding tool-calls for the agentic loop.
@@ -647,7 +648,14 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         """
         # Some models may not support all of these; we accept them at the transport layer
         # so the Responses API can decide. We include reasoning and function_call_output now.
-        allowed_types = {"text", "image_path", "function_call", "tool_call", "function_call_output", "reasoning"}
+        allowed_types = {
+            "text",
+            "image_path",
+            "function_call",
+            "tool_call",
+            "function_call_output",
+            "reasoning",
+        }
         for message_piece in message.message_pieces:
             if message_piece.converted_value_data_type not in allowed_types:
                 raise ValueError(f"Unsupported data type: {message_piece.converted_value_data_type}")
@@ -674,7 +682,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                     continue
                 if section.get("type") == "function_call":
                     # Do NOT skip function_call even if status == "completed" — we still need to emit the output.
-                    return section
+                    return cast(dict[str, Any], section)
         return None
 
     async def _execute_call_section(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:

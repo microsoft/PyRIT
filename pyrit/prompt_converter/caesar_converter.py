@@ -23,7 +23,7 @@ class CaesarConverter(PromptConverter):
 
     def __init__(self, *, caesar_offset: int, append_description: bool = False) -> None:
         """
-        Initializes the converter with a Caesar cipher offset and an option to append a description.
+        Initialize the converter with a Caesar cipher offset and an option to append a description.
 
         Args:
             caesar_offset (int): Offset for caesar cipher, range 0 to 25 (inclusive).
@@ -46,7 +46,19 @@ class CaesarConverter(PromptConverter):
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt using the Caesar cipher."""
+        """
+        Convert the given prompt using the Caesar cipher.
+
+        Args:
+            prompt (str): The input prompt to be converted.
+            input_type (PromptDataType): The type of the input prompt. Must be "text".
+
+        Returns:
+            ConverterResult: The result containing the converted prompt and its type.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import base64
 import json
 import logging
 import os
@@ -10,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from openai import BadRequestError, RateLimitError
+from openai import APIStatusError, BadRequestError, ContentFilterFinishReasonError, RateLimitError
+from openai.types.chat import ChatCompletion
 from unit.mocks import (
     get_image_message_piece,
     get_sample_conversations,
@@ -25,7 +27,12 @@ from pyrit.exceptions.exception_classes import (
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
+from pyrit.prompt_target import (
+    OpenAIChatAudioConfig,
+    OpenAIChatTarget,
+    OpenAIResponseTarget,
+    PromptChatTarget,
+)
 
 
 def fake_construct_response_from_request(request, response_text_pieces):
@@ -34,12 +41,12 @@ def fake_construct_response_from_request(request, response_text_pieces):
 
 def create_mock_completion(content: str = "hi", finish_reason: str = "stop"):
     """Helper to create a mock OpenAI completion response"""
-    from openai.types.chat import ChatCompletion
-
     mock_completion = MagicMock(spec=ChatCompletion)
     mock_completion.choices = [MagicMock()]
     mock_completion.choices[0].finish_reason = finish_reason
     mock_completion.choices[0].message.content = content
+    mock_completion.choices[0].message.audio = None
+    mock_completion.choices[0].message.tool_calls = None
     mock_completion.model_dump_json.return_value = json.dumps(
         {"choices": [{"finish_reason": finish_reason, "message": {"content": content}}]}
     )
@@ -161,13 +168,13 @@ async def test_build_chat_messages_for_multi_modal(target: OpenAIChatTarget):
 
 @pytest.mark.asyncio
 async def test_build_chat_messages_for_multi_modal_with_unsupported_data_types(target: OpenAIChatTarget):
-    # Like an image_path, the audio_path requires a file, but doesn't validate any contents
+    # Use video_path which is truly not supported for multimodal chat
     entry = get_image_message_piece()
-    entry.converted_value_data_type = "audio_path"
+    entry.converted_value_data_type = "video_path"
 
     with pytest.raises(ValueError) as excinfo:
         await target._build_chat_messages_for_multi_modal_async([Message(message_pieces=[entry])])
-    assert "Multimodal data type audio_path is not yet supported." in str(excinfo.value)
+    assert "Multimodal data type video_path is not yet supported." in str(excinfo.value)
 
 
 @pytest.mark.asyncio
@@ -551,7 +558,7 @@ def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
     with pytest.raises(ValueError) as excinfo:
         target._validate_request(message=message)
 
-    assert "This target only supports text and image_path." in str(excinfo.value), (
+    assert "This target only supports text, image_path, and audio_path." in str(excinfo.value), (
         "Error not raised for unsupported data types"
     )
 
@@ -666,9 +673,7 @@ async def test_send_prompt_async_content_filter_400(target: OpenAIChatTarget):
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_other_http_error(monkeypatch):
-    from openai import APIStatusError
-
+async def test_send_prompt_async_other_http_error(patch_central_database):
     target = OpenAIChatTarget(
         model_name="gpt-4",
         endpoint="https://mock.azure.com/",
@@ -792,8 +797,6 @@ def test_azure_endpoint_new_format_openai_v1(patch_central_database):
 def test_azure_responses_endpoint_format(patch_central_database):
     """Test that Azure responses endpoint format is handled correctly."""
     with patch.dict(os.environ, {}, clear=True):
-        from pyrit.prompt_target import OpenAIResponseTarget
-
         target = OpenAIResponseTarget(
             model_name="o4-mini",
             endpoint="https://test.openai.azure.com/openai/responses?api-version=2025-03-01-preview",
@@ -807,8 +810,6 @@ def test_azure_responses_endpoint_format(patch_central_database):
 def test_azure_responses_endpoint_new_format(patch_central_database):
     """Test that Azure responses endpoint with /openai/v1 format is handled correctly."""
     with patch.dict(os.environ, {}, clear=True):
-        from pyrit.prompt_target import OpenAIResponseTarget
-
         target = OpenAIResponseTarget(
             model_name="o4-mini",
             endpoint="https://test.openai.azure.com/openai/v1?api-version=2025-03-01-preview",
@@ -862,8 +863,6 @@ async def test_content_filter_finish_reason_error(
     target: OpenAIChatTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
     """Test ContentFilterFinishReasonError from SDK is handled correctly."""
-    from openai import ContentFilterFinishReasonError
-
     message_piece = sample_conversations[0]
     message_piece.conversation_id = "test-conv-id"
     request = Message(message_pieces=[message_piece])
@@ -943,8 +942,6 @@ async def test_bad_request_with_string_content_filter(
 @pytest.mark.asyncio
 async def test_api_status_error_429(target: OpenAIChatTarget, sample_conversations: MutableSequence[MessagePiece]):
     """Test APIStatusError with status 429 raises RateLimitException."""
-    from openai import APIStatusError
-
     message_piece = sample_conversations[0]
     message_piece.conversation_id = "test-conv-id"
     request = Message(message_pieces=[message_piece])
@@ -967,8 +964,6 @@ async def test_api_status_error_429(target: OpenAIChatTarget, sample_conversatio
 @pytest.mark.asyncio
 async def test_api_status_error_non_429(target: OpenAIChatTarget, sample_conversations: MutableSequence[MessagePiece]):
     """Test APIStatusError with non-429 status is re-raised."""
-    from openai import APIStatusError
-
     message_piece = sample_conversations[0]
     message_piece.conversation_id = "test-conv-id"
     request = Message(message_pieces=[message_piece])
@@ -1169,3 +1164,765 @@ def test_get_identifier_includes_top_p_when_set(patch_central_database):
     identifier = target.get_identifier()
 
     assert identifier["top_p"] == 0.9
+
+
+# ============================================================================
+# Audio Response Config Tests
+# ============================================================================
+
+
+def test_init_with_audio_response_config(patch_central_database):
+    """Test initialization with audio_response_config."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    assert target._audio_response_config is not None
+    assert target._audio_response_config.voice == "alloy"
+    assert target._audio_response_config.audio_format == "wav"
+
+
+def test_init_audio_config_extra_body_params_merged(patch_central_database):
+    """Test that audio config parameters are merged with extra_body_parameters."""
+    audio_config = OpenAIChatAudioConfig(voice="coral", audio_format="mp3")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+        extra_body_parameters={"custom_param": "value"},
+    )
+
+    # The audio config should add modalities and audio to extra body
+    assert target._extra_body_parameters.get("modalities") == ["text", "audio"]
+    assert target._extra_body_parameters.get("audio") == {"voice": "coral", "format": "mp3"}
+    assert target._extra_body_parameters.get("custom_param") == "value"
+
+
+@pytest.mark.asyncio
+async def test_construct_request_body_with_audio_config(patch_central_database, dummy_text_message_piece: MessagePiece):
+    """Test that request body includes audio modalities when audio config is set."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    request = Message(message_pieces=[dummy_text_message_piece])
+    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+
+    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+
+    assert body.get("modalities") == ["text", "audio"]
+    assert body.get("audio") == {"voice": "alloy", "format": "wav"}
+
+
+# ============================================================================
+# Audio History Stripping Tests
+# ============================================================================
+
+
+def _create_audio_message_piece(role: str, data_type: str = "audio_path") -> MessagePiece:
+    """Helper to create a MessagePiece for audio skip tests."""
+    return MessagePiece(
+        role=role,
+        original_value="/path/to/audio.wav",
+        converted_value="/path/to/audio.wav",
+        original_value_data_type=data_type,
+        converted_value_data_type=data_type,
+        conversation_id="test-conv",
+    )
+
+
+def test_should_skip_sending_audio_assistant_role(patch_central_database):
+    """Test that audio is always skipped for assistant messages."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Assistant audio should always be skipped regardless of other conditions
+    message_piece = _create_audio_message_piece(role="assistant")
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=True,
+        has_text_piece=True,
+    )
+    assert result is True
+
+    # Even when it's the last message with no text piece
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=True,
+        has_text_piece=False,
+    )
+    assert result is True
+
+
+def test_should_skip_sending_audio_user_history_with_transcript(patch_central_database):
+    """Test that historical user audio is skipped when transcript exists and prefer_transcript_for_history is True."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav", prefer_transcript_for_history=True)
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Historical user audio with transcript should be skipped
+    message_piece = _create_audio_message_piece(role="user")
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=False,  # Historical message
+        has_text_piece=True,  # Has transcript
+    )
+    assert result is True
+
+
+def test_should_skip_sending_audio_user_history_without_transcript(patch_central_database):
+    """Test that historical user audio is NOT skipped when no transcript exists."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav", prefer_transcript_for_history=True)
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Historical user audio without transcript should NOT be skipped
+    message_piece = _create_audio_message_piece(role="user")
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=False,  # Historical message
+        has_text_piece=False,  # No transcript
+    )
+    assert result is False
+
+
+def test_should_skip_sending_audio_current_user_message(patch_central_database):
+    """Test that the current (last) user audio is NOT skipped."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav", prefer_transcript_for_history=True)
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Current user audio should NOT be skipped even with transcript
+    message_piece = _create_audio_message_piece(role="user")
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=True,  # Current message
+        has_text_piece=True,
+    )
+    assert result is False
+
+
+def test_should_skip_sending_audio_prefer_transcript_disabled(patch_central_database):
+    """Test that audio is NOT skipped when prefer_transcript_for_history is False."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav", prefer_transcript_for_history=False)
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Historical user audio should NOT be skipped when prefer_transcript_for_history is False
+    message_piece = _create_audio_message_piece(role="user")
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=False,
+        has_text_piece=True,
+    )
+    assert result is False
+
+
+def test_should_skip_sending_audio_no_audio_config(patch_central_database):
+    """Test that audio is NOT skipped when no audio config is set."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+    )
+
+    # Without audio config, historical audio should NOT be skipped (for user)
+    message_piece = _create_audio_message_piece(role="user")
+    result = target._should_skip_sending_audio(
+        message_piece=message_piece,
+        is_last_message=False,
+        has_text_piece=True,
+    )
+    assert result is False
+
+
+def test_should_skip_sending_audio_non_audio_type(patch_central_database):
+    """Test that non-audio data types are never skipped by this method."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Text type should not be skipped
+    text_piece = _create_audio_message_piece(role="user", data_type="text")
+    result = target._should_skip_sending_audio(
+        message_piece=text_piece,
+        is_last_message=False,
+        has_text_piece=True,
+    )
+    assert result is False
+
+    # Image type should not be skipped
+    image_piece = _create_audio_message_piece(role="assistant", data_type="image_path")
+    result = target._should_skip_sending_audio(
+        message_piece=image_piece,
+        is_last_message=True,
+        has_text_piece=False,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_build_chat_messages_strips_audio_from_history(patch_central_database):
+    """Test that audio is stripped from historical messages when building chat messages."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav", prefer_transcript_for_history=True)
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    conv_id = "test-conv-id"
+
+    # Create a historical message with both text (transcript) and audio
+    historical_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Hello from audio",
+                converted_value="Hello from audio",
+                original_value_data_type="text",
+                converted_value_data_type="text",
+                conversation_id=conv_id,
+            ),
+            MessagePiece(
+                role="user",
+                original_value="/path/to/audio.wav",
+                converted_value="/path/to/audio.wav",
+                original_value_data_type="audio_path",
+                converted_value_data_type="audio_path",
+                conversation_id=conv_id,
+            ),
+        ]
+    )
+
+    # Create the current (last) message with text
+    current_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Follow up question",
+                converted_value="Follow up question",
+                original_value_data_type="text",
+                converted_value_data_type="text",
+                conversation_id=conv_id,
+            ),
+        ]
+    )
+
+    # Build chat messages
+    messages = await target._build_chat_messages_for_multi_modal_async([historical_message, current_message])
+
+    # Verify the historical message only has text (audio was stripped)
+    assert len(messages) == 2
+    assert messages[0]["role"] == "user"
+    # The historical message should only have the text content, not the audio
+    historical_content = messages[0]["content"]
+    assert len(historical_content) == 1
+    assert historical_content[0]["type"] == "text"
+    assert historical_content[0]["text"] == "Hello from audio"
+
+    # Current message should just have text
+    assert messages[1]["content"][0]["type"] == "text"
+    assert messages[1]["content"][0]["text"] == "Follow up question"
+
+
+# ============================================================================
+# Audio Response Saving Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_save_audio_response_async_wav_format(patch_central_database):
+    """Test saving audio response with wav format."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Create some dummy audio data
+    audio_bytes = b"fake wav audio data"
+    audio_data_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/saved/audio.wav"
+        mock_serializer.save_data = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
+
+        # Verify factory was called with correct extension
+        mock_factory.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=".wav",
+        )
+
+        # Verify save_data was called (not save_formatted_audio for wav)
+        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_formatted_audio.assert_not_called()
+
+        assert result == "/path/to/saved/audio.wav"
+
+
+@pytest.mark.asyncio
+async def test_save_audio_response_async_mp3_format(patch_central_database):
+    """Test saving audio response with mp3 format."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="mp3")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    audio_bytes = b"fake mp3 audio data"
+    audio_data_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/saved/audio.mp3"
+        mock_serializer.save_data = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
+
+        # Verify factory was called with correct extension
+        mock_factory.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=".mp3",
+        )
+
+        # Verify save_data was called (not save_formatted_audio for mp3)
+        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+
+        assert result == "/path/to/saved/audio.mp3"
+
+
+@pytest.mark.asyncio
+async def test_save_audio_response_async_pcm16_format(patch_central_database):
+    """Test saving audio response with pcm16 format adds WAV headers."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="pcm16")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Create some dummy raw PCM audio data
+    audio_bytes = b"\x00\x01\x02\x03" * 100  # Raw PCM16 data
+    audio_data_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/saved/audio.wav"
+        mock_serializer.save_formatted_audio = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
+
+        # Verify factory was called with .wav extension (pcm16 gets saved as wav)
+        mock_factory.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=".wav",
+        )
+
+        # Verify save_formatted_audio was called with correct PCM16 parameters
+        mock_serializer.save_formatted_audio.assert_called_once_with(
+            data=audio_bytes,
+            num_channels=1,
+            sample_width=2,
+            sample_rate=24000,
+        )
+        # save_data should not be called for pcm16
+        mock_serializer.save_data.assert_not_called()
+
+        assert result == "/path/to/saved/audio.wav"
+
+
+@pytest.mark.asyncio
+async def test_save_audio_response_async_flac_format(patch_central_database):
+    """Test saving audio response with flac format."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="flac")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    audio_bytes = b"fake flac audio data"
+    audio_data_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/saved/audio.flac"
+        mock_serializer.save_data = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
+
+        mock_factory.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=".flac",
+        )
+        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+
+        assert result == "/path/to/saved/audio.flac"
+
+
+@pytest.mark.asyncio
+async def test_save_audio_response_async_opus_format(patch_central_database):
+    """Test saving audio response with opus format."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="opus")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    audio_bytes = b"fake opus audio data"
+    audio_data_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/saved/audio.opus"
+        mock_serializer.save_data = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
+
+        mock_factory.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=".opus",
+        )
+        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+
+        assert result == "/path/to/saved/audio.opus"
+
+
+@pytest.mark.asyncio
+async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central_database):
+    """Test saving audio response defaults to wav when no audio config is set."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        # No audio_response_config
+    )
+
+    audio_bytes = b"fake audio data"
+    audio_data_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/saved/audio.wav"
+        mock_serializer.save_data = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
+
+        # Should default to .wav extension
+        mock_factory.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=".wav",
+        )
+        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+
+        assert result == "/path/to/saved/audio.wav"
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_audio_transcript_has_metadata(
+    patch_central_database, dummy_text_message_piece: MessagePiece
+):
+    """Test that audio transcript text pieces include metadata to distinguish from regular text."""
+    audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="wav")
+    target = OpenAIChatTarget(
+        model_name="gpt-4o-audio-preview",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        audio_response_config=audio_config,
+    )
+
+    # Create mock response with audio (transcript + data)
+    mock_response = MagicMock(spec=ChatCompletion)
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].finish_reason = "stop"
+    mock_response.choices[0].message.content = None  # No text content
+    mock_response.choices[0].message.audio = MagicMock()
+    mock_response.choices[0].message.audio.transcript = "This is the audio transcript"
+    mock_response.choices[0].message.audio.data = base64.b64encode(b"fake audio").decode("utf-8")
+    mock_response.choices[0].message.tool_calls = None
+
+    with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/path/to/audio.wav"
+        mock_serializer.save_data = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+        # Should have 2 pieces: transcript (text) and audio file (audio_path)
+        assert len(result.message_pieces) == 2
+
+        transcript_piece = result.message_pieces[0]
+        audio_piece = result.message_pieces[1]
+
+        # Verify transcript piece
+        assert transcript_piece.converted_value_data_type == "text"
+        assert transcript_piece.converted_value == "This is the audio transcript"
+        assert transcript_piece.prompt_metadata is not None
+        assert transcript_piece.prompt_metadata.get("transcription") == "audio"
+
+        # Verify audio piece
+        assert audio_piece.converted_value_data_type == "audio_path"
+        assert audio_piece.converted_value == "/path/to/audio.wav"
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_text_content_no_transcript_metadata(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test that regular text content does not have transcript metadata."""
+    mock_response = create_mock_completion(content="Regular text response", finish_reason="stop")
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    assert len(result.message_pieces) == 1
+    text_piece = result.message_pieces[0]
+
+    assert text_piece.converted_value_data_type == "text"
+    assert text_piece.converted_value == "Regular text response"
+    # Regular text should not have transcription metadata
+    assert text_piece.prompt_metadata is None or text_piece.prompt_metadata.get("transcription") is None
+
+
+# ============================================================================
+# Tool Calling Tests
+# ============================================================================
+
+
+def create_mock_completion_with_tool_calls(tool_calls: list, finish_reason: str = "tool_calls"):
+    """Helper to create a mock OpenAI completion response with tool calls."""
+    mock_completion = MagicMock(spec=ChatCompletion)
+    mock_completion.choices = [MagicMock()]
+    mock_completion.choices[0].finish_reason = finish_reason
+    mock_completion.choices[0].message.content = None
+    mock_completion.choices[0].message.audio = None
+    mock_completion.choices[0].message.tool_calls = tool_calls
+    mock_completion.model_dump_json.return_value = json.dumps(
+        {"choices": [{"finish_reason": finish_reason, "message": {"content": None, "tool_calls": []}}]}
+    )
+    return mock_completion
+
+
+def create_mock_tool_call(call_id: str, function_name: str, arguments: str):
+    """Helper to create a mock tool call object."""
+    mock_tool_call = MagicMock()
+    mock_tool_call.id = call_id
+    mock_tool_call.type = "function"
+    mock_tool_call.function = MagicMock()
+    mock_tool_call.function.name = function_name
+    mock_tool_call.function.arguments = arguments
+    return mock_tool_call
+
+
+def test_validate_response_tool_calls_finish_reason(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
+    """Test _validate_response accepts tool_calls finish_reason."""
+    tool_call = create_mock_tool_call("call_123", "get_weather", '{"location": "NYC"}')
+    mock_response = create_mock_completion_with_tool_calls([tool_call], finish_reason="tool_calls")
+
+    # Should not raise - tool_calls is a valid finish reason
+    result = target._validate_response(mock_response, dummy_text_message_piece)
+    assert result is None
+
+
+def test_detect_response_content_with_tool_calls(target: OpenAIChatTarget):
+    """Test _detect_response_content correctly identifies tool calls."""
+    mock_message = MagicMock()
+    mock_message.content = None
+    mock_message.audio = None
+
+    tool_call = create_mock_tool_call("call_123", "get_weather", '{"location": "NYC"}')
+    mock_message.tool_calls = [tool_call]
+
+    has_content, has_audio, has_tool_calls = target._detect_response_content(mock_message)
+
+    assert not has_content
+    assert not has_audio
+    assert has_tool_calls  # Truthy - returns the list itself
+
+
+def test_detect_response_content_no_tool_calls(target: OpenAIChatTarget):
+    """Test _detect_response_content when tool_calls is None."""
+    mock_message = MagicMock()
+    mock_message.content = "Hello"
+    mock_message.audio = None
+    mock_message.tool_calls = None
+
+    has_content, has_audio, has_tool_calls = target._detect_response_content(mock_message)
+
+    assert has_content
+    assert not has_audio
+    assert not has_tool_calls  # Falsy - None
+
+
+def test_detect_response_content_empty_tool_calls(target: OpenAIChatTarget):
+    """Test _detect_response_content when tool_calls is empty list."""
+    mock_message = MagicMock()
+    mock_message.content = "Hello"
+    mock_message.audio = None
+    mock_message.tool_calls = []
+
+    has_content, has_audio, has_tool_calls = target._detect_response_content(mock_message)
+
+    assert has_content
+    assert not has_audio
+    assert not has_tool_calls  # Falsy - empty list
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_with_tool_calls(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test _construct_message_from_response extracts tool calls correctly."""
+    tool_call = create_mock_tool_call("call_abc123", "get_current_weather", '{"location": "Seattle, WA"}')
+    mock_response = create_mock_completion_with_tool_calls([tool_call])
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    assert isinstance(result, Message)
+    assert len(result.message_pieces) == 1
+
+    piece = result.message_pieces[0]
+    assert piece.converted_value_data_type == "function_call"
+
+    # Verify the serialized tool call data
+    tool_call_data = json.loads(piece.converted_value)
+    assert tool_call_data["type"] == "function"
+    assert tool_call_data["id"] == "call_abc123"
+    assert tool_call_data["function"]["name"] == "get_current_weather"
+    assert tool_call_data["function"]["arguments"] == '{"location": "Seattle, WA"}'
+
+
+@pytest.mark.asyncio
+async def test_construct_message_from_response_with_multiple_tool_calls(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test _construct_message_from_response handles multiple tool calls."""
+    tool_call1 = create_mock_tool_call("call_1", "get_weather", '{"location": "NYC"}')
+    tool_call2 = create_mock_tool_call("call_2", "get_time", '{"timezone": "EST"}')
+    mock_response = create_mock_completion_with_tool_calls([tool_call1, tool_call2])
+
+    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+
+    assert isinstance(result, Message)
+    assert len(result.message_pieces) == 2
+
+    # Verify both tool calls are present
+    tool_call_data_1 = json.loads(result.message_pieces[0].converted_value)
+    tool_call_data_2 = json.loads(result.message_pieces[1].converted_value)
+
+    assert tool_call_data_1["function"]["name"] == "get_weather"
+    assert tool_call_data_2["function"]["name"] == "get_time"
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_with_tool_calls(target: OpenAIChatTarget):
+    """Test send_prompt_async correctly handles tool call responses."""
+    tool_call = create_mock_tool_call("call_test", "search_web", '{"query": "PyRIT documentation"}')
+    mock_response = create_mock_completion_with_tool_calls([tool_call])
+
+    target._async_client.chat.completions.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
+
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                conversation_id="test-conv",
+                original_value="Search for PyRIT documentation",
+                converted_value="Search for PyRIT documentation",
+                original_value_data_type="text",
+                converted_value_data_type="text",
+            )
+        ]
+    )
+
+    result = await target.send_prompt_async(message=message)
+
+    assert len(result) == 1
+    assert len(result[0].message_pieces) == 1
+    assert result[0].message_pieces[0].converted_value_data_type == "function_call"
+
+    tool_call_data = json.loads(result[0].message_pieces[0].converted_value)
+    assert tool_call_data["function"]["name"] == "search_web"
+
+
+def test_construct_request_body_with_tools(patch_central_database):
+    """Test that tools are included in request body when specified in extra_body_parameters."""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the weather",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    target = OpenAIChatTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        extra_body_parameters={"tools": tools, "tool_choice": "auto"},
+    )
+
+    assert target._extra_body_parameters.get("tools") == tools
+    assert target._extra_body_parameters.get("tool_choice") == "auto"

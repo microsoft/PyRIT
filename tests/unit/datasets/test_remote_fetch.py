@@ -94,9 +94,7 @@ class TestFetchWithCache:
         monkeypatch.setattr(_remote_fetch, "DB_DATA_PATH", tmp_path)
         source = "https://example.com/data.jsonl"
 
-        cache_file = _remote_fetch.get_cache_file(
-            source=source, file_type="jsonl", cache_subdir="unit-test-cache"
-        )
+        cache_file = _remote_fetch.get_cache_file(source=source, file_type="jsonl", cache_subdir="unit-test-cache")
         payload = [{"cached": True}]
         _remote_fetch.write_cache(cache_file=cache_file, examples=payload, file_type="jsonl")
 
@@ -118,9 +116,7 @@ class TestFetchWithCache:
         result = _remote_fetch.fetch_with_cache(source=source, cache_subdir="unit-test-cache")
         assert result == payload
 
-        cache_file = _remote_fetch.get_cache_file(
-            source=source, file_type="jsonl", cache_subdir="unit-test-cache"
-        )
+        cache_file = _remote_fetch.get_cache_file(source=source, file_type="jsonl", cache_subdir="unit-test-cache")
         assert cache_file.exists()
 
     @patch.object(_remote_fetch, "requests")
@@ -136,9 +132,7 @@ class TestFetchWithCache:
 
         _remote_fetch.fetch_with_cache(source=source, cache_subdir="unit-test-cache", cache=False)
 
-        cache_file = _remote_fetch.get_cache_file(
-            source=source, file_type="jsonl", cache_subdir="unit-test-cache"
-        )
+        cache_file = _remote_fetch.get_cache_file(source=source, file_type="jsonl", cache_subdir="unit-test-cache")
         assert not cache_file.exists()
 
     def test_invalid_file_type_inferred_raises(self):

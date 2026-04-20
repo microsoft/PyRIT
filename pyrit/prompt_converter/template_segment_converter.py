@@ -30,7 +30,7 @@ class TemplateSegmentConverter(PromptConverter):
         prompt_template: Optional[SeedPrompt] = None,
     ):
         """
-        Initializes the converter with the specified target and prompt template.
+        Initialize the converter with the specified target and prompt template.
 
         Args:
             prompt_template (SeedPrompt, Optional): The prompt template for the conversion. Must have two or more
@@ -71,7 +71,7 @@ class TemplateSegmentConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by splitting it into random segments and using them to fill the template parameters.
+        Convert the given prompt by splitting it into random segments and using them to fill the template parameters.
         The prompt is split into N segments (where N is the number of template parameters) at random word boundaries.
         Each segment is then used to fill the corresponding template parameter.
 
@@ -96,7 +96,7 @@ class TemplateSegmentConverter(PromptConverter):
 
     def _split_prompt_into_segments(self, prompt: str) -> list[str]:
         """
-        Splits a prompt into random segments based on word boundaries.
+        Split a prompt into random segments based on word boundaries.
         If there aren't enough words for all parameters, remaining segments will be empty strings.
 
         Args:

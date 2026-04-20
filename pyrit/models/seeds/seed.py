@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Sequence, TypeVar, Union
+from typing import Any, Dict, Iterator, Optional, Sequence, TypeVar, Union
 
 from jinja2 import BaseLoader, Environment, StrictUndefined, Template, Undefined
 
@@ -31,17 +31,17 @@ T = TypeVar("T", bound="Seed")
 
 class PartialUndefined(Undefined):
     # Return the original placeholder format
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{{{{ {self._undefined_name} }}}}" if self._undefined_name else ""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{{{{ {self._undefined_name} }}}}" if self._undefined_name else ""
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[object]:
         """Return an empty iterator to prevent Jinja from trying to loop over undefined variables."""
         return iter([])
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return True  # Ensures it doesn't evaluate to False
 
 
@@ -104,7 +104,7 @@ class Seed(YamlLoadable):
         """
         return "text"
 
-    def render_template_value(self, **kwargs) -> str:
+    def render_template_value(self, **kwargs: Any) -> str:
         """
         Renders self.value as a template, applying provided parameters in kwargs.
 
@@ -128,7 +128,7 @@ class Seed(YamlLoadable):
                 f"Template value preview: {self.value[:100]}..."
             ) from e
 
-    def render_template_value_silent(self, **kwargs) -> str:
+    def render_template_value_silent(self, **kwargs: Any) -> str:
         """
         Renders self.value as a template, applying provided parameters in kwargs. For parameters in the template
         that are not provided as kwargs here, this function will leave them as is instead of raising an error.

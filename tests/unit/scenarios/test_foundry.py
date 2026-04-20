@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the Foundry class."""
+"""Tests for the RedTeamAgent class."""
 
 from unittest.mock import MagicMock, patch
 
@@ -10,13 +10,24 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.scenario import AtomicAttack
-from pyrit.scenario.foundry import Foundry, FoundryStrategy
-from pyrit.score import TrueFalseScorer
+from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
+
+
+def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 @pytest.fixture
@@ -51,7 +62,16 @@ def mock_adversarial_target():
 def mock_objective_scorer():
     """Create a mock objective scorer for testing."""
     mock = MagicMock(spec=TrueFalseScorer)
-    mock.get_identifier.return_value = {"__type__": "MockObjectiveScorer", "__module__": "test"}
+    mock.get_identifier.return_value = _mock_scorer_id("MockObjectiveScorer")
+    return mock
+
+
+@pytest.fixture
+def mock_float_threshold_scorer():
+    """Create a mock FloatScaleThresholdScorer for TAP tests."""
+    mock = MagicMock(spec=FloatScaleThresholdScorer)
+    mock.get_identifier.return_value = _mock_scorer_id("MockFloatScaleThresholdScorer")
+    mock.threshold = 0.7
     return mock
 
 
@@ -63,7 +83,7 @@ def sample_objectives():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFoundryInitialization:
-    """Tests for Foundry initialization."""
+    """Tests for RedTeamAgent initialization."""
 
     @patch.dict(
         "os.environ",
@@ -78,8 +98,8 @@ class TestFoundryInitialization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test initialization with a single attack strategy."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -88,7 +108,7 @@ class TestFoundryInitialization:
                 scenario_strategies=[FoundryStrategy.Base64],
             )
             assert scenario.atomic_attack_count > 0
-            assert scenario.name == "Foundry"
+            assert scenario.name == "RedTeamAgent"
 
     @patch.dict(
         "os.environ",
@@ -109,8 +129,8 @@ class TestFoundryInitialization:
             FoundryStrategy.Leetspeak,
         ]
 
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -130,7 +150,7 @@ class TestFoundryInitialization:
     )
     def test_init_with_custom_objectives(self, mock_objective_target, mock_objective_scorer, sample_objectives):
         """Test initialization with custom objectives."""
-        scenario = Foundry(
+        scenario = RedTeamAgent(
             objectives=sample_objectives,
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
         )
@@ -150,7 +170,7 @@ class TestFoundryInitialization:
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
     ):
         """Test initialization with custom adversarial target."""
-        scenario = Foundry(
+        scenario = RedTeamAgent(
             adversarial_chat=mock_adversarial_target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
         )
@@ -167,7 +187,7 @@ class TestFoundryInitialization:
     )
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer):
         """Test initialization with custom objective scorer."""
-        scenario = Foundry(
+        scenario = RedTeamAgent(
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
         )
 
@@ -186,8 +206,8 @@ class TestFoundryInitialization:
         """Test initialization with memory labels."""
         memory_labels = {"test": "foundry", "category": "attack"}
 
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -200,7 +220,7 @@ class TestFoundryInitialization:
 
             assert scenario._memory_labels == memory_labels
 
-    @patch("pyrit.scenario.scenarios.foundry.foundry.TrueFalseCompositeScorer")
+    @patch("pyrit.scenario.scenarios.foundry.red_team_agent.TrueFalseCompositeScorer")
     @patch.dict(
         "os.environ",
         {
@@ -219,8 +239,8 @@ class TestFoundryInitialization:
         mock_composite_instance = MagicMock(spec=TrueFalseScorer)
         mock_composite.return_value = mock_composite_instance
 
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry()
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent()
 
             # Verify default scorer was created
             mock_composite.assert_called_once()
@@ -240,7 +260,7 @@ class TestFoundryInitialization:
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
-        scenario = Foundry(attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer))
+        scenario = RedTeamAgent(attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer))
 
         # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
@@ -264,8 +284,8 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test that EASY strategy expands to easy attack strategies."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -289,8 +309,8 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test that MODERATE strategy expands to moderate attack strategies."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -311,12 +331,13 @@ class TestFoundryStrategyNormalization:
     )
     @pytest.mark.asyncio
     async def test_normalize_difficult_strategies(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+        self, mock_objective_target, mock_float_threshold_scorer, mock_memory_seed_groups
     ):
         """Test that DIFFICULT strategy expands to difficult attack strategies."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            # DIFFICULT strategy includes TAP which requires FloatScaleThresholdScorer
+            scenario = RedTeamAgent(
+                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_float_threshold_scorer),
             )
 
             await scenario.initialize_async(
@@ -339,8 +360,8 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test that multiple difficulty levels expand correctly."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -364,8 +385,8 @@ class TestFoundryStrategyNormalization:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test that specific strategies combined with difficulty levels work correctly."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -397,8 +418,8 @@ class TestFoundryAttackCreation:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test creating an attack from a single-turn strategy."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -427,8 +448,8 @@ class TestFoundryAttackCreation:
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test creating a multi-turn attack strategy."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 adversarial_chat=mock_adversarial_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -463,8 +484,8 @@ class TestFoundryGetAttack:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test creating a single-turn attack with converters."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -493,8 +514,8 @@ class TestFoundryGetAttack:
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer, mock_memory_seed_groups
     ):
         """Test creating a multi-turn attack."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 adversarial_chat=mock_adversarial_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -555,8 +576,8 @@ class TestFoundryAllStrategies:
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, strategy
     ):
         """Test that all single-turn strategies can create attack runs."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 
@@ -595,8 +616,8 @@ class TestFoundryAllStrategies:
         strategy,
     ):
         """Test that all multi-turn strategies can create attack runs."""
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 adversarial_chat=mock_adversarial_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
@@ -614,7 +635,7 @@ class TestFoundryAllStrategies:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFoundryProperties:
-    """Tests for Foundry properties and attributes."""
+    """Tests for RedTeamAgent properties and attributes."""
 
     @patch.dict(
         "os.environ",
@@ -631,8 +652,8 @@ class TestFoundryProperties:
         """Test that scenario composites are set after initialize_async."""
         strategies = [FoundryStrategy.Base64, FoundryStrategy.ROT13]
 
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
                 include_baseline=False,
             )
@@ -659,7 +680,7 @@ class TestFoundryProperties:
     )
     def test_scenario_version_is_set(self, mock_objective_target, mock_objective_scorer):
         """Test that scenario version is properly set."""
-        scenario = Foundry(
+        scenario = RedTeamAgent(
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
         )
 
@@ -684,8 +705,8 @@ class TestFoundryProperties:
             FoundryStrategy.Leetspeak,
         ]
 
-        with patch.object(Foundry, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
-            scenario = Foundry(
+        with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
             )
 

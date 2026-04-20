@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import base64
+import json
 import logging
 from typing import Any, Dict, MutableSequence, Optional
 
@@ -12,13 +14,16 @@ from pyrit.exceptions import (
 )
 from pyrit.models import (
     ChatMessage,
+    DataTypeSerializer,
     Message,
     MessagePiece,
     construct_response_from_request,
+    data_serializer_factory,
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
+from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
@@ -68,9 +73,10 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         seed: Optional[int] = None,
         n: Optional[int] = None,
         is_json_supported: bool = True,
+        audio_response_config: Optional[OpenAIChatAudioConfig] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Args:
             model_name (str, Optional): The name of the model.
@@ -110,6 +116,8 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 setting the response_format header. Official OpenAI models all support this, but if you are using
                 this target with different models, is_json_supported should be set correctly to avoid issues when
                 using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
+            audio_response_config (OpenAIChatAudioConfig, Optional): Configuration for audio output from models
+                that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
@@ -143,6 +151,16 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         self._presence_penalty = presence_penalty
         self._seed = seed
         self._n = n
+        self._audio_response_config = audio_response_config
+
+        # Merge audio config into extra_body_parameters if provided
+        if audio_response_config:
+            audio_params = audio_response_config.to_extra_body_parameters()
+            if extra_body_parameters:
+                extra_body_parameters = {**audio_params, **extra_body_parameters}
+            else:
+                extra_body_parameters = audio_params
+
         self._extra_body_parameters = extra_body_parameters
 
     def _set_openai_env_configuration_vars(self) -> None:
@@ -224,7 +242,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         Checks for:
         - Missing choices
         - Invalid finish_reason
-        - Empty content
+        - At least one valid response type (text content, audio, or tool_calls)
 
         Args:
             response: The ChatCompletion response from OpenAI SDK.
@@ -245,34 +263,197 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         finish_reason = choice.finish_reason
 
         # Check finish_reason (content_filter is handled by _check_content_filter)
-        if finish_reason not in ["stop", "length", "content_filter"]:
-            # finish_reason="stop" means API returned complete message
-            # "length" means API returned incomplete message due to max_tokens limit
+        # "tool_calls" is valid when the model invokes functions
+        valid_finish_reasons = ["stop", "length", "content_filter", "tool_calls"]
+        if finish_reason not in valid_finish_reasons:
             raise PyritException(
                 message=f"Unknown finish_reason {finish_reason} from response: {response.model_dump_json()}"
             )
 
-        # Check for empty content
-        content = choice.message.content or ""
-        if not content:
-            logger.error("The chat returned an empty response.")
-            raise EmptyResponseException(message="The chat returned an empty response.")
+        # Check for at least one valid response type
+        has_content, has_audio, has_tool_calls = self._detect_response_content(choice.message)
+
+        if not (has_content or has_audio or has_tool_calls):
+            logger.error("The chat returned an empty response (no content, audio, or tool_calls).")
+            raise EmptyResponseException(
+                message="The chat returned an empty response (no content, audio, or tool_calls)."
+            )
 
         return None
+
+    def _detect_response_content(self, message: Any) -> tuple[bool, bool, bool]:
+        """
+        Detect what content types are present in a ChatCompletion message.
+
+        Args:
+            message: The message object from response.choices[0].message.
+
+        Returns:
+            Tuple of (has_content, has_audio, has_tool_calls) booleans.
+        """
+        has_content = bool(message.content)
+        has_audio = hasattr(message, "audio") and message.audio is not None
+        has_tool_calls = hasattr(message, "tool_calls") and message.tool_calls
+        return has_content, has_audio, has_tool_calls
+
+    def _should_skip_sending_audio(
+        self,
+        *,
+        message_piece: MessagePiece,
+        is_last_message: bool,
+        has_text_piece: bool,
+    ) -> bool:
+        """
+        Determine if an audio_path piece should be skipped when building chat messages.
+
+        Args:
+            message_piece: The MessagePiece to evaluate.
+            is_last_message: Whether this is the last (current) message in the conversation.
+            has_text_piece: Whether the message contains a text piece (e.g., transcript).
+
+        Returns:
+            True if the audio should be skipped, False if it should be included.
+        """
+        if message_piece.converted_value_data_type != "audio_path":
+            return False
+
+        api_role = message_piece.api_role
+
+        # Skip audio for assistant messages - OpenAI only allows audio in user messages.
+        # For assistant responses, the transcript text piece should already be included.
+        if api_role == "assistant":
+            return True
+
+        # Skip historical user audio if prefer_transcript_for_history is enabled and we have a transcript
+        if (
+            api_role == "user"
+            and not is_last_message
+            and has_text_piece
+            and self._audio_response_config
+            and self._audio_response_config.prefer_transcript_for_history
+        ):
+            return True
+
+        return False
 
     async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a ChatCompletion response.
+
+        Handles multiple response types:
+        - Text content from message.content
+        - Audio transcript and audio file from message.audio
+        - Tool calls serialized as JSON from message.tool_calls
 
         Args:
             response: The ChatCompletion response from OpenAI SDK.
             request: The original request MessagePiece.
 
         Returns:
-            Message: Constructed message with extracted content.
+            Message: Constructed message with one or more MessagePiece entries.
+
+        Raises:
+            EmptyResponseException: If the response contains no content, audio, or tool calls.
         """
-        extracted_response = response.choices[0].message.content or ""
-        return construct_response_from_request(request=request, response_text_pieces=[extracted_response])
+        message = response.choices[0].message
+        has_content, has_audio, has_tool_calls = self._detect_response_content(message)
+
+        pieces: list[MessagePiece] = []
+
+        # Handle text content
+        if has_content:
+            text_piece = construct_response_from_request(
+                request=request,
+                response_text_pieces=[message.content],
+                response_type="text",
+            ).message_pieces[0]
+            pieces.append(text_piece)
+
+        # Handle audio response (transcript + saved audio file)
+        if has_audio:
+            audio_response = message.audio
+
+            # Add transcript as text piece with metadata
+            audio_transcript: Optional[str] = getattr(audio_response, "transcript", None)
+            if audio_transcript:
+                transcript_piece = construct_response_from_request(
+                    request=request,
+                    response_text_pieces=[audio_transcript],
+                    response_type="text",
+                    prompt_metadata={"transcription": "audio"},
+                ).message_pieces[0]
+                pieces.append(transcript_piece)
+
+            # Save audio data and add as audio_path piece
+            audio_data: Optional[str] = getattr(audio_response, "data", None)
+            if audio_data:
+                audio_path = await self._save_audio_response_async(audio_data_base64=audio_data)
+                audio_piece = construct_response_from_request(
+                    request=request,
+                    response_text_pieces=[audio_path],
+                    response_type="audio_path",
+                ).message_pieces[0]
+                pieces.append(audio_piece)
+
+        # Handle tool calls; for completions it is always function at the time of writing
+        if has_tool_calls:
+            for tool_call in message.tool_calls:
+                tool_call_data = {
+                    "type": "function",
+                    "id": tool_call.id,
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                }
+                tool_call_json = json.dumps(tool_call_data)
+                tool_piece = construct_response_from_request(
+                    request=request,
+                    response_text_pieces=[tool_call_json],
+                    response_type="function_call",
+                ).message_pieces[0]
+                pieces.append(tool_piece)
+
+        if not pieces:
+            raise EmptyResponseException(message="Failed to extract any response content.")
+
+        return Message(message_pieces=pieces)
+
+    async def _save_audio_response_async(self, *, audio_data_base64: str) -> str:
+        """
+        Save audio data from an OpenAI audio response to a file.
+
+        Args:
+            audio_data_base64: Base64-encoded audio data from message.audio.data.
+
+        Returns:
+            str: The file path where the audio was saved.
+        """
+        audio_bytes = base64.b64decode(audio_data_base64)
+
+        # Determine the format from config, default to wav
+        audio_format = self._audio_response_config.audio_format if self._audio_response_config else "wav"
+        extension = f".{audio_format}" if audio_format != "pcm16" else ".wav"
+
+        audio_serializer = data_serializer_factory(
+            category="prompt-memory-entries",
+            data_type="audio_path",
+            extension=extension,
+        )
+
+        if audio_format == "pcm16":
+            # Raw PCM needs WAV headers - OpenAI uses 24kHz mono PCM16
+            await audio_serializer.save_formatted_audio(
+                data=audio_bytes,
+                num_channels=1,
+                sample_width=2,
+                sample_rate=24000,
+            )
+        else:
+            # wav, mp3, flac, opus are already properly formatted
+            await audio_serializer.save_data(audio_bytes)
+
+        return audio_serializer.value
 
     def is_json_response_supported(self) -> bool:
         """
@@ -283,7 +464,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         """
         return self._is_json_supported
 
-    async def _build_chat_messages_async(self, conversation: MutableSequence[Message]) -> list[dict]:
+    async def _build_chat_messages_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries.
 
@@ -315,7 +496,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 return False
         return True
 
-    def _build_chat_messages_for_text(self, conversation: MutableSequence[Message]) -> list[dict]:
+    def _build_chat_messages_for_text(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries. This is needed because many
         openai "compatible" models don't support ChatMessageListDictContent format (this is more universally accepted).
@@ -330,7 +511,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             ValueError: If any message does not have exactly one text piece.
             ValueError: If any message piece is not of type text.
         """
-        chat_messages: list[dict] = []
+        chat_messages: list[dict[str, Any]] = []
         for message in conversation:
             # validated to only have one text entry
 
@@ -347,7 +528,9 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         return chat_messages
 
-    async def _build_chat_messages_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict]:
+    async def _build_chat_messages_for_multi_modal_async(
+        self, conversation: MutableSequence[Message]
+    ) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries.
 
@@ -361,14 +544,28 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             ValueError: If any message does not have a role.
             ValueError: If any message piece has an unsupported data type.
         """
-        chat_messages: list[dict] = []
-        for message in conversation:
+        chat_messages: list[dict[str, Any]] = []
+        last_message_index = len(conversation) - 1
+
+        for message_index, message in enumerate(conversation):
             message_pieces = message.message_pieces
+            is_last_message = message_index == last_message_index
+
+            # Check if this message has a text piece (transcript) alongside audio
+            has_text_piece = any(mp.converted_value_data_type == "text" for mp in message_pieces)
 
             content = []
             role = None
             for message_piece in message_pieces:
                 role = message_piece.api_role
+
+                if self._should_skip_sending_audio(
+                    message_piece=message_piece,
+                    is_last_message=is_last_message,
+                    has_text_piece=has_text_piece,
+                ):
+                    continue
+
                 if message_piece.converted_value_data_type == "text":
                     entry = {"type": "text", "text": message_piece.converted_value}
                     content.append(entry)
@@ -376,6 +573,27 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                     data_base64_encoded_url = await convert_local_image_to_data_url(message_piece.converted_value)
                     image_url_entry = {"url": data_base64_encoded_url}
                     entry = {"type": "image_url", "image_url": image_url_entry}  # type: ignore
+                    content.append(entry)
+                elif message_piece.converted_value_data_type == "audio_path":
+                    ext = DataTypeSerializer.get_extension(message_piece.converted_value)
+                    # OpenAI SDK: openai/types/chat/chat_completion_content_part_input_audio_param.py
+                    # defines format: Required[Literal["wav", "mp3"]]
+                    if not ext or ext.lower() not in [".wav", ".mp3"]:
+                        raise ValueError(
+                            f"Unsupported audio format: {ext}. "
+                            "OpenAI Chat Completions API input_audio only supports .wav and .mp3. "
+                            "Note: This is different from the Whisper Speech-to-Text API which supports more formats."
+                        )
+                    audio_serializer = data_serializer_factory(
+                        category="prompt-memory-entries",
+                        value=message_piece.converted_value,
+                        data_type="audio_path",
+                        extension=ext,
+                    )
+                    base64_data = await audio_serializer.read_data_base64()
+                    audio_format = ext.lower().lstrip(".")
+                    input_audio_entry = {"data": base64_data, "format": audio_format}
+                    entry = {"type": "input_audio", "input_audio": input_audio_entry}  # type: ignore
                     content.append(entry)
                 else:
                     raise ValueError(
@@ -385,13 +603,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             if not role:
                 raise ValueError("No role could be determined from the message pieces.")
 
-            chat_message = ChatMessage(role=role, content=content)  # type: ignore
+            chat_message = ChatMessage(role=role, content=content)
             chat_messages.append(chat_message.model_dump(exclude_none=True))
         return chat_messages
 
     async def _construct_request_body(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
-    ) -> dict:
+    ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
         response_format = self._build_response_format(json_config)
 
@@ -433,8 +651,10 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         # Some models may not support all of these
         for prompt_data_type in converted_prompt_data_types:
-            if prompt_data_type not in ["text", "image_path"]:
-                raise ValueError(f"This target only supports text and image_path. Received: {prompt_data_type}.")
+            if prompt_data_type not in ["text", "image_path", "audio_path"]:
+                raise ValueError(
+                    f"This target only supports text, image_path, and audio_path. Received: {prompt_data_type}."
+                )
 
     def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[Dict[str, Any]]:
         if not json_config.enabled:

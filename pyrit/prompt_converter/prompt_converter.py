@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from typing import get_args
 
 from pyrit import prompt_converter
-from pyrit.models import Identifier, PromptDataType
+from pyrit.identifiers import LegacyIdentifiable
+from pyrit.models import PromptDataType
 
 
 @dataclass
@@ -21,11 +22,17 @@ class ConverterResult:
     #: The data type of the converted output. Indicates the format/type of the ``output_text``.
     output_type: PromptDataType
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        Representation of the ConverterResult.
+
+        Returns:
+            str: A string representation showing the output type and text.
+        """
         return f"{self.output_type}: {self.output_text}"
 
 
-class PromptConverter(abc.ABC, Identifier):
+class PromptConverter(LegacyIdentifiable):
     """
     Base class for converters that transform prompts into a different representation or format.
 
@@ -41,9 +48,9 @@ class PromptConverter(abc.ABC, Identifier):
     #: Tuple of output modalities supported by this converter. Subclasses must override this.
     SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ()
 
-    def __init_subclass__(cls, **kwargs) -> None:
+    def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validates that concrete subclasses define required class attributes.
+        Validate that concrete subclasses define required class attributes.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
@@ -66,16 +73,16 @@ class PromptConverter(abc.ABC, Identifier):
                     f"Declare the output modalities this converter produces."
                 )
 
-    def __init__(self):
+    def __init__(self) -> None:
         """
-        Initializes the prompt converter.
+        Initialize the prompt converter.
         """
         super().__init__()
 
     @abc.abstractmethod
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into the target format supported by the converter.
+        Convert the given prompt into the target format supported by the converter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -87,7 +94,7 @@ class PromptConverter(abc.ABC, Identifier):
 
     def input_supported(self, input_type: PromptDataType) -> bool:
         """
-        Checks if the input type is supported by the converter.
+        Check if the input type is supported by the converter.
 
         Args:
             input_type (PromptDataType): The input type to check.
@@ -99,7 +106,7 @@ class PromptConverter(abc.ABC, Identifier):
 
     def output_supported(self, output_type: PromptDataType) -> bool:
         """
-        Checks if the output type is supported by the converter.
+        Check if the output type is supported by the converter.
 
         Args:
             output_type (PromptDataType): The output type to check.
@@ -113,7 +120,7 @@ class PromptConverter(abc.ABC, Identifier):
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
     ) -> ConverterResult:
         """
-        Converts substrings within a prompt that are enclosed by specified start and end tokens. If there are no tokens
+        Convert substrings within a prompt that are enclosed by specified start and end tokens. If there are no tokens
         present, the entire prompt is converted.
 
         Args:
@@ -152,13 +159,13 @@ class PromptConverter(abc.ABC, Identifier):
 
         return ConverterResult(output_text=prompt, output_type="text")
 
-    async def _replace_text_match(self, match):
+    async def _replace_text_match(self, match: str) -> ConverterResult:
         result = await self.convert_async(prompt=match, input_type="text")
         return result
 
     def get_identifier(self) -> dict[str, str]:
         """
-        Returns an identifier dictionary for the converter.
+        Return an identifier dictionary for the converter.
 
         Returns:
             dict: The identifier dictionary.
@@ -191,7 +198,7 @@ class PromptConverter(abc.ABC, Identifier):
 
 def get_converter_modalities() -> list[tuple[str, list[PromptDataType], list[PromptDataType]]]:
     """
-    Retrieves a list of all converter classes and their supported input/output modalities
+    Retrieve a list of all converter classes and their supported input/output modalities
     by reading the SUPPORTED_INPUT_TYPES and SUPPORTED_OUTPUT_TYPES class attributes.
 
     Returns:

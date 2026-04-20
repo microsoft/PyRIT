@@ -111,7 +111,7 @@ class GandalfTarget(PromptTarget):
             raise ValueError("The chat returned an empty response.")
 
         json_response = resp.json()
-        return json_response["success"]
+        return bool(json_response["success"])
 
     async def _complete_text_async(self, text: str) -> str:
         payload: dict[str, object] = {
@@ -126,7 +126,7 @@ class GandalfTarget(PromptTarget):
         if not resp.text:
             raise ValueError("The chat returned an empty response.")
 
-        answer = json.loads(resp.text)["answer"]
+        answer: str = json.loads(resp.text)["answer"]
 
         logger.info(f'Received the following response from the prompt target "{answer}"')
         return answer

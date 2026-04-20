@@ -16,7 +16,7 @@ class TextJailbreakConverter(PromptConverter):
 
     def __init__(self, *, jailbreak_template: TextJailBreak):
         """
-        Initializes the converter with the specified jailbreak template.
+        Initialize the converter with the specified jailbreak template.
 
         Args:
             jailbreak_template (TextJailBreak): The jailbreak template to use for conversion.
@@ -25,7 +25,17 @@ class TextJailbreakConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt using the jailbreak template.
+        Convert the given prompt using the jailbreak template.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")

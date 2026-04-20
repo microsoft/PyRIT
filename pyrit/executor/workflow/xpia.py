@@ -5,7 +5,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional, Protocol, overload
+from typing import Any, Dict, Optional, Protocol, overload
 
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.executor.core import StrategyConverterConfig
@@ -389,18 +389,18 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult]):
         processing_callback: Optional[XPIAProcessingCallback] = None,
         processing_prompt: Optional[Message] = None,
         memory_labels: Optional[Dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> XPIAResult: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> XPIAResult: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> XPIAResult:
         """
         Execute the XPIA workflow strategy asynchronously with the provided parameters.

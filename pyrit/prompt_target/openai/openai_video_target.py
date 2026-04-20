@@ -43,8 +43,8 @@ class OpenAIVideoTarget(OpenAITarget):
         *,
         resolution_dimensions: str = "1280x720",
         n_seconds: int = 4,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the OpenAI Video Target.
 
@@ -153,7 +153,7 @@ class OpenAIVideoTarget(OpenAITarget):
         # Use unified error handler - automatically detects Video and validates
         response = await self._handle_openai_request(
             api_call=lambda: self._async_client.videos.create_and_poll(
-                model=self._model_name,  # type: ignore[arg-type]
+                model=self._model_name,
                 prompt=prompt,
                 size=self._size,  # type: ignore[arg-type]
                 seconds=str(self._n_seconds),  # type: ignore[arg-type]

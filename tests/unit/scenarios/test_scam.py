@@ -16,6 +16,7 @@ from pyrit.executor.attack import (
     RolePlayAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.models import SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget, PromptTarget
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
@@ -23,6 +24,16 @@ from pyrit.score import TrueFalseCompositeScorer
 
 SEED_DATASETS_PATH = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt"
 SEED_PROMPT_LIST = list(SeedDataset.from_yaml_file(SEED_DATASETS_PATH / "scams.prompt").get_values())
+
+
+def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 @pytest.fixture
@@ -72,7 +83,7 @@ def mock_objective_target() -> PromptTarget:
 @pytest.fixture
 def mock_objective_scorer() -> TrueFalseCompositeScorer:
     mock = MagicMock(spec=TrueFalseCompositeScorer)
-    mock.get_identifier.return_value = {"__type__": "MockObjectiveScorer", "__module__": "test"}
+    mock.get_identifier.return_value = _mock_scorer_id("MockObjectiveScorer")
     return mock
 
 

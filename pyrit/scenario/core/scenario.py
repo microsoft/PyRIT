@@ -270,7 +270,6 @@ class Scenario(ABC):
         result = ScenarioResult(
             scenario_identifier=self._identifier,
             objective_target_identifier=self._objective_target_identifier,
-            objective_scorer=self._objective_scorer,
             objective_scorer_identifier=self._objective_scorer_identifier,
             labels=self._memory_labels,
             attack_results=attack_results,

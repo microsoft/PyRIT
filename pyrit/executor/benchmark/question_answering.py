@@ -4,7 +4,7 @@
 import logging
 import textwrap
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, overload
+from typing import Any, Dict, List, Optional, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -262,18 +262,18 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         question_answering_entry: QuestionAnsweringEntry,
         prepended_conversation: Optional[List[Message]] = None,
         memory_labels: Optional[Dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult:
         """
         Execute the QA benchmark strategy asynchronously with the provided parameters.

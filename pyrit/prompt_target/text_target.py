@@ -90,6 +90,6 @@ class TextTarget(PromptTarget):
     def _validate_request(self, *, message: Message) -> None:
         pass
 
-    async def cleanup_target(self):
+    async def cleanup_target(self) -> None:
         """Target does not require cleanup."""
         pass

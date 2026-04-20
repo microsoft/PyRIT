@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Optional
 
 from colorama import Fore, Style
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.score.printer.scorer_printer import ScorerPrinter
-from pyrit.score.scorer_identifier import ScorerIdentifier
 
 if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.scorer_metrics import (
@@ -56,7 +56,9 @@ class ConsoleScorerPrinter(ScorerPrinter):
         else:
             print(text)
 
-    def _get_quality_color(self, value: float, *, higher_is_better: bool, good_threshold: float, bad_threshold: float):
+    def _get_quality_color(
+        self, value: float, *, higher_is_better: bool, good_threshold: float, bad_threshold: float
+    ) -> str:
         """
         Determine the color based on metric quality thresholds.
 
@@ -72,17 +74,17 @@ class ConsoleScorerPrinter(ScorerPrinter):
         """
         if higher_is_better:
             if value >= good_threshold:
-                return Fore.GREEN
+                return Fore.GREEN  # type: ignore[no-any-return]
             elif value < bad_threshold:
-                return Fore.RED
-            return Fore.CYAN
+                return Fore.RED  # type: ignore[no-any-return]
+            return Fore.CYAN  # type: ignore[no-any-return]
         else:
             # Lower is better (e.g., MAE, score time)
             if value <= good_threshold:
-                return Fore.GREEN
+                return Fore.GREEN  # type: ignore[no-any-return]
             elif value > bad_threshold:
-                return Fore.RED
-            return Fore.CYAN
+                return Fore.RED  # type: ignore[no-any-return]
+            return Fore.CYAN  # type: ignore[no-any-return]
 
     def print_objective_scorer(self, *, scorer_identifier: ScorerIdentifier) -> None:
         """
@@ -106,7 +108,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
         self._print_scorer_info(scorer_identifier, indent_level=3)
 
         # Look up metrics by hash
-        scorer_hash = scorer_identifier.compute_hash()
+        scorer_hash = scorer_identifier.hash
         metrics = find_objective_metrics_by_hash(hash=scorer_hash)
         self._print_objective_metrics(metrics)
 
@@ -133,7 +135,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
         self._print_scorer_info(scorer_identifier, indent_level=3)
 
         # Look up metrics by hash and harm category
-        scorer_hash = scorer_identifier.compute_hash()
+        scorer_hash = scorer_identifier.hash
         metrics = find_harm_metrics_by_hash(hash=scorer_hash, harm_category=harm_category)
         self._print_harm_metrics(metrics)
 
@@ -147,7 +149,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
         """
         indent = self._indent * indent_level
 
-        self._print_colored(f"{indent}• Scorer Type: {scorer_identifier.type}", Fore.CYAN)
+        self._print_colored(f"{indent}• Scorer Type: {scorer_identifier.class_name}", Fore.CYAN)
 
         # Print target info if available
         if scorer_identifier.target_info:

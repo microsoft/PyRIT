@@ -6,6 +6,7 @@ import logging
 import pytest
 
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.remote import _VLSUMultimodalDataset
 from pyrit.models import SeedDataset
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,11 @@ class TestSeedDatasetProviderIntegration:
         logger.info(f"Testing provider: {name}")
 
         try:
-            provider = provider_cls()
+            # Use max_examples for slow providers that fetch many remote images
+            if provider_cls == _VLSUMultimodalDataset:
+                provider = provider_cls(max_examples=6)
+            else:
+                provider = provider_cls()
             dataset = await provider.fetch_dataset(cache=False)
 
             assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"

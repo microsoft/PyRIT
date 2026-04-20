@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.score import (
@@ -16,6 +17,16 @@ from pyrit.score import (
 )
 
 
+def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="tests.unit.score",
+        class_description="",
+        identifier_type="instance",
+    )
+
+
 class MockScorer(TrueFalseScorer):
     """A mock scorer for testing purposes."""
 
@@ -24,16 +35,15 @@ class MockScorer(TrueFalseScorer):
         return TrueFalseScoreAggregator.AND(score_list)
 
     def __init__(self, score_value: bool, score_rationale: str, aggregator=None):
-        self.scorer_type = "true_false"
         self._score_value = score_value
         self._score_rationale = score_rationale
         self.aggregator = aggregator
-        # Call super().__init__() to properly initialize the scorer including _scorer_identifier
+        # Call super().__init__() to properly initialize the scorer including _identifier
         super().__init__(validator=MagicMock())
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> None:
         """Build the scorer evaluation identifier for this mock scorer."""
-        self._set_scorer_identifier()
+        self._set_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return [
@@ -44,7 +54,7 @@ class MockScorer(TrueFalseScorer):
                 score_category=[],
                 score_metadata=None,
                 score_rationale=self._score_rationale,
-                scorer_class_identifier={"name": "MockScorer"},
+                scorer_class_identifier=_mock_scorer_id("MockScorer"),
                 message_piece_id=str(message_piece.id),
                 objective=str(objective),
             )
@@ -146,8 +156,8 @@ def test_composite_scorer_invalid_scorer_type():
         def __init__(self):
             self._validator = MagicMock()
 
-        def _build_scorer_identifier(self) -> None:
-            self._set_scorer_identifier()
+        def _build_identifier(self) -> None:
+            self._set_identifier()
 
         async def _score_piece_async(
             self, message_piece: MessagePiece, *, objective: Optional[str] = None

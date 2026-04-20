@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
     Message,
@@ -18,6 +19,16 @@ from pyrit.models import (
     Score,
     SeedPrompt,
 )
+
+
+def _test_scorer_id(name: str = "TestScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="tests.unit.memory",
+        class_description="",
+        identifier_type="instance",
+    )
 
 
 def assert_original_value_in_list(original_value: str, message_pieces: Sequence[MessagePiece]):
@@ -205,7 +216,7 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
             score_category=["test"],
             score_rationale="Test score",
             score_metadata={"test": "metadata"},
-            scorer_class_identifier={"__type__": "TestScorer1"},
+            scorer_class_identifier=_test_scorer_id("TestScorer1"),
             message_piece_id=prompt_id_1,
         ),
         Score(
@@ -215,7 +226,7 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
             score_category=["test"],
             score_rationale="Test score",
             score_metadata={"test": "metadata"},
-            scorer_class_identifier={"__type__": "TestScorer2"},
+            scorer_class_identifier=_test_scorer_id("TestScorer2"),
             message_piece_id=prompt_id_2,
         ),
     ]
@@ -359,7 +370,7 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             score_category=["test"],
             score_rationale="Test score",
             score_metadata={"test": "metadata"},
-            scorer_class_identifier={"__type__": "TestScorer1"},
+            scorer_class_identifier=_test_scorer_id("TestScorer1"),
             message_piece_id=prompt_id_1,
         ),
         Score(
@@ -369,7 +380,7 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             score_category=["test"],
             score_rationale="Test score",
             score_metadata={"test": "metadata"},
-            scorer_class_identifier={"__type__": "TestScorer2"},
+            scorer_class_identifier=_test_scorer_id("TestScorer2"),
             message_piece_id=prompt_id_2,
         ),
     ]
@@ -1030,6 +1041,7 @@ def test_message_piece_scores_duplicate_piece(sqlite_instance: MemoryInterface):
         score_rationale="Sample rationale",
         score_metadata={"sample": "metadata"},
         message_piece_id=original_id,
+        scorer_class_identifier=_test_scorer_id(),
     )
     sqlite_instance.add_scores_to_memory(scores=[score])
 

@@ -13,7 +13,7 @@ import inspect
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, Type, TypeVar
+from typing import Any, Callable, Dict, Type, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class DefaultValueScope:
     be inherited by subclasses.
     """
 
-    class_type: Type
+    class_type: Type[object]
     parameter_name: str
     include_subclasses: bool = True
 
@@ -86,7 +86,7 @@ class GlobalDefaultValues:
     def set_default_value(
         self,
         *,
-        class_type: Type,
+        class_type: Type[object],
         parameter_name: str,
         value: Any,
         include_subclasses: bool = True,
@@ -111,7 +111,7 @@ class GlobalDefaultValues:
     def get_default_value(
         self,
         *,
-        class_type: Type,
+        class_type: Type[object],
         parameter_name: str,
     ) -> tuple[bool, Any]:
         """
@@ -171,7 +171,7 @@ def get_global_default_values() -> GlobalDefaultValues:
 
 def set_default_value(
     *,
-    class_type: Type,
+    class_type: Type[object],
     parameter_name: str,
     value: Any,
     include_subclasses: bool = True,
@@ -231,7 +231,7 @@ def set_global_variable(*, name: str, value: Any) -> None:
     sys.modules["__main__"].__dict__[name] = value
 
 
-def apply_defaults_to_method(method):
+def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
     """
     Apply default values to a method's parameters.
 
@@ -246,7 +246,7 @@ def apply_defaults_to_method(method):
     """
 
     @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: object, *args: object, **kwargs: object) -> T:
         # Get the class of the instance
         cls = self.__class__
 
@@ -293,7 +293,7 @@ def apply_defaults_to_method(method):
     return wrapper
 
 
-def apply_defaults(method):
+def apply_defaults(method: Callable[..., T]) -> Callable[..., T]:
     """
     Apply default values to a class constructor.
 

@@ -3,7 +3,7 @@
 
 import logging
 import time
-from typing import Union
+from typing import Any, Union
 
 import mlflow
 import numpy as np
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class GreedyCoordinateGradientAdversarialSuffixGenerator:
-    def __init__(self):
+    def __init__(self) -> None:
         if mp.get_start_method(allow_none=True) != "spawn":
             mp.set_start_method("spawn")
 
@@ -35,10 +35,10 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         self,
         *,
         token: str = "",
-        tokenizer_paths: list = [],
+        tokenizer_paths: list[str] = [],
         model_name: str = "",
-        model_paths: list = [],
-        conversation_templates: list = [],
+        model_paths: list[str] = [],
+        conversation_templates: list[str] = [],
         result_prefix: str = "",
         train_data: str = "",
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
@@ -57,9 +57,9 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         verbose: bool = True,
         allow_non_ascii: bool = False,
         num_train_models: int = 1,
-        devices: list = ["cuda:0"],
-        model_kwargs: list = [{"low_cpu_mem_usage": True, "use_cache": False}],
-        tokenizer_kwargs: list = [{"use_fast": False}],
+        devices: list[str] = ["cuda:0"],
+        model_kwargs: list[dict[str, Any]] = [{"low_cpu_mem_usage": True, "use_cache": False}],
+        tokenizer_kwargs: list[dict[str, Any]] = [{"use_fast": False}],
         n_test_data: int = 0,
         test_data: str = "",
         lr: float = 0.01,
@@ -69,7 +69,7 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         gbda_deterministic: bool = True,
         logfile: str = "",
         random_seed: int = 42,
-    ):
+    ) -> None:
         params = config_dict.ConfigDict()
         params.result_prefix = result_prefix
         params.train_data = train_data
@@ -116,10 +116,10 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         train_goals, train_targets, test_goals, test_targets = get_goals_and_targets(params)
         log_train_goals(train_goals=train_goals)
 
-        def process_fn(s):
+        def process_fn(s: str) -> str:
             return s.replace("Sure, h", "H")
 
-        def process_fn2(s):
+        def process_fn2(s: str) -> str:
             return s.replace("Sure, here is", "Sure, here's")
 
         train_targets = [process_fn(t) if np.random.random() < 0.5 else process_fn2(t) for t in train_targets]

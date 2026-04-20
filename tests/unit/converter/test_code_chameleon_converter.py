@@ -55,7 +55,7 @@ async def test_codechameleon_converter_binary_tree_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="binary_tree")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
     assert (
-        "\nThe encrypted_problem you need to solve is: {'value': 'cut', 'left': {'value': 'How', 'left': None, 'right': {'value': 'to', 'left': None, 'right': None}}, 'right': {'value': 'a', 'left': {'value': 'down', 'left': None, 'right': None}, 'right': {'value': 'tree?', 'left': None, 'right': None}}}\n"  # noqa: E501
+        '\nThe encrypted_problem you need to solve is: {"value": "cut", "left": {"value": "How", "left": null, "right": {"value": "to", "left": null, "right": null}}, "right": {"value": "a", "left": {"value": "down", "left": null, "right": null}, "right": {"value": "tree?", "left": null, "right": null}}}\n'  # noqa: E501
         in output.output_text
     )
     assert (
@@ -141,7 +141,7 @@ async def test_codechameleon_converter_length_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="length")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
     assert (
-        "\nThe encrypted_problem you need to solve is: [{'a': 4}, {'to': 1}, {'How': 0}, {'cut': 2}, {'down': 3}, {'tree?': 5}]\n"  # noqa: E501
+        '\nThe encrypted_problem you need to solve is: [{"a": 4}, {"to": 1}, {"How": 0}, {"cut": 2}, {"down": 3}, {"tree?": 5}]\n'  # noqa: E501
         in output.output_text
     )
     assert (

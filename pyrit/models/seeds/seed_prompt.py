@@ -33,7 +33,7 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None  # type: ignore[assignment]
+    data_type: Optional[PromptDataType] = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: Optional[ChatMessageRole] = None
@@ -66,7 +66,7 @@ class SeedPrompt(Seed):
             else:
                 self.data_type = "text"
 
-    def set_encoding_metadata(self):
+    def set_encoding_metadata(self) -> None:
         """
         This method sets the encoding data for the prompt within metadata dictionary. For images, this is just the
         file format. For audio and video, this also includes bitrate (kBits/s as int), samplerate (samples/second

@@ -4,12 +4,12 @@
 
 import json
 import re
-from typing import Callable
+from typing import Any, Callable, Optional
 
 import requests
 
 
-def get_http_target_json_response_callback_function(key: str) -> Callable:
+def get_http_target_json_response_callback_function(key: str) -> Callable[[requests.Response], str]:
     """
     Determine proper parsing response function for an HTTP Request.
 
@@ -35,12 +35,14 @@ def get_http_target_json_response_callback_function(key: str) -> Callable:
         """
         json_response = json.loads(response.content)
         data_key = _fetch_key(data=json_response, key=key)
-        return data_key
+        return str(data_key)
 
     return parse_json_http_response
 
 
-def get_http_target_regex_matching_callback_function(key: str, url: str = None) -> Callable:
+def get_http_target_regex_matching_callback_function(
+    key: str, url: Optional[str] = None
+) -> Callable[[requests.Response], str]:
     """
     Get a callback function that parses HTTP responses using regex matching.
 
@@ -77,24 +79,25 @@ def get_http_target_regex_matching_callback_function(key: str, url: str = None) 
     return parse_using_regex
 
 
-def _fetch_key(data: dict, key: str):
+def _fetch_key(data: dict[str, Any], key: str) -> Any:
     """
     Fetch the answer from the HTTP JSON response based on the path.
 
     Args:
-        data (dict): HTTP response data.
+        data (dict[str, Any]): HTTP response data.
         key (str): The key path to fetch the value.
 
     Returns:
-        str: The fetched value.
+        Any: The fetched value.
     """
     pattern = re.compile(r"([a-zA-Z_]+)|\[(-?\d+)\]")
     keys = pattern.findall(key)
+    result: Any = data
     for key_part, index_part in keys:
         if key_part:
-            data = data.get(key_part, None)
-        elif index_part and isinstance(data, list):
-            data = data[int(index_part)] if -len(data) <= int(index_part) < len(data) else None
-        if data is None:
+            result = result.get(key_part, None) if isinstance(result, dict) else None
+        elif index_part and isinstance(result, list):
+            result = result[int(index_part)] if -len(result) <= int(index_part) < len(result) else None
+        if result is None:
             return ""
-    return data
+    return result

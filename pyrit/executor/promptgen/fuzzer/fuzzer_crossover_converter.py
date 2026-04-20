@@ -4,7 +4,7 @@
 import pathlib
 import random
 import uuid
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -50,7 +50,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
         self.prompt_templates = prompt_templates or []
         self.template_label = "TEMPLATE 1"
 
-    def update(self, **kwargs) -> None:
+    def update(self, **kwargs: Any) -> None:
         """Update the converter with new prompt templates."""
         if "prompt_templates" in kwargs:
             self.prompt_templates = kwargs["prompt_templates"]

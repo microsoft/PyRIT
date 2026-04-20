@@ -46,7 +46,7 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         output_format: AzureSpeechAudioFormat = "wav",
     ) -> None:
         """
-        Initializes the converter with Azure Speech service credentials, synthesis language, and voice name.
+        Initialize the converter with Azure Speech service credentials, synthesis language, and voice name.
 
         Args:
             azure_speech_region (str, Optional): The name of the Azure region.
@@ -61,7 +61,6 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
             synthesis_voice_name (str): Synthesis voice name, see URL.
                 For more details see the following link for synthesis language and synthesis voice:
                 https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support
-            filename (str): File name to be generated. Please include either .wav or .mp3.
             output_format (str): Either wav or mp3. Must match the file prefix.
 
         Raises:
@@ -96,7 +95,7 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given text prompt into its audio representation.
+        Convert the given text prompt into its audio representation.
 
         Args:
             prompt (str): The text prompt to be converted into audio.

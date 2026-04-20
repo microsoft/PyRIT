@@ -5,7 +5,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, List, Optional, Union, cast
 
 import pandas as pd
 
@@ -43,7 +43,7 @@ class HumanLabeledEntry:
     """
 
     conversation: List[Message]
-    human_scores: List
+    human_scores: List[Any]
 
     def __post_init__(self) -> None:
         """
@@ -315,6 +315,7 @@ class HumanLabeledDataset:
                     ],
                 )
             ]
+            entry: HumanLabeledEntry
             if metrics_type == MetricsType.HARM:
                 entry = cls._construct_harm_entry(
                     messages=messages,
@@ -436,12 +437,14 @@ class HumanLabeledDataset:
                 raise ValueError(f"Human score column '{col}' contains NaN values.")
 
     @staticmethod
-    def _construct_harm_entry(*, messages: List[Message], harm: str, human_scores: List):
+    def _construct_harm_entry(*, messages: List[Message], harm: str, human_scores: List[Any]) -> HarmHumanLabeledEntry:
         float_scores = [float(score) for score in human_scores]
         return HarmHumanLabeledEntry(messages, float_scores, harm)
 
     @staticmethod
-    def _construct_objective_entry(*, messages: List[Message], objective: str, human_scores: List):
+    def _construct_objective_entry(
+        *, messages: List[Message], objective: str, human_scores: List[Any]
+    ) -> "ObjectiveHumanLabeledEntry":
         # Convert scores to int before casting to bool in case the values (0, 1) are parsed as strings
         bool_scores = [bool(int(score)) for score in human_scores]
         return ObjectiveHumanLabeledEntry(messages, bool_scores, objective)

@@ -4,15 +4,15 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 import pyrit
 from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
+    from pyrit.identifiers import ScorerIdentifier
     from pyrit.score import Scorer
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerMetrics
-    from pyrit.score.scorer_identifier import ScorerIdentifier
+    from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class ScenarioIdentifier:
         name: str,
         description: str = "",
         scenario_version: int = 1,
-        init_data: Optional[dict] = None,
+        init_data: Optional[dict[str, Any]] = None,
         pyrit_version: Optional[str] = None,
     ):
         """
@@ -53,67 +53,48 @@ ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]
 class ScenarioResult:
     """
     Scenario result class for aggregating scenario results.
-
-    Note: When creating a new ScenarioResult, objective_scorer should always be provided.
-    The parameter is Optional only to support deserialization from the database where
-    the scorer object cannot be reconstructed.
     """
 
     def __init__(
         self,
         *,
         scenario_identifier: ScenarioIdentifier,
-        objective_target_identifier: dict,
+        objective_target_identifier: dict[str, str],
         attack_results: dict[str, List[AttackResult]],
-        objective_scorer: Optional["Scorer"] = None,
-        objective_scorer_identifier: Optional[dict] = None,
+        objective_scorer_identifier: Union[Dict[str, Any], "ScorerIdentifier"],
         scenario_run_state: ScenarioRunState = "CREATED",
         labels: Optional[dict[str, str]] = None,
         completion_time: Optional[datetime] = None,
         number_tries: int = 0,
         id: Optional[uuid.UUID] = None,
+        # Deprecated parameter - will be removed in 0.13.0
+        objective_scorer: Optional["Scorer"] = None,
     ) -> None:
+        from pyrit.common import print_deprecation_message
+        from pyrit.identifiers import ScorerIdentifier
+
         self.id = id if id is not None else uuid.uuid4()
         self.scenario_identifier = scenario_identifier
         self.objective_target_identifier = objective_target_identifier
-        # Store the scorer object for metrics access (not serialized)
-        self._objective_scorer = objective_scorer
-        # Derive identifier from scorer if available, otherwise use provided identifier
-        if objective_scorer:
-            self.objective_scorer_identifier = objective_scorer.get_identifier() or objective_scorer_identifier
+
+        # Handle deprecated objective_scorer parameter
+        if objective_scorer is not None:
+            print_deprecation_message(
+                old_item="objective_scorer parameter",
+                new_item="objective_scorer_identifier",
+                removed_in="0.13.0",
+            )
+            # Extract identifier from scorer object and normalize
+            # (handles both ScorerIdentifier and legacy dict returns)
+            self.objective_scorer_identifier = ScorerIdentifier.normalize(objective_scorer.get_identifier())
         else:
-            self.objective_scorer_identifier = objective_scorer_identifier or {}
+            self.objective_scorer_identifier = ScorerIdentifier.normalize(objective_scorer_identifier)
+
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results
         self.labels = labels if labels is not None else {}
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
-
-    @property
-    def objective_scorer(self) -> Optional["Scorer"]:
-        """
-        Get the objective scorer for this scenario.
-
-        Returns:
-            Scorer: The objective scorer instance, or None if deserialized from database.
-        """
-        return self._objective_scorer
-
-    def get_objective_scorer_identifier(self) -> Optional["ScorerIdentifier"]:
-        """
-        Get the objective scorer identifier as a ScorerIdentifier object.
-
-        Reconstructs a ScorerIdentifier from the stored dict representation.
-        This can be used even for deserialized results from the database.
-
-        Returns:
-            ScorerIdentifier: The scorer identifier object, or None if no identifier is stored.
-        """
-        from pyrit.score.scorer_identifier import ScorerIdentifier
-
-        if not self.objective_scorer_identifier:
-            return None
-        return ScorerIdentifier.from_compact_dict(self.objective_scorer_identifier)
 
     def get_strategies_used(self) -> List[str]:
         """Get the list of strategies used in this scenario."""
@@ -219,8 +200,10 @@ class ScenarioResult:
             find_objective_metrics_by_hash,
         )
 
-        # Use the stored hash directly for lookup (avoids needing to reconstruct ScorerIdentifier)
-        scorer_hash = self.objective_scorer_identifier.get("hash")
+        if not self.objective_scorer_identifier:
+            return None
+
+        scorer_hash = self.objective_scorer_identifier.hash
         if not scorer_hash:
             return None
 

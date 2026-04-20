@@ -2,11 +2,11 @@
 # Licensed under the MIT license.
 
 """
-Foundry scenario factory implementation.
+RedTeamAgent scenario factory implementation.
 
-This module provides a factory for creating Foundry-specific attack scenarios.
-The FoundryFactory creates a comprehensive test scenario that includes all
-Foundry attacks against specified datasets.
+This module provides a factory for creating RedTeamAgent attack scenarios.
+The RedTeamAgent creates a comprehensive test scenario that includes all
+available attacks against specified datasets.
 """
 
 import logging
@@ -77,7 +77,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
 )
 
-AttackStrategyT = TypeVar("AttackStrategyT", bound=AttackStrategy)
+AttackStrategyT = TypeVar("AttackStrategyT", bound="AttackStrategy[Any, Any]")
 logger = logging.getLogger(__name__)
 
 
@@ -200,9 +200,9 @@ class FoundryStrategy(ScenarioStrategy):
             )
 
 
-class Foundry(Scenario):
+class RedTeamAgent(Scenario):
     """
-    Foundry is a preconfigured scenario that automatically generates multiple
+    RedTeamAgent is a preconfigured scenario that automatically generates multiple
     AtomicAttack instances based on the specified attack strategies. It supports both
     single-turn attacks (with various converters) and multi-turn attacks (Crescendo,
     RedTeaming), making it easy to quickly test a target against multiple attack vectors.
@@ -210,8 +210,8 @@ class Foundry(Scenario):
     The scenario can expand difficulty levels (EASY, MODERATE, DIFFICULT) into their
     constituent attack strategies, or you can specify individual strategies directly.
 
-    Note this is not the same as the Foundry AI Red Teaming Agent. This is a PyRIT contract
-    so their library can make use of PyRIT in a consistent way.
+    This scenario is designed for use with the Foundry AI Red Teaming Agent library,
+    providing a consistent PyRIT contract for their integration.
     """
 
     version: int = 1
@@ -296,7 +296,7 @@ class Foundry(Scenario):
 
         # Call super().__init__() first to initialize self._memory
         super().__init__(
-            name="Foundry",
+            name="RedTeamAgent",
             version=self.version,
             strategy_class=FoundryStrategy,
             objective_scorer=objective_scorer,
@@ -390,7 +390,7 @@ class Foundry(Scenario):
         Raises:
             ValueError: If the strategy composition is invalid (e.g., multiple attack strategies).
         """
-        attack: AttackStrategy
+        attack: AttackStrategy[Any, Any]
 
         # Extract FoundryStrategy enums from the composite
         strategy_list = [s for s in composite_strategy.strategies if isinstance(s, FoundryStrategy)]
@@ -402,7 +402,7 @@ class Foundry(Scenario):
         if len(attacks) > 1:
             raise ValueError(f"Cannot compose multiple attack strategies: {[a.value for a in attacks]}")
 
-        attack_type: type[AttackStrategy] = PromptSendingAttack
+        attack_type: type[AttackStrategy[Any, Any]] = PromptSendingAttack
         attack_kwargs: dict[str, Any] = {}
         if len(attacks) == 1:
             if attacks[0] == FoundryStrategy.Crescendo:
@@ -541,22 +541,22 @@ class Foundry(Scenario):
         # Type ignore is used because this is a factory method that works with compatible
         # attack types. The caller is responsible for ensuring the attack type accepts
         # these constructor parameters.
-        return attack_type(**kwargs)  # type: ignore[arg-type, call-arg]
+        return attack_type(**kwargs)  # type: ignore[arg-type]
 
 
-class FoundryScenario(Foundry):
+class FoundryScenario(RedTeamAgent):
     """
-    Deprecated alias for Foundry.
+    Deprecated alias for RedTeamAgent.
 
     This class is deprecated and will be removed in version 0.13.0.
-    Use `Foundry` instead.
+    Use `RedTeamAgent` instead.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize FoundryScenario with deprecation warning."""
         print_deprecation_message(
             old_item="FoundryScenario",
-            new_item="Foundry",
+            new_item="RedTeamAgent",
             removed_in="0.13.0",
         )
         super().__init__(**kwargs)

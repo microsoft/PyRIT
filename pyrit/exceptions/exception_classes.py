@@ -30,7 +30,7 @@ def _get_custom_result_retry_max_num_attempts() -> int:
     return int(os.getenv("CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS", 10))
 
 
-def _get_retry_max_num_attempts() -> int:
+def get_retry_max_num_attempts() -> int:
     """Get the maximum number of retry attempts."""
     return int(os.getenv("RETRY_MAX_NUM_ATTEMPTS", 10))
 
@@ -208,7 +208,7 @@ def pyrit_target_retry(func: Callable[..., Any]) -> Callable[..., Any]:
         | retry_if_exception_type(RateLimitException),
         wait=_DynamicWaitRandomExponential(_get_retry_wait_min_seconds, _get_retry_wait_max_seconds),
         after=log_exception,
-        stop=_DynamicStopAfterAttempt(_get_retry_max_num_attempts),
+        stop=_DynamicStopAfterAttempt(get_retry_max_num_attempts),
     )(func)
 
 
@@ -229,7 +229,7 @@ def pyrit_json_retry(func: Callable[..., Any]) -> Callable[..., Any]:
         reraise=True,
         retry=retry_if_exception_type(InvalidJsonException),
         after=log_exception,
-        stop=_DynamicStopAfterAttempt(_get_retry_max_num_attempts),
+        stop=_DynamicStopAfterAttempt(get_retry_max_num_attempts),
     )(func)
 
 
@@ -250,7 +250,7 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
         reraise=True,
         retry=retry_if_exception_type(MissingPromptPlaceholderException),
         after=log_exception,
-        stop=_DynamicStopAfterAttempt(_get_retry_max_num_attempts),
+        stop=_DynamicStopAfterAttempt(get_retry_max_num_attempts),
     )(func)
 
 

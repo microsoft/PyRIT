@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.score import (
@@ -20,14 +21,24 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
+def _make_scorer_id(name: str = "TestScorer") -> ScorerIdentifier:
+    """Helper to create ScorerIdentifier for tests."""
+    return ScorerIdentifier(
+        class_name=name,
+        class_module="test_module",
+        class_description="",
+        identifier_type="instance",
+    )
+
+
 class MockFloatScaleScorer(FloatScaleScorer):
     """Mock FloatScaleScorer for testing"""
 
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
-    def _build_scorer_identifier(self) -> None:
-        self._set_scorer_identifier()
+    def _build_identifier(self) -> None:
+        self._set_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return []
@@ -39,8 +50,8 @@ class MockTrueFalseScorer(TrueFalseScorer):
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
-    def _build_scorer_identifier(self) -> None:
-        self._set_scorer_identifier()
+    def _build_identifier(self) -> None:
+        self._set_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return []
@@ -52,8 +63,8 @@ class MockUnsupportedScorer(Scorer):
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
-    def _build_scorer_identifier(self) -> None:
-        self._set_scorer_identifier()
+    def _build_identifier(self) -> None:
+        self._set_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return []
@@ -111,7 +122,7 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
         score_rationale="Valid rationale",
         score_metadata={"test": "metadata"},
         score_category=["test_harm"],
-        scorer_class_identifier={"test": "test"},
+        scorer_class_identifier=_make_scorer_id(),
         message_piece_id=message_pieces[-1].id or uuid.uuid4(),
         objective="test_objective",
         score_type="float_scale",
@@ -203,7 +214,7 @@ async def test_conversation_history_scorer_filters_roles_correctly(patch_central
         score_rationale="Test rationale",
         score_metadata={},
         score_category=["test"],
-        scorer_class_identifier={"test": "test"},
+        scorer_class_identifier=_make_scorer_id(),
         message_piece_id=message_pieces[0].id or str(uuid.uuid4()),
         objective="test",
         score_type="float_scale",
@@ -251,7 +262,7 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
         score_rationale="Test rationale",
         score_metadata={},
         score_category=["test"],
-        scorer_class_identifier={"test": "test"},
+        scorer_class_identifier=_make_scorer_id(),
         message_piece_id=message_piece.id or str(uuid.uuid4()),
         objective="test",
         score_type="float_scale",
@@ -295,7 +306,7 @@ async def test_conversation_scorer_regenerates_score_ids_to_prevent_collisions(p
         score_rationale="Test rationale",
         score_metadata={},
         score_category=["test"],
-        scorer_class_identifier={"test": "test"},
+        scorer_class_identifier=_make_scorer_id(),
         message_piece_id=message_piece.id,
         objective="test",
         score_type="float_scale",
@@ -426,7 +437,7 @@ def test_conversation_scorer_validates_float_scale_scores():
         score_rationale="Test",
         score_metadata={},
         score_category=["test"],
-        scorer_class_identifier={"test": "test"},
+        scorer_class_identifier=_make_scorer_id(),
         message_piece_id=uuid.uuid4(),
         objective="test",
         score_type="float_scale",
@@ -453,7 +464,7 @@ def test_conversation_scorer_validates_true_false_scores():
         score_rationale="Test",
         score_metadata={},
         score_category=["test"],
-        scorer_class_identifier={"test": "test"},
+        scorer_class_identifier=_make_scorer_id(),
         message_piece_id=uuid.uuid4(),
         objective="test",
         score_type="true_false",

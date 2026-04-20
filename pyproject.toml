@@ -84,8 +84,17 @@ dev = [
     "ruff>=0.14.4",
     "sphinxcontrib-mermaid>=1.0.0",
     "types-aiofiles>=24.1.0",
+    "types-cachetools>=5.5.0",
+    "types-decorator>=5.1.0",
+    "types-paramiko>=3.5.0",
+    "types-pycurl>=7.45.0",
+    "types-pytz>=2024.2.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
+    "types-simplejson>=3.19.0",
+    "types-six>=1.16.0",
+    "types-tabulate>=0.9.0",
+    "types-ujson>=5.10.0",
 ]
 huggingface = [
     "torch>=2.7.0",
@@ -270,7 +279,7 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # Temporary ignores for pyrit/ subdirectories until issue #1176
 # https://github.com/Azure/PyRIT/issues/1176 is fully resolved
 # TODO: Remove these ignores once the issues are fixed
-"pyrit/{auxiliary_attacks,exceptions,models,prompt_converter,ui}/**/*.py" = ["D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501"]
+"pyrit/{auxiliary_attacks,exceptions,models,ui}/**/*.py" = ["D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501"]
 "pyrit/__init__.py" = ["D104"]
 
 [tool.ruff.lint.pydocstyle]

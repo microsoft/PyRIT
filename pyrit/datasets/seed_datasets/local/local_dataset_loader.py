@@ -3,6 +3,7 @@
 
 import logging
 from pathlib import Path
+from typing import Any, Callable
 
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.models import SeedDataset
@@ -69,7 +70,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             raise
 
 
-def _register_local_datasets():
+def _register_local_datasets() -> None:
     """
     Auto-discover and register all YAML files from the seed_datasets directory.
     """
@@ -89,8 +90,8 @@ def _register_local_datasets():
                     # We set should_register=True so it gets registered
                     # We override __init__ to pass the specific file_path
 
-                    def make_init(path):
-                        def __init__(self):
+                    def make_init(path: Path) -> Callable[[Any], None]:
+                        def __init__(self: Any) -> None:
                             super(self.__class__, self).__init__(file_path=path)
 
                         return __init__

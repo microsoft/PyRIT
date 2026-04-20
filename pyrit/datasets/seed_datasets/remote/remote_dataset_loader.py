@@ -115,7 +115,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         """
         disable_progress_bars()
 
-        def _load_dataset_sync():
+        def _load_dataset_sync() -> Any:
             """
             Run dataset loading synchronously in thread pool.
 

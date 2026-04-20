@@ -4,6 +4,7 @@
 import json
 import logging
 import uuid
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions import (
@@ -58,7 +59,7 @@ class FuzzerConverter(PromptConverter):
         self.system_prompt = prompt_template.value
         self.template_label = "TEMPLATE"
 
-    def update(self, **kwargs) -> None:
+    def update(self, **kwargs: Any) -> None:
         """Update the converter with new parameters."""
         pass
 
@@ -111,7 +112,7 @@ class FuzzerConverter(PromptConverter):
         return ConverterResult(output_text=response, output_type="text")
 
     @pyrit_json_retry
-    async def send_prompt_async(self, request):
+    async def send_prompt_async(self, request: Message) -> str:
         """
         Send the message to the converter target and process the response.
 
@@ -133,7 +134,7 @@ class FuzzerConverter(PromptConverter):
             parsed_response = json.loads(response_msg)
             if "output" not in parsed_response:
                 raise InvalidJsonException(message=f"Invalid JSON encountered; missing 'output' key: {response_msg}")
-            return parsed_response["output"]
+            return str(parsed_response["output"])
 
         except json.JSONDecodeError:
             raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}")

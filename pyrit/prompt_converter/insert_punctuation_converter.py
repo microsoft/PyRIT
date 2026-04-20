@@ -27,7 +27,7 @@ class InsertPunctuationConverter(PromptConverter):
 
     def __init__(self, word_swap_ratio: float = 0.2, between_words: bool = True) -> None:
         """
-        Initializes the converter with a word swap ratio and punctuation insertion mode.
+        Initialize the converter with a word swap ratio and punctuation insertion mode.
 
         Args:
             word_swap_ratio (float): Percentage of words to perturb. Defaults to 0.2.
@@ -61,7 +61,7 @@ class InsertPunctuationConverter(PromptConverter):
         self, *, prompt: str, input_type: PromptDataType = "text", punctuation_list: Optional[List[str]] = None
     ) -> ConverterResult:
         """
-        Converts the given prompt by inserting punctuation.
+        Convert the given prompt by inserting punctuation.
 
         Args:
             prompt (str): The text to convert.
@@ -151,7 +151,7 @@ class InsertPunctuationConverter(PromptConverter):
         Insert punctuation at any indices in the prompt, can insert into a word.
 
         Args:
-            promp str: The prompt string
+            prompt (str): The prompt string
             num_insertions (int): Number of punctuations to insert.
             punctuation_list (List[str]): punctuations for insertion.
 

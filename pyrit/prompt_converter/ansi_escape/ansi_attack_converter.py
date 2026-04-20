@@ -41,7 +41,7 @@ class AnsiAttackConverter(PromptConverter):
         incorporate_user_prompt: bool = True,
     ):
         """
-        Initializes the converter with various options to control the scenarios generated.
+        Initialize the converter with various options to control the scenarios generated.
 
         Args:
             include_raw (bool): Include scenarios with raw ANSI codes.
@@ -59,13 +59,43 @@ class AnsiAttackConverter(PromptConverter):
         self.incorporate_user_prompt = incorporate_user_prompt
 
     def input_supported(self, input_type: PromptDataType) -> bool:
+        """
+        Check if the input type is supported.
+
+        Args:
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            bool: True if the input type is supported, False otherwise.
+        """
         return input_type == "text"
 
     def output_supported(self, output_type: PromptDataType) -> bool:
+        """
+        Check if the output type is supported.
+
+        Args:
+            output_type (PromptDataType): The type of output data.
+
+        Returns:
+            bool: True if the output type is supported, False otherwise.
+        """
         return output_type == "text"
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt into an ANSI attack scenario."""
+        """
+        Convert the given prompt into an ANSI attack scenario.
+
+        Args:
+            prompt (str): The original user prompt.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the generated ANSI scenario prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 

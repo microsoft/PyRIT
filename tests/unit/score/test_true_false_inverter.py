@@ -19,16 +19,20 @@ def image_message_piece() -> MessagePiece:
 
 
 @pytest.mark.asyncio
-async def test_inverter_scorer_validate(image_message_piece: MessagePiece):
+async def test_score_async_unsupported_data_type_inverts_false_to_true(
+    patch_central_database, image_message_piece: MessagePiece
+):
     sub_scorer = SubStringScorer(substring="test", categories=["new_category"])
     scorer = TrueFalseInverterScorer(scorer=sub_scorer)
 
     request = image_message_piece.to_message()
 
-    with pytest.raises(
-        RuntimeError, match="Error in scorer TrueFalseInverterScorer.*There are no valid pieces to score"
-    ):
-        await scorer.score_async(request)
+    # With raise_on_no_valid_pieces=False (default), the inner scorer returns False,
+    # and the inverter inverts it to True
+    scores = await scorer.score_async(request)
+    assert len(scores) == 1
+    # Inverter inverts False -> True
+    assert scores[0].get_value() is True
 
     os.remove(image_message_piece.converted_value)
 

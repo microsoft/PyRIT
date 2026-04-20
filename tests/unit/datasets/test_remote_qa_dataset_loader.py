@@ -48,13 +48,9 @@ class TestRemoteQADatasetLoader:
     def test_fetch_from_url_delegates_to_shared_helper(self):
         """`_fetch_from_url` must forward subclass's cache_subdir and args to `fetch_with_cache`."""
         loader = _FakeQAContents()
-        with patch(
-            "pyrit.datasets.executors.question_answer.remote_qa_dataset_loader.fetch_with_cache"
-        ) as mock_fetch:
+        with patch("pyrit.datasets.executors.question_answer.remote_qa_dataset_loader.fetch_with_cache") as mock_fetch:
             mock_fetch.return_value = [{"ok": True}]
-            result = loader._fetch_from_url(
-                source="https://example.com/x.jsonl", file_type="jsonl", cache=False
-            )
+            result = loader._fetch_from_url(source="https://example.com/x.jsonl", file_type="jsonl", cache=False)
 
         assert result == [{"ok": True}]
         kwargs = mock_fetch.call_args.kwargs

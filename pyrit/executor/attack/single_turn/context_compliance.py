@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -131,7 +131,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         self._answer_user_turn = context_description_instructions.prompts[1]
         self._rephrase_objective_to_question = context_description_instructions.prompts[2]
 
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Set up the context compliance attack.
 
@@ -164,7 +164,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         await super()._setup_async(context=context)
 
     async def _build_benign_context_conversation_async(
-        self, *, objective: str, context: SingleTurnAttackContext
+        self, *, objective: str, context: SingleTurnAttackContext[Any]
     ) -> list[Message]:
         """
         Build the conversation that creates a benign context for the objective.
@@ -213,7 +213,9 @@ class ContextComplianceAttack(PromptSendingAttack):
             ),
         ]
 
-    async def _get_objective_as_benign_question_async(self, *, objective: str, context: SingleTurnAttackContext) -> str:
+    async def _get_objective_as_benign_question_async(
+        self, *, objective: str, context: SingleTurnAttackContext[Any]
+    ) -> str:
         """
         Rephrase the objective as a more benign question.
 
@@ -239,7 +241,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         return response.get_value()
 
     async def _get_benign_question_answer_async(
-        self, *, benign_user_query: str, context: SingleTurnAttackContext
+        self, *, benign_user_query: str, context: SingleTurnAttackContext[Any]
     ) -> str:
         """
         Generate an answer to the benign question.
@@ -265,7 +267,7 @@ class ContextComplianceAttack(PromptSendingAttack):
 
         return response.get_value()
 
-    async def _get_objective_as_question_async(self, *, objective: str, context: SingleTurnAttackContext) -> str:
+    async def _get_objective_as_question_async(self, *, objective: str, context: SingleTurnAttackContext[Any]) -> str:
         """
         Rephrase the objective as a question.
 

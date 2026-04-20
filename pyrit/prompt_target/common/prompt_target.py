@@ -3,15 +3,16 @@
 
 import abc
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from pyrit.identifiers import LegacyIdentifiable
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Identifier, Message
+from pyrit.models import Message
 
 logger = logging.getLogger(__name__)
 
 
-class PromptTarget(abc.ABC, Identifier):
+class PromptTarget(LegacyIdentifiable):
     """
     Abstract base class for prompt targets.
 
@@ -23,7 +24,7 @@ class PromptTarget(abc.ABC, Identifier):
 
     #: A list of PromptConverters that are supported by the prompt target.
     #: An empty list implies that the prompt target supports all converters.
-    supported_converters: list
+    supported_converters: List[Any]
 
     def __init__(
         self,

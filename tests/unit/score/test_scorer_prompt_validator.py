@@ -129,8 +129,8 @@ class TestScorerPromptValidatorValidate:
         validator.validate(response, objective=None)
 
     def test_validate_raises_when_no_valid_pieces(self):
-        """Test that validate raises error when no pieces are valid."""
-        validator = ScorerPromptValidator(supported_data_types=["text"])
+        """Test that validate raises error when no pieces are valid and raise_on_no_valid_pieces=True."""
+        validator = ScorerPromptValidator(supported_data_types=["text"], raise_on_no_valid_pieces=True)
 
         image_piece = MessagePiece(
             role="assistant",
@@ -348,8 +348,10 @@ class TestScorerPromptValidatorMaxTextLength:
         assert validator.is_message_piece_supported(very_long_piece) is True
 
     def test_validate_raises_when_all_pieces_filtered_by_length(self):
-        """Test that validate raises error when all pieces are filtered due to length."""
-        validator = ScorerPromptValidator(supported_data_types=["text"], max_text_length=100)
+        """Test that validate raises error when all pieces are filtered due to length and raise_on_no_valid_pieces=True."""
+        validator = ScorerPromptValidator(
+            supported_data_types=["text"], max_text_length=100, raise_on_no_valid_pieces=True
+        )
 
         long_piece = MessagePiece(
             role="assistant", original_value="a" * 101, converted_value_data_type="text", conversation_id="test"

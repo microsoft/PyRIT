@@ -9,9 +9,23 @@ from contextlib import AbstractAsyncContextManager
 from typing import Generator, MutableSequence, Optional, Sequence
 from unittest.mock import MagicMock, patch
 
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptChatTarget, limit_requests_per_minute
+
+
+def get_mock_scorer_identifier() -> ScorerIdentifier:
+    """
+    Returns a mock ScorerIdentifier for use in tests where the specific
+    scorer identity doesn't matter.
+    """
+    return ScorerIdentifier(
+        class_name="MockScorer",
+        class_module="tests.unit.mocks",
+        class_description="Mock scorer for testing",
+        identifier_type="instance",
+    )
 
 
 class MockHttpPostAsync(AbstractAsyncContextManager):

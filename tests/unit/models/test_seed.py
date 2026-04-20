@@ -723,11 +723,11 @@ metadata:
     assert seed_prompt.metadata["version"] == 1
 
 
-def test_seed_group_dict_with_is_objective_true():
-    """Test that a dictionary with is_objective=True creates an objective."""
+def test_seed_group_dict_with_seed_type_objective():
+    """Test that a dictionary with seed_type='objective' creates an objective."""
     prompt_dict = {
         "value": "Test objective from dict",
-        "is_objective": True,
+        "seed_type": "objective",
     }
 
     group = SeedGroup(seeds=[prompt_dict])
@@ -740,9 +740,29 @@ def test_seed_group_dict_with_is_objective_true():
     assert len(group.prompts) == 0
 
 
-def test_seed_group_dict_with_is_objective_false():
-    """Test that a dictionary with is_objective=False creates a prompt."""
-    prompt_dict = {"value": "Test prompt from dict", "is_objective": False, "sequence": 1}
+def test_seed_group_dict_with_is_objective_true_backward_compat():
+    """Test backward compatibility: is_objective=True still works (deprecated)."""
+    import warnings
+
+    prompt_dict = {
+        "value": "Test objective from dict",
+        "is_objective": True,
+    }
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        group = SeedGroup(seeds=[prompt_dict])
+        # Verify deprecation warning was raised
+        assert any("is_objective" in str(warning.message) for warning in w)
+
+    # Should still work
+    assert group.objective is not None
+    assert group.objective.value == "Test objective from dict"
+
+
+def test_seed_group_dict_with_seed_type_prompt():
+    """Test that a dictionary with seed_type='prompt' creates a prompt."""
+    prompt_dict = {"value": "Test prompt from dict", "seed_type": "prompt", "sequence": 1}
 
     group = SeedGroup(seeds=[prompt_dict])
 
@@ -777,9 +797,9 @@ def test_seed_group_dict_without_is_objective():
 
 
 def test_seed_group_mixed_objective_types():
-    """Test that mixing SeedObjective and dict with is_objective=True raises ValueError."""
+    """Test that mixing SeedObjective and dict with seed_type='objective' raises ValueError."""
     objective = SeedObjective(value="Seed objective")
-    dict_objective = {"value": "Dict objective", "data_type": "text", "is_objective": True}
+    dict_objective = {"value": "Dict objective", "data_type": "text", "seed_type": "objective"}
 
     with pytest.raises(ValueError, match="SeedGroup can only have one objective."):
         SeedGroup(seeds=[objective, dict_objective])

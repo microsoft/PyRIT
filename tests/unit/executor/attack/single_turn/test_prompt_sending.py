@@ -27,6 +27,7 @@ from pyrit.prompt_converter import Base64Converter, StringJoinConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
+from tests.unit.mocks import get_mock_scorer_identifier
 
 
 @pytest.fixture
@@ -89,6 +90,7 @@ def success_score():
         score_rationale="Test rationale for success",
         score_metadata="{}",
         message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -103,6 +105,7 @@ def failure_score():
         score_rationale="Test rationale for failure",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -496,6 +499,7 @@ class TestResponseEvaluation:
             score_rationale="Auxiliary rationale",
             score_metadata={},
             message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         attack = PromptSendingAttack(
@@ -840,6 +844,7 @@ class TestDetermineAttackOutcome:
             score_rationale="Objective achieved",
             score_metadata="{}",
             message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         outcome, reason = attack._determine_attack_outcome(
@@ -864,6 +869,7 @@ class TestDetermineAttackOutcome:
             score_rationale="Objective not achieved",
             score_metadata="{}",
             message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         outcome, reason = attack._determine_attack_outcome(
@@ -888,6 +894,7 @@ class TestDetermineAttackOutcome:
             score_rationale="Objective not achieved",
             score_metadata="{}",
             message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         outcome, reason = attack._determine_attack_outcome(

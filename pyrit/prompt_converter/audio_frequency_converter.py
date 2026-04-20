@@ -33,7 +33,7 @@ class AudioFrequencyConverter(PromptConverter):
         shift_value: int = 20000,
     ) -> None:
         """
-        Initializes the converter with the specified output format and shift value.
+        Initialize the converter with the specified output format and shift value.
 
         Args:
             output_format (str): The format of the audio file, defaults to "wav".
@@ -44,7 +44,7 @@ class AudioFrequencyConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "audio_path") -> ConverterResult:
         """
-        Converts the given audio file by shifting its frequency.
+        Convert the given audio file by shifting its frequency.
 
         Args:
             prompt (str): File path to the audio file to be converted.

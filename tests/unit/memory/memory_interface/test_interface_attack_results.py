@@ -6,6 +6,7 @@ import uuid
 from typing import Sequence
 
 from pyrit.common.utils import to_sha256
+from pyrit.identifiers import ScorerIdentifier
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
@@ -436,7 +437,12 @@ def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInter
         score_value="1.0",
         score_type="float_scale",
         score_category=["test_category"],
-        scorer_class_identifier={"name": "test_scorer"},
+        scorer_class_identifier=ScorerIdentifier(
+            class_name="TestScorer",
+            class_module="test_module",
+            class_description="",
+            identifier_type="instance",
+        ),
         message_piece_id=message_piece.id,
         score_value_description="Test score description",
         score_rationale="Test score rationale",

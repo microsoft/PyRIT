@@ -124,7 +124,7 @@
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.foundry import Foundry, FoundryStrategy
+from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets
 
@@ -133,7 +133,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefault
 objective_target = OpenAIChatTarget()
 
 # Create a scenario with retry configuration
-scenario = Foundry()
+scenario = RedTeamAgent()
 
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
@@ -198,7 +198,7 @@ print(f"Total results: {len(result.attack_results)}")
 # scenario_id = str(result.id)
 #
 # # Later, create a new scenario with the same configuration and the saved ID
-# resumed_scenario = Foundry(
+# resumed_scenario = RedTeamAgent(
 #     objective_target=objective_target,
 #     scenario_strategies=[FoundryStrategy.Base64],
 #     scenario_result_id=scenario_id,  # Resume from this scenario
@@ -285,13 +285,13 @@ print(f"Total results: {len(result.attack_results)}")
 #
 # ```python
 # # Development: fail fast
-# dev_scenario = Foundry(
+# dev_scenario = RedTeamAgent(
 #     objective_target=target,
 #     max_retries=0,  # No retries - see failures immediately
 # )
 #
 # # Production: resilient execution
-# prod_scenario = Foundry(
+# prod_scenario = RedTeamAgent(
 #     objective_target=target,
 #     max_retries=3,  # Automatic retry after transient exceptions
 # )

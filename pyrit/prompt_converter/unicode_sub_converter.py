@@ -13,13 +13,29 @@ class UnicodeSubstitutionConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, *, start_value=0xE0000):
+    def __init__(self, *, start_value: int = 0xE0000) -> None:
+        """
+        Initialize the converter with a specified unicode starting point.
+
+        Args:
+            start_value (int): The unicode starting point to use for encoding.
+        """
         self.startValue = start_value
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by encoding it using any unicode starting point.
+        Convert the given prompt by encoding it using any unicode starting point.
         Default is to use invisible flag emoji characters.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")

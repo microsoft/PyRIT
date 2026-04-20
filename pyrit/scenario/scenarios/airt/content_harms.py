@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from typing import Dict, List, Optional, Sequence, Type, TypeVar
+from typing import Any, Dict, List, Optional, Sequence, Type, TypeVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import (
@@ -25,7 +25,7 @@ from pyrit.scenario.core.scenario_strategy import (
 )
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
 
-AttackStrategyT = TypeVar("AttackStrategyT", bound=AttackStrategy)
+AttackStrategyT = TypeVar("AttackStrategyT", bound="AttackStrategy[Any, Any]")
 
 
 class ContentHarmsDatasetConfiguration(DatasetConfiguration):

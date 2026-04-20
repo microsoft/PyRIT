@@ -11,9 +11,9 @@ from train import GreedyCoordinateGradientAdversarialSuffixGenerator
 from pyrit.setup.initialization import _load_environment_files
 
 
-def _load_yaml_to_dict(config_path: str) -> dict:
+def _load_yaml_to_dict(config_path: str) -> dict[str, Any]:
     with open(config_path, "r") as f:
-        data = yaml.safe_load(f)
+        data: dict[str, Any] = yaml.safe_load(f)
     return data
 
 
@@ -22,7 +22,7 @@ ALL_MODELS = "all_models"
 MODEL_PARAM_OPTIONS = MODEL_NAMES + [ALL_MODELS]
 
 
-def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parameters):
+def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parameters: Any) -> None:
     """
     Trains and generates adversarial suffix - single model single prompt.
 
@@ -70,7 +70,7 @@ def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parame
     trainer.generate_suffix(**config)
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Script to run the adversarial suffix trainer")
     parser.add_argument("--model_name", type=str, help="The name of the model")
     parser.add_argument(
