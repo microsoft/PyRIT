@@ -70,12 +70,18 @@ class AddImageTextConverter(PromptConverter):
                 Defaults to False.
 
         Raises:
+            TypeError: If more than one positional argument is passed, or if img_to_add
+                is passed as both positional and keyword argument.
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
                 font_size tuple is invalid, or bounding_box coordinates are invalid.
             TypeError: If more than one positional argument is passed, or if img_to_add
                 is provided as both positional and keyword argument.
         """
         if args:
+            if len(args) > 1:
+                raise TypeError(f"AddImageTextConverter() takes at most 1 positional argument, got {len(args)}")
+            if img_to_add:
+                raise TypeError("Cannot pass img_to_add as both positional and keyword argument")
             warnings.warn(
                 "Passing 'img_to_add' as a positional argument is deprecated. "
                 "Use img_to_add=... as a keyword argument. "
@@ -83,10 +89,6 @@ class AddImageTextConverter(PromptConverter):
                 FutureWarning,
                 stacklevel=2,
             )
-            if len(args) > 1:
-                raise TypeError(f"Expected at most 1 positional argument, got {len(args)}")
-            if img_to_add:
-                raise TypeError("Cannot pass 'img_to_add' as both positional and keyword argument")
             img_to_add = args[0]
         if x_pos != 10 or y_pos != 10:
             warnings.warn(
@@ -116,6 +118,7 @@ class AddImageTextConverter(PromptConverter):
         self._img_to_add = img_to_add
         self._font_name = font_name
         self._font_size = self._font_size_max
+        self._font_load_failed = False
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos
@@ -161,13 +164,16 @@ class AddImageTextConverter(PromptConverter):
             size (int): The font size to load.
 
         Returns:
-            FreeTypeFont: The loaded font object. Falls back to the default font on error.
+            FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
+        if self._font_load_failed:
+            return cast("FreeTypeFont", ImageFont.load_default(size=size))
         try:
             return ImageFont.truetype(self._font_name, size)
         except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
-            return cast("FreeTypeFont", ImageFont.load_default())
+            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
+            self._font_load_failed = True
+            return cast("FreeTypeFont", ImageFont.load_default(size=size))
 
     def _wrap_text(self, *, text: str, font: FreeTypeFont, max_width: int) -> list[str]:
         """

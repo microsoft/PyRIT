@@ -89,19 +89,13 @@ class AddTextImageConverter(PromptConverter):
         Load the font for a given font name and font size.
 
         Returns:
-            ImageFont.FreeTypeFont or ImageFont.ImageFont: The loaded font object. If the specified font
-            cannot be loaded, the default font is returned.
-
-        Raises:
-            OSError: If the font resource cannot be loaded, a warning is logged and the default font is used instead.
+            FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
-        # Try to load the specified font
         try:
-            font = ImageFont.truetype(self._font_name, self._font_size)
+            return ImageFont.truetype(self._font_name, self._font_size)
         except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
-            font = cast("FreeTypeFont", ImageFont.load_default())
-        return font
+            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
+            return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:
         """
@@ -113,30 +107,62 @@ class AddTextImageConverter(PromptConverter):
         Returns:
             Image.Image: The image with added text.
         """
-        draw = ImageDraw.Draw(image)
-
-        # Calculate the maximum width in pixels with margin into account
         margin = 5
-        max_width_pixels = image.size[0] - margin
+        # Use bounding box from (x_pos, y_pos) to (width - margin, height - margin)
+        # to match AddImageTextConverter's default behavior
+        x1, y1 = self._x_pos, self._y_pos
+        x2, y2 = image.width - margin, image.height - margin
+        box_width = x2 - x1
+        box_height = y2 - y1
 
-        # Estimate the maximum chars that can fit on a line
-        alphabet_letters = string.ascii_letters  # This gives 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        bbox = draw.textbbox((0, 0), alphabet_letters, font=self._font)
-        avg_char_width = (bbox[2] - bbox[0]) / len(alphabet_letters)
-        max_chars_per_line = int(max_width_pixels // avg_char_width)
+        lines = self._wrap_text(text=self._text_to_add, font=self._font, max_width=box_width)
 
-        # Wrap the text
-        wrapped_text = textwrap.fill(self._text_to_add, width=max_chars_per_line)
+        overlay = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        fill_color = self._color + (255,)
 
-        # Add wrapped text to image
-        y_offset = float(self._y_pos)
-        for line in wrapped_text.split("\n"):
-            draw.text((self._x_pos, y_offset), line, font=self._font, fill=self._color)
-            bbox = draw.textbbox((self._x_pos, y_offset), line, font=self._font)
-            line_height = bbox[3] - bbox[1]
-            y_offset += line_height
+        line_height = self._get_line_height(font=self._font)
+        for i, line in enumerate(lines):
+            draw.text((0, i * line_height), line, font=self._font, fill=fill_color)
 
-        return image
+        image = image.convert("RGBA")
+        image.paste(overlay, (x1, y1), overlay)
+        return image.convert("RGB")
+
+    def _wrap_text(self, *, text: str, font: FreeTypeFont, max_width: int) -> list[str]:
+        """
+        Word-wrap text to fit within max_width pixels.
+
+        Args:
+            text (str): The text to wrap.
+            font (FreeTypeFont): The font used for measuring text width.
+            max_width (int): The maximum width in pixels for each line.
+
+        Returns:
+            list[str]: The wrapped text lines.
+        """
+        temp_img = Image.new("RGBA", (1, 1))
+        draw = ImageDraw.Draw(temp_img)
+        bbox = draw.textbbox((0, 0), string.ascii_letters, font=font)
+        avg_char_width = (bbox[2] - bbox[0]) / len(string.ascii_letters)
+        max_chars = max(1, int(max_width / avg_char_width))
+        wrapped = textwrap.fill(text, width=max_chars)
+        return wrapped.split("\n")
+
+    def _get_line_height(self, *, font: FreeTypeFont) -> int:
+        """
+        Get the line height in pixels for a given font.
+
+        Args:
+            font (FreeTypeFont): The font to measure.
+
+        Returns:
+            int: The line height in pixels.
+        """
+        temp_img = Image.new("RGBA", (1, 1))
+        draw = ImageDraw.Draw(temp_img)
+        bbox = draw.textbbox((0, 0), "Ag", font=font)
+        return int(bbox[3] - bbox[1])
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """

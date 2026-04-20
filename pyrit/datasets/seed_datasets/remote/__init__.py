@@ -27,6 +27,7 @@ from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     COMIC_JAILBREAK_TEMPLATES,
+    ComicJailbreakTemplateConfig,
     _ComicJailbreakDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
@@ -128,6 +129,7 @@ __all__ = [
     "_CCPSensitivePromptsDataset",
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
+    "ComicJailbreakTemplateConfig",
     "_DarkBenchDataset",
     "_EquityMedQADataset",
     "_ForbiddenQuestionsDataset",
