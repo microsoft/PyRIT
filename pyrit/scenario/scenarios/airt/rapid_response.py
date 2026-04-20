@@ -188,13 +188,13 @@ class RapidResponse(Scenario):
             if self._adversarial_chat is not None:
                 adversarial_override = AttackAdversarialConfig(target=self._adversarial_chat)
 
-            attack_technique = factory.create(
-                objective_target=self._objective_target,
-                attack_scoring_config_override=scoring_for_technique,
-                attack_adversarial_config_override=adversarial_override,
-            )
-
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
+                # Each AtomicAttack gets a fresh, independent attack instance
+                attack_technique = factory.create(
+                    objective_target=self._objective_target,
+                    attack_scoring_config_override=scoring_for_technique,
+                    attack_adversarial_config_override=adversarial_override,
+                )
                 display_group = self._build_display_group(
                     technique_name=technique_name,
                     seed_group_name=dataset_name,
