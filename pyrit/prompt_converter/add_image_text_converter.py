@@ -53,14 +53,14 @@ class AddImageTextConverter(_BaseImageTextConverter):
 
         Args:
             *args: Deprecated positional argument for img_to_add. Use img_to_add=... instead.
-                Will be removed in version 0.14.0.
+                Will be removed in version 0.15.0.
             img_to_add (str): File path of image to add text to.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int | tuple[int, int]): Font size as a fixed int, or a (min, max) tuple for automatic
                 sizing that shrinks from max down to min to fit text in the bounding box. Defaults to 15.
-            x_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.14.0.
-            y_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.14.0.
+            x_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.15.0.
+            y_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.15.0.
             bounding_box (tuple[int, int, int, int] | None): Optional (x1, y1, x2, y2) region to constrain
                 text within. When not set, the full image is used with a default margin.
                 Defaults to None.
@@ -84,7 +84,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
             warnings.warn(
                 "Passing 'img_to_add' as a positional argument is deprecated. "
                 "Use img_to_add=... as a keyword argument. "
-                "It will be keyword-only starting in version 0.14.0.",
+                "It will be keyword-only starting in version 0.15.0.",
                 FutureWarning,
                 stacklevel=2,
             )
@@ -92,7 +92,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         if x_pos != 10 or y_pos != 10:
             warnings.warn(
                 "x_pos and y_pos are deprecated. Use bounding_box=(x, y, x2, y2) instead. "
-                "They will be removed in version 0.14.0.",
+                "They will be removed in version 0.15.0.",
                 FutureWarning,
                 stacklevel=2,
             )
