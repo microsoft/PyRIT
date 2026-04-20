@@ -107,6 +107,8 @@ API Reference
 
     SeedDatasetProvider
     TextJailBreak
+    fetch_anthropic_evals_dataset
+    fetch_wmdp_dataset
 
 
 
