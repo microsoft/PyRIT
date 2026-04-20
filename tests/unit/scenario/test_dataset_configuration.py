@@ -56,7 +56,7 @@ class TestDatasetConfigurationInit:
         assert config._seed_groups == sample_seed_groups
         assert config._dataset_names is None
         assert config.max_dataset_size is None
-        assert config._scenario_composites is None
+        assert config._scenario_strategies is None
 
     def test_init_with_dataset_names_only(self) -> None:
         """Test initialization with only dataset_names."""
@@ -119,15 +119,15 @@ class TestDatasetConfigurationInit:
         # Config should still have the original length
         assert len(config._dataset_names) == 2
 
-    def test_init_with_scenario_composites(self, sample_seed_groups: list) -> None:
-        """Test initialization with scenario_composites."""
-        mock_composites = [MagicMock(), MagicMock()]
+    def test_init_with_scenario_strategies(self, sample_seed_groups: list) -> None:
+        """Test initialization with scenario_strategies."""
+        mock_strategies = [MagicMock(), MagicMock()]
         config = DatasetConfiguration(
             seed_groups=sample_seed_groups,
-            scenario_composites=mock_composites,
+            scenario_strategies=mock_strategies,
         )
 
-        assert config._scenario_composites == mock_composites
+        assert config._scenario_strategies == mock_strategies
 
     def test_init_with_no_data_source(self) -> None:
         """Test initialization with neither seed_groups nor dataset_names."""

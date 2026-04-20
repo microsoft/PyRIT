@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import uuid
+import warnings
 from collections.abc import MutableSequence
 from datetime import datetime, timedelta, timezone
 
@@ -1043,3 +1044,138 @@ class TestSimulatedAssistantRole:
         assert piece.get_role_for_storage() == "simulated_assistant"
         assert piece.api_role == "assistant"
         assert piece.is_simulated is True
+
+
+class TestMessagePieceDeprecationWarnings:
+    """Tests for deprecation warnings on parameters scheduled for removal."""
+
+    def test_scorer_identifier_emits_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(
+                role="user",
+                original_value="Hello",
+                scorer_identifier=ComponentIdentifier(class_name="S", class_module="m"),
+            )
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert any("scorer_identifier" in str(m.message) for m in deprecation_msgs)
+
+    def test_scorer_identifier_none_no_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello")
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert not any("scorer_identifier" in str(m.message) for m in deprecation_msgs)
+
+    def test_originator_non_default_emits_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello", originator="attack")
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert any("originator" in str(m.message) for m in deprecation_msgs)
+
+    def test_originator_default_no_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello")
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert not any("originator" in str(m.message) for m in deprecation_msgs)
+
+    def test_scores_emits_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello", scores=[])
+        # scores=[] is falsy but not None, however the check is `scores is not None`
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert any("scores" in str(m.message) for m in deprecation_msgs)
+
+    def test_scores_none_no_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello")
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert not any("scores" in str(m.message) for m in deprecation_msgs)
+
+    def test_targeted_harm_categories_emits_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello", targeted_harm_categories=["violence"])
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)
+
+    def test_targeted_harm_categories_none_no_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello")
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert not any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)
+
+
+class TestCopyLineageFrom:
+    """Tests for MessagePiece.copy_lineage_from."""
+
+    _SOURCE_CONV_ID = "source-conv-id"
+    _SOURCE_LABELS = {"op": "red_team", "run": "42"}
+    _SOURCE_ATTACK_ID = ComponentIdentifier(class_name="TestAttack", class_module="tests")
+    _SOURCE_TARGET_ID = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit")
+    _SOURCE_METADATA = {"scenario": "jailbreak", "turn": 5}
+
+    def _make_source(self) -> MessagePiece:
+        return MessagePiece(
+            role="user",
+            original_value="source prompt",
+            conversation_id=self._SOURCE_CONV_ID,
+            labels=dict(self._SOURCE_LABELS),
+            attack_identifier=self._SOURCE_ATTACK_ID,
+            prompt_target_identifier=self._SOURCE_TARGET_ID,
+            prompt_metadata=dict(self._SOURCE_METADATA),
+        )
+
+    def _make_target(self) -> MessagePiece:
+        return MessagePiece(
+            role="user",
+            original_value="target prompt",
+        )
+
+    def test_copies_all_lineage_fields(self):
+        source = self._make_source()
+        target = self._make_target()
+
+        target.copy_lineage_from(source)
+
+        assert target.conversation_id == self._SOURCE_CONV_ID
+        assert target.labels == self._SOURCE_LABELS
+        assert target.attack_identifier == self._SOURCE_ATTACK_ID
+        assert target.prompt_target_identifier == self._SOURCE_TARGET_ID
+        assert target.prompt_metadata == self._SOURCE_METADATA
+
+    def test_labels_are_independent_copies(self):
+        source = self._make_source()
+        target = self._make_target()
+
+        target.copy_lineage_from(source)
+
+        target.labels["extra"] = "injected"
+        assert "extra" not in source.labels
+
+    def test_prompt_metadata_are_independent_copies(self):
+        source = self._make_source()
+        target = self._make_target()
+
+        target.copy_lineage_from(source)
+
+        target.prompt_metadata["extra"] = "injected"
+        assert "extra" not in source.prompt_metadata
+
+    def test_does_not_overwrite_non_lineage_fields(self):
+        source = self._make_source()
+        target = self._make_target()
+        original_id = target.id
+        original_role = target._role
+        original_value = target.original_value
+
+        target.copy_lineage_from(source)
+
+        assert target.id == original_id
+        assert target._role == original_role
+        assert target.original_value == original_value

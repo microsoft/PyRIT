@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import uuid
+import warnings
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
@@ -12,9 +13,11 @@ from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 
 if TYPE_CHECKING:
+    from pyrit.models.message import Message
     from pyrit.models.score import Score
 
 Originator = Literal["attack", "converter", "undefined", "scorer"]
+"""Deprecated: The Originator type alias will be removed in a future release."""
 
 
 class MessagePiece:
@@ -135,6 +138,12 @@ class MessagePiece:
         )
 
         # Handle scorer_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
+        if scorer_identifier is not None:
+            warnings.warn(
+                "The 'scorer_identifier' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.scorer_identifier: Optional[ComponentIdentifier] = (
             ComponentIdentifier.normalize(scorer_identifier) if scorer_identifier else None
         )
@@ -161,13 +170,52 @@ class MessagePiece:
             raise ValueError(f"response_error {response_error} is not a valid response error.")
 
         self.response_error = response_error
+
+        if originator != "undefined":
+            warnings.warn(
+                "The 'originator' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.originator = originator
 
         # Original prompt id defaults to id (assumes that this is the original prompt, not a duplicate)
         self.original_prompt_id = original_prompt_id or self.id
 
+        if scores is not None:
+            warnings.warn(
+                "The 'scores' parameter is deprecated and will be removed in a future release. "
+                "Scores are now hydrated by the memory layer.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.scores = scores if scores else []
+
+        if targeted_harm_categories is not None:
+            warnings.warn(
+                "The 'targeted_harm_categories' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.targeted_harm_categories = targeted_harm_categories if targeted_harm_categories else []
+
+    def copy_lineage_from(self, source: MessagePiece) -> None:
+        """
+        Copy lineage metadata from ``source`` onto this piece.
+
+        Lineage fields are the metadata that tie a piece back to its originating
+        conversation, attack, and target. Mutable containers (``labels``,
+        ``prompt_metadata``) are shallow-copied so that mutations on one piece
+        do not affect others.
+
+        Args:
+            source: The piece whose lineage metadata is authoritative.
+        """
+        self.conversation_id = source.conversation_id
+        self.labels = dict(source.labels)
+        self.attack_identifier = source.attack_identifier
+        self.prompt_target_identifier = source.prompt_target_identifier
+        self.prompt_metadata = dict(source.prompt_metadata)
 
     async def set_sha256_values_async(self) -> None:
         """
@@ -226,7 +274,7 @@ class MessagePiece:
         """
         return self._role
 
-    def to_message(self) -> Message:  # type: ignore[name-defined] # noqa: F821
+    def to_message(self) -> Message:
         """
         Convert this message piece into a Message.
 
@@ -235,7 +283,7 @@ class MessagePiece:
         """
         from pyrit.models.message import Message
 
-        return Message([self])  # noqa: F821
+        return Message([self])
 
     def has_error(self) -> bool:
         """

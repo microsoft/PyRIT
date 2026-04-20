@@ -517,7 +517,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send prompt, handle agentic tool calls (function_call), return all messages.
 
@@ -526,25 +526,20 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         - Agentic tool-calling loops that may require multiple back-and-forth exchanges
 
         Args:
-            message: The initial prompt from the user.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             List of messages generated during the interaction (assistant responses and tool messages).
             The normalizer will persist all of these to memory.
         """
-        self._validate_request(message=message)
-
+        message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
-        json_config = _JsonResponseConfig(enabled=False)
-        if message.message_pieces:
-            last_piece = message.message_pieces[-1]
-            json_config = self._get_json_response_config(message_piece=last_piece)
+        last_piece = message.message_pieces[-1]
+        json_config = self._get_json_response_config(message_piece=last_piece)
 
-        # Get full conversation history from memory and append the current message
-        conversation: MutableSequence[Message] = self._memory.get_conversation(
-            conversation_id=message_piece.conversation_id
-        )
-        conversation.append(message)
+        working_conversation: MutableSequence[Message] = list(normalized_conversation)
 
         # Track all responses generated during this interaction
         responses_to_return: list[Message] = []
@@ -553,9 +548,9 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         tool_call_section: Optional[dict[str, Any]] = None
 
         while True:
-            logger.info(f"Sending conversation with {len(conversation)} messages to the prompt target")
+            logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            body = await self._construct_request_body(conversation=conversation, json_config=json_config)
+            body = await self._construct_request_body(conversation=working_conversation, json_config=json_config)
 
             # Use unified error handling - automatically detects Response and validates
             result = await self._handle_openai_request(
@@ -564,7 +559,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             )
 
             # Add result to conversation and responses list
-            conversation.append(result)
+            working_conversation.append(result)
             responses_to_return.append(result)
 
             # Extract tool call if present
@@ -582,7 +577,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             tool_message = Message(message_pieces=[tool_piece], skip_validation=True)
 
             # Add tool output message to conversation and responses list
-            conversation.append(tool_message)
+            working_conversation.append(tool_message)
             responses_to_return.append(tool_message)
 
             # Continue loop to send tool result and get next response

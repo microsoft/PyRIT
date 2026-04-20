@@ -155,7 +155,7 @@ class TestPlaywrightCopilotTarget:
             match=r"This target supports only the following data types.*If your target does support this, set the"
             r" custom_configuration parameter accordingly",
         ):
-            target._validate_request(message=request)
+            target._validate_request(normalized_conversation=[request])
 
     def test_validate_request_valid_text(self, mock_page, text_request_piece):
         """Test validation with valid text request."""
@@ -163,14 +163,14 @@ class TestPlaywrightCopilotTarget:
         request = Message(message_pieces=[text_request_piece])
 
         # Should not raise any exception
-        target._validate_request(message=request)
+        target._validate_request(normalized_conversation=[request])
 
     def test_validate_request_valid_multimodal(self, mock_page, multimodal_request):
         """Test validation with valid multimodal request."""
         target = PlaywrightCopilotTarget(page=mock_page)
 
         # Should not raise any exception
-        target._validate_request(message=multimodal_request)
+        target._validate_request(normalized_conversation=[multimodal_request])
 
     @pytest.mark.asyncio
     async def test_send_text_async(self, mock_page):

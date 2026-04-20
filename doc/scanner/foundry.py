@@ -75,18 +75,18 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # %% [markdown]
 # ## Strategy Composition
 #
-# You can combine multiple converters into a single composite strategy using
-# `ScenarioCompositeStrategy`. Each converter in the composite is applied in sequence.
+# You can pair a multi-turn attack with one or more converter strategies using `FoundryComposite`.
+# Each converter in the composite is applied in sequence before the attack runs.
 #
 # ```python
-# from pyrit.scenario import ScenarioCompositeStrategy
+# from pyrit.scenario.scenarios.foundry import FoundryComposite
 #
-# composed = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
+# composed = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
 # ```
 
 # %%
-# from pyrit.scenario import ScenarioCompositeStrategy
-# composed = ScenarioCompositeStrategy(strategies=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
+# from pyrit.scenario.scenarios.foundry import FoundryComposite
+# composed = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
 # scenario_strategies = [FoundryStrategy.Base64, composed]
 
 # %% [markdown]

@@ -3,6 +3,8 @@
 
 import logging
 import warnings
+from collections.abc import Mapping
+from typing import Any
 
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import Message
@@ -84,7 +86,7 @@ class TargetConfiguration:
         *,
         capabilities: TargetCapabilities,
         policy: CapabilityHandlingPolicy | None = None,
-        normalizer_overrides: dict[CapabilityName, MessageListNormalizer[Message]] | None = None,
+        normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Any]] | None = None,
     ) -> None:
         """
         Build a target configuration and resolve the normalization pipeline.
@@ -93,7 +95,7 @@ class TargetConfiguration:
             capabilities (TargetCapabilities): The target's declared capabilities.
             policy (CapabilityHandlingPolicy | None): How to handle each missing
                 capability. Defaults to RAISE for all adaptable capabilities.
-            normalizer_overrides (dict[CapabilityName, MessageListNormalizer[Message]] | None):
+            normalizer_overrides (Mapping[CapabilityName, MessageListNormalizer[Any]] | None):
                 Optional overrides for specific capability normalizers.
         """
         self._capabilities = capabilities

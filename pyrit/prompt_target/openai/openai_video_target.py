@@ -181,7 +181,7 @@ class OpenAIVideoTarget(OpenAITarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously sends a message and generates a video using the OpenAI SDK.
 
@@ -195,7 +195,9 @@ class OpenAIVideoTarget(OpenAITarget):
         chained remixes.
 
         Args:
-            message: The message object containing the prompt.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             A list containing the response with the generated video path.
@@ -204,7 +206,7 @@ class OpenAIVideoTarget(OpenAITarget):
             RateLimitException: If the rate limit is exceeded.
             ValueError: If the request is invalid.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         text_piece = message.get_piece_by_type(data_type="text")
 
@@ -458,7 +460,7 @@ class OpenAIVideoTarget(OpenAITarget):
             prompt_metadata=prompt_metadata,
         )
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
         Validate the request message.
 
@@ -468,12 +470,13 @@ class OpenAIVideoTarget(OpenAITarget):
         - Text piece + video_path piece (remix mode via history lookup)
 
         Args:
-            message: The message to validate.
+            normalized_conversation: The normalized conversation to validate.
 
         Raises:
             ValueError: If the request is invalid.
         """
-        super()._validate_request(message=message)
+        super()._validate_request(normalized_conversation=normalized_conversation)
+        message = normalized_conversation[-1]
 
         text_pieces = message.get_pieces_by_type(data_type="text")
         image_pieces = message.get_pieces_by_type(data_type="image_path")

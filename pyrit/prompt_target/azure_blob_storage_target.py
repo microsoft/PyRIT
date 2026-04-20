@@ -196,18 +196,20 @@ class AzureBlobStorageTarget(PromptTarget):
         return container_url, blob_prefix
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         (Async) Sends prompt to target, which creates a file and uploads it as a blob
         to the provided storage container.
 
         Args:
-            message (Message): A Message to be sent to the target.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response with the Blob URL.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
 
         # default file name is <conversation_id>.txt, but can be overridden by prompt metadata

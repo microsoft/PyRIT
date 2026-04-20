@@ -13,4 +13,5 @@ from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponseStrategy as ContentHarmsStrategy,
 )
 
+
 __all__ = ["ContentHarms", "ContentHarmsStrategy"]

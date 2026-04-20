@@ -1414,3 +1414,20 @@ def test_get_attack_results_by_attack_identifier_filter_no_match(sqlite_instance
         ],
     )
     assert len(results) == 0
+
+
+def test_get_attack_results_targeted_harm_categories_emits_deprecation_warning(sqlite_instance: MemoryInterface):
+    """Test that passing targeted_harm_categories emits a DeprecationWarning."""
+    import warnings
+
+    message_piece = create_message_piece("conv_1", 1, targeted_harm_categories=["violence"])
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
+
+    attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS)
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        sqlite_instance.get_attack_results(targeted_harm_categories=["violence"])
+    deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+    assert any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)

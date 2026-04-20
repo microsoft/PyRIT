@@ -21,7 +21,7 @@ from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, TechniqueSpec
-from pyrit.scenario import ScenarioCompositeStrategy
+
 from pyrit.scenario.core.scenario_techniques import (
     SCENARIO_TECHNIQUES,
     get_default_adversarial_target,
@@ -269,7 +269,7 @@ class TestRapidResponseBasic:
         scenario = RapidResponse(adversarial_chat=mock_adversarial_target)
         await scenario.initialize_async(objective_target=mock_objective_target)
         # DEFAULT expands to PromptSending + ManyShot → 2 composites
-        assert len(scenario._scenario_composites) == 2
+        assert len(scenario._scenario_strategies) == 2
 
     @pytest.mark.asyncio
     async def test_initialize_raises_when_no_datasets(

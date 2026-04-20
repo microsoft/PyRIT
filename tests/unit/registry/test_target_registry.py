@@ -17,10 +17,10 @@ class MockPromptTarget(PromptTarget):
     def __init__(self, *, model_name: str = "mock_model") -> None:
         super().__init__(model_name=model_name)
 
-    async def send_prompt_async(
+    async def _send_prompt_to_target_async(
         self,
         *,
-        message: Message,
+        normalized_conversation: list[Message],
     ) -> list[Message]:
         return [
             MessagePiece(
@@ -29,7 +29,7 @@ class MockPromptTarget(PromptTarget):
             ).to_message()
         ]
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
 
@@ -39,10 +39,10 @@ class MockPromptChatTarget(PromptChatTarget):
     def __init__(self, *, model_name: str = "mock_chat_model", endpoint: str = "http://chat-test") -> None:
         super().__init__(model_name=model_name, endpoint=endpoint)
 
-    async def send_prompt_async(
+    async def _send_prompt_to_target_async(
         self,
         *,
-        message: Message,
+        normalized_conversation: list[Message],
     ) -> list[Message]:
         return [
             MessagePiece(
@@ -51,7 +51,7 @@ class MockPromptChatTarget(PromptChatTarget):
             ).to_message()
         ]
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
 

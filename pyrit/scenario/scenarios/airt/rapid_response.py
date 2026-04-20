@@ -21,10 +21,7 @@ from pyrit.prompt_target import PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -158,9 +155,7 @@ class RapidResponse(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        selected_techniques = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=RapidResponseStrategy
-        )
+        selected_techniques = {s.value for s in self._scenario_strategies}
 
         factories = self.get_attack_technique_factories()
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()

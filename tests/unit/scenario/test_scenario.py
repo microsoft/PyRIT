@@ -688,7 +688,7 @@ class TestScenarioBaselineOnlyExecution:
 
     @pytest.mark.asyncio
     async def test_initialize_async_with_empty_strategies_and_baseline(self, mock_objective_target):
-        """Test that baseline-only execution works when include_baseline=True and strategies is empty."""
+        """Test that baseline is included when include_baseline=True, regardless of strategies."""
         from pyrit.models import SeedAttackGroup, SeedObjective
 
         # Create a scenario with include_default_baseline=True and TrueFalseScorer
@@ -705,10 +705,10 @@ class TestScenarioBaselineOnlyExecution:
             SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
         ]
 
-        # Initialize with empty strategies
+        # Initialize with None (default strategy) — [] also works, both expand defaults
         await scenario.initialize_async(
             objective_target=mock_objective_target,
-            scenario_strategies=[],  # Empty list - baseline only
+            scenario_strategies=None,
             dataset_config=mock_dataset_config,
         )
 
@@ -734,10 +734,10 @@ class TestScenarioBaselineOnlyExecution:
             SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
         ]
 
-        # Initialize with empty strategies
+        # Initialize with None — [] also expands defaults now, both are equivalent
         await scenario.initialize_async(
             objective_target=mock_objective_target,
-            scenario_strategies=[],  # Empty list - baseline only
+            scenario_strategies=None,  # same as [] now
             dataset_config=mock_dataset_config,
         )
 
@@ -754,7 +754,7 @@ class TestScenarioBaselineOnlyExecution:
 
     @pytest.mark.asyncio
     async def test_empty_strategies_without_baseline_allows_initialization(self, mock_objective_target):
-        """Test that empty strategies without include_baseline allows initialization but fails at run time."""
+        """Test that no strategies + no baseline allows initialization but fails at run time."""
         scenario = ConcreteScenario(
             name="No Baseline Test",
             version=1,
@@ -763,11 +763,10 @@ class TestScenarioBaselineOnlyExecution:
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
 
-        # Empty strategies are now always allowed during initialization
-        # (no allow_empty parameter required)
+        # None strategies with no baseline: _get_atomic_attacks_async returns []
         await scenario.initialize_async(
             objective_target=mock_objective_target,
-            scenario_strategies=[],  # Empty list without baseline
+            scenario_strategies=None,
             dataset_config=mock_dataset_config,
         )
 
@@ -798,7 +797,7 @@ class TestScenarioBaselineOnlyExecution:
 
         await scenario.initialize_async(
             objective_target=mock_objective_target,
-            scenario_strategies=[],
+            scenario_strategies=None,
             dataset_config=mock_dataset_config,
         )
 
@@ -806,6 +805,18 @@ class TestScenarioBaselineOnlyExecution:
         baseline_attack = scenario._atomic_attacks[0]
         assert baseline_attack.atomic_attack_name == "baseline"
         assert baseline_attack.seed_groups == expected_seeds
+
+    def test_empty_list_strategies_expands_defaults_same_as_none(self):
+        """Test that [] and None both expand to the default strategy set."""
+        scenario = ConcreteScenario(name="Test", version=1)
+        strategy_class = scenario.get_strategy_class()
+        default = scenario.get_default_strategy()
+
+        resolved_none = strategy_class.resolve(None, default=default)
+        resolved_empty = strategy_class.resolve([], default=default)
+
+        assert resolved_none == resolved_empty
+        assert len(resolved_none) > 0
 
 
 class TestGetDefaultObjectiveScorer:

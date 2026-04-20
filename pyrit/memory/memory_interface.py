@@ -5,6 +5,7 @@ import abc
 import atexit
 import logging
 import uuid
+import warnings
 import weakref
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing
@@ -1531,6 +1532,11 @@ class MemoryInterface(abc.ABC):
             )
 
         if targeted_harm_categories:
+            warnings.warn(
+                "The 'targeted_harm_categories' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             # Use database-specific JSON query method
             conditions.append(
                 self._get_attack_result_harm_category_condition(targeted_harm_categories=targeted_harm_categories)

@@ -27,10 +27,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import (
     SelfAskRefusalScorer,
     SelfAskTrueFalseScorer,
@@ -376,8 +373,6 @@ class Leakage(Scenario):
         # Resolve objectives to seed groups format
         self._seed_groups = self._resolve_seed_groups()
 
-        strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            composites=self._scenario_composites, strategy_type=LeakageStrategy
-        )
+        strategies = {s.value for s in self._scenario_strategies}
 
         return [await self._get_atomic_attack_from_strategy_async(strategy) for strategy in strategies]
