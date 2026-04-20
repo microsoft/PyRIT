@@ -15,8 +15,8 @@ from pyrit.scenario.core.dataset_configuration import EXPLICIT_SEED_GROUPS_KEY, 
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 
-# TechniqueSpec lives in the registry module but is re-exported here for convenience
-from pyrit.registry.object_registries.attack_technique_registry import TechniqueSpec
+# AttackTechniqueSpec lives in the registry module but is re-exported here for convenience
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueSpec
 
 __all__ = [
     "AtomicAttack",
@@ -28,7 +28,7 @@ __all__ = [
     "Scenario",
     "ScenarioCompositeStrategy",
     "ScenarioStrategy",
-    "TechniqueSpec",
+    "AttackTechniqueSpec",
     "get_default_adversarial_target",
     "register_scenario_techniques",
 ]

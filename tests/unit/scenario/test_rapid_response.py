@@ -20,7 +20,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, TechniqueSpec
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 
 from pyrit.scenario.core.scenario_techniques import (
     SCENARIO_TECHNIQUES,
@@ -758,7 +758,7 @@ class TestRegistrationAndFactoryFromSpec:
         assert len(registry) == 4
 
     def test_register_assigns_correct_tags(self, mock_adversarial_target):
-        """Tags from TechniqueSpec are applied correctly."""
+        """Tags from AttackTechniqueSpec are applied correctly."""
         register_scenario_techniques()
         registry = AttackTechniqueRegistry.get_registry_singleton()
 
@@ -768,9 +768,9 @@ class TestRegistrationAndFactoryFromSpec:
         assert multi_turn == {"many_shot", "tap"}
 
     def test_register_from_specs_custom_list(self, mock_adversarial_target):
-        """register_from_specs accepts a custom list of TechniqueSpecs."""
+        """register_from_specs accepts a custom list of AttackTechniqueSpecs."""
         custom_specs = [
-            TechniqueSpec(name="custom_attack", attack_class=PromptSendingAttack, tags=["custom"]),
+            AttackTechniqueSpec(name="custom_attack", attack_class=PromptSendingAttack, tags=["custom"]),
         ]
         registry = AttackTechniqueRegistry.get_registry_singleton()
         registry.register_from_specs(custom_specs, adversarial_chat=mock_adversarial_target)
@@ -805,16 +805,16 @@ class TestRegistrationAndFactoryFromSpec:
 
 
 # ===========================================================================
-# TechniqueSpec tests
+# AttackTechniqueSpec tests
 # ===========================================================================
 
 
 @pytest.mark.usefixtures(*FIXTURES)
-class TestTechniqueSpec:
-    """Tests for the TechniqueSpec dataclass."""
+class TestAttackTechniqueSpec:
+    """Tests for the AttackTechniqueSpec dataclass."""
 
     def test_simple_spec(self):
-        spec = TechniqueSpec(name="test", attack_class=PromptSendingAttack, tags=["single_turn"])
+        spec = AttackTechniqueSpec(name="test", attack_class=PromptSendingAttack, tags=["single_turn"])
         assert spec.name == "test"
         assert spec.attack_class is PromptSendingAttack
         assert spec.tags == ["single_turn"]
@@ -822,7 +822,7 @@ class TestTechniqueSpec:
 
     def test_extra_kwargs_builder(self, mock_adversarial_target):
         builder = lambda _adv: {"role_play_definition_path": "/custom/path.yaml"}
-        spec = TechniqueSpec(
+        spec = AttackTechniqueSpec(
             name="complex",
             attack_class=RolePlayAttack,
             tags=["single_turn"],
@@ -834,7 +834,7 @@ class TestTechniqueSpec:
 
     def test_build_factory_no_adversarial(self, mock_adversarial_target):
         """Non-adversarial spec should not have attack_adversarial_config."""
-        spec = TechniqueSpec(name="simple", attack_class=PromptSendingAttack, tags=[])
+        spec = AttackTechniqueSpec(name="simple", attack_class=PromptSendingAttack, tags=[])
         factory = AttackTechniqueRegistry.build_factory_from_spec(spec, adversarial_chat=mock_adversarial_target)
         assert "attack_adversarial_config" not in (factory._attack_kwargs or {})
 
@@ -844,22 +844,22 @@ class TestTechniqueSpec:
         assert names == {"prompt_sending", "role_play", "many_shot", "tap"}
 
     def test_frozen_spec(self):
-        """TechniqueSpec is frozen (immutable)."""
-        spec = TechniqueSpec(name="test", attack_class=PromptSendingAttack)
+        """AttackTechniqueSpec is frozen (immutable)."""
+        spec = AttackTechniqueSpec(name="test", attack_class=PromptSendingAttack)
         with pytest.raises(AttributeError):
             spec.name = "modified"
 
     def test_adversarial_auto_detected_from_signature(self, mock_adversarial_target):
         """Adversarial config is injected based on attack class signature, not a manual flag."""
         # RolePlayAttack accepts attack_adversarial_config → should be injected
-        rp_spec = TechniqueSpec(name="rp", attack_class=RolePlayAttack, tags=[])
+        rp_spec = AttackTechniqueSpec(name="rp", attack_class=RolePlayAttack, tags=[])
         rp_factory = AttackTechniqueRegistry.build_factory_from_spec(
             rp_spec, adversarial_chat=mock_adversarial_target
         )
         assert "attack_adversarial_config" in rp_factory._attack_kwargs
 
         # PromptSendingAttack does NOT accept it → should not be injected
-        ps_spec = TechniqueSpec(name="ps", attack_class=PromptSendingAttack, tags=[])
+        ps_spec = AttackTechniqueSpec(name="ps", attack_class=PromptSendingAttack, tags=[])
         ps_factory = AttackTechniqueRegistry.build_factory_from_spec(
             ps_spec, adversarial_chat=mock_adversarial_target
         )

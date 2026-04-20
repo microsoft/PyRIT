@@ -8,7 +8,7 @@ Provides ``SCENARIO_TECHNIQUES`` (the standard catalog) and
 ``register_scenario_techniques`` (registers specs into the
 ``AttackTechniqueRegistry`` singleton).
 
-To add a new technique, append a ``TechniqueSpec`` to ``SCENARIO_TECHNIQUES``.
+To add a new technique, append a ``AttackTechniqueSpec`` to ``SCENARIO_TECHNIQUES``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.registry.object_registries.attack_technique_registry import TechniqueSpec
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueSpec
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 # Scenario technique catalog
 # ---------------------------------------------------------------------------
 
-SCENARIO_TECHNIQUES: list[TechniqueSpec] = [
-    TechniqueSpec(
+SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
+    AttackTechniqueSpec(
         name="prompt_sending",
         attack_class=PromptSendingAttack,
         tags=["core", "single_turn", "default"],
     ),
-    TechniqueSpec(
+    AttackTechniqueSpec(
         name="role_play",
         attack_class=RolePlayAttack,
         tags=["core", "single_turn"],
@@ -47,12 +47,12 @@ SCENARIO_TECHNIQUES: list[TechniqueSpec] = [
             "role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value,
         },
     ),
-    TechniqueSpec(
+    AttackTechniqueSpec(
         name="many_shot",
         attack_class=ManyShotJailbreakAttack,
         tags=["core", "multi_turn", "default"],
     ),
-    TechniqueSpec(
+    AttackTechniqueSpec(
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
         tags=["core", "multi_turn"],

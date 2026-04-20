@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class TechniqueSpec:
+class AttackTechniqueSpec:
     """
     Declarative definition of an attack technique.
 
@@ -161,7 +161,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
     def build_strategy_class_from_specs(
         *,
         class_name: str,
-        specs: list[TechniqueSpec],
+        specs: list[AttackTechniqueSpec],
         aggregate_tags: dict[str, set[str]],
     ) -> type:
         """
@@ -215,12 +215,12 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
     @staticmethod
     def build_factory_from_spec(
-        spec: TechniqueSpec,
+        spec: AttackTechniqueSpec,
         *,
         adversarial_chat: "PromptChatTarget | None" = None,
     ) -> "AttackTechniqueFactory":
         """
-        Build an ``AttackTechniqueFactory`` from a ``TechniqueSpec``.
+        Build an ``AttackTechniqueFactory`` from a ``AttackTechniqueSpec``.
 
         Automatically injects ``AttackAdversarialConfig`` when the attack
         class accepts ``attack_adversarial_config`` as a constructor parameter.
@@ -257,7 +257,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
     def register_from_specs(
         self,
-        specs: list[TechniqueSpec],
+        specs: list[AttackTechniqueSpec],
         *,
         adversarial_chat: "PromptChatTarget | None" = None,
     ) -> None:

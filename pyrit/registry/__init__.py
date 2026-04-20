@@ -25,7 +25,7 @@ from pyrit.registry.object_registries import (
     RetrievableInstanceRegistry,
     ScorerRegistry,
     TargetRegistry,
-    TechniqueSpec,
+    AttackTechniqueSpec,
 )
 
 __all__ = [
@@ -46,5 +46,5 @@ __all__ = [
     "ScenarioRegistry",
     "ScorerRegistry",
     "TargetRegistry",
-    "TechniqueSpec",
+    "AttackTechniqueSpec",
 ]
