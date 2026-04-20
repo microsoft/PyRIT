@@ -134,12 +134,12 @@ class RapidResponse(Scenario):
 
     def get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
         """
-        Register core techniques with this scenario's adversarial chat target.
+        Register core techniques and return factories from the registry.
         """
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
         from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
 
-        register_scenario_techniques(adversarial_chat=self._adversarial_chat)
+        register_scenario_techniques()
         return AttackTechniqueRegistry.get_registry_singleton().get_factories()
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
@@ -164,8 +164,10 @@ class RapidResponse(Scenario):
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
 
         # Resolve adversarial_chat for AtomicAttack parameter building.
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
         from pyrit.scenario.core.scenario_techniques import get_default_adversarial_target
 
+        registry = AttackTechniqueRegistry.get_registry_singleton()
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
 
         atomic_attacks: list[AtomicAttack] = []
@@ -175,10 +177,9 @@ class RapidResponse(Scenario):
                 logger.warning(f"No factory for technique '{technique_name}', skipping.")
                 continue
 
-            # TAP creates its own FloatScaleThresholdScorer internally when no
-            # scoring config is provided.  Passing the scenario's TrueFalseScorer
-            # would fail TAP's type validation.
-            scoring_for_technique = None if technique_name == "tap" else scoring_config
+            # Only pass scorer override if the technique accepts it.
+            # Some techniques (e.g. TAP) manage their own scoring internally.
+            scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
 
             # Build adversarial config override if scenario has a custom adversarial target
             adversarial_override = None

@@ -601,12 +601,6 @@ class Scenario(ABC):
             List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
 
-    def _apply_display_groups(self, result: ScenarioResult) -> ScenarioResult:
-        """Apply the in-memory display_group_map to a ScenarioResult loaded from storage."""
-        if hasattr(self, "_display_group_map"):
-            result._display_group_map = self._display_group_map
-        return result
-
     async def run_async(self) -> ScenarioResult:
         """
         Execute all atomic attacks in the scenario sequentially.
@@ -729,7 +723,7 @@ class Scenario(ABC):
             # Retrieve and return the current scenario result
             scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
             if scenario_results:
-                return self._apply_display_groups(scenario_results[0])
+                return scenario_results[0]
             raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
 
         logger.info(
@@ -833,7 +827,7 @@ class Scenario(ABC):
             if not scenario_results:
                 raise ValueError(f"Scenario result with ID {self._scenario_result_id} not found")
 
-            return self._apply_display_groups(scenario_results[0])
+            return scenario_results[0]
 
         except Exception as e:
             logger.error(f"Scenario '{self._name}' failed with error: {str(e)}")

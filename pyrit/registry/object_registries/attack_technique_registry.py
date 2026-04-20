@@ -51,12 +51,16 @@ class TechniqueSpec:
         tags: Classification tags (e.g. ``["single_turn"]``).
         extra_kwargs_builder: Optional callback that returns additional kwargs
             for the factory. Receives the resolved adversarial target.
+        accepts_scorer_override: Whether the technique accepts a scenario-level
+            scorer override. Set to False for techniques (e.g. TAP) that manage
+            their own scoring internally. Defaults to True.
     """
 
     name: str
     attack_class: type
     tags: list[str] = field(default_factory=list)
     extra_kwargs_builder: Callable[["PromptChatTarget"], dict[str, Any]] | None = None
+    accepts_scorer_override: bool = True
 
 
 class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
@@ -95,6 +99,25 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
         return {name: entry.instance for name, entry in self._registry_items.items()}
+
+    def accepts_scorer_override(self, name: str) -> bool:
+        """
+        Check whether a registered technique accepts a scenario-level scorer override.
+
+        Returns True by default if the tag is not set (for backwards compatibility
+        with externally registered techniques).
+
+        Args:
+            name: The registry name of the technique.
+
+        Returns:
+            bool: True if the technique accepts scorer overrides.
+
+        Raises:
+            KeyError: If no technique is registered with the given name.
+        """
+        entry = self._registry_items[name]
+        return entry.tags.get("accepts_scorer_override", "true") == "true"
 
     def create_technique(
         self,
@@ -195,6 +218,8 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         for spec in specs:
             if spec.name not in self:
                 factory = self.build_factory_from_spec(spec, adversarial_chat=adversarial_chat)
-                self.register_technique(name=spec.name, factory=factory, tags=spec.tags)
+                tags: dict[str, str] = {t: "" for t in spec.tags}
+                tags["accepts_scorer_override"] = str(spec.accepts_scorer_override).lower()
+                self.register_technique(name=spec.name, factory=factory, tags=tags)
 
         logger.debug("Technique registration complete (%d total in registry)", len(self))

@@ -56,6 +56,7 @@ SCENARIO_TECHNIQUES: list[TechniqueSpec] = [
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
         tags=["multi_turn"],
+        accepts_scorer_override=False,
     ),
 ]
 
@@ -94,20 +95,19 @@ def get_default_adversarial_target() -> PromptChatTarget:
 # ---------------------------------------------------------------------------
 
 
-def register_scenario_techniques(*, adversarial_chat: PromptChatTarget | None = None) -> None:
+def register_scenario_techniques() -> None:
     """
     Register all ``SCENARIO_TECHNIQUES`` into the ``AttackTechniqueRegistry`` singleton.
 
     Per-name idempotent: existing entries are not overwritten.
 
-    Args:
-        adversarial_chat: Shared adversarial chat target for techniques
-            that require one. If None, resolved via ``get_default_adversarial_target()``.
+    The registry always stores the **default** adversarial target. Scenarios
+    that need a custom adversarial target should pass it at ``factory.create()``
+    time via ``attack_adversarial_config_override``.
     """
     from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
-    if adversarial_chat is None:
-        adversarial_chat = get_default_adversarial_target()
+    adversarial_chat = get_default_adversarial_target()
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
     registry.register_from_specs(SCENARIO_TECHNIQUES, adversarial_chat=adversarial_chat)

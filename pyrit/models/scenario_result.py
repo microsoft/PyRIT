@@ -84,7 +84,7 @@ class ScenarioResult:
             id (Optional[uuid.UUID]): Optional scenario result ID.
             display_group_map (Optional[dict[str, str]]): Optional mapping of
                 atomic_attack_name → display group label. Used by the console
-                printer to aggregate results for user-facing output. Not persisted.
+                printer to aggregate results for user-facing output.
 
         """
         from pyrit.identifiers.component_identifier import ComponentIdentifier
