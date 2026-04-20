@@ -4,22 +4,21 @@
 import base64
 import hashlib
 import logging
-import string
-import textwrap
 from io import BytesIO
 from typing import cast
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
+from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult
 
 logger = logging.getLogger(__name__)
 
 
-class AddTextImageConverter(PromptConverter):
+class AddTextImageConverter(_BaseImageTextConverter):
     """
     Adds a string to an image and wraps the text into multiple lines if necessary.
 
@@ -107,62 +106,16 @@ class AddTextImageConverter(PromptConverter):
         Returns:
             Image.Image: The image with added text.
         """
-        margin = 5
-        # Use bounding box from (x_pos, y_pos) to (width - margin, height - margin)
-        # to match AddImageTextConverter's default behavior
-        x1, y1 = self._x_pos, self._y_pos
-        x2, y2 = image.width - margin, image.height - margin
-        box_width = x2 - x1
-        box_height = y2 - y1
+        margin = self._DEFAULT_MARGIN
+        bounding_box = (self._x_pos, self._y_pos, image.width - margin, image.height - margin)
 
-        lines = self._wrap_text(text=self._text_to_add, font=self._font, max_width=box_width)
-
-        overlay = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        fill_color = self._color + (255,)
-
-        line_height = self._get_line_height(font=self._font)
-        for i, line in enumerate(lines):
-            draw.text((0, i * line_height), line, font=self._font, fill=fill_color)
-
-        image = image.convert("RGBA")
-        image.paste(overlay, (x1, y1), overlay)
-        return image.convert("RGB")
-
-    def _wrap_text(self, *, text: str, font: FreeTypeFont, max_width: int) -> list[str]:
-        """
-        Word-wrap text to fit within max_width pixels.
-
-        Args:
-            text (str): The text to wrap.
-            font (FreeTypeFont): The font used for measuring text width.
-            max_width (int): The maximum width in pixels for each line.
-
-        Returns:
-            list[str]: The wrapped text lines.
-        """
-        temp_img = Image.new("RGBA", (1, 1))
-        draw = ImageDraw.Draw(temp_img)
-        bbox = draw.textbbox((0, 0), string.ascii_letters, font=font)
-        avg_char_width = (bbox[2] - bbox[0]) / len(string.ascii_letters)
-        max_chars = max(1, int(max_width / avg_char_width))
-        wrapped = textwrap.fill(text, width=max_chars)
-        return wrapped.split("\n")
-
-    def _get_line_height(self, *, font: FreeTypeFont) -> int:
-        """
-        Get the line height in pixels for a given font.
-
-        Args:
-            font (FreeTypeFont): The font to measure.
-
-        Returns:
-            int: The line height in pixels.
-        """
-        temp_img = Image.new("RGBA", (1, 1))
-        draw = ImageDraw.Draw(temp_img)
-        bbox = draw.textbbox((0, 0), "Ag", font=font)
-        return int(bbox[3] - bbox[1])
+        return self._render_text_on_image(
+            image=image,
+            text=self._text_to_add,
+            font=self._font,
+            color=self._color,
+            bounding_box=bounding_box,
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
