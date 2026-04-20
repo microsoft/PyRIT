@@ -1043,3 +1043,14 @@ class TestSimulatedAssistantRole:
         assert piece.get_role_for_storage() == "simulated_assistant"
         assert piece.api_role == "assistant"
         assert piece.is_simulated is True
+
+
+def test_set_piece_not_in_database_sets_id_to_none():
+    entry = MessagePiece(
+        role="user",
+        original_value="Hello",
+        converted_value="Hello",
+    )
+    assert entry.id is not None
+    entry.set_piece_not_in_database()
+    assert entry.id is None

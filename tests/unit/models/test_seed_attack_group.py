@@ -75,4 +75,4 @@ def test_seed_attack_group_objective_raises_when_get_objective_returns_none():
     group = SeedAttackGroup(seeds=[objective, prompt])
     with patch.object(type(group), "_get_objective", return_value=None):
         with pytest.raises(ValueError, match="SeedAttackGroup should always have an objective"):
-            group.objective
+            _ = group.objective

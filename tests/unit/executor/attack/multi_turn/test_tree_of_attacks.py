@@ -1804,3 +1804,24 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             ),
             attack_scoring_config=scoring_config,
         )
+
+
+def test_tap_attack_result_tree_visualization_getter_returns_value():
+    """Test that TAPAttackResult.tree_visualization returns the stored tree."""
+    tree = Tree()
+    tree.create_node("root", "root")
+    result = TAPAttackResult(
+        conversation_id="conv1",
+        objective="test",
+    )
+    result.metadata["tree_visualization"] = tree
+    assert result.tree_visualization is tree
+
+
+def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing():
+    """Test that TAPAttackResult.tree_visualization returns None when not set."""
+    result = TAPAttackResult(
+        conversation_id="conv1",
+        objective="test",
+    )
+    assert result.tree_visualization is None

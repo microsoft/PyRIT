@@ -436,3 +436,21 @@ async def test_get_data_filename_raises_when_results_storage_io_none():
     with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
         with pytest.raises(RuntimeError, match="results_storage_io is not initialized"):
             await serializer.get_data_filename()
+
+
+@pytest.mark.asyncio
+async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+    serializer._file_path = None
+    mock_memory = MagicMock()
+    mock_memory.results_path = None
+    mock_storage_io = AsyncMock()
+    mock_memory.results_storage_io = mock_storage_io
+    with (
+        patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory),
+        patch("pyrit.common.path.DB_DATA_PATH", "/fallback/db_data"),
+    ):
+        result = await serializer.get_data_filename(file_name="test_file")
+    result_str = str(result).replace("\\", "/")
+    assert "/fallback/db_data" in result_str
+    assert result_str.endswith(".png")

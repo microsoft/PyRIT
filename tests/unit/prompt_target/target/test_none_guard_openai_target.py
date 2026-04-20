@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai import BadRequestError, ContentFilterFinishReasonError
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message
 from pyrit.prompt_target import OpenAIChatTarget
 
 
@@ -14,7 +14,7 @@ def test_client_property_raises_when_async_client_none(patch_central_database):
     target = OpenAIChatTarget(endpoint="https://test.openai.com", api_key="test", model_name="gpt-4")
     target._async_client = None
     with pytest.raises(RuntimeError, match="AsyncOpenAI client is not initialized"):
-        target._client
+        _ = target._client
 
 
 @pytest.mark.asyncio

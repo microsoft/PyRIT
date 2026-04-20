@@ -1341,4 +1341,4 @@ def test_short_hash_raises_when_hash_none():
     object.__setattr__(obj, "class_name", "Test")
     object.__setattr__(obj, "class_module", "test.module")
     with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
-        obj.short_hash
+        _ = obj.short_hash

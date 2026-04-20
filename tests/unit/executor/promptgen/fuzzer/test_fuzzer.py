@@ -500,10 +500,10 @@ def test_create_normalizer_requests_raises_when_seed_group_message_none():
     generator._request_converters = []
     generator._response_converters = []
 
-    with patch("pyrit.executor.promptgen.fuzzer.fuzzer.SeedGroup") as MockSeedGroup:
+    with patch("pyrit.executor.promptgen.fuzzer.fuzzer.SeedGroup") as mock_seed_group:
         mock_instance = MagicMock()
         type(mock_instance).next_message = PropertyMock(return_value=None)
-        MockSeedGroup.return_value = mock_instance
+        mock_seed_group.return_value = mock_instance
 
         with pytest.raises(ValueError, match="No message in seed group"):
             generator._create_normalizer_requests(["test prompt"])
