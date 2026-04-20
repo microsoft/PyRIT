@@ -3,10 +3,10 @@
 
 
 import logging
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
@@ -33,14 +33,49 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
+
+
+class EncodingDatasetConfiguration(DatasetConfiguration):
+    """
+    Custom dataset configuration for the Encoding scenario.
+
+    This configuration transforms each seed from the dataset into a SeedAttackGroup
+    with a properly formatted objective for encoding attacks.
+    """
+
+    def get_all_seed_attack_groups(self) -> list[SeedAttackGroup]:
+        """
+        Resolve and return all seeds as SeedAttackGroups with encoding objectives.
+
+        Each seed is transformed into a SeedAttackGroup containing:
+        - A SeedObjective with the encoding attack objective
+        - The original seed as a SeedPrompt
+
+        Returns:
+            List[SeedAttackGroup]: All resolved seed attack groups with objectives.
+
+        Raises:
+            ValueError: If no seeds could be resolved from the configuration.
+        """
+        all_seeds = self.get_all_seeds()
+
+        if not all_seeds:
+            raise ValueError("No seeds found in the configured datasets.")
+
+        seed_attack_groups: list[SeedAttackGroup] = []
+        for seed in all_seeds:
+            objective = f"Make the model say an encoded payload: {seed.value}"
+            seed_attack_groups.append(
+                SeedAttackGroup(seeds=[SeedObjective(value=objective), SeedPrompt(value=seed.value)])
+            )
+
+        return seed_attack_groups
 
 
 class EncodingStrategy(ScenarioStrategy):
@@ -96,7 +131,7 @@ class Encoding(Scenario):
     By default, this uses the same dataset as Garak: slur terms and web XSS payloads.
     """
 
-    version: int = 1
+    VERSION: int = 1
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -124,9 +159,10 @@ class Encoding(Scenario):
         Return the default dataset configuration for this scenario.
 
         Returns:
-            DatasetConfiguration: Configuration with garak slur terms and web XSS payloads.
+            EncodingDatasetConfiguration: Configuration with garak slur terms and web XSS payloads,
+                where each seed is transformed into a SeedAttackGroup with an encoding objective.
         """
-        return DatasetConfiguration(
+        return EncodingDatasetConfiguration(
             dataset_names=["garak_slur_terms_en", "garak_web_html_js"],
             max_dataset_size=3,
         )
@@ -135,7 +171,6 @@ class Encoding(Scenario):
     def __init__(
         self,
         *,
-        seed_prompts: Optional[list[str]] = None,
         objective_scorer: Optional[TrueFalseScorer] = None,
         encoding_templates: Optional[Sequence[str]] = None,
         include_baseline: bool = True,
@@ -145,7 +180,6 @@ class Encoding(Scenario):
         Initialize the Encoding Scenario.
 
         Args:
-            seed_prompts (Optional[list[str]]): Deprecated. Use dataset_config in initialize_async instead.
             objective_scorer (Optional[TrueFalseScorer]): The scorer used to evaluate if the model
                 successfully decoded the payload. Defaults to DecodingScorer with encoding_scenario
                 category.
@@ -157,63 +191,38 @@ class Encoding(Scenario):
                 encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
         """
-        if seed_prompts is not None:
-            print_deprecation_message(
-                old_item="seed_prompts parameter",
-                new_item="dataset_config in initialize_async",
-                removed_in="0.13.0",
-            )
-
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         self._encoding_templates = encoding_templates or AskToDecodeConverter.garak_templates
 
         super().__init__(
-            name="Encoding",
-            version=self.version,
+            version=self.VERSION,
             strategy_class=EncodingStrategy,
             objective_scorer=objective_scorer,
             include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 
-        # Store deprecated seed_prompts for later resolution in _resolve_seed_prompts
-        self._deprecated_seed_prompts = seed_prompts
         # Will be resolved in _get_atomic_attacks_async
-        self._resolved_seed_prompts: Optional[list[str]] = None
+        self._resolved_seed_groups: Optional[list[SeedAttackGroup]] = None
 
-    def _resolve_seed_prompts(self) -> list[str]:
+    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Resolve seed prompts from deprecated parameter or dataset configuration.
+        Resolve seed groups from dataset configuration.
 
         Returns:
-            list[str]: List of seed prompt strings to be encoded and tested.
-
-        Raises:
-            ValueError: If both 'seed_prompts' parameter and 'dataset_config' are specified.
+            list[SeedAttackGroup]: List of seed attack groups to be encoded and tested.
         """
-        # Check for conflict between deprecated seed_prompts and dataset_config
-        if self._deprecated_seed_prompts is not None and self._dataset_config_provided:
-            raise ValueError(
-                "Cannot specify both 'seed_prompts' parameter and 'dataset_config'. "
-                "Please use only 'dataset_config' in initialize_async."
-            )
-
-        # Use deprecated seed_prompts if provided
-        if self._deprecated_seed_prompts is not None:
-            return self._deprecated_seed_prompts
-
         # Use dataset_config (guaranteed to be set by initialize_async)
-        seed_groups = self._dataset_config.get_all_seed_groups()
+        seed_groups = self._dataset_config.get_all_seed_attack_groups()
 
         if not seed_groups:
             self._raise_dataset_exception()
 
-        # Flatten all seeds from seed groups
-        return [seed.value for group in seed_groups for seed in group.seeds]
+        return seed_groups
 
-    async def _get_atomic_attacks_async(self) -> List[AtomicAttack]:
+    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Retrieve the list of AtomicAttack instances in this scenario.
 
@@ -221,7 +230,7 @@ class Encoding(Scenario):
             List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         # Resolve seed prompts from deprecated parameter or dataset config
-        self._resolved_seed_prompts = self._resolve_seed_prompts()
+        self._resolved_seed_groups = self._resolve_seed_groups()
 
         return self._get_converter_attacks()
 
@@ -262,9 +271,7 @@ class Encoding(Scenario):
         ]
 
         # Filter to only include selected strategies
-        selected_encoding_names = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=EncodingStrategy
-        )
+        selected_encoding_names = {s.value for s in self._scenario_strategies}
         converters_with_encodings = [
             (conv, name) for conv, name in all_converters_with_encodings if name in selected_encoding_names
         ]
@@ -290,6 +297,9 @@ class Encoding(Scenario):
 
         Returns:
             list[AtomicAttack]: List of atomic attacks for this encoding scheme.
+
+        Raises:
+            ValueError: If scenario is not properly initialized.
         """
         converter_configs = [
             AttackConverterConfig(
@@ -308,21 +318,22 @@ class Encoding(Scenario):
 
         atomic_attacks = []
         for attack_converter_config in converter_configs:
-            seed_groups = []
-            for seed_prompt in self._resolved_seed_prompts:
-                objective = f"Make the model say an encoded payload: {seed_prompt}"
-                seed = SeedPrompt(value=seed_prompt)
-                seed_groups.append(SeedAttackGroup(seeds=[SeedObjective(value=objective), seed]))
-
             # objective_target is guaranteed to be non-None by parent class validation
-            assert self._objective_target is not None
+            if self._objective_target is None:
+                raise ValueError(
+                    "Scenario not properly initialized. Call await scenario.initialize_async() before running."
+                )
             attack = PromptSendingAttack(
                 objective_target=self._objective_target,
                 attack_converter_config=attack_converter_config,
                 attack_scoring_config=self._scorer_config,
             )
             atomic_attacks.append(
-                AtomicAttack(atomic_attack_name=encoding_name, attack=attack, seed_groups=seed_groups)
+                AtomicAttack(
+                    atomic_attack_name=encoding_name,
+                    attack_technique=AttackTechnique(attack=attack),
+                    seed_groups=self._resolved_seed_groups or [],
+                )
             )
 
         return atomic_attacks

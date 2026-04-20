@@ -11,24 +11,22 @@ from pyrit.models import EmbeddingData, EmbeddingResponse, EmbeddingUsageInforma
 
 @pytest.fixture
 def my_embedding() -> EmbeddingResponse:
-    embedding = EmbeddingResponse(
+    return EmbeddingResponse(
         model="test",
         object="test",
         usage=EmbeddingUsageInformation(prompt_tokens=0, total_tokens=0),
         data=[EmbeddingData(embedding=[0.0], index=0, object="embedding")],
     )
-    return embedding
 
 
 @pytest.fixture
 def my_embedding_data() -> dict:
-    data = {
+    return {
         "model": "test",
         "object": "test",
         "usage": {"prompt_tokens": 0, "total_tokens": 0},
         "data": [{"embedding": [0.0], "index": 0, "object": "embedding"}],
     }
-    return data
 
 
 def test_can_save_embeddings(my_embedding: EmbeddingResponse):

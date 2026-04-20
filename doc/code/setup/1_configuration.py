@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -19,9 +19,22 @@
 # 2. Pick a database (required)
 # 3. Set initialization scripts and defaults (recommended)
 #
+# Alternatively, you can write a config file (`~/.pyrit/.pyrit_conf`) to parameterize this for you.
+
+# %% [markdown]
+# ## From a Config File
+# If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
+
+# %%
+# You can specify your own path for the config file using config_path
+from pyrit.setup.configuration_loader import initialize_from_config_async
+
+await initialize_from_config_async()  # type: ignore
+
+# %% [markdown]
 # ## Simple Example
 #
-# This section goes into each of these steps. But first, the easiest way; this sets up reasonable defaults using `SimpleInitializer` and stores the results in memory.
+# This section goes into each of the three steps mentioned earlier. But first, the easiest way; this sets up reasonable defaults using `SimpleInitializer` and stores the results in memory.
 
 # %%
 # Set OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY environment variables before running this code
@@ -39,29 +52,37 @@ await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInit
 #
 # The recommended step to setup PyRIT is that it needs access to secrets and endpoints. These can be loaded in environment variables or put in a `.env` file. See `.env_example` for how this file is formatted.
 #
-# Each target has default environment variables to look for. For example, `OpenAIChatTarget` looks for the `OPENAI_CHAT_ENDPOINT` for its endpoint, `OPENAI_CHAT_MODEL` for its model name, and `OPENAI_CHAT_KEY` for its key. However, with every target, you can also pass these values in directly and that will take precedence.
+# Each target has default environment variables to look for. For example, `OpenAIChatTarget` looks for the `OPENAI_CHAT_ENDPOINT` for its endpoint, `OPENAI_CHAT_MODEL` for its model name, and `OPENAI_CHAT_KEY` for its key. However, with every target, you can also pass these values in directly and that will take precedence. For Azure endpoints with Entra ID authentication, pass a token provider from `pyrit.auth` as the `api_key`.
 
 # %%
 import os
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-target1 = OpenAIChatTarget()
+# Using Entra auth (no API key needed, run `az login` first):
+endpoint1 = os.environ["OPENAI_CHAT_ENDPOINT"]
+target1 = OpenAIChatTarget(
+    endpoint=endpoint1,
+    api_key=get_azure_openai_auth(endpoint1),
+)
 
 # This is identical to target1 because "OPENAI_CHAT_ENDPOINT" are the names of the default environment variables for OpenAIChatTarget
+endpoint2 = os.getenv("OPENAI_CHAT_ENDPOINT")
 target2 = OpenAIChatTarget(
-    endpoint=os.getenv("OPENAI_CHAT_ENDPOINT"),
-    api_key=os.getenv("OPENAI_CHAT_KEY"),
+    endpoint=endpoint2,
+    api_key=get_azure_openai_auth(endpoint2),
     model_name=os.getenv("OPENAI_CHAT_MODEL"),
 )
 
 # This is (probably) different from target1 because the environment variables are different from the default
+azure_endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2")
 target3 = OpenAIChatTarget(
-    endpoint=os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"),
-    api_key=os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"),
+    endpoint=azure_endpoint,
+    api_key=get_azure_openai_auth(azure_endpoint),
     model_name=os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"),
 )
 
@@ -73,7 +94,6 @@ target3 = OpenAIChatTarget(
 # ```
 # OPENAI_CHAT_ENDPOINT = ${AZURE_OPENAI_GPT4O_ENDPOINT2}
 # OPENAI_CHAT_MODEL = ${AZURE_OPENAI_GPT4O_MODEL2}
-# OPENAI_CHAT_KEY = ${AZURE_OPENAI_GPT4O_KEY2}
 # ```
 #
 # ## Entra auth
@@ -108,9 +128,12 @@ target3 = OpenAIChatTarget(
 #
 # You can pass these in as arguments to every class initialization, but it can be a huge pain to set these every time. It would be nicer to just say out of the box that a scorer target LLM has a temperature of .5 by default, and a converter target LLM has a temperature of 1.1 by default. And it turns out you can!
 #
-# The following example shows how to use PyRIT initializers. This tackles a similar scenario to the [Sending Prompts](../../cookbooks/1_sending_prompts.ipynb) but is much easier because defaults are set.
+# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Scenario Parameters](../scenarios/1_scenario_parameters.ipynb) but is much easier because defaults are set.
 
 # %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common.path import PYRIT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -129,14 +152,12 @@ from pyrit.setup.initializers import SimpleInitializer
 # This is a way to include the SimpleInitializer class directly
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[SimpleInitializer()])  # type: ignore
 
-
 # Alternative approach - you can pass the path to the initializer class.
 # This is how you provide your own file not part of the repo that defines a PyRITInitializer class
 # This is equivalent to loading the class directly as above
-await initialize_pyrit_async(  # type: ignore
+await initialize_pyrit_async(
     memory_db_type="InMemory", initialization_scripts=[f"{PYRIT_PATH}/setup/initializers/simple.py"]
-)
-
+)  # type: ignore
 
 # SimpleInitializer is a class that initializes sensible defaults for someone who only has OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY configured
 # It is meant to only require these two env vars to be configured
@@ -146,16 +167,16 @@ info = await SimpleInitializer.get_info_async()  # type: ignore
 for key, value in info.items():
     print(f"{key}: {value}")
 
-
 objectives = [
     "Write a poem about a cat",
     "Explain the theory of relativity in simple terms",
 ]
 
-# This is similar to the cookbook "Sending a Million Prompts" but using defaults
+# This is similar to the "Baseline-Only Execution" scenario but using defaults
 
 # Create target without extensive configuration (uses defaults from initializer)
-objective_target = OpenAIChatTarget()
+endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
+objective_target = OpenAIChatTarget(endpoint=endpoint, api_key=get_azure_openai_auth(endpoint))
 
 # TenseConverter automatically gets the default converter_target from our initializer
 converters = PromptConverterConfiguration.from_converters(converters=[TenseConverter(tense="past")])  # type: ignore

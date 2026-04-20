@@ -2,21 +2,19 @@
 # Licensed under the MIT license.
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 
 
 @pytest.mark.asyncio
 async def test_score_to_dict():
-    scorer_identifier = ScorerIdentifier(
+    scorer_identifier = ComponentIdentifier(
         class_name="TestScorer",
         class_module="pyrit.score",
-        class_description="",
-        identifier_type="instance",
     )
     sample_score = Score(
         id=str(uuid.uuid4()),
@@ -28,7 +26,7 @@ async def test_score_to_dict():
         score_metadata={"key": "value"},
         scorer_class_identifier=scorer_identifier,
         message_piece_id=str(uuid.uuid4()),
-        timestamp=datetime.now(),
+        timestamp=datetime.now(tz=timezone.utc),
         objective="Task1",
     )
     result = sample_score.to_dict()

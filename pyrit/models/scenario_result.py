@@ -4,14 +4,13 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union
 
 import pyrit
 from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ScorerIdentifier
-    from pyrit.score import Scorer
+    from pyrit.identifiers.component_identifier import ComponentIdentifier
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
@@ -39,6 +38,7 @@ class ScenarioIdentifier:
             scenario_version (int): Version of the scenario.
             init_data (Optional[dict]): Initialization data.
             pyrit_version (Optional[str]): PyRIT version string. If None, uses current version.
+
         """
         self.name = name
         self.description = description
@@ -59,36 +59,39 @@ class ScenarioResult:
         self,
         *,
         scenario_identifier: ScenarioIdentifier,
-        objective_target_identifier: dict[str, str],
-        attack_results: dict[str, List[AttackResult]],
-        objective_scorer_identifier: Union[Dict[str, Any], "ScorerIdentifier"],
+        objective_target_identifier: Union[dict[str, Any], "ComponentIdentifier"],
+        attack_results: dict[str, list[AttackResult]],
+        objective_scorer_identifier: Union[dict[str, Any], "ComponentIdentifier"],
         scenario_run_state: ScenarioRunState = "CREATED",
         labels: Optional[dict[str, str]] = None,
         completion_time: Optional[datetime] = None,
         number_tries: int = 0,
-        id: Optional[uuid.UUID] = None,
-        # Deprecated parameter - will be removed in 0.13.0
-        objective_scorer: Optional["Scorer"] = None,
+        id: Optional[uuid.UUID] = None,  # noqa: A002
     ) -> None:
-        from pyrit.common import print_deprecation_message
-        from pyrit.identifiers import ScorerIdentifier
+        """
+        Initialize a scenario result.
+
+        Args:
+            scenario_identifier (ScenarioIdentifier): Identifier for the executed scenario.
+            objective_target_identifier (Union[Dict[str, Any], TargetIdentifier]): Target identifier.
+            attack_results (dict[str, List[AttackResult]]): Results grouped by atomic attack name.
+            objective_scorer_identifier (Union[Dict[str, Any], ScorerIdentifier]): Objective scorer identifier.
+            scenario_run_state (ScenarioRunState): Current scenario run state.
+            labels (Optional[dict[str, str]]): Optional labels.
+            completion_time (Optional[datetime]): Optional completion timestamp.
+            number_tries (int): Number of run attempts.
+            id (Optional[uuid.UUID]): Optional scenario result ID.
+
+        """
+        from pyrit.identifiers.component_identifier import ComponentIdentifier
 
         self.id = id if id is not None else uuid.uuid4()
         self.scenario_identifier = scenario_identifier
-        self.objective_target_identifier = objective_target_identifier
 
-        # Handle deprecated objective_scorer parameter
-        if objective_scorer is not None:
-            print_deprecation_message(
-                old_item="objective_scorer parameter",
-                new_item="objective_scorer_identifier",
-                removed_in="0.13.0",
-            )
-            # Extract identifier from scorer object and normalize
-            # (handles both ScorerIdentifier and legacy dict returns)
-            self.objective_scorer_identifier = ScorerIdentifier.normalize(objective_scorer.get_identifier())
-        else:
-            self.objective_scorer_identifier = ScorerIdentifier.normalize(objective_scorer_identifier)
+        # Normalize objective_target_identifier to ComponentIdentifier
+        self.objective_target_identifier = ComponentIdentifier.normalize(objective_target_identifier)
+
+        self.objective_scorer_identifier = ComponentIdentifier.normalize(objective_scorer_identifier)
 
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results
@@ -96,11 +99,17 @@ class ScenarioResult:
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
 
-    def get_strategies_used(self) -> List[str]:
-        """Get the list of strategies used in this scenario."""
+    def get_strategies_used(self) -> list[str]:
+        """
+        Get the list of strategies used in this scenario.
+
+        Returns:
+            List[str]: Atomic attack strategy names present in the results.
+
+        """
         return list(self.attack_results.keys())
 
-    def get_objectives(self, *, atomic_attack_name: Optional[str] = None) -> List[str]:
+    def get_objectives(self, *, atomic_attack_name: Optional[str] = None) -> list[str]:
         """
         Get the list of unique objectives for this scenario.
 
@@ -110,9 +119,10 @@ class ScenarioResult:
 
         Returns:
             List[str]: Deduplicated list of objectives.
+
         """
-        objectives: List[str] = []
-        strategies_to_process: List[List[AttackResult]]
+        objectives: list[str] = []
+        strategies_to_process: list[list[AttackResult]]
 
         if not atomic_attack_name:
             # Include all atomic attacks
@@ -125,8 +135,7 @@ class ScenarioResult:
                 strategies_to_process = []
 
         for results in strategies_to_process:
-            for result in results:
-                objectives.append(result.objective)
+            objectives.extend(result.objective for result in results)
 
         return list(set(objectives))
 
@@ -140,6 +149,7 @@ class ScenarioResult:
 
         Returns:
             int: Success rate as a percentage (0-100).
+
         """
         if not atomic_attack_name:
             # Calculate rate across all atomic attacks
@@ -177,14 +187,14 @@ class ScenarioResult:
 
         Returns:
             The normalized scenario name suitable for database queries.
+
         """
         # Check if it looks like snake_case (contains underscore and is lowercase)
         if "_" in scenario_name and scenario_name == scenario_name.lower():
             # Convert snake_case to PascalCase
             # e.g., "content_harms" -> "ContentHarms"
             parts = scenario_name.split("_")
-            pascal_name = "".join(part.capitalize() for part in parts)
-            return pascal_name
+            return "".join(part.capitalize() for part in parts)
         # Already PascalCase or other format, return as-is
         return scenario_name
 
@@ -194,17 +204,17 @@ class ScenarioResult:
 
         Returns:
             ScorerMetrics: The evaluation metrics object, or None if not found.
+
         """
         # import here to avoid circular imports
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_hash,
+            find_objective_metrics_by_eval_hash,
         )
 
         if not self.objective_scorer_identifier:
             return None
 
-        scorer_hash = self.objective_scorer_identifier.hash
-        if not scorer_hash:
-            return None
+        eval_hash = ScorerEvaluationIdentifier(self.objective_scorer_identifier).eval_hash
 
-        return find_objective_metrics_by_hash(hash=scorer_hash)
+        return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)

@@ -8,6 +8,7 @@ from typing import Literal
 import numpy as np
 from scipy.io import wavfile
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -41,6 +42,20 @@ class AudioFrequencyConverter(PromptConverter):
         """
         self._output_format = output_format
         self._shift_value = shift_value
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with audio frequency parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "output_format": self._output_format,
+                "shift_value": self._shift_value,
+            },
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "audio_path") -> ConverterResult:
         """
@@ -82,11 +97,7 @@ class AudioFrequencyConverter(PromptConverter):
             converted_bytes = bytes_io.getvalue()
             await audio_serializer.save_data(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
-            logger.info(
-                "Speech synthesized for text [{}], and the audio was saved to [{}]".format(
-                    prompt, audio_serializer_file
-                )
-            )
+            logger.info(f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]")
 
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +9,7 @@ from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -20,12 +20,22 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 
-
 # Fixtures at the top of the file
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
 @pytest.fixture
 def mock_prompt_target() -> MagicMock:
     """Mock prompt target for testing."""
     target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = _mock_target_id("mock_prompt_target")
     return target
 
 
@@ -85,7 +95,6 @@ def sample_attack_result() -> AttackResult:
     return AttackResult(
         conversation_id="test-conversation-id",
         objective="Test objective",
-        attack_identifier={"name": "test_attack"},
         executed_turns=1,
         execution_time_ms=1000,
         outcome=AttackOutcome.SUCCESS,
@@ -347,8 +356,8 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
         sample_attack_result: AttackResult,
     ) -> None:
         """Test execute_async with optional parameters."""
-        prepended_conversation: List[Message] = []
-        memory_labels: Dict[str, str] = {"test": "label"}
+        prepended_conversation: list[Message] = []
+        memory_labels: dict[str, str] = {"test": "label"}
 
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
             mock_attack_instance = AsyncMock()
@@ -398,7 +407,7 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         mock_response = MagicMock(spec=Message)
         mock_response.message_pieces = [mock_message_piece]
 
-        prepended_conversation: List[Message] = [mock_response]
+        prepended_conversation: list[Message] = [mock_response]
 
         context = QuestionAnsweringBenchmarkContext(
             question_answering_entry=sample_question_entry, prepended_conversation=prepended_conversation

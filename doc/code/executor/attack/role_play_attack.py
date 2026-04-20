@@ -15,17 +15,18 @@
 # %% [markdown]
 # # Role Play Attack (Single-Turn) - optional
 #
-# This attack prepends some prompts defined in `role_play_definition`, along with an `adversarial_chat` target LLM to generate the first turns to send. Typically these prompts describe a fictional scenario to attempt and elicit harmful responses.
-# Any converters that you provide will be applied to the prompt that has already been converted by the role play definition (using the provided `adversarial_chat` target). You may see better success if you provide a LLM that has no content moderation or other safety mechanisms. Otherwise, it may refuse to convert the prompt as expected.
+# This attack prepends some prompts defined in `role_play_definition`, along with an `attack_adversarial_config` target LLM to generate the first turns to send. Typically these prompts describe a fictional scenario to attempt and elicit harmful responses.
+# Any converters that you provide will be applied to the prompt that has already been converted by the role play definition (using the provided `attack_adversarial_config` target). You may see better success if you provide a LLM that has no content moderation or other safety mechanisms. Otherwise, it may refuse to convert the prompt as expected.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 
 # %%
 import os
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import (
+    AttackAdversarialConfig,
     AttackConverterConfig,
     AttackExecutor,
     AttackScoringConfig,
@@ -42,9 +43,10 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 objective_target = OpenAIChatTarget()
+adversarial_endpoint = os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"]
 adversarial_chat = OpenAIChatTarget(
-    endpoint=os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"],
-    api_key=os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"],
+    endpoint=adversarial_endpoint,
+    api_key=get_azure_openai_auth(adversarial_endpoint),
     model_name=os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"],
 )
 
@@ -57,7 +59,7 @@ scoring_config = AttackScoringConfig(
 
 attack = RolePlayAttack(
     objective_target=objective_target,
-    adversarial_chat=adversarial_chat,
+    attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
     role_play_definition_path=RolePlayPaths.MOVIE_SCRIPT.value,
     attack_scoring_config=scoring_config,
     attack_converter_config=converter_config,

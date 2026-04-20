@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, Score, UnvalidatedScore
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.score.scorer import Scorer
@@ -51,14 +52,16 @@ class FloatScaleScorer(Scorer):
             HarmScorerMetrics: The metrics for this scorer, or None if not found or not configured.
         """
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_harm_metrics_by_hash,
+            find_harm_metrics_by_eval_hash,
         )
 
         if self.evaluation_file_mapping is None or self.evaluation_file_mapping.harm_category is None:
             return None
-        scorer_hash = self.get_identifier().hash
 
-        return find_harm_metrics_by_hash(hash=scorer_hash, harm_category=self.evaluation_file_mapping.harm_category)
+        return find_harm_metrics_by_eval_hash(
+            eval_hash=self.get_identifier().eval_hash,
+            harm_category=self.evaluation_file_mapping.harm_category,
+        )
 
     async def _score_value_with_llm(
         self,
@@ -75,7 +78,7 @@ class FloatScaleScorer(Scorer):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: Optional[Dict[str, str]] = None,
+        attack_identifier: Optional[ComponentIdentifier] = None,
     ) -> UnvalidatedScore:
         score: UnvalidatedScore | None = None
         try:
@@ -102,5 +105,5 @@ class FloatScaleScorer(Scorer):
             score_value = score.raw_score_value if score else "None"
             raise InvalidJsonException(
                 message=(f"Invalid JSON response, score_value should be a float not this: {score_value}")
-            )
+            ) from None
         return score

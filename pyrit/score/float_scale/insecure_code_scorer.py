@@ -7,6 +7,7 @@ from typing import Optional, Union
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -19,7 +20,7 @@ class InsecureCodeScorer(FloatScaleScorer):
     Configuration is loaded from a YAML file for dynamic prompts and instructions.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
     def __init__(
         self,
@@ -37,7 +38,7 @@ class InsecureCodeScorer(FloatScaleScorer):
                 Defaults to the default insecure code scoring prompt if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._default_validator)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self._prompt_target = chat_target
 
@@ -55,11 +56,20 @@ class InsecureCodeScorer(FloatScaleScorer):
         # Render the system prompt with the harm category
         self._system_prompt = scoring_instructions_template.render_template_value(harm_categories=self._harm_category)
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_identifier(
-            system_prompt_template=self._system_prompt,
-            prompt_target=self._prompt_target,
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "system_prompt_template": self._system_prompt,
+            },
+            children={
+                "prompt_target": self._prompt_target.get_identifier(),
+            },
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
@@ -93,7 +103,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             # Attempt to use score_value if available
             raw_score_value = float(unvalidated_score.raw_score_value)
         except KeyError:
-            raise InvalidJsonException(message="Expected 'score_value' key missing in the JSON response")
+            raise InvalidJsonException(message="Expected 'score_value' key missing in the JSON response") from None
 
         # Convert UnvalidatedScore to Score, applying scaling and metadata
         score = unvalidated_score.to_score(

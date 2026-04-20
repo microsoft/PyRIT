@@ -7,8 +7,9 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import get_mock_target_identifier
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, UnvalidatedScore
 from pyrit.score import ContentClassifierPaths, SelfAskScaleScorer
 
@@ -39,8 +40,10 @@ def scorer_scale_response() -> Message:
 
 @pytest.fixture
 def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     return SelfAskScaleScorer(
-        chat_target=MagicMock(),
+        chat_target=chat_target,
         scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
         system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
     )
@@ -65,6 +68,7 @@ async def test_scale_scorer_set_system_prompt(
     patch_central_database,
 ):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
     scorer = SelfAskScaleScorer(
@@ -86,6 +90,7 @@ async def test_scale_scorer_set_system_prompt(
 
 def test_scale_scorer_invalid_scale_file_contents():
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     # When using a YAML with wrong keys the Scale constructor will raise an exception.
     with pytest.raises(ValueError, match="Missing key in scale_args:"):
         SelfAskScaleScorer(
@@ -135,6 +140,7 @@ def test_validate_scale_arguments_missing_args_raises_value_error(scale_args, sc
 @pytest.mark.asyncio
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
@@ -161,6 +167,7 @@ async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_
 @pytest.mark.asyncio
 async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     # set a higher score to test the scaling
     scorer_scale_response.message_pieces[0].original_value = scorer_scale_response.message_pieces[
@@ -197,6 +204,7 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
 @pytest.mark.asyncio
 async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskScaleScorer(
         chat_target=chat_target,
@@ -210,11 +218,9 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
         score_category=["jailbreak"],
         score_value_description="description",
         score_metadata={"meta": "metadata"},
-        scorer_class_identifier=ScorerIdentifier(
+        scorer_class_identifier=ComponentIdentifier(
             class_name="SelfAskScaleScorer",
             class_module="pyrit.score",
-            class_description="",
-            identifier_type="instance",
         ),
         message_piece_id=str(uuid.uuid4()),
         objective="task",
@@ -223,4 +229,4 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     scorer._score_value_with_llm = AsyncMock(return_value=score)
 
     await scorer.score_text_async(text="example text", objective="task")
-    assert scorer._score_value_with_llm.call_count == int(1)
+    assert scorer._score_value_with_llm.call_count == 1

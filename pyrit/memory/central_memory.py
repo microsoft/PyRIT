@@ -41,5 +41,4 @@ class CentralMemory:
         if cls._memory_instance:
             logger.info(f"Using existing memory instance: {type(cls._memory_instance).__name__}")
             return cls._memory_instance
-        else:
-            raise ValueError("Central memory instance has not been set. Use `set_memory_instance` to set it.")
+        raise ValueError("Central memory instance has not been set. Use `set_memory_instance` to set it.")

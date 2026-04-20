@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -69,11 +69,9 @@ class TestScorerMetricsWithIdentity:
     """Tests for ScorerMetricsWithIdentity dataclass."""
 
     def test_creation_with_objective_metrics(self):
-        scorer_id = ScorerIdentifier(
+        scorer_id = ComponentIdentifier(
             class_name="TestScorer",
             class_module="test.module",
-            class_description="Test scorer",
-            identifier_type="instance",
         )
         metrics = ObjectiveScorerMetrics(
             num_responses=10,
@@ -95,11 +93,9 @@ class TestScorerMetricsWithIdentity:
         assert result.metrics.f1_score == 0.85
 
     def test_creation_with_harm_metrics(self):
-        scorer_id = ScorerIdentifier(
+        scorer_id = ComponentIdentifier(
             class_name="HarmScorer",
             class_module="test.module",
-            class_description="Harm scorer",
-            identifier_type="instance",
         )
         metrics = HarmScorerMetrics(
             num_responses=20,
@@ -122,11 +118,9 @@ class TestScorerMetricsWithIdentity:
         assert result.metrics.harm_category == "hate_speech"
 
     def test_repr(self):
-        scorer_id = ScorerIdentifier(
+        scorer_id = ComponentIdentifier(
             class_name="MyScorer",
             class_module="test.module",
-            class_description="My scorer",
-            identifier_type="instance",
         )
         metrics = ObjectiveScorerMetrics(
             num_responses=5,
@@ -296,7 +290,7 @@ class TestGetAllObjectiveMetrics:
         assert sorted_results[1].metrics.f1_score == 0.80
 
     def test_get_all_objective_metrics_scorer_identifier_reconstructed(self, tmp_path):
-        """Test that ScorerIdentifier is properly reconstructed with all fields."""
+        """Test that ComponentIdentifier is properly reconstructed with all fields."""
         objective_dir = tmp_path / "objective"
         objective_dir.mkdir(parents=True, exist_ok=True)
         file_path = objective_dir / "objective_achieved_metrics.jsonl"
@@ -331,10 +325,10 @@ class TestGetAllObjectiveMetrics:
         scorer_id = results[0].scorer_identifier
 
         assert scorer_id.class_name == "ComplexScorer"
-        assert scorer_id.system_prompt_template == "sha256:abcd1234"
-        assert scorer_id.user_prompt_template == "user template"
-        assert scorer_id.target_info == {"model": "gpt-4", "temperature": 0.7}
-        assert scorer_id.scorer_specific_params == {"threshold": 0.5}
+        assert scorer_id.params["system_prompt_template"] == "sha256:abcd1234"
+        assert scorer_id.params["user_prompt_template"] == "user template"
+        assert scorer_id.params["target_info"] == {"model": "gpt-4", "temperature": 0.7}
+        assert scorer_id.params["scorer_specific_params"] == {"threshold": 0.5}
 
 
 class TestGetAllHarmMetrics:
@@ -424,13 +418,9 @@ class TestReplaceEvaluationResults:
         """Test that replace_evaluation_results adds a new entry when none exists."""
         result_file = tmp_path / "test_results.jsonl"
 
-        scorer_identifier = ScorerIdentifier(
+        scorer_identifier = ComponentIdentifier(
             class_name="TestScorer",
             class_module="test.module",
-            class_description="Test scorer",
-            identifier_type="instance",
-            sub_identifier=[],
-            target_info=None,
         )
 
         metrics = ObjectiveScorerMetrics(
@@ -448,6 +438,7 @@ class TestReplaceEvaluationResults:
         replace_evaluation_results(
             file_path=result_file,
             scorer_identifier=scorer_identifier,
+            eval_hash=scorer_identifier.hash,
             metrics=metrics,
         )
 
@@ -457,20 +448,16 @@ class TestReplaceEvaluationResults:
 
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["hash"] == scorer_identifier.hash
+        assert entry["eval_hash"] == scorer_identifier.hash
         assert entry["metrics"]["accuracy"] == 0.9
 
     def test_replace_replaces_existing_entry(self, tmp_path):
         """Test that replace_evaluation_results replaces existing entry with same hash."""
         result_file = tmp_path / "test_results.jsonl"
 
-        scorer_identifier = ScorerIdentifier(
+        scorer_identifier = ComponentIdentifier(
             class_name="TestScorer",
             class_module="test.module",
-            class_description="Test scorer",
-            identifier_type="instance",
-            sub_identifier=[],
-            target_info=None,
         )
 
         # Add initial entry
@@ -489,6 +476,7 @@ class TestReplaceEvaluationResults:
         replace_evaluation_results(
             file_path=result_file,
             scorer_identifier=scorer_identifier,
+            eval_hash=scorer_identifier.hash,
             metrics=initial_metrics,
         )
 
@@ -508,6 +496,7 @@ class TestReplaceEvaluationResults:
         replace_evaluation_results(
             file_path=result_file,
             scorer_identifier=scorer_identifier,
+            eval_hash=scorer_identifier.hash,
             metrics=updated_metrics,
         )
 
@@ -517,7 +506,7 @@ class TestReplaceEvaluationResults:
 
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["hash"] == scorer_identifier.hash
+        assert entry["eval_hash"] == scorer_identifier.hash
         assert entry["metrics"]["accuracy"] == 0.9
         assert entry["metrics"]["num_scorer_trials"] == 5
 
@@ -526,13 +515,9 @@ class TestReplaceEvaluationResults:
         result_file = tmp_path / "test_results.jsonl"
 
         # Add first scorer
-        scorer1 = ScorerIdentifier(
+        scorer1 = ComponentIdentifier(
             class_name="TestScorer1",
             class_module="test.module",
-            class_description="Test scorer 1",
-            identifier_type="instance",
-            sub_identifier=[],
-            target_info=None,
         )
         metrics1 = ObjectiveScorerMetrics(
             num_responses=10,
@@ -548,17 +533,14 @@ class TestReplaceEvaluationResults:
         replace_evaluation_results(
             file_path=result_file,
             scorer_identifier=scorer1,
+            eval_hash=scorer1.hash,
             metrics=metrics1,
         )
 
         # Add second scorer
-        scorer2 = ScorerIdentifier(
+        scorer2 = ComponentIdentifier(
             class_name="TestScorer2",
             class_module="test.module",
-            class_description="Test scorer 2",
-            identifier_type="instance",
-            sub_identifier=[],
-            target_info=None,
         )
         metrics2 = ObjectiveScorerMetrics(
             num_responses=15,
@@ -574,6 +556,7 @@ class TestReplaceEvaluationResults:
         replace_evaluation_results(
             file_path=result_file,
             scorer_identifier=scorer2,
+            eval_hash=scorer2.hash,
             metrics=metrics2,
         )
 
@@ -592,6 +575,7 @@ class TestReplaceEvaluationResults:
         replace_evaluation_results(
             file_path=result_file,
             scorer_identifier=scorer1,
+            eval_hash=scorer1.hash,
             metrics=updated_metrics1,
         )
 
@@ -601,7 +585,7 @@ class TestReplaceEvaluationResults:
 
         assert len(lines) == 2
         entries = [json.loads(line) for line in lines]
-        hashes = {e["hash"]: e for e in entries}
+        hashes = {e["eval_hash"]: e for e in entries}
 
         assert scorer1.hash in hashes
         assert scorer2.hash in hashes

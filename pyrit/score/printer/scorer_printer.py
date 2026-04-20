@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 
 
 class ScorerPrinter(ABC):
@@ -16,7 +16,7 @@ class ScorerPrinter(ABC):
     """
 
     @abstractmethod
-    def print_objective_scorer(self, *, scorer_identifier: ScorerIdentifier) -> None:
+    def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
         """
         Print objective scorer information including type, nested scorers, and evaluation metrics.
 
@@ -26,12 +26,11 @@ class ScorerPrinter(ABC):
         - Objective evaluation metrics (accuracy, precision, recall, F1) from the registry
 
         Args:
-            scorer_identifier (ScorerIdentifier): The scorer identifier to print information for.
+            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
         """
-        pass
 
     @abstractmethod
-    def print_harm_scorer(self, scorer_identifier: ScorerIdentifier, *, harm_category: str) -> None:
+    def print_harm_scorer(self, scorer_identifier: ComponentIdentifier, *, harm_category: str) -> None:
         """
         Print harm scorer information including type, nested scorers, and evaluation metrics.
 
@@ -41,7 +40,6 @@ class ScorerPrinter(ABC):
         - Harm evaluation metrics (MAE, Krippendorff alpha) from the registry
 
         Args:
-            scorer_identifier (ScorerIdentifier): The scorer identifier to print information for.
+            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
             harm_category (str): The harm category for looking up metrics (e.g., "hate_speech", "violence").
         """
-        pass

@@ -13,6 +13,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -42,8 +43,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
     2. Sending the actual objective prompt to the primed target.
     3. Evaluating the response using configured scorers to determine success.
 
-    Learn more about attack at the link below:
-    https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/
+    Learn more about the attack [@microsoft2024skeletonkey].
     """
 
     # Default skeleton key prompt path
@@ -175,7 +175,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             last_response=None,
             last_score=None,
             outcome=AttackOutcome.FAILURE,

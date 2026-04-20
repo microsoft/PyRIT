@@ -13,6 +13,7 @@ from pyrit.executor.attack import (
     FlipAttack,
     SingleTurnAttackContext,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -23,12 +24,28 @@ from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import TrueFalseScorer
 
 
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
 @pytest.fixture
 def mock_objective_target():
     """Create a mock PromptChatTarget for testing"""
     target = MagicMock(spec=PromptChatTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target
 
 
@@ -43,6 +60,7 @@ def mock_scorer():
     """Create a mock true/false scorer"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = _mock_scorer_id()
     return scorer
 
 
@@ -200,7 +218,6 @@ class TestFlipAttackExecution:
             mock_result = AttackResult(
                 conversation_id=basic_context.conversation_id,
                 objective=basic_context.objective,
-                attack_identifier=flip_attack.get_identifier(),
                 outcome=AttackOutcome.SUCCESS,
             )
             mock_perform.return_value = mock_result
@@ -232,7 +249,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
         attack._perform_async = AsyncMock(return_value=mock_result)

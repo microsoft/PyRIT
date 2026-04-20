@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import logging
 import uuid
 from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -60,6 +62,34 @@ class LLMGenericTextConverter(PromptConverter):
             raise ValueError("user_prompt_template_with_objective must contain the 'objective' parameter")
 
         self._user_prompt_template_with_objective = user_prompt_template_with_objective
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with LLM and template parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        # Hash templates if they exist and have a value attribute
+        system_prompt_hash = None
+        if self._system_prompt_template and hasattr(self._system_prompt_template, "value"):
+            system_prompt_hash = hashlib.sha256(str(self._system_prompt_template.value).encode("utf-8")).hexdigest()[
+                :16
+            ]
+
+        user_prompt_hash = None
+        if self._user_prompt_template_with_objective and hasattr(self._user_prompt_template_with_objective, "value"):
+            user_prompt_hash = hashlib.sha256(
+                str(self._user_prompt_template_with_objective.value).encode("utf-8")
+            ).hexdigest()[:16]
+
+        return self._create_identifier(
+            params={
+                "system_prompt_template_hash": system_prompt_hash,
+                "user_prompt_template_hash": user_prompt_hash,
+            },
+            children={"converter_target": self._converter_target.get_identifier()},
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """

@@ -172,6 +172,7 @@ cython_debug/
 
 # PyRIT secrets file
 .env
+.pyrit_cache/
 
 # Cache for generating docs
 doc/generate_docs/cache/*

@@ -6,11 +6,12 @@ from __future__ import annotations
 import enum
 import logging
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.common.utils import warn_if_set
+from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
     get_adversarial_chat_messages,
@@ -25,6 +26,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -36,7 +38,11 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +54,6 @@ class RTASystemPromptPaths(enum.Enum):
     IMAGE_GENERATION = Path(EXECUTOR_RED_TEAM_PATH, "image_generation.yaml").resolve()
     NAIVE_CRESCENDO = Path(EXECUTOR_RED_TEAM_PATH, "naive_crescendo.yaml").resolve()
     VIOLENT_DURIAN = Path(EXECUTOR_RED_TEAM_PATH, "violent_durian.yaml").resolve()
-    CRUCIBLE = Path(EXECUTOR_RED_TEAM_PATH, "crucible.yaml").resolve()
 
 
 class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], AttackResult]):
@@ -309,7 +314,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         # Prepare the result
         return AttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -322,7 +327,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     async def _teardown_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
         # Nothing to be done here, no-op
-        pass
 
     async def _generate_next_prompt_async(self, context: MultiTurnAttackContext[Any]) -> Message:
         """
@@ -361,13 +365,21 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
         prompt_message = Message.from_prompt(prompt=prompt_text, role="user")
 
-        response = await self._prompt_normalizer.send_prompt_async(
-            message=prompt_message,
-            conversation_id=context.session.adversarial_chat_conversation_id,
-            target=self._adversarial_chat,
+        with execution_context(
+            component_role=ComponentRole.ADVERSARIAL_CHAT,
+            attack_strategy_name=self.__class__.__name__,
             attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,
-        )
+            component_identifier=self._adversarial_chat.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
+            objective=context.objective,
+        ):
+            response = await self._prompt_normalizer.send_prompt_async(
+                message=prompt_message,
+                conversation_id=context.session.adversarial_chat_conversation_id,
+                target=self._adversarial_chat,
+                attack_identifier=self.get_identifier(),
+                labels=context.memory_labels,
+            )
 
         # Check if the response is valid
         if response is None:
@@ -436,7 +448,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 prompt_text += f"\n\n{context.last_score.score_rationale}"
             return prompt_text
 
-        elif response_piece.is_blocked():
+        if response_piece.is_blocked():
             return RedTeamingAttack.DEFAULT_ADVERSARIAL_PROMPT_IF_OBJECTIVE_TARGET_IS_BLOCKED
 
         return f"Request to target failed: {response_piece.response_error}"
@@ -512,16 +524,27 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """
         logger.info(f"Sending prompt to target: {message.get_value()[:50]}...")
 
-        # Send the message to the target
-        response = await self._prompt_normalizer.send_prompt_async(
-            message=message,
-            conversation_id=context.session.conversation_id,
-            request_converter_configurations=self._request_converters,
-            response_converter_configurations=self._response_converters,
-            target=self._objective_target,
-            labels=context.memory_labels,
+        # For single-turn targets, rotate conversation_id so each turn starts fresh
+        self._rotate_conversation_for_single_turn_target(context=context)
+
+        with execution_context(
+            component_role=ComponentRole.OBJECTIVE_TARGET,
+            attack_strategy_name=self.__class__.__name__,
             attack_identifier=self.get_identifier(),
-        )
+            component_identifier=self._objective_target.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
+            objective=context.objective,
+        ):
+            # Send the message to the target
+            response = await self._prompt_normalizer.send_prompt_async(
+                message=message,
+                conversation_id=context.session.conversation_id,
+                request_converter_configurations=self._request_converters,
+                response_converter_configurations=self._response_converters,
+                target=self._objective_target,
+                labels=context.memory_labels,
+                attack_identifier=self.get_identifier(),
+            )
 
         if response is None:
             # Easiest way to handle this is to raise an error
@@ -552,12 +575,21 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             logger.warning("No response available in context to score")
             return None
 
-        # score_async handles blocked, filtered, other errors
-        scoring_results = await self._objective_scorer.score_async(
-            message=context.last_response,
-            role_filter="assistant",
+        with execution_context(
+            component_role=ComponentRole.OBJECTIVE_SCORER,
+            attack_strategy_name=self.__class__.__name__,
+            attack_identifier=self.get_identifier(),
+            component_identifier=self._objective_scorer.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
-        )
+        ):
+            # score_async handles blocked, filtered, other errors
+            scoring_results = await self._objective_scorer.score_async(
+                message=context.last_response,
+                role_filter="assistant",
+                objective=context.objective,
+            )
+
         objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
 
@@ -572,7 +604,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             ValueError: If the seed prompt is not a string or SeedPrompt object.
         """
         if isinstance(seed_prompt, str):
-            self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text")
+            self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text", is_jinja_template=True)
         elif isinstance(seed_prompt, SeedPrompt):
             self._adversarial_chat_seed_prompt = seed_prompt
         else:

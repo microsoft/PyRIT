@@ -5,6 +5,7 @@ authors:
 parameters:
   - prompt
 data_type: text
+is_general_technique: true
 value: |
   {% raw %}  TIP: to use this prompt with the "writing tool" enter it somewhere like the Notes app, then highlight just the first sentence and use "rewrite with ChatGPT."
 

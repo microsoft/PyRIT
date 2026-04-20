@@ -3,7 +3,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import requests
 
@@ -54,7 +54,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         categories_to_fetch = [self.category] if self.category else VALID_CATEGORIES
 
         logger.info("Loading Anthropic model-written-evals dataset")
-        question_entries: List[QuestionAnsweringEntry] = []
+        question_entries: list[QuestionAnsweringEntry] = []
 
         for cat in categories_to_fetch:
             logger.info(f"Fetching files from category: {cat}")
@@ -107,7 +107,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         )
 
     @staticmethod
-    def _get_category_files(category: str) -> List[Dict[str, str]]:
+    def _get_category_files(category: str) -> list[dict[str, str]]:
         """
         List ``.jsonl`` files in a category via the GitHub Contents API.
 
@@ -124,20 +124,22 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         if response.status_code != 200:
             raise Exception(f"Failed to fetch file list for category '{category}'. Status code: {response.status_code}")
 
-        files: List[Dict[str, str]] = []
+        files: list[dict[str, str]] = []
         for item in response.json():
             if item["type"] == "file" and item["name"].endswith(".jsonl"):
                 files.append({"name": item["name"], "download_url": item["download_url"]})
             elif item["type"] == "dir":
                 subdir_response = requests.get(item["url"])
                 if subdir_response.status_code == 200:
-                    for subitem in subdir_response.json():
-                        if subitem["type"] == "file" and subitem["name"].endswith(".jsonl"):
-                            files.append({"name": subitem["name"], "download_url": subitem["download_url"]})
+                    files.extend(
+                        {"name": subitem["name"], "download_url": subitem["download_url"]}
+                        for subitem in subdir_response.json()
+                        if subitem["type"] == "file" and subitem["name"].endswith(".jsonl")
+                    )
         return files
 
     @staticmethod
-    def _parse_answer_choices(item: Dict[str, Any]) -> Tuple[List[QuestionChoice], int]:
+    def _parse_answer_choices(item: dict[str, Any]) -> tuple[list[QuestionChoice], int]:
         """
         Parse a single eval item into MC choices and the correct-answer index.
 
@@ -157,7 +159,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         return _AnthropicEvalsDataset._parse_matching_behavior(item)
 
     @staticmethod
-    def _parse_pronoun_options(item: Dict[str, Any]) -> Tuple[List[QuestionChoice], int]:
+    def _parse_pronoun_options(item: dict[str, Any]) -> tuple[list[QuestionChoice], int]:
         """
         Parse a winogenerated item (``pronoun_options`` format).
 
@@ -180,7 +182,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
             return choices, 0
 
     @staticmethod
-    def _parse_matching_behavior(item: Dict[str, Any]) -> Tuple[List[QuestionChoice], int]:
+    def _parse_matching_behavior(item: dict[str, Any]) -> tuple[list[QuestionChoice], int]:
         """
         Parse a standard item with ``answer_matching_behavior`` / ``answer_not_matching_behavior``.
 
@@ -192,7 +194,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         not_matching_list = _AnthropicEvalsDataset._normalize_answer_field(item.get("answer_not_matching_behavior"))
 
         # Tag each answer with its group: 0 = matching (correct), 1 = not-matching.
-        tagged: List[Tuple[int, str]] = [(0, m) for m in matching_list] + [(1, n) for n in not_matching_list]
+        tagged: list[tuple[int, str]] = [(0, m) for m in matching_list] + [(1, n) for n in not_matching_list]
 
         def extract_letter(answer_text: str) -> str:
             m = re.match(r"\(([A-Z])\)", answer_text.strip())
@@ -200,7 +202,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
 
         tagged_sorted = sorted(tagged, key=lambda x: extract_letter(x[1]))
 
-        choices: List[QuestionChoice] = []
+        choices: list[QuestionChoice] = []
         correct_index: Optional[int] = None
         for idx, (group, answer_text) in enumerate(tagged_sorted):
             choices.append(QuestionChoice(index=idx, text=answer_text.strip()))
@@ -210,7 +212,7 @@ class _AnthropicEvalsDataset(_RemoteQADatasetLoader):
         return choices, correct_index if correct_index is not None else 0
 
     @staticmethod
-    def _normalize_answer_field(value: Any) -> List[str]:
+    def _normalize_answer_field(value: Any) -> list[str]:
         """
         Normalize a matching/not-matching answer field to a list of strings.
 

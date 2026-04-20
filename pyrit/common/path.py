@@ -6,7 +6,7 @@ import pathlib
 from appdirs import user_data_dir
 
 
-def get_default_data_path(dir: str) -> pathlib.Path:
+def get_default_data_path(dir: str) -> pathlib.Path:  # noqa: A002
     """
     Retrieve the default data path for PyRIT.
 
@@ -15,8 +15,7 @@ def get_default_data_path(dir: str) -> pathlib.Path:
     """
     if in_git_repo():
         return pathlib.Path(PYRIT_PATH, "..", dir).resolve()
-    else:
-        return pathlib.Path(user_data_dir(dir, "pyrit")).resolve()
+    return pathlib.Path(user_data_dir(dir, "pyrit")).resolve()
 
 
 def in_git_repo() -> bool:
@@ -33,6 +32,10 @@ PYRIT_PATH = pathlib.Path(__file__, "..", "..").resolve()
 
 CONFIGURATION_DIRECTORY_PATH = pathlib.Path.home() / ".pyrit"
 
+# Default configuration file name and path
+DEFAULT_CONFIG_FILENAME = ".pyrit_conf"
+DEFAULT_CONFIG_PATH = CONFIGURATION_DIRECTORY_PATH / DEFAULT_CONFIG_FILENAME
+
 # Points to the root of the project
 HOME_PATH = pathlib.Path(PYRIT_PATH, "..").resolve()
 
@@ -42,6 +45,10 @@ DOCS_CODE_PATH = pathlib.Path(PYRIT_PATH, "..", "doc", "code").resolve()
 # Path to where all the seed prompt entry and prompt memory entry files and database file will be stored
 DB_DATA_PATH = get_default_data_path("dbdata")
 DB_DATA_PATH.mkdir(parents=True, exist_ok=True)
+
+# Path to where cache files are stored, i.e. token cache, etc.
+PYRIT_CACHE_PATH = get_default_data_path(".pyrit_cache")
+PYRIT_CACHE_PATH.mkdir(parents=True, exist_ok=True)
 
 # Path to where the logs are located
 LOG_PATH = pathlib.Path(DB_DATA_PATH, "logs.txt").resolve()

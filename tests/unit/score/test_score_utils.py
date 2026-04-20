@@ -12,7 +12,7 @@ to provide numerical feedback to adversarial chats regardless of score type.
 import uuid
 from unittest.mock import MagicMock
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 from pyrit.score.score_utils import (
     ORIGINAL_FLOAT_VALUE_KEY,
@@ -23,12 +23,10 @@ from pyrit.score.score_utils import (
 
 
 # Reusable test scorer identifiers
-def _make_scorer_id(name: str) -> ScorerIdentifier:
-    return ScorerIdentifier(
+def _make_scorer_id(name: str) -> ComponentIdentifier:
+    return ComponentIdentifier(
         class_name=name,
         class_module="tests.unit.score",
-        class_description="",
-        identifier_type="instance",
     )
 
 

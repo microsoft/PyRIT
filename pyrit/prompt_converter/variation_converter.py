@@ -15,6 +15,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -66,6 +67,17 @@ class VariationConverter(PromptConverter):
         self.number_variations = 1
 
         self.system_prompt = str(prompt_template.render_template_value(number_iterations=str(self.number_variations)))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with variation parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            children={"converter_target": self.converter_target.get_identifier()},
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -141,9 +153,9 @@ class VariationConverter(PromptConverter):
             response = json.loads(response_msg)
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}") from None
 
         try:
             return str(response[0])
         except KeyError:
-            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON response: {response_msg}") from None

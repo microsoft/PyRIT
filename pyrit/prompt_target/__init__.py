@@ -10,10 +10,18 @@ for example sending prompts or transferring content (uploads).
 
 from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
+from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityHandlingPolicy,
+    CapabilityName,
+    TargetCapabilities,
+    UnsupportedCapabilityBehavior,
+)
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
-from pyrit.prompt_target.crucible_target import CrucibleTarget
 from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
@@ -36,12 +44,15 @@ from pyrit.prompt_target.playwright_copilot_target import CopilotType, Playwrigh
 from pyrit.prompt_target.playwright_target import PlaywrightTarget
 from pyrit.prompt_target.prompt_shield_target import PromptShieldTarget
 from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target.websocket_copilot_target import WebSocketCopilotTarget
 
 __all__ = [
     "AzureBlobStorageTarget",
     "AzureMLChatTarget",
+    "CapabilityName",
+    "CapabilityHandlingPolicy",
     "CopilotType",
-    "CrucibleTarget",
+    "ConversationNormalizationPipeline",
     "GandalfLevel",
     "GandalfTarget",
     "get_http_target_json_response_callback_function",
@@ -65,5 +76,10 @@ __all__ = [
     "PromptShieldTarget",
     "PromptTarget",
     "RealtimeTarget",
+    "TargetCapabilities",
+    "TargetConfiguration",
+    "TargetRequirements",
+    "UnsupportedCapabilityBehavior",
     "TextTarget",
+    "WebSocketCopilotTarget",
 ]

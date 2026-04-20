@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from collections import defaultdict
-from typing import Callable, Dict, Iterable, List
+from collections.abc import Callable, Iterable
 
 from pyrit.models import Score
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
@@ -11,11 +11,11 @@ from pyrit.score.score_utils import (
     format_score_for_rationale,
 )
 
-FloatScaleOp = Callable[[List[float]], float]
-FloatScaleAggregatorFunc = Callable[[Iterable[Score]], List[ScoreAggregatorResult]]
+FloatScaleOp = Callable[[list[float]], float]
+FloatScaleAggregatorFunc = Callable[[Iterable[Score]], list[ScoreAggregatorResult]]
 
 
-def _build_rationale(scores: List[Score], *, aggregate_description: str) -> tuple[str, str]:
+def _build_rationale(scores: list[Score], *, aggregate_description: str) -> tuple[str, str]:
     """
     Build description and rationale for aggregated scores.
 
@@ -59,7 +59,7 @@ def _create_aggregator(
             into a list containing a single ScoreAggregatorResult with a float value in [0, 1].
     """
 
-    def aggregator(scores: Iterable[Score]) -> List[ScoreAggregatorResult]:
+    def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
         # Validate types and normalize input
         for s in scores:
             if s.score_type != "float_scale":
@@ -181,7 +181,7 @@ def _create_aggregator_by_category(
             into one or more ScoreAggregatorResult objects.
     """
 
-    def aggregator(scores: Iterable[Score]) -> List[ScoreAggregatorResult]:
+    def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
         # Validate types and normalize input
         for s in scores:
             if s.score_type != "float_scale":
@@ -221,7 +221,7 @@ def _create_aggregator_by_category(
 
         # Group scores by category
         # We need to handle the fact that score_category can be None, [], or a list of categories
-        category_groups: Dict[str, List[Score]] = defaultdict(list)
+        category_groups: dict[str, list[Score]] = defaultdict(list)
 
         for score in scores_list:
             categories = getattr(score, "score_category", None) or []
@@ -238,7 +238,7 @@ def _create_aggregator_by_category(
                 category_groups[primary_category].append(score)
 
         # Aggregate each category group separately
-        results: List[ScoreAggregatorResult] = []
+        results: list[ScoreAggregatorResult] = []
 
         for category_name, category_scores in sorted(category_groups.items()):
             float_values = [float(s.get_value()) for s in category_scores]

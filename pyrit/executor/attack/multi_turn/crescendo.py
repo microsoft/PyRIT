@@ -5,12 +5,14 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.exceptions import (
+    ComponentRole,
     InvalidJsonException,
+    execution_context,
     pyrit_json_retry,
     remove_markdown_json,
 )
@@ -28,6 +30,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
@@ -48,6 +51,9 @@ from pyrit.score import (
     SelfAskScaleScorer,
 )
 from pyrit.score.score_utils import normalize_score_to_float
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +81,7 @@ class CrescendoAttackResult(AttackResult):
         Returns:
             int: The number of backtracks.
         """
-        return cast(int, self.metadata.get("backtrack_count", 0))
+        return cast("int", self.metadata.get("backtrack_count", 0))
 
     @backtrack_count.setter
     def backtrack_count(self, value: int) -> None:
@@ -103,8 +109,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     4. Scoring responses to determine if the objective has been achieved.
     5. Continuing until the objective is met or maximum turns/backtracks are reached.
 
-    You can learn more about the Crescendo attack at:
-    https://crescendo-the-multiturn-jailbreak.github.io/
+    You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
     # Default system prompt template path for Crescendo attack
@@ -252,7 +257,17 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         Args:
             context (CrescendoAttackContext): Attack context with configuration
+
+        Raises:
+            ValueError: If the objective target does not support multi-turn conversations.
         """
+        if not self._objective_target.capabilities.supports_multi_turn:
+            raise ValueError(
+                "CrescendoAttack requires a multi-turn target. Crescendo fundamentally relies on "
+                "multi-turn conversation history to gradually escalate prompts. "
+                "Use RedTeamingAttack or TreeOfAttacksWithPruning instead."
+            )
+
         # Ensure the context has a session
         context.session = ConversationSession()
 
@@ -378,7 +393,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Prepare the result
         result = CrescendoAttackResult(
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
@@ -400,7 +415,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             context (CrescendoAttackContext): The attack context.
         """
         # Nothing to be done here, no-op
-        pass
 
     @pyrit_json_retry
     async def _get_attack_prompt_async(
@@ -506,13 +520,21 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             prompt_metadata=prompt_metadata,
         )
 
-        response = await self._prompt_normalizer.send_prompt_async(
-            message=message,
-            conversation_id=context.session.adversarial_chat_conversation_id,
-            target=self._adversarial_chat,
+        with execution_context(
+            component_role=ComponentRole.ADVERSARIAL_CHAT,
+            attack_strategy_name=self.__class__.__name__,
             attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,
-        )
+            component_identifier=self._adversarial_chat.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
+            objective=context.objective,
+        ):
+            response = await self._prompt_normalizer.send_prompt_async(
+                message=message,
+                conversation_id=context.session.adversarial_chat_conversation_id,
+                target=self._adversarial_chat,
+                attack_identifier=self.get_identifier(),
+                labels=context.memory_labels,
+            )
 
         if not response:
             raise ValueError("No response received from adversarial chat")
@@ -576,21 +598,29 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Raises:
             ValueError: If no response is received from the objective target.
         """
-        objective_target_type = self._objective_target.get_identifier()["__type__"]
+        objective_target_type = self._objective_target.get_identifier().class_name
 
         # Send the generated prompt to the objective target
         prompt_preview = attack_message.get_value()[:100] if attack_message.get_value() else ""
         self._logger.debug(f"Sending prompt to {objective_target_type}: {prompt_preview}...")
 
-        response = await self._prompt_normalizer.send_prompt_async(
-            message=attack_message,
-            target=self._objective_target,
-            conversation_id=context.session.conversation_id,
-            request_converter_configurations=self._request_converters,
-            response_converter_configurations=self._response_converters,
+        with execution_context(
+            component_role=ComponentRole.OBJECTIVE_TARGET,
+            attack_strategy_name=self.__class__.__name__,
             attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,
-        )
+            component_identifier=self._objective_target.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
+            objective=context.objective,
+        ):
+            response = await self._prompt_normalizer.send_prompt_async(
+                message=attack_message,
+                target=self._objective_target,
+                conversation_id=context.session.conversation_id,
+                request_converter_configurations=self._request_converters,
+                response_converter_configurations=self._response_converters,
+                attack_identifier=self.get_identifier(),
+                labels=context.memory_labels,
+            )
 
         if not response:
             raise ValueError("No response received from objective target")
@@ -614,9 +644,17 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         if not context.last_response:
             raise ValueError("No response available in context to check for refusal")
 
-        scores = await self._refusal_scorer.score_async(
-            message=context.last_response, objective=objective, skip_on_error_result=False
-        )
+        with execution_context(
+            component_role=ComponentRole.REFUSAL_SCORER,
+            attack_strategy_name=self.__class__.__name__,
+            attack_identifier=self.get_identifier(),
+            component_identifier=self._refusal_scorer.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
+            objective=context.objective,
+        ):
+            scores = await self._refusal_scorer.score_async(
+                message=context.last_response, objective=objective, skip_on_error_result=False
+            )
         return scores[0]
 
     async def _score_response_async(self, *, context: CrescendoAttackContext) -> Score:
@@ -636,14 +674,22 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         if not context.last_response:
             raise ValueError("No response available in context to score")
 
-        scoring_results = await Scorer.score_response_async(
-            response=context.last_response,
-            objective_scorer=self._objective_scorer,
-            auxiliary_scorers=self._auxiliary_scorers,
-            role_filter="assistant",
+        with execution_context(
+            component_role=ComponentRole.OBJECTIVE_SCORER,
+            attack_strategy_name=self.__class__.__name__,
+            attack_identifier=self.get_identifier(),
+            component_identifier=self._objective_scorer.get_identifier(),
+            objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
-            skip_on_error_result=False,
-        )
+        ):
+            scoring_results = await Scorer.score_response_async(
+                response=context.last_response,
+                objective_scorer=self._objective_scorer,
+                auxiliary_scorers=self._auxiliary_scorers,
+                role_filter="assistant",
+                objective=context.objective,
+                skip_on_error_result=False,
+            )
 
         objective_score = scoring_results["objective_scores"]
         if not objective_score:

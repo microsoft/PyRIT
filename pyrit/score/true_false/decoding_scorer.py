@@ -4,6 +4,7 @@
 from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -23,7 +24,7 @@ class DecodingScorer(TrueFalseScorer):
     text matching strategy.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"], supported_roles=["assistant"]
     )
 
@@ -49,13 +50,18 @@ class DecodingScorer(TrueFalseScorer):
         self._text_matcher = text_matcher if text_matcher else ExactTextMatching(case_sensitive=False)
         self._score_categories = categories if categories else []
 
-        super().__init__(score_aggregator=aggregator, validator=validator or self._default_validator)
+        super().__init__(score_aggregator=aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_identifier(
-            score_aggregator=self._score_aggregator.__name__,
-            scorer_specific_params={
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "score_aggregator": self._score_aggregator.__name__,
                 "text_matcher": self._text_matcher.__class__.__name__,
             },
         )
@@ -96,7 +102,7 @@ class DecodingScorer(TrueFalseScorer):
                 match_found = True
                 break
 
-        score = [
+        return [
             Score(
                 score_value=str(match_found),
                 score_value_description="",
@@ -109,5 +115,3 @@ class DecodingScorer(TrueFalseScorer):
                 objective=objective,
             )
         ]
-
-        return score

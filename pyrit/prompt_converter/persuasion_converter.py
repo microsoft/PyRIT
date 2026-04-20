@@ -13,6 +13,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -29,7 +30,7 @@ class PersuasionConverter(PromptConverter):
     """
     Rephrases prompts using a variety of persuasion techniques.
 
-    Based on https://arxiv.org/abs/2401.06373 by Zeng et al.
+    Based on [@zeng2024persuasion].
 
     Supported persuasion techniques:
         - "authority_endorsement":
@@ -75,8 +76,25 @@ class PersuasionConverter(PromptConverter):
                 pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion" / f"{persuasion_technique}.yaml"
             )
         except FileNotFoundError:
-            raise ValueError(f"Persuasion technique '{persuasion_technique}' does not exist or is not supported.")
+            raise ValueError(
+                f"Persuasion technique '{persuasion_technique}' does not exist or is not supported."
+            ) from None
         self.system_prompt = str(prompt_template.value)
+        self._persuasion_technique = persuasion_technique
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with persuasion parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "persuasion_technique": self._persuasion_technique,
+            },
+            children={"converter_target": self.converter_target.get_identifier()},
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -151,4 +169,4 @@ class PersuasionConverter(PromptConverter):
             return str(parsed_response["mutated_text"])
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}") from None

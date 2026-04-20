@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 from pyrit.prompt_converter.text_selection_strategy import (
@@ -89,6 +90,25 @@ class SelectiveTextConverter(PromptConverter):
         self._is_word_level = isinstance(selection_strategy, WordSelectionStrategy)
         self._is_token_based = isinstance(selection_strategy, TokenSelectionStrategy)
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with selective text converter parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "selection_strategy": self._selection_strategy.__class__.__name__,
+                "preserve_tokens": self._preserve_tokens,
+                "start_token": self._start_token,
+                "end_token": self._end_token,
+            },
+            children={
+                "sub_converters": [self._converter.get_identifier()],
+            },
+        )
+
     def _validate_converter(
         self,
         *,
@@ -161,8 +181,7 @@ class SelectiveTextConverter(PromptConverter):
 
         if self._is_word_level:
             return await self._convert_word_level_async(prompt=prompt)
-        else:
-            return await self._convert_char_level_async(prompt=prompt)
+        return await self._convert_char_level_async(prompt=prompt)
 
     async def _convert_word_level_async(self, *, prompt: str) -> ConverterResult:
         """
@@ -177,7 +196,7 @@ class SelectiveTextConverter(PromptConverter):
         words = prompt.split(self._word_separator)
 
         # Get selected word indices
-        selected_indices = self._selection_strategy.select_words(words=words)  # type: ignore
+        selected_indices = self._selection_strategy.select_words(words=words)  # type: ignore[attr-defined]
 
         # If no words selected, return original prompt
         if not selected_indices:

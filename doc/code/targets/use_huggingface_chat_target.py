@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.0
 # ---
 
 # %% [markdown]
@@ -37,7 +37,6 @@
 #      - `stabilityai/stablelm-2-zephyr-1_6b`: 5.31 seconds
 #      - `stabilityai/stablelm-zephyr-3b`: 8.37 seconds
 #
-
 
 # %%
 import time

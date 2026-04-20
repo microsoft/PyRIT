@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import logging
+import logging  # noqa: TC003
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional, TypeVar
@@ -26,14 +26,10 @@ WorkflowResultT = TypeVar("WorkflowResultT", bound="WorkflowResult")
 class WorkflowContext(StrategyContext, ABC):
     """Base class for all workflow contexts."""
 
-    pass
-
 
 @dataclass
 class WorkflowResult(StrategyResult, ABC):
     """Base class for all workflow results."""
-
-    pass
 
 
 class _DefaultWorkflowEventHandler(StrategyEventHandler[WorkflowContextT, WorkflowResultT]):

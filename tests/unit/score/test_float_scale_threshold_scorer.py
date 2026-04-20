@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Score
 from pyrit.score import FloatScaleThresholdScorer
@@ -14,11 +14,9 @@ from pyrit.score import FloatScaleThresholdScorer
 
 def create_mock_float_scorer(score_value: float):
     """Helper to create a mock float scale scorer with proper identifier."""
-    mock_identifier = ScorerIdentifier(
+    mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
         class_module="test.mock",
-        class_description="Mock scorer for testing",
-        identifier_type="instance",
     )
     scorer = AsyncMock()
     scorer.score_async = AsyncMock(
@@ -36,7 +34,7 @@ def create_mock_float_scorer(score_value: float):
             )
         ]
     )
-    # Add mock identifier - get_identifier() returns a ScorerIdentifier
+    # Add mock identifier - get_identifier() returns a ComponentIdentifier
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
     return scorer
 
@@ -68,12 +66,10 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
 
     memory = MagicMock(MemoryInterface)
 
-    # get_identifier() returns a ScorerIdentifier
-    mock_identifier = ScorerIdentifier(
+    # get_identifier() returns a ComponentIdentifier
+    mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
         class_module="test.mock",
-        class_description="Mock scorer for testing",
-        identifier_type="instance",
     )
 
     # Mock a scorer that returns multiple scores (like AzureContentFilterScorer)
@@ -148,12 +144,10 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
     # Mock a scorer that returns empty list (all pieces filtered)
     scorer = AsyncMock()
     scorer.score_async = AsyncMock(return_value=[])
-    # get_identifier() returns a ScorerIdentifier
-    mock_identifier = ScorerIdentifier(
+    # get_identifier() returns a ComponentIdentifier
+    mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
         class_module="test.mock",
-        class_description="Mock scorer for testing",
-        identifier_type="instance",
     )
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
 
@@ -188,12 +182,10 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     # Mock a scorer that returns empty list (all pieces filtered)
     scorer = AsyncMock()
     scorer.score_async = AsyncMock(return_value=[])
-    # get_identifier() returns a ScorerIdentifier
-    mock_identifier = ScorerIdentifier(
+    # get_identifier() returns a ComponentIdentifier
+    mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
         class_module="test.mock",
-        class_description="Mock scorer for testing",
-        identifier_type="instance",
     )
     scorer.get_identifier = MagicMock(return_value=mock_identifier)
 

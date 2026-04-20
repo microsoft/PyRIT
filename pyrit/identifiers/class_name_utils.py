@@ -28,8 +28,7 @@ def class_name_to_snake_case(class_name: str, *, suffix: str = "") -> str:
     # Handle transitions like "XMLParser" -> "XML_Parser"
     name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", class_name)
     # Handle transitions like "getHTTPResponse" -> "get_HTTP_Response"
-    name = re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
-    return name
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
 
 def snake_case_to_class_name(snake_case_name: str, *, suffix: str = "") -> str:

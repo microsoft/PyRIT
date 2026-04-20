@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 import logging
 import pathlib
+from collections.abc import Sequence
 
 # Import PyRITInitializer for type checking (with TYPE_CHECKING to avoid circular imports)
-from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 import dotenv
 
@@ -156,7 +157,12 @@ def _load_initializers_from_scripts(
                 obj = getattr(module, name)
                 # Check if it's a class, is a subclass of PyRITInitializer,
                 # and is not the base class itself
-                if isinstance(obj, type) and issubclass(obj, PyRITInitializer) and obj is not PyRITInitializer:
+                if (
+                    isinstance(obj, type)
+                    and issubclass(obj, PyRITInitializer)
+                    and obj is not PyRITInitializer
+                    and obj.__module__ == module.__name__
+                ):
                     try:
                         # Instantiate the initializer class
                         initializer = obj()

@@ -14,7 +14,7 @@
 #
 # The **Skeleton Key Attack** showcases how to perform a multi-step jailbreak against a large language model (LLM). It demonstrates the effectiveness of using a two-step approach where the attack first sends an initial "skeleton key" prompt to the model to bypass its safety and guardrails, followed by a secondary attack prompt that attempts to elicit harmful or restricted content. This demo is designed to test and evaluate the security measures and robustness of LLMs against adversarial attacks.
 #
-# The [Skeleton Key Attack](https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/) operates by initially sending a prompt designed to subvert the LLM's safety mechanisms. This initial prompt sets up the model to disregard its responsible AI guardrails. Following this, PyRIT sends a second, harmful prompt to the model, testing whether it will comply now that its defenses have been bypassed. If the attack is successful, the model responds without the usual censorship or refusal.
+# The Skeleton Key Attack [@microsoft2024skeletonkey] operates by initially sending a prompt designed to subvert the LLM's safety mechanisms. This initial prompt sets up the model to disregard its responsible AI guardrails. Following this, PyRIT sends a second, harmful prompt to the model, testing whether it will comply now that its defenses have been bypassed. If the attack is successful, the model responds without the usual censorship or refusal.
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 # %%

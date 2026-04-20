@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
 
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -27,7 +28,6 @@ from pyrit.prompt_converter import Base64Converter, StringJoinConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
-from tests.unit.mocks import get_mock_scorer_identifier
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def mock_target():
     """Create a mock prompt target for testing"""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     return target
 
 
@@ -44,6 +44,7 @@ def mock_true_false_scorer():
     """Create a mock true/false scorer for testing"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
 
@@ -51,6 +52,7 @@ def mock_true_false_scorer():
 def mock_non_true_false_scorer():
     """Create a mock scorer that is not a true/false type"""
     scorer = MagicMock(spec=Scorer)
+    scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
 
@@ -682,6 +684,24 @@ class TestAttackExecution:
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
 
+    @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
+
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(return_value=sample_response)
+        attack._evaluate_response_async = AsyncMock(return_value=None)
+
+        result = await attack._perform_async(context=basic_context)
+
+        # Verify atomic_attack_identifier is set and has the correct AtomicAttack format
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConverterIntegration:
@@ -943,7 +963,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
         attack._perform_async = AsyncMock(return_value=mock_result)
@@ -1023,7 +1042,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id="test-id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
             last_response=sample_response.get_piece(),
         )
@@ -1146,13 +1164,13 @@ class TestEdgeCasesAndErrorHandling:
         id2 = attack2.get_identifier()
 
         # Verify identifier structure
-        assert "__type__" in id1
-        assert "__module__" in id1
-        assert "id" in id1
+        assert id1.class_name == "PromptSendingAttack"
+        assert id1.class_module is not None
+        assert id1.hash is not None
 
-        # Verify uniqueness
-        assert id1["id"] != id2["id"]
-        assert id1["__type__"] == id2["__type__"] == "PromptSendingAttack"
+        # Same config produces same identifier
+        assert id1.hash == id2.hash
+        assert id1.class_name == id2.class_name == "PromptSendingAttack"
 
     @pytest.mark.asyncio
     async def test_retry_stores_unsuccessful_conversation_and_updates_id(

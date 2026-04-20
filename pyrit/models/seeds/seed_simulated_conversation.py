@@ -18,7 +18,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Optional, Union
 
 import pyrit
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
@@ -63,6 +63,7 @@ class SeedSimulatedConversation(Seed):
             an additional user message after the simulated conversation. If provided, a single
             LLM call generates a final user message that attempts to get the target to fulfill
             the objective in their next response.
+
     """
 
     def __init__(
@@ -95,6 +96,10 @@ class SeedSimulatedConversation(Seed):
                 Defaults to 0.
             pyrit_version: PyRIT version for reproducibility tracking. Defaults to current version.
             **kwargs: Additional arguments passed to the Seed base class.
+
+        Raises:
+            ValueError: If num_turns is not positive or sequence is negative.
+
         """
         # Apply default for simulated target system prompt if not provided
         if simulated_target_system_prompt_path is None:
@@ -116,10 +121,18 @@ class SeedSimulatedConversation(Seed):
         # Compute value and pass to parent
         # Remove 'value' from kwargs if present since we compute it
         kwargs.pop("value", None)
+        # Default is_general_technique to True for simulated conversations
+        kwargs.setdefault("is_general_technique", True)
         super().__init__(value=self._compute_value(), **kwargs)
 
     def _compute_value(self) -> str:
-        """Compute the value field as JSON serialization of config."""
+        """
+        Compute the value field as JSON serialization of config.
+
+        Returns:
+            str: Deterministic JSON representation of this configuration.
+
+        """
         config = {
             "num_turns": self.num_turns,
             "sequence": self.sequence,
@@ -133,7 +146,7 @@ class SeedSimulatedConversation(Seed):
         return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SeedSimulatedConversation":
+    def from_dict(cls, data: dict[str, Any]) -> SeedSimulatedConversation:
         """
         Create a SeedSimulatedConversation from a dictionary, typically from YAML.
 
@@ -147,6 +160,10 @@ class SeedSimulatedConversation(Seed):
 
         Returns:
             A new SeedSimulatedConversation instance.
+
+        Raises:
+            ValueError: If required configuration fields are missing.
+
         """
         adversarial_path = data.get("adversarial_chat_system_prompt_path")
         if not adversarial_path:
@@ -166,7 +183,7 @@ class SeedSimulatedConversation(Seed):
         template_path: Union[str, Path],
         required_parameters: list[str],
         error_message: Optional[str] = None,
-    ) -> "SeedSimulatedConversation":
+    ) -> SeedSimulatedConversation:
         """
         Load a SeedSimulatedConversation from a YAML file and validate required parameters.
 
@@ -180,6 +197,7 @@ class SeedSimulatedConversation(Seed):
 
         Raises:
             ValueError: If required parameters are missing.
+
         """
         instance = cls.from_yaml_file(template_path)
 
@@ -191,12 +209,13 @@ class SeedSimulatedConversation(Seed):
 
         return instance
 
-    def get_identifier(self) -> Dict[str, Any]:
+    def get_identifier(self) -> dict[str, Any]:
         """
         Get an identifier dict capturing this configuration for comparison/storage.
 
         Returns:
             Dictionary with configuration details.
+
         """
         return {
             "__type__": "SeedSimulatedConversation",
@@ -216,6 +235,7 @@ class SeedSimulatedConversation(Seed):
 
         Returns:
             A SHA256 hash string representing the configuration.
+
         """
         identifier = self.get_identifier()
         config_json = json.dumps(identifier, sort_keys=True, separators=(",", ":"))
@@ -245,6 +265,7 @@ class SeedSimulatedConversation(Seed):
 
         Raises:
             ValueError: If the template doesn't have required parameters.
+
         """
         if simulated_target_system_prompt_path is None:
             return None
@@ -271,11 +292,19 @@ class SeedSimulatedConversation(Seed):
 
         Returns:
             A range object representing the sequence numbers.
+
         """
         message_count = self.num_turns * 2 + (1 if self.next_message_system_prompt_path else 0)
         return range(self.sequence, self.sequence + message_count)
 
     def __repr__(self) -> str:
+        """
+        Return a concise representation of this simulated conversation seed.
+
+        Returns:
+            str: Simulated conversation summary string.
+
+        """
         has_next_msg = self.next_message_system_prompt_path is not None
         return (
             f"<SeedSimulatedConversation(num_turns={self.num_turns}, sequence={self.sequence}, "

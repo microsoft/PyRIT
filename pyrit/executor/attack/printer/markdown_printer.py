@@ -2,8 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from datetime import datetime
-from typing import List
+from datetime import datetime, timezone
 
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
@@ -31,7 +30,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         self._memory = CentralMemory.get_memory_instance()
         self._display_inline = display_inline
 
-    def _render_markdown(self, markdown_lines: List[str]) -> None:
+    def _render_markdown(self, markdown_lines: list[str]) -> None:
         """
         Render the markdown content using appropriate display method.
 
@@ -90,8 +89,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             rationale_lines = score.score_rationale.split("\n")
             if len(rationale_lines) > 1:
                 lines.append(f"{indent}- **Rationale:**")
-                for line in rationale_lines:
-                    lines.append(f"{indent}  {line}")
+                lines.extend(f"{indent}  {line}" for line in rationale_lines)
             else:
                 lines.append(f"{indent}- **Rationale:** {score.score_rationale}")
 
@@ -172,7 +170,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         # Footer
         markdown_lines.append("\n---")
-        markdown_lines.append(f"*Report generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
         self._render_markdown(markdown_lines)
 
@@ -209,7 +208,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
     async def _get_conversation_markdown_async(
         self, *, result: AttackResult, include_scores: bool = False
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Generate markdown lines for the conversation history.
 
@@ -260,7 +259,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return markdown_lines
 
-    def _format_system_message(self, message: Message) -> List[str]:
+    def _format_system_message(self, message: Message) -> list[str]:
         """
         Format a system message as markdown.
 
@@ -274,11 +273,10 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             List[str]: List of markdown strings representing the system message.
         """
         lines = ["\n### System Message\n"]
-        for piece in message.message_pieces:
-            lines.append(f"{piece.converted_value}\n")
+        lines.extend(f"{piece.converted_value}\n" for piece in message.message_pieces)
         return lines
 
-    async def _format_user_message_async(self, *, message: Message, turn_number: int) -> List[str]:
+    async def _format_user_message_async(self, *, message: Message, turn_number: int) -> list[str]:
         """
         Format a user message as markdown with turn numbering.
 
@@ -300,7 +298,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    async def _format_assistant_message_async(self, *, message: Message) -> List[str]:
+    async def _format_assistant_message_async(self, *, message: Message) -> list[str]:
         """
         Format an assistant or system response message as markdown.
 
@@ -337,14 +335,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         """
         if audio_path.lower().endswith(".wav"):
             return "audio/wav"
-        elif audio_path.lower().endswith(".ogg"):
+        if audio_path.lower().endswith(".ogg"):
             return "audio/ogg"
-        elif audio_path.lower().endswith(".m4a"):
+        if audio_path.lower().endswith(".m4a"):
             return "audio/mp4"
-        else:
-            return "audio/mpeg"  # Default fallback for .mp3, .mpeg, and unknown formats
+        return "audio/mpeg"  # Default fallback for .mp3, .mpeg, and unknown formats
 
-    def _format_image_content(self, *, image_path: str) -> List[str]:
+    def _format_image_content(self, *, image_path: str) -> list[str]:
         """
         Format image content as markdown.
 
@@ -358,7 +355,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
 
-    def _format_audio_content(self, *, audio_path: str) -> List[str]:
+    def _format_audio_content(self, *, audio_path: str) -> list[str]:
         """
         Format audio content as HTML5 audio player.
 
@@ -379,7 +376,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    def _format_error_content(self, *, piece: MessagePiece) -> List[str]:
+    def _format_error_content(self, *, piece: MessagePiece) -> list[str]:
         """
         Format error response content with proper styling.
 
@@ -398,7 +395,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    def _format_text_content(self, *, piece: MessagePiece, show_original: bool) -> List[str]:
+    def _format_text_content(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
         """
         Format regular text content.
 
@@ -420,7 +417,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    async def _format_piece_content_async(self, *, piece: MessagePiece, show_original: bool) -> List[str]:
+    async def _format_piece_content_async(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
         """
         Format a single piece content based on its data type.
 
@@ -436,16 +433,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         """
         if piece.converted_value_data_type == "image_path":
             return self._format_image_content(image_path=piece.converted_value)
-        elif piece.converted_value_data_type == "audio_path":
+        if piece.converted_value_data_type == "audio_path":
             return self._format_audio_content(audio_path=piece.converted_value)
-        else:
-            # Handle text content (including errors)
-            if piece.has_error():
-                return self._format_error_content(piece=piece)
-            else:
-                return self._format_text_content(piece=piece, show_original=show_original)
+        # Handle text content (including errors)
+        if piece.has_error():
+            return self._format_error_content(piece=piece)
+        return self._format_text_content(piece=piece, show_original=show_original)
 
-    def _format_message_scores(self, message: Message) -> List[str]:
+    def _format_message_scores(self, message: Message) -> list[str]:
         """
         Format scores for all pieces in a message as markdown.
 
@@ -465,12 +460,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
             if scores:
                 lines.append("\n##### Scores\n")
-                for score in scores:
-                    lines.append(self._format_score(score, indent=""))
+                lines.extend(self._format_score(score, indent="") for score in scores)
                 lines.append("")
         return lines
 
-    async def _get_summary_markdown_async(self, result: AttackResult) -> List[str]:
+    async def _get_summary_markdown_async(self, result: AttackResult) -> list[str]:
         """
         Generate markdown lines for the attack summary.
 
@@ -493,7 +487,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         markdown_lines.append("|-------|-------|")
         markdown_lines.append(f"| **Objective** | {result.objective} |")
 
-        attack_type = result.attack_identifier.get("__type__", "Unknown")
+        attack_type = (
+            result.get_attack_strategy_identifier().class_name if result.get_attack_strategy_identifier() else "Unknown"
+        )
 
         markdown_lines.append(f"| **Attack Type** | `{attack_type}` |")
         markdown_lines.append(f"| **Conversation ID** | `{result.conversation_id}` |")
@@ -520,7 +516,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return markdown_lines
 
-    async def _get_pruned_conversations_markdown_async(self, result: AttackResult) -> List[str]:
+    async def _get_pruned_conversations_markdown_async(self, result: AttackResult) -> list[str]:
         """
         Generate markdown lines for pruned conversations.
 
@@ -576,12 +572,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
                 scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
                 if scores:
                     markdown_lines.append("\n**Score:**\n")
-                    for score in scores:
-                        markdown_lines.append(self._format_score(score, indent=""))
+                    markdown_lines.extend(self._format_score(score, indent="") for score in scores)
 
         return markdown_lines
 
-    async def _get_adversarial_conversation_markdown_async(self, result: AttackResult) -> List[str]:
+    async def _get_adversarial_conversation_markdown_async(self, result: AttackResult) -> list[str]:
         """
         Generate markdown lines for the adversarial conversation.
 

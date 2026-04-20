@@ -1,8 +1,0 @@
-# JupyterLab and related packages
-jupyterlab>=4.3.4,<4.5
-notebook==7.3.2
-ipywidgets==8.1.5
-matplotlib==3.10.1
-pandas==2.2.3
-seaborn==0.13.2
-ipython==9.0.2

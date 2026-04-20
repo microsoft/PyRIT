@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import textwrap
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from colorama import Back, Fore, Style
@@ -201,8 +202,14 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
 
             # Now print all pieces in this message
             for piece in message.message_pieces:
-                # Skip reasoning traces unless explicitly requested
-                if piece.original_value_data_type == "reasoning" and not include_reasoning_trace:
+                # Reasoning pieces: show summary when include_reasoning_trace is set
+                if piece.original_value_data_type == "reasoning":
+                    if include_reasoning_trace:
+                        summary_text = self._extract_reasoning_summary(piece.original_value)
+                        if summary_text:
+                            self._print_colored(f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN)
+                            self._print_wrapped_text(summary_text, Fore.CYAN)
+                            print()
                     continue
 
                 # Handle converted values for user and assistant messages
@@ -234,6 +241,28 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         print()
         self._print_colored("─" * self._width, Fore.BLUE)
 
+    def _extract_reasoning_summary(self, reasoning_value: str) -> str:
+        """
+        Extract human-readable summary text from a reasoning piece's JSON value.
+
+        Args:
+            reasoning_value (str): The JSON string stored in the reasoning piece.
+
+        Returns:
+            str: The concatenated summary text, or empty string if no summary is present.
+        """
+        try:
+            data = json.loads(reasoning_value)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+
+        summary = data.get("summary") if isinstance(data, dict) else None
+        if not summary or not isinstance(summary, list):
+            return ""
+
+        parts = [item.get("text", "") for item in summary if isinstance(item, dict) and item.get("text")]
+        return "\n".join(parts)
+
     async def print_summary_async(self, result: AttackResult) -> None:
         """
         Print a summary of the attack result with enhanced formatting.
@@ -256,12 +285,11 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         self._print_colored(f"{self._indent}📋 Basic Information", Style.BRIGHT)
         self._print_colored(f"{self._indent * 2}• Objective: {result.objective}", Fore.CYAN)
 
-        # Extract attack type name from attack_identifier
+        # Extract attack type name from atomic_attack_identifier
         attack_type = "Unknown"
-        if isinstance(result.attack_identifier, dict) and "__type__" in result.attack_identifier:
-            attack_type = result.attack_identifier["__type__"]
-        elif isinstance(result.attack_identifier, str):
-            attack_type = result.attack_identifier
+        attack_strategy_id = result.get_attack_strategy_identifier()
+        if attack_strategy_id:
+            attack_type = attack_strategy_id.class_name
 
         self._print_colored(f"{self._indent * 2}• Attack Type: {attack_type}", Fore.CYAN)
         self._print_colored(f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN)
@@ -318,10 +346,10 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
 
         Displays the current timestamp when the report was generated.
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print()
         self._print_colored("─" * self._width, Style.DIM, Fore.WHITE)
-        footer_text = f"Report generated at: {timestamp}"
+        footer_text = f"Report generated at: {timestamp} UTC"
         self._print_colored(footer_text.center(self._width), Style.DIM, Fore.WHITE)
 
     def _print_section_header(self, title: str) -> None:

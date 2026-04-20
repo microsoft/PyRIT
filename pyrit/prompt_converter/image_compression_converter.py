@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import aiohttp
 from PIL import Image
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -64,13 +65,14 @@ class ImageCompressionConverter(PromptConverter):
         Initialize the converter with specified compression settings.
 
         Args:
-            output_format (str, optional): Output image format. If None, keeps original format (if supported).
-            quality (int, optional): General quality setting for JPEG and WEBP formats (0-100).\n
-                For JPEG format, it represents the image quality, on a scale from 0 (worst) to 95 (best).\n
+            output_format (str, optional): Output image format. Must be one of 'JPEG', 'PNG', or 'WEBP'.
+            If None, keeps original format (if supported).
+            quality (int, optional): General quality setting for JPEG and WEBP formats (0-100).
+                For JPEG format, it represents the image quality, on a scale from 0 (worst) to 95 (best).
                 For WEBP format, the value ranges from 0 to 100; for lossy compression: 0-smallest file size and
                 100-largest; for ``lossless``: 0-fastest/less efficient, and 100 gives the best compression.
-            optimize (bool, optional): Whether to optimize the image during compression. \n
-                For JPEG: makes the encoder perform an extra pass over the image to select optimal settings.\n
+            optimize (bool, optional): Whether to optimize the image during compression.
+                For JPEG: makes the encoder perform an extra pass over the image to select optimal settings.
                 For PNG: instructs the PNG writer to make the output file as small as possible.
             progressive (bool, optional): Whether to save JPEG images as progressive.
             compress_level (int, optional): ZLIB compression level (0-9): 1=fastest, 9=best, 0=none.
@@ -123,6 +125,25 @@ class ImageCompressionConverter(PromptConverter):
                 "Using quality > 95 for JPEG may result in larger files. Consider using a lower quality setting."
             )
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with image compression parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "output_format": self._output_format,
+                "quality": self._quality,
+                "optimize": self._optimize,
+                "progressive": self._progressive,
+                "compress_level": self._compress_level,
+                "lossless": self._lossless,
+                "method": self._method,
+            }
+        )
+
     def _should_compress(self, original_size: int) -> bool:
         """
         Determine if image should be compressed.
@@ -133,9 +154,7 @@ class ImageCompressionConverter(PromptConverter):
         Returns:
             bool: True if the image should be compressed, False otherwise.
         """
-        if original_size < self._min_compression_threshold:
-            return False  # skip compression for small images
-        return True
+        return original_size >= self._min_compression_threshold
 
     def _compress_image(self, image: Image.Image, original_format: str, original_size: int) -> tuple[BytesIO, str]:
         """
@@ -241,12 +260,11 @@ class ImageCompressionConverter(PromptConverter):
             RuntimeError: If there is an error during the download process.
         """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    response.raise_for_status()
-                    return await response.read()
+            async with aiohttp.ClientSession() as session, session.get(url) as response:
+                response.raise_for_status()
+                return await response.read()
         except aiohttp.ClientError as e:
-            raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}")
+            raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}") from e
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """

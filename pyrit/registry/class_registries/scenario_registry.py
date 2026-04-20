@@ -11,12 +11,12 @@ from the pyrit.scenario.scenarios module and from user-defined initialization sc
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from pyrit.identifiers import Identifier
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.class_registries.base_class_registry import (
     BaseClassRegistry,
     ClassEntry,
@@ -33,18 +33,27 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ScenarioMetadata(Identifier):
+class ScenarioMetadata(ClassRegistryEntry):
     """
     Metadata describing a registered Scenario class.
 
     Use get_class() to get the actual class.
     """
 
-    default_strategy: str
-    all_strategies: tuple[str, ...]
-    aggregate_strategies: tuple[str, ...]
-    default_datasets: tuple[str, ...]
-    max_dataset_size: Optional[int]
+    # The default strategy name (e.g., "single_turn")
+    default_strategy: str = field(kw_only=True)
+
+    # All available strategy names for this scenario.
+    all_strategies: tuple[str, ...] = field(kw_only=True)
+
+    # Aggregate strategies that combine multiple attack approaches.
+    aggregate_strategies: tuple[str, ...] = field(kw_only=True)
+
+    # Default dataset names used by this scenario.
+    default_datasets: tuple[str, ...] = field(kw_only=True)
+
+    # Maximum number of items per dataset.
+    max_dataset_size: Optional[int] = field(kw_only=True)
 
 
 class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
@@ -55,18 +64,8 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
     1. Built-in scenarios in pyrit.scenario.scenarios module
     2. User-defined scenarios from initialization scripts (set via globals)
 
-    Scenarios are identified by their simple name (e.g., "encoding", "foundry").
+    Scenarios are identified by their dotted name (e.g., "garak.encoding", "foundry.red_team_agent").
     """
-
-    @classmethod
-    def get_registry_singleton(cls) -> "ScenarioRegistry":
-        """
-        Get the singleton instance of the ScenarioRegistry.
-
-        Returns:
-            The singleton ScenarioRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
@@ -106,15 +105,31 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 package_path = Path(package_file).parent
 
             # Discover scenarios using the shared discovery utility
-            for module_name, scenario_class in discover_in_package(
+            # Use ``package_name.module_name`` as the registry name
+            for registry_name, scenario_class in discover_in_package(
                 package_path=package_path,
                 package_name="pyrit.scenario.scenarios",
                 base_class=Scenario,  # type: ignore[type-abstract]
                 recursive=True,
             ):
+                # Skip deprecated alias classes
+                doc = (scenario_class.__doc__ or "").strip()
+                if doc.startswith("Deprecated alias"):
+                    logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
+                    continue
+
+                # Check for registry key collision
+                if registry_name in self._class_entries:
+                    logger.warning(
+                        f"Scenario registry name collision: '{registry_name}' "
+                        f"conflicts with an already-registered scenario. Original "
+                        f"scenario is kept: {self._class_entries[registry_name].registered_class.__name__}"
+                    )
+                    continue
+
                 entry = ClassEntry(registered_class=scenario_class)
-                self._class_entries[module_name] = entry
-                logger.debug(f"Registered built-in scenario: {module_name} ({scenario_class.__name__})")
+                self._class_entries[registry_name] = entry
+                logger.debug(f"Registered built-in scenario: {registry_name} ({scenario_class.__name__})")
 
         except Exception as e:
             logger.error(f"Failed to discover built-in scenarios: {e}")
@@ -131,7 +146,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         from pyrit.scenario.core import Scenario
 
         try:
-            for module_name, scenario_class in discover_subclasses_in_loaded_modules(
+            for _, scenario_class in discover_subclasses_in_loaded_modules(
                 base_class=Scenario  # type: ignore[type-abstract]
             ):
                 # Check if this is a user-defined class (not from pyrit.scenario.scenarios)
@@ -145,7 +160,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         except Exception as e:
             logger.debug(f"Failed to discover user scenarios: {e}")
 
-    def _build_metadata(self, name: str, entry: ClassEntry["Scenario"]) -> ScenarioMetadata:
+    def _build_metadata(self, name: str, entry: ClassEntry[Scenario]) -> ScenarioMetadata:
         """
         Build metadata for a Scenario class.
 
@@ -170,10 +185,10 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         max_dataset_size = dataset_config.max_dataset_size
 
         return ScenarioMetadata(
-            identifier_type="class",
             class_name=scenario_class.__name__,
             class_module=scenario_class.__module__,
             class_description=description,
+            registry_name=name,
             default_strategy=scenario_class.get_default_strategy().value,
             all_strategies=tuple(s.value for s in strategy_class.get_all_strategies()),
             aggregate_strategies=tuple(s.value for s in strategy_class.get_aggregate_strategies()),

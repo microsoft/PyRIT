@@ -11,12 +11,12 @@ import logging
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from typing import Any, Optional, TypeVar
 
 from pyrit.common.path import (
     SCORER_EVALS_PATH,
 )
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 
 # Thread locks for writing (module-level, persists for application lifetime)
 # Locks are created per file path to ensure thread-safe writes
-_file_write_locks: Dict[str, threading.Lock] = {}
+_file_write_locks: dict[str, threading.Lock] = {}
 
 M = TypeVar("M", bound=ScorerMetrics)
 
 
-def _metrics_to_registry_dict(metrics: ScorerMetrics) -> Dict[str, Any]:
+def _metrics_to_registry_dict(metrics: ScorerMetrics) -> dict[str, Any]:
     """
     Convert metrics to a dictionary suitable for registry storage.
 
@@ -54,7 +54,7 @@ def _metrics_to_registry_dict(metrics: ScorerMetrics) -> Dict[str, Any]:
 
 def get_all_objective_metrics(
     file_path: Optional[Path] = None,
-) -> List[ScorerMetricsWithIdentity[ObjectiveScorerMetrics]]:
+) -> list[ScorerMetricsWithIdentity[ObjectiveScorerMetrics]]:
     """
     Load all objective scorer metrics with full scorer identity for comparison.
 
@@ -80,7 +80,7 @@ def get_all_objective_metrics(
 
 def get_all_harm_metrics(
     harm_category: str,
-) -> List[ScorerMetricsWithIdentity[HarmScorerMetrics]]:
+) -> list[ScorerMetricsWithIdentity[HarmScorerMetrics]]:
     """
     Load all harm scorer metrics for a specific harm category.
 
@@ -103,8 +103,8 @@ def get_all_harm_metrics(
 def _load_metrics_from_file(
     *,
     file_path: Path,
-    metrics_class: Type[M],
-) -> List[ScorerMetricsWithIdentity[M]]:
+    metrics_class: type[M],
+) -> list[ScorerMetricsWithIdentity[M]]:
     """
     Load scorer metrics from a JSONL file with the specified metrics class.
 
@@ -117,7 +117,7 @@ def _load_metrics_from_file(
     Returns:
         List[ScorerMetricsWithIdentity[M]]: List of metrics with scorer identity.
     """
-    results: List[ScorerMetricsWithIdentity[M]] = []
+    results: list[ScorerMetricsWithIdentity[M]] = []
     entries = _load_jsonl(file_path)
 
     for entry in entries:
@@ -126,11 +126,11 @@ def _load_metrics_from_file(
         metrics_dict = {k: v for k, v in metrics_dict.items() if not k.startswith("_")}
 
         # Extract scorer identity (everything except metrics)
-        identity_dict = {k: v for k, v in entry.items() if k != "metrics"}
+        identity_dict = {k: v for k, v in entry.items() if k not in ("metrics", "eval_hash")}
 
         try:
-            # Reconstruct ScorerIdentifier from the stored dict
-            scorer_identifier = ScorerIdentifier.from_dict(identity_dict)
+            # Reconstruct ComponentIdentifier from the stored dict
+            scorer_identifier = ComponentIdentifier.from_dict(identity_dict)
 
             # Create the metrics object
             metrics = metrics_class(**metrics_dict)
@@ -148,16 +148,16 @@ def _load_metrics_from_file(
     return results
 
 
-def find_objective_metrics_by_hash(
+def find_objective_metrics_by_eval_hash(
     *,
-    hash: str,
+    eval_hash: str,
     file_path: Optional[Path] = None,
 ) -> Optional[ObjectiveScorerMetrics]:
     """
-    Find objective scorer metrics by configuration hash.
+    Find objective scorer metrics by evaluation hash.
 
     Args:
-        hash (str): The scorer configuration hash to search for.
+        eval_hash (str): The scorer evaluation hash to search for.
         file_path (Optional[Path]): Path to the JSONL file to search.
             If not provided, uses the default path:
             SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
@@ -168,42 +168,43 @@ def find_objective_metrics_by_hash(
     if file_path is None:
         file_path = SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
 
-    return _find_metrics_by_hash(file_path=file_path, hash=hash, metrics_class=ObjectiveScorerMetrics)
+    return _find_metrics_by_eval_hash(file_path=file_path, eval_hash=eval_hash, metrics_class=ObjectiveScorerMetrics)
 
 
-def find_harm_metrics_by_hash(
+def find_harm_metrics_by_eval_hash(
     *,
-    hash: str,
+    eval_hash: str,
     harm_category: str,
 ) -> Optional[HarmScorerMetrics]:
     """
-    Find harm scorer metrics by configuration hash.
+    Find harm scorer metrics by evaluation hash.
 
     Args:
-        hash (str): The scorer configuration hash to search for.
+        eval_hash (str): The scorer evaluation hash to search for.
         harm_category (str): The harm category to search in (e.g., "hate_speech", "violence").
 
     Returns:
         HarmScorerMetrics if found, else None.
     """
     file_path = SCORER_EVALS_PATH / "harm" / f"{harm_category}_metrics.jsonl"
-    return _find_metrics_by_hash(file_path=file_path, hash=hash, metrics_class=HarmScorerMetrics)
+    return _find_metrics_by_eval_hash(file_path=file_path, eval_hash=eval_hash, metrics_class=HarmScorerMetrics)
 
 
-def _find_metrics_by_hash(
+def _find_metrics_by_eval_hash(
     *,
     file_path: Path,
-    hash: str,
-    metrics_class: Type[M],
+    eval_hash: str,
+    metrics_class: type[M],
 ) -> Optional[M]:
     """
-    Find scorer metrics by configuration hash in a specific file.
+    Find scorer metrics by evaluation hash in a specific file.
 
-    This is a private helper function used by find_objective_metrics_by_hash and find_harm_metrics_by_hash.
+    This is a private helper function used by find_objective_metrics_by_eval_hash
+    and find_harm_metrics_by_eval_hash.
 
     Args:
         file_path (Path): Path to the JSONL file to search.
-        hash (str): The scorer configuration hash to search for.
+        eval_hash (str): The scorer evaluation hash to search for.
         metrics_class (Type[M]): The metrics class to instantiate.
 
     Returns:
@@ -212,14 +213,14 @@ def _find_metrics_by_hash(
     entries = _load_jsonl(file_path)
 
     for entry in entries:
-        if entry.get("hash") == hash:
+        if entry.get("eval_hash") == eval_hash:
             metrics_dict = entry.get("metrics", {})
             # Filter out internal fields that have init=False (e.g., _harm_definition_obj)
             metrics_dict = {k: v for k, v in metrics_dict.items() if not k.startswith("_")}
             try:
                 return metrics_class(**metrics_dict)
             except Exception as e:
-                logger.warning(f"Failed to parse metrics for hash {hash}: {e}")
+                logger.warning(f"Failed to parse metrics for eval_hash {eval_hash}: {e}")
                 return None
 
     return None
@@ -228,7 +229,8 @@ def _find_metrics_by_hash(
 def add_evaluation_results(
     *,
     file_path: Path,
-    scorer_identifier: ScorerIdentifier,
+    scorer_identifier: ComponentIdentifier,
+    eval_hash: str,
     metrics: "ScorerMetrics",
 ) -> None:
     """
@@ -239,7 +241,8 @@ def add_evaluation_results(
 
     Args:
         file_path (Path): The full path to the JSONL file to append to.
-        scorer_identifier (ScorerIdentifier): The scorer's configuration identifier.
+        scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
+        eval_hash (str): The pre-computed evaluation hash for grouping.
         metrics (ScorerMetrics): The computed metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """
     # Get or create lock for this file path
@@ -249,6 +252,7 @@ def add_evaluation_results(
 
     # Build entry dictionary
     entry = scorer_identifier.to_dict()
+    entry["eval_hash"] = eval_hash
     entry["metrics"] = _metrics_to_registry_dict(metrics)
 
     # Write to file with thread safety
@@ -261,7 +265,7 @@ def add_evaluation_results(
     logger.info(f"Added metrics for {scorer_identifier.class_name} to {file_path.name}")
 
 
-def _load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
+def _load_jsonl(file_path: Path) -> list[dict[str, Any]]:
     """
     Load entries from a JSONL file.
 
@@ -277,7 +281,7 @@ def _load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
 
     entries = []
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if line:
@@ -291,7 +295,7 @@ def _load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
     return entries
 
 
-def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: Dict[str, Any]) -> None:
+def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: dict[str, Any]) -> None:
     """
     Append an entry to a JSONL file with thread safety.
 
@@ -313,19 +317,21 @@ def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: Dict[str, 
 def replace_evaluation_results(
     *,
     file_path: Path,
-    scorer_identifier: ScorerIdentifier,
+    scorer_identifier: ComponentIdentifier,
+    eval_hash: str,
     metrics: "ScorerMetrics",
 ) -> None:
     """
-    Replace existing scorer metrics entry (by hash) with new metrics, or add if not exists.
+    Replace existing scorer metrics entry (by eval_hash) with new metrics, or add if not exists.
 
-    This is an atomic operation that removes any existing entry with the same scorer hash
-    and adds the new entry. Only one entry per scorer hash is maintained in the registry,
+    This is an atomic operation that removes any existing entry with the same eval_hash
+    and adds the new entry. Only one entry per eval_hash is maintained in the registry,
     ensuring we always track the highest-fidelity evaluation.
 
     Args:
         file_path (Path): The full path to the JSONL file.
-        scorer_identifier (ScorerIdentifier): The scorer's configuration identifier.
+        scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
+        eval_hash (str): The pre-computed evaluation hash for grouping.
         metrics (ScorerMetrics): The computed metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """
     # Get or create lock for this file path
@@ -333,10 +339,9 @@ def replace_evaluation_results(
     if file_path_str not in _file_write_locks:
         _file_write_locks[file_path_str] = threading.Lock()
 
-    scorer_hash = scorer_identifier.hash
-
     # Build new entry dictionary
     new_entry = scorer_identifier.to_dict()
+    new_entry["eval_hash"] = eval_hash
     new_entry["metrics"] = _metrics_to_registry_dict(metrics)
 
     with _file_write_locks[file_path_str]:
@@ -345,7 +350,7 @@ def replace_evaluation_results(
             existing_entries = _load_jsonl(file_path)
 
             # Filter out entries with the same hash
-            filtered_entries = [e for e in existing_entries if e.get("hash") != scorer_hash]
+            filtered_entries = [e for e in existing_entries if e.get("eval_hash") != eval_hash]
 
             # Add the new entry
             filtered_entries.append(new_entry)
@@ -359,7 +364,8 @@ def replace_evaluation_results(
             replaced = len(existing_entries) != len(filtered_entries)
             action = "Replaced" if replaced else "Added"
             logger.info(
-                f"{action} metrics for {scorer_identifier.class_name} (hash={scorer_hash[:8]}...) in {file_path.name}"
+                f"{action} metrics for {scorer_identifier.class_name}"
+                f" (eval_hash={eval_hash[:8]}...) in {file_path.name}"
             )
 
         except Exception as e:

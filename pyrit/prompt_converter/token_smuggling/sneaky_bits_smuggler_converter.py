@@ -2,8 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
         - ``one_char`` (default: U+2064) to represent binary 1.
 
     Replicates functionality detailed in:
-        - https://embracethered.com/blog/posts/2025/sneaky-bits-and-ascii-smuggler/
+        - [@embracethered2025sneakybits]
     """
 
     def __init__(
@@ -42,7 +43,22 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
         self.zero_char = zero_char if zero_char is not None else "\u2062"  # Invisible Times
         self.one_char = one_char if one_char is not None else "\u2064"  # Invisible Plus
 
-    def encode_message(self, message: str) -> Tuple[str, str]:
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with sneaky bits parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "action": self.action,
+                "zero_char_codepoint": hex(ord(self.zero_char)),
+                "one_char_codepoint": hex(ord(self.one_char)),
+            }
+        )
+
+    def encode_message(self, message: str) -> tuple[str, str]:
         """
         Encode the message using Sneaky Bits mode.
 

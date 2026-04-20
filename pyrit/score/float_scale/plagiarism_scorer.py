@@ -3,10 +3,11 @@
 
 import re
 from enum import Enum
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -31,7 +32,7 @@ class PlagiarismScorer(FloatScaleScorer):
     3. Word-level n-gram Jaccard similarity
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
     def __init__(
         self,
@@ -49,23 +50,28 @@ class PlagiarismScorer(FloatScaleScorer):
             n (int): The n-gram size for n-gram similarity. Defaults to 5.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._default_validator)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self.reference_text = reference_text
         self.metric = metric
         self.n = n
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_identifier(
-            scorer_specific_params={
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
                 "reference_text": self.reference_text,
                 "metric": self.metric.value,
                 "n": self.n,
             },
         )
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         """
         Tokenize text using whitespace-based tokenization (case-insensitive).
 
@@ -76,7 +82,7 @@ class PlagiarismScorer(FloatScaleScorer):
         text = re.sub(r"[^\w\s]", "", text)
         return text.split()
 
-    def _lcs_length(self, a: List[str], b: List[str]) -> int:
+    def _lcs_length(self, a: list[str], b: list[str]) -> int:
         """
         Compute the length of the Longest Common Subsequence at word level.
 
@@ -92,7 +98,7 @@ class PlagiarismScorer(FloatScaleScorer):
                     dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
         return int(dp[len(a)][len(b)])
 
-    def _levenshtein_distance(self, a: List[str], b: List[str]) -> int:
+    def _levenshtein_distance(self, a: list[str], b: list[str]) -> int:
         """
         Compute Levenshtein edit distance at word level.
 
@@ -110,14 +116,14 @@ class PlagiarismScorer(FloatScaleScorer):
                 dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
         return int(dp[len(a)][len(b)])
 
-    def _ngram_set(self, tokens: List[str], n: int) -> set[tuple[str, ...]]:
+    def _ngram_set(self, tokens: list[str], n: int) -> set[tuple[str, ...]]:
         """
         Generate a set of n-grams from token list.
 
         Returns:
             set: Set of n-gram tuples.
         """
-        return set(tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
+        return {tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)}
 
     def _plagiarism_score(
         self,
@@ -141,27 +147,23 @@ class PlagiarismScorer(FloatScaleScorer):
         # Compute the LCS metric (normalized by reference length)
         if metric.value == "lcs":
             lcs_len = self._lcs_length(tokens_reference, tokens_response)
-            score = lcs_len / reference_len
-            return score
+            return lcs_len / reference_len
 
         # Compute the Levenshtein metric (normalized by max length)
-        elif metric.value == "levenshtein":
+        if metric.value == "levenshtein":
             lev_dist = self._levenshtein_distance(tokens_reference, tokens_response)
             max_len = max(reference_len, response_len)
-            score = 1 - (lev_dist / max_len)
-            return score
+            return 1 - (lev_dist / max_len)
 
         # Compute the Jaccard metric (normalized by number of n-grams in reference)
-        elif metric.value == "jaccard":
+        if metric.value == "jaccard":
             ref_ngrams = self._ngram_set(tokens_reference, n) if reference_len >= n else set()
             res_ngrams = self._ngram_set(tokens_response, n) if response_len >= n else set()
             if not ref_ngrams:
                 return 0.0
-            score = len(ref_ngrams & res_ngrams) / len(ref_ngrams)
-            return score
+            return len(ref_ngrams & res_ngrams) / len(ref_ngrams)
 
-        else:
-            raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
+        raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         """

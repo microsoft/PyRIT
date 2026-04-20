@@ -1,89 +1,44 @@
 import { useEffect, useState } from 'react'
 import {
-  makeStyles,
-  tokens,
   Text,
   Tooltip,
 } from '@fluentui/react-components'
 import { versionApi } from '../../services/api'
-import Navigation from '../Sidebar/Navigation'
-
-const useStyles = makeStyles({
-  root: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100vh',
-    width: '100vw',
-    overflow: 'hidden',
-  },
-  topBar: {
-    height: '60px',
-    backgroundColor: tokens.colorNeutralBackground3,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
-    display: 'flex',
-    alignItems: 'center',
-    padding: `0 ${tokens.spacingHorizontalL}`,
-    gap: tokens.spacingHorizontalM,
-  },
-  logo: {
-    width: '40px',
-    height: '40px',
-    cursor: 'help',
-  },
-  title: {
-    fontSize: tokens.fontSizeHero700,
-    fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorBrandForeground1,
-  },
-  subtitle: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    marginLeft: tokens.spacingHorizontalXS,
-  },
-  contentArea: {
-    display: 'flex',
-    flex: 1,
-    overflow: 'hidden',
-  },
-  sidebar: {
-    width: '60px',
-    backgroundColor: tokens.colorNeutralBackground3,
-    borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  main: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-  },
-})
+import Navigation, { type ViewName } from '../Sidebar/Navigation'
+import { useMainLayoutStyles } from './MainLayout.styles'
 
 interface MainLayoutProps {
   children: React.ReactNode
+  currentView: ViewName
+  onNavigate: (view: ViewName) => void
   onToggleTheme: () => void
   isDarkMode: boolean
 }
 
 export default function MainLayout({
   children,
+  currentView,
+  onNavigate,
   onToggleTheme,
   isDarkMode,
 }: MainLayoutProps) {
-  const styles = useStyles()
+  const styles = useMainLayoutStyles()
   const [version, setVersion] = useState<string>('Loading...')
+  const [databaseInfo, setDatabaseInfo] = useState<string | null>(null)
 
   useEffect(() => {
     versionApi.getVersion()
-      .then(data => setVersion(data.display || data.version))
+      .then(data => {
+        setVersion(data.display || data.version)
+        setDatabaseInfo(data.database_info ?? null)
+      })
       .catch(() => setVersion('Unknown'))
   }, [])
 
   return (
     <div className={styles.root}>
       <div className={styles.topBar}>
-        <Tooltip content={`PyRIT ${version}`} relationship="label">
+        <Tooltip content={<>{`PyRIT ${version}`}{databaseInfo && <><br />{databaseInfo}</>}</>} relationship="label">
           <img
             src="/roakey.png"
             alt="Co-PyRIT Logo"
@@ -96,6 +51,8 @@ export default function MainLayout({
       <div className={styles.contentArea}>
         <aside className={styles.sidebar}>
           <Navigation
+            currentView={currentView}
+            onNavigate={onNavigate}
             onToggleTheme={onToggleTheme}
             isDarkMode={isDarkMode}
           />

@@ -12,17 +12,36 @@ from pyrit.executor.workflow.xpia import (
     XPIAStatus,
     XPIAWorkflow,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer
 
-
 # Shared fixtures for all test classes
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
 @pytest.fixture
 def mock_attack_setup_target() -> MagicMock:
     """Create a mock attack setup target."""
     target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = _mock_target_id("mock_attack_setup_target")
     return target
 
 
@@ -31,6 +50,7 @@ def mock_scorer() -> MagicMock:
     """Create a mock scorer."""
     scorer = MagicMock(spec=Scorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = _mock_scorer_id()
     return scorer
 
 
@@ -89,7 +109,7 @@ class TestXPIAWorkflowValidation:
         self, workflow: XPIAWorkflow, mock_processing_callback: AsyncMock
     ) -> None:
         """Test that validation fails when attack_content is None."""
-        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore
+        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="attack_content: Message must be provided"):
             workflow._validate_context(context=context)
@@ -98,7 +118,7 @@ class TestXPIAWorkflowValidation:
         self, workflow: XPIAWorkflow, mock_processing_callback: AsyncMock
     ) -> None:
         """Test that validation fails when message has no pieces."""
-        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore
+        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="attack_content: Message must be provided"):
             workflow._validate_context(context=context)
@@ -142,7 +162,7 @@ class TestXPIAWorkflowValidation:
         self, workflow: XPIAWorkflow, valid_message: Message
     ) -> None:
         """Test that validation fails when processing_callback is None."""
-        context = XPIAContext(attack_content=valid_message, processing_callback=None)  # type: ignore
+        context = XPIAContext(attack_content=valid_message, processing_callback=None)  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="processing_callback is required"):
             workflow._validate_context(context=context)

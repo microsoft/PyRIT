@@ -5,6 +5,7 @@ authors:
 parameters:
   - prompt
 data_type: text
+is_general_technique: true
 value: |
   Format:
   Your Refusal.

@@ -4,7 +4,8 @@
 
 import json
 import re
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 import requests
 
@@ -71,10 +72,8 @@ def get_http_target_regex_matching_callback_function(
         if match:
             if url:
                 return url + match.group()
-            else:
-                return match.group()
-        else:
-            return str(response.content)
+            return match.group()
+        return str(response.content)
 
     return parse_using_regex
 

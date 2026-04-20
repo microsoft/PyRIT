@@ -266,7 +266,7 @@ class TestExcluding:
 
     def test_excluding_creates_class_without_specified_fields(self) -> None:
         """Test that excluding() creates a class without the specified fields."""
-        ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")
+        ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")  # noqa: N806
 
         field_names = {f.name for f in dataclasses.fields(ExcludedParams)}
 
@@ -282,13 +282,13 @@ class TestExcluding:
 
     async def test_excluded_class_has_from_seed_group_async(self) -> None:
         """Test that the excluded class has from_seed_group_async method."""
-        ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")
+        ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")  # noqa: N806
 
         assert hasattr(ExcludedParams, "from_seed_group_async")
 
     async def test_excluded_class_from_seed_group_async_works(self) -> None:
         """Test that from_seed_group_async works on excluded class."""
-        ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")
+        ExcludedParams = AttackParameters.excluding("next_message", "prepended_conversation")  # noqa: N806
         objective = SeedObjective(value="Test objective")
         seed_group = SeedAttackGroup(seeds=[objective])
 
@@ -298,7 +298,7 @@ class TestExcluding:
 
     async def test_excluded_class_rejects_excluded_field_overrides(self) -> None:
         """Test that from_seed_group_async rejects overrides for excluded fields."""
-        ExcludedParams = AttackParameters.excluding("next_message")
+        ExcludedParams = AttackParameters.excluding("next_message")  # noqa: N806
         objective = SeedObjective(value="Test objective")
         seed_group = SeedAttackGroup(seeds=[objective])
 

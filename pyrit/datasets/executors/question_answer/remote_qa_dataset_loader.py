@@ -12,7 +12,7 @@ subclass's `cache_subdir` attribute.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.datasets._remote_fetch import fetch_with_cache
 from pyrit.models import QuestionAnsweringDataset
@@ -48,7 +48,7 @@ class _RemoteQADatasetLoader(ABC):
         source_type: Literal["public_url", "file"] = "public_url",
         file_type: Optional[str] = None,
         cache: bool = True,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Fetch raw examples from a URL or local file using this subclass's cache namespace.
 

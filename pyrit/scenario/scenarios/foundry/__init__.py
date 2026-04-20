@@ -4,13 +4,13 @@
 """Foundry scenario classes."""
 
 from pyrit.scenario.scenarios.foundry.red_team_agent import (
-    FoundryScenario,
+    FoundryComposite,
     FoundryStrategy,
     RedTeamAgent,
 )
 
 __all__ = [
-    "FoundryScenario",
+    "FoundryComposite",
     "FoundryStrategy",
     "RedTeamAgent",
 ]

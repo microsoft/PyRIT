@@ -11,6 +11,7 @@ from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     generate_simulated_conversation_async,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -25,13 +26,29 @@ from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import TrueFalseScorer
 
 
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
 @pytest.fixture
 def mock_adversarial_chat() -> MagicMock:
     """Create a mock adversarial chat target for testing."""
     chat = MagicMock(spec=PromptChatTarget)
     chat.send_prompt_async = AsyncMock()
     chat.set_system_prompt = MagicMock()
-    chat.get_identifier.return_value = {"__type__": "MockAdversarialChat", "__module__": "test_module"}
+    chat.get_identifier.return_value = _mock_target_id("MockAdversarialChat")
     return chat
 
 
@@ -40,7 +57,7 @@ def mock_objective_scorer() -> MagicMock:
     """Create a mock objective scorer for testing."""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
-    scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test_module"}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
 
 
@@ -143,10 +160,14 @@ class TestGenerateSimulatedConversationAsync:
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             # Configure the mock attack
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -184,10 +205,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that the attack is created with score_last_turn_only=True."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -224,10 +249,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that the attack is created with the specified num_turns as max_turns."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -267,10 +296,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -313,10 +346,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that the simulated target system prompt is passed via prepended_conversation."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -361,10 +398,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -404,10 +445,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -445,10 +490,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that a system message is prepended when executing the attack."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -490,10 +539,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that default num_turns is 3."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -545,10 +598,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -611,10 +668,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -655,10 +716,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,

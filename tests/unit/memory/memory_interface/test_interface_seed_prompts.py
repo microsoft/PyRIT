@@ -3,7 +3,7 @@
 
 import os
 import tempfile
-from typing import Sequence
+from collections.abc import Sequence
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -26,7 +26,7 @@ async def test_get_seeds_with_audio(sqlite_instance: MemoryInterface):
     temp_files = []
     try:
         # Create a temporary audio file
-        audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)  # noqa: SIM115
         audio_file.write(b"dummy audio content")
         audio_file.close()
         temp_files.append(audio_file.name)
@@ -55,7 +55,7 @@ async def test_get_seeds_with_video(sqlite_instance: MemoryInterface):
     temp_files = []
     try:
         # Create a temporary video file
-        video_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        video_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)  # noqa: SIM115
         video_file.write(b"dummy video content")
         video_file.close()
         temp_files.append(video_file.name)
@@ -84,7 +84,7 @@ async def test_get_seeds_with_image(sqlite_instance: MemoryInterface):
     temp_files = []
     try:
         # Create a temporary image file
-        image_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        image_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)  # noqa: SIM115
         image_file.write(b"dummy image content")
         image_file.close()
         temp_files.append(image_file.name)
@@ -615,19 +615,19 @@ async def test_add_seed_groups_to_memory_with_all_modalities(sqlite_instance: Me
     sqlite_instance.results_path = temp_dir.name
     try:
         # Create a temporary image file
-        image_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        image_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)  # noqa: SIM115
         image_file.write(b"dummy image content")
         image_file.close()
         temp_files.append(image_file.name)
 
         # Create a temporary audio file
-        audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)  # noqa: SIM115
         audio_file.write(b"dummy audio content")
         audio_file.close()
         temp_files.append(audio_file.name)
 
         # Create a temporary video file
-        video_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        video_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)  # noqa: SIM115
         video_file.write(b"dummy video content")
         video_file.close()
         temp_files.append(video_file.name)
@@ -691,7 +691,7 @@ async def test_add_seed_groups_to_memory_with_textimage_modalities(sqlite_instan
     sqlite_instance.results_path = temp_dir.name
     try:
         # Create a temporary image file
-        image_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        image_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)  # noqa: SIM115
         image_file.write(b"dummy image content")
         image_file.close()
         temp_files.append(image_file.name)
@@ -1078,7 +1078,7 @@ async def test_get_seed_groups_deduplication_and_filtering(sqlite_instance: Memo
     sqlite_instance.results_path = temp_dir.name
     try:
         # Create a temporary audio file
-        audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)  # noqa: SIM115
         audio_file.write(b"dummy audio content")
         audio_file.close()
         temp_files.append(audio_file.name)

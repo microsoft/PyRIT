@@ -3,7 +3,7 @@
 
 from typing import Optional
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
@@ -11,12 +11,10 @@ from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
 
-# Reusable ScorerIdentifier for tests
-_TEST_SCORER_ID = ScorerIdentifier(
+# Reusable ComponentIdentifier for tests
+_TEST_SCORER_ID = ComponentIdentifier(
     class_name="UnitTestScorer",
     class_module="tests.unit.score",
-    class_description="",
-    identifier_type="instance",
 )
 
 

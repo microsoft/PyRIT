@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+
 from art import text2art
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -22,7 +24,20 @@ class AsciiArtConverter(PromptConverter):
         Args:
             font (str): The font to use for ASCII art. Defaults to "rand" which selects a random font.
         """
-        self.font_value = font
+        self._font = font
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with font parameter.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "font": self._font,
+            },
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -41,4 +56,4 @@ class AsciiArtConverter(PromptConverter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        return ConverterResult(output_text=text2art(prompt, font=self.font_value), output_type="text")
+        return ConverterResult(output_text=text2art(prompt, font=self._font), output_type="text")

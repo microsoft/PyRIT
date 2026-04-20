@@ -119,7 +119,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         try:
             context_description_instructions = SeedDataset.from_yaml_file(instructions_path)
         except Exception as e:
-            raise ValueError(f"Failed to load context description instructions from {instructions_path}: {e}")
+            raise ValueError(f"Failed to load context description instructions from {instructions_path}: {e}") from e
 
         if len(context_description_instructions.prompts) < 3:
             raise ValueError(

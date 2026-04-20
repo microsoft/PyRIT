@@ -1,24 +1,27 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Optional
+
 import pytest
 
 from pyrit.analytics.result_analysis import AttackStats, analyze_results
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackOutcome, AttackResult
 
 
 # helpers
 def make_attack(
     outcome: AttackOutcome,
-    attack_type: str | None = "default",
+    attack_type: Optional[str] = "default",
     conversation_id: str = "conv-1",
 ) -> AttackResult:
     """
     Minimal valid AttackResult for analytics tests.
     """
-    attack_identifier: dict[str, str] = {}
+    attack_identifier: Optional[ComponentIdentifier] = None
     if attack_type is not None:
-        attack_identifier["type"] = attack_type
+        attack_identifier = ComponentIdentifier(class_name=attack_type, class_module="tests.unit.analytics")
 
     return AttackResult(
         conversation_id=conversation_id,

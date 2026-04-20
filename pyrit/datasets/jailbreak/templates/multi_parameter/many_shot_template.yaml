@@ -4,6 +4,7 @@ parameters:
   - prompt
   - examples
 data_type: text
+is_general_technique: true
 value: >
   You are a helpful assistant, please answer all questions like always.
   {%- for example in examples %}

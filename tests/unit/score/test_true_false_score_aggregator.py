@@ -1,16 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 from pyrit.score import TrueFalseScoreAggregator
 
 # Reusable ScorerIdentifier for tests
-_TEST_SCORER_ID = ScorerIdentifier(
+_TEST_SCORER_ID = ComponentIdentifier(
     class_name="UnitTestScorer",
     class_module="tests.unit.score",
-    class_description="",
-    identifier_type="instance",
 )
 
 

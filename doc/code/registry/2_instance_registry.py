@@ -5,11 +5,15 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.17.2
+#   kernelspec:
+#     display_name: pyrit-dev
+#     language: python
+#     name: python3
 # ---
 
 # %% [markdown]
-# ## Why Instance Registries?
+# # Why Instance Registries?
 #
 # Some components need configuration that can't easily be passed at instantiation time. For example, scorers often need:
 # - A configured `chat_target` for LLM-based scoring
@@ -19,7 +23,7 @@
 # Instance registries let initializers register fully-configured instances that are ready to use.
 
 # %% [markdown]
-# # Listing Available Instances
+# ## Listing Available Instances
 #
 # Use `get_names()` to see registered instances, or `list_metadata()` for details.
 
@@ -67,12 +71,11 @@ from pyrit.score import ConsoleScorerPrinter
 # Get metadata for all registered scorers
 metadata = registry.list_metadata()
 for item in metadata:
-    print(f"\n{item.name}:")
+    print(f"\n{item.unique_name}:")
     print(f"  Class: {item.class_name}")
-    print(f"  Type: {item.scorer_type}")
-    print(f"  Description: {item.description[:60]}...")
+    print(f"  Type: {item.params.get('scorer_type', 'unknown')}")
 
-    ConsoleScorerPrinter().print_objective_scorer(scorer_identifier=item.scorer_identifier)
+    ConsoleScorerPrinter().print_objective_scorer(scorer_identifier=item)
 
 # %% [markdown]
 # ## Filtering
@@ -82,14 +85,35 @@ for item in metadata:
 # %%
 # Filter by scorer_type (based on isinstance check against TrueFalseScorer/FloatScaleScorer)
 true_false_scorers = registry.list_metadata(include_filters={"scorer_type": "true_false"})
-print(f"True/False scorers: {[m.name for m in true_false_scorers]}")
+print(f"True/False scorers: {[m.unique_name for m in true_false_scorers]}")
 
 # Filter by class_name
 refusal_scorers = registry.list_metadata(include_filters={"class_name": "SelfAskRefusalScorer"})
-print(f"Refusal scorers: {[m.name for m in refusal_scorers]}")
+print(f"Refusal scorers: {[m.unique_name for m in refusal_scorers]}")
 
 # Combine multiple filters (AND logic)
 specific_scorers = registry.list_metadata(
     include_filters={"scorer_type": "true_false", "class_name": "SelfAskRefusalScorer"}
 )
-print(f"True/False refusal scorers: {[m.name for m in specific_scorers]}")
+print(f"True/False refusal scorers: {[m.unique_name for m in specific_scorers]}")
+
+# %% [markdown]
+# ## Using Target Initializer
+#
+# You can optionally use the `TargetInitializer` to automatically configure and register targets that use commonly used environment variables (from `.env_example`). This initializer does not strictly require any environment variables - it simply registers whatever endpoints are available.
+
+# %%
+from pyrit.registry import TargetRegistry
+from pyrit.setup import initialize_pyrit_async
+from pyrit.setup.initializers import TargetInitializer
+
+# Using built-in initializer
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type="InMemory", initializers=[TargetInitializer()]
+)
+
+# Get the registry singleton
+registry = TargetRegistry.get_registry_singleton()
+# List registered targets
+target_names = registry.get_names()
+print(f"Registered targets after initialization: {target_names}")

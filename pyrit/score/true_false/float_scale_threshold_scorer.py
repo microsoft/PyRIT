@@ -4,6 +4,7 @@
 import uuid
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
@@ -54,14 +55,21 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """Get the threshold value used for score comparison."""
         return self._threshold
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_identifier(
-            sub_scorers=[self._scorer],
-            score_aggregator=self._score_aggregator.__name__,
-            scorer_specific_params={
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "score_aggregator": self._score_aggregator.__name__,
                 "threshold": self._threshold,
                 "float_scale_aggregator": self._float_scale_aggregator.__name__,
+            },
+            children={
+                "sub_scorers": [self._scorer.get_identifier()],
             },
         )
 

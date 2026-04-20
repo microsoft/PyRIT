@@ -5,13 +5,14 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.literals import ChatMessageRole
 
 ALLOWED_CHAT_MESSAGE_ROLES = ["system", "user", "assistant", "simulated_assistant", "tool", "developer"]
 
 
 class ToolCall(BaseModel):
+    """Represents a tool invocation requested by the assistant."""
+
     model_config = ConfigDict(extra="forbid")
     id: str
     type: str
@@ -40,6 +41,7 @@ class ChatMessage(BaseModel):
 
         Returns:
             A JSON string representation of the message.
+
         """
         return self.model_dump_json()
 
@@ -49,6 +51,7 @@ class ChatMessage(BaseModel):
 
         Returns:
             A dictionary representation of the message, excluding None values.
+
         """
         return self.model_dump(exclude_none=True)
 
@@ -62,35 +65,14 @@ class ChatMessage(BaseModel):
 
         Returns:
             A ChatMessage instance.
+
         """
         return cls.model_validate_json(json_str)
-
-
-class ChatMessageListDictContent(ChatMessage):
-    """
-    Deprecated: Use ChatMessage instead.
-
-    This class exists for backward compatibility and will be removed in a future version.
-    """
-
-    def __init__(self, **data: Any) -> None:
-        print_deprecation_message(
-            old_item="ChatMessageListDictContent",
-            new_item="ChatMessage",
-            removed_in="0.13.0",
-        )
-        super().__init__(**data)
 
 
 class ChatMessagesDataset(BaseModel):
     """
     Represents a dataset of chat messages.
-
-    Parameters:
-        model_config (ConfigDict): The model configuration.
-        name (str): The name of the dataset.
-        description (str): The description of the dataset.
-        list_of_chat_messages (list[list[ChatMessage]]): A list of chat messages.
     """
 
     model_config = ConfigDict(extra="forbid")

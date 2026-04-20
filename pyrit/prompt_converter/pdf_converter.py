@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import ast
+import hashlib
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from pypdf import PageObject, PdfReader, PdfWriter
 from reportlab.lib.units import mm
@@ -12,6 +13,7 @@ from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
 
 from pyrit.common.logger import logger
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, SeedPrompt, data_serializer_factory
 from pyrit.models.data_type_serializer import DataTypeSerializer
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
@@ -46,7 +48,7 @@ class PDFConverter(PromptConverter):
         column_width: int = 0,
         row_height: int = 10,
         existing_pdf: Optional[Path] = None,
-        injection_items: Optional[List[Dict[str, Any]]] = None,
+        injection_items: Optional[list[dict[str, Any]]] = None,
     ) -> None:
         """
         Initialize the converter with the specified parameters.
@@ -103,6 +105,32 @@ class PDFConverter(PromptConverter):
         if not all(isinstance(item, dict) for item in self._injection_items):
             raise ValueError("Each injection item must be a dictionary.")
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with PDF converter parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        template_hash = None
+        if self._prompt_template:
+            template_hash = hashlib.sha256(str(self._prompt_template.value).encode("utf-8")).hexdigest()[:16]
+
+        existing_pdf_path = None
+        if self._existing_pdf_path:
+            existing_pdf_path = str(self._existing_pdf_path)
+
+        return self._create_identifier(
+            params={
+                "font_type": self._font_type,
+                "font_size": self._font_size,
+                "page_width": self._page_width,
+                "page_height": self._page_height,
+                "prompt_template_hash": template_hash,
+                "existing_pdf_path": existing_pdf_path,
+            }
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
         Convert the given prompt into a PDF.
@@ -127,10 +155,7 @@ class PDFConverter(PromptConverter):
         content = self._prepare_content(prompt)
 
         # Step 2: Generate or modify the PDF (Overlay, if existing PDF)
-        if self._existing_pdf_bytes:
-            pdf_bytes = self._modify_existing_pdf()
-        else:
-            pdf_bytes = self._generate_pdf(content)
+        pdf_bytes = self._modify_existing_pdf() if self._existing_pdf_bytes else self._generate_pdf(content)
 
         # Step 3: Serialize PDF
         pdf_serializer = await self._serialize_pdf(pdf_bytes, content)
@@ -170,15 +195,14 @@ class PDFConverter(PromptConverter):
 
             except (ValueError, KeyError) as e:
                 logger.error(f"Error rendering prompt: {e}")
-                raise ValueError(f"Failed to render the prompt: {e}")
+                raise ValueError(f"Failed to render the prompt: {e}") from e
 
         # If no template is provided, return the raw prompt as content
         if isinstance(prompt, str):
             logger.debug("No template provided. Using raw prompt.")
             return prompt
-        else:
-            logger.error("Prompt must be a string when no template is provided.")
-            raise ValueError("Prompt must be a string when no template is provided.")
+        logger.error("Prompt must be a string when no template is provided.")
+        raise ValueError("Prompt must be a string when no template is provided.")
 
     def _generate_pdf(self, content: str) -> bytes:
         """
@@ -216,10 +240,7 @@ class PDFConverter(PromptConverter):
         y = page_height_pt - margin  # ReportLab uses bottom-left origin
 
         # Calculate actual column width
-        if self._column_width == 0:
-            actual_width = page_width_pt - (2 * margin)
-        else:
-            actual_width = self._column_width * mm
+        actual_width = page_width_pt - 2 * margin if self._column_width == 0 else self._column_width * mm
 
         # Convert row_height from mm to points
         line_height = self._row_height * mm if self._row_height else self._font_size * 1.2
@@ -265,61 +286,56 @@ class PDFConverter(PromptConverter):
             raise ValueError("Existing PDF and injection items are required for modification.")
 
         reader = PdfReader(self._existing_pdf_bytes)
-        writer = PdfWriter()
+        # clone_from attaches all pages to the writer up-front, avoiding
+        # the deprecated PageObject.replace_contents() call on unattached pages.
+        writer = PdfWriter(clone_from=reader)
 
         # Keep a list of overlay buffers to close them after final write
         overlay_buffers = []
 
-        for page_number, page in enumerate(reader.pages):
-            # We know page_number is valid because enumerate() only provides indices in range(total_pages).
-            # Therefore, no extra check needed here.
+        try:
+            for page_number, page in enumerate(writer.pages):
+                logger.info(f"Processing page {page_number} with {len(self._injection_items)} injection items.")
 
-            logger.info(f"Processing page {page_number} with {len(self._injection_items)} injection items.")
+                # Extract page dimensions for early coordinate checks
+                page_width = float(page.mediabox[2] - page.mediabox[0])
+                page_height = float(page.mediabox[3] - page.mediabox[1])
 
-            # Extract page dimensions for early coordinate checks
-            page_width = float(page.mediabox[2] - page.mediabox[0])
-            page_height = float(page.mediabox[3] - page.mediabox[1])
+                # For each item that belongs on this page, create and merge an overlay
+                for item in self._injection_items:
+                    if item.get("page", 0) == page_number:
+                        # Default to a small offset (10 points) from the top-left corner if no coordinates are provided.
+                        # This prevents injected text from starting at (0,0) and potentially running off the edges.
+                        x = item.get("x", 10)
+                        y = item.get("y", 10)
+                        text = item.get("text", "")
+                        font = item.get("font", self._font_type)
+                        font_size = item.get("font_size", self._font_size)
+                        font_color = item.get("font_color", self._font_color)
 
-            # For each item that belongs on this page, create and merge an overlay
-            for item in self._injection_items:
-                if item.get("page", 0) == page_number:
-                    # Default to a small offset (10 points) from the top-left corner if no coordinates are provided.
-                    # This prevents injected text from starting at (0,0) and potentially running off the edges.
-                    x = item.get("x", 10)
-                    y = item.get("y", 10)
-                    text = item.get("text", "")
-                    font = item.get("font", self._font_type)
-                    font_size = item.get("font_size", self._font_size)
-                    font_color = item.get("font_color", self._font_color)
+                        # Coordinate validation before calling _inject_text_into_page
+                        if not (0 <= x <= page_width and 0 <= y <= page_height):
+                            raise ValueError(f"Coordinates x={x}, y={y} out of bounds for page {page_number}.")
 
-                    # Coordinate validation before calling _inject_text_into_page
-                    if not (0 <= x <= page_width and 0 <= y <= page_height):
-                        raise ValueError(f"Coordinates x={x}, y={y} out of bounds for page {page_number}.")
+                        # (1) Build the overlay PageObject + buffer
+                        overlay_page, overlay_buffer = self._inject_text_into_page(
+                            page, x, y, text, font, font_size, font_color
+                        )
 
-                    # (1) Build the overlay PageObject + buffer
-                    overlay_page, overlay_buffer = self._inject_text_into_page(
-                        page, x, y, text, font, font_size, font_color
-                    )
+                        # (2) Merge onto the page (already attached to writer)
+                        page.merge_page(overlay_page)
 
-                    # (2) Merge onto the page
-                    page.merge_page(overlay_page)
+                        # (3) Store overlay buffer to close later
+                        overlay_buffers.append(overlay_buffer)
 
-                    # (3) Store overlay buffer to close later
-                    overlay_buffers.append(overlay_buffer)
-
-            # Add the modified page to the writer
-            writer.add_page(page)
-
-        # Finalize the PDF
-        output_pdf = BytesIO()
-        writer.write(output_pdf)
-        output_pdf.seek(0)
-
-        # Safe to close all overlays AFTER writing is finished
-        for buf in overlay_buffers:
-            buf.close()
-
-        return output_pdf.getvalue()
+            # Finalize the PDF
+            output_pdf = BytesIO()
+            writer.write(output_pdf)
+            output_pdf.seek(0)
+            return output_pdf.getvalue()
+        finally:
+            for buf in overlay_buffers:
+                buf.close()
 
     def _inject_text_into_page(
         self,
@@ -413,10 +429,7 @@ class PDFConverter(PromptConverter):
         """
         original_filename_ending = self._existing_pdf_path.suffix if self._existing_pdf_path else ""
 
-        if original_filename_ending:
-            extension = original_filename_ending[1:]  # Remove the leading dot
-        else:
-            extension = "pdf"
+        extension = original_filename_ending[1:] if original_filename_ending else "pdf"
 
         pdf_serializer = data_serializer_factory(
             category="prompt-memory-entries",

@@ -5,7 +5,7 @@ from pyrit.models import DataTypeSerializer, data_serializer_factory
 
 # Supported image formats for Azure OpenAI GPT-4o,
 # https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/use-your-image-data
-AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", "tif"]
+AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif"]
 
 
 async def convert_local_image_to_data_url(image_path: str) -> str:

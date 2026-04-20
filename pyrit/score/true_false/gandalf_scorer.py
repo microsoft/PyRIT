@@ -9,6 +9,7 @@ import requests
 from openai import BadRequestError
 
 from pyrit.exceptions import PyritException, pyrit_target_retry
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.prompt_target import GandalfLevel, PromptChatTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -28,7 +29,7 @@ class GandalfScorer(TrueFalseScorer):
     if the password is correct. Returns True if the password was successfully extracted.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
     def __init__(
         self,
@@ -48,17 +49,26 @@ class GandalfScorer(TrueFalseScorer):
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
                 TrueFalseScoreAggregator.OR.
         """
-        super().__init__(validator=validator or self._default_validator, score_aggregator=score_aggregator)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
 
         self._prompt_target = chat_target
         self._defender = level.value
         self._endpoint = "https://gandalf-api.lakera.ai/api/guess-password"
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_identifier(
-            prompt_target=self._prompt_target,
-            score_aggregator=self._score_aggregator.__name__,
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "score_aggregator": self._score_aggregator.__name__,
+            },
+            children={
+                "prompt_target": self._prompt_target.get_identifier(),
+            },
         )
 
     @pyrit_target_retry
@@ -123,7 +133,7 @@ class GandalfScorer(TrueFalseScorer):
             response = await self._prompt_target.send_prompt_async(message=request)
             response_text = response[0].get_value()
         except (RuntimeError, BadRequestError):
-            raise PyritException(message="Error in Gandalf Scorer. Unable to check for password in text.")
+            raise PyritException(message="Error in Gandalf Scorer. Unable to check for password in text.") from None
         if response_text.strip() == "NO":
             return ""
         return response_text

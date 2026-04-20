@@ -32,7 +32,7 @@ def get_converters_mentioned_in_notebooks():
         if notebook_file.name.startswith("_"):
             continue
 
-        content = notebook_file.read_text()
+        content = notebook_file.read_text(encoding="utf-8")
 
         # Look for converter imports and class names
         # Pattern 1: from pyrit.prompt_converter import ConverterName

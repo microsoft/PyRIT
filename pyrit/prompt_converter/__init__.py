@@ -18,7 +18,11 @@ from pyrit.prompt_converter.ansi_escape.ansi_attack_converter import AnsiAttackC
 from pyrit.prompt_converter.ascii_art_converter import AsciiArtConverter
 from pyrit.prompt_converter.ask_to_decode_converter import AskToDecodeConverter
 from pyrit.prompt_converter.atbash_converter import AtbashConverter
+from pyrit.prompt_converter.audio_echo_converter import AudioEchoConverter
 from pyrit.prompt_converter.audio_frequency_converter import AudioFrequencyConverter
+from pyrit.prompt_converter.audio_speed_converter import AudioSpeedConverter
+from pyrit.prompt_converter.audio_volume_converter import AudioVolumeConverter
+from pyrit.prompt_converter.audio_white_noise_converter import AudioWhiteNoiseConverter
 from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpeechAudioToTextConverter
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
@@ -37,9 +41,9 @@ from pyrit.prompt_converter.ecoji_converter import EcojiConverter
 from pyrit.prompt_converter.emoji_converter import EmojiConverter
 from pyrit.prompt_converter.first_letter_converter import FirstLetterConverter
 from pyrit.prompt_converter.flip_converter import FlipConverter
-from pyrit.prompt_converter.human_in_the_loop_converter import HumanInTheLoopConverter
 from pyrit.prompt_converter.image_compression_converter import ImageCompressionConverter
 from pyrit.prompt_converter.insert_punctuation_converter import InsertPunctuationConverter
+from pyrit.prompt_converter.json_string_converter import JsonStringConverter
 from pyrit.prompt_converter.leetspeak_converter import LeetspeakConverter
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.prompt_converter.malicious_question_generator_converter import MaliciousQuestionGeneratorConverter
@@ -57,6 +61,7 @@ from pyrit.prompt_converter.random_capital_letters_converter import RandomCapita
 from pyrit.prompt_converter.random_translation_converter import RandomTranslationConverter
 from pyrit.prompt_converter.repeat_token_converter import RepeatTokenConverter
 from pyrit.prompt_converter.rot13_converter import ROT13Converter
+from pyrit.prompt_converter.scientific_translation_converter import ScientificTranslationConverter
 from pyrit.prompt_converter.search_replace_converter import SearchReplaceConverter
 from pyrit.prompt_converter.selective_text_converter import SelectiveTextConverter
 from pyrit.prompt_converter.string_join_converter import StringJoinConverter
@@ -96,6 +101,7 @@ from pyrit.prompt_converter.unicode_replacement_converter import UnicodeReplacem
 from pyrit.prompt_converter.unicode_sub_converter import UnicodeSubstitutionConverter
 from pyrit.prompt_converter.url_converter import UrlConverter
 from pyrit.prompt_converter.variation_converter import VariationConverter
+from pyrit.prompt_converter.word_doc_converter import WordDocConverter
 from pyrit.prompt_converter.zalgo_converter import ZalgoConverter
 from pyrit.prompt_converter.zero_width_converter import ZeroWidthConverter
 
@@ -109,7 +115,11 @@ __all__ = [
     "AsciiSmugglerConverter",
     "AskToDecodeConverter",
     "AtbashConverter",
+    "AudioEchoConverter",
     "AudioFrequencyConverter",
+    "AudioSpeedConverter",
+    "AudioVolumeConverter",
+    "AudioWhiteNoiseConverter",
     "AzureSpeechAudioToTextConverter",
     "AzureSpeechTextToAudioConverter",
     "Base2048Converter",
@@ -129,10 +139,10 @@ __all__ = [
     "EmojiConverter",
     "FirstLetterConverter",
     "FlipConverter",
-    "HumanInTheLoopConverter",
     "ImageCompressionConverter",
     "IndexSelectionStrategy",
     "InsertPunctuationConverter",
+    "JsonStringConverter",
     "KeywordSelectionStrategy",
     "LeetspeakConverter",
     "LLMGenericTextConverter",
@@ -155,6 +165,7 @@ __all__ = [
     "RangeSelectionStrategy",
     "RegexSelectionStrategy",
     "RepeatTokenConverter",
+    "ScientificTranslationConverter",
     "SearchReplaceConverter",
     "SelectiveTextConverter",
     "SneakyBitsSmugglerConverter",
@@ -176,6 +187,7 @@ __all__ = [
     "UrlConverter",
     "VariationConverter",
     "VariationSelectorSmugglerConverter",
+    "WordDocConverter",
     "WordIndexSelectionStrategy",
     "WordKeywordSelectionStrategy",
     "WordPositionSelectionStrategy",

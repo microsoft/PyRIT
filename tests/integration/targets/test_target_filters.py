@@ -121,7 +121,7 @@ async def test_image_input_filters(sqlite_instance, endpoint, api_key, model_nam
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
-    [("OPENAI_VIDEO2_ENDPOINT", "OPENAI_VIDEO2_KEY", "OPENAI_VIDEO2_MODEL")],
+    [("AZURE_OPENAI_VIDEO_ENDPOINT", "AZURE_OPENAI_VIDEO_KEY", "AZURE_OPENAI_VIDEO_MODEL")],
 )
 async def test_video_input_filters(sqlite_instance, endpoint, api_key, model_name):
     target = OpenAIVideoTarget(

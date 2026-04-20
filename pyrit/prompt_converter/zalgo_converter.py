@@ -5,6 +5,7 @@ import logging
 import random
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
@@ -40,11 +41,24 @@ class ZalgoConverter(WordLevelConverter):
         self._intensity = self._normalize_intensity(intensity)
         self._seed = seed
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with zalgo parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "intensity": self._intensity,
+            },
+        )
+
     def _normalize_intensity(self, intensity: int) -> int:
         try:
             intensity = int(intensity)
         except (TypeError, ValueError):
-            raise ValueError(f"Invalid intensity value: {intensity!r} (must be an integer)")
+            raise ValueError(f"Invalid intensity value: {intensity!r} (must be an integer)") from None
 
         normalized_intensity = max(0, min(intensity, MAX_INTENSITY))
         if intensity != normalized_intensity:

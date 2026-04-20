@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from pyrit.auth.azure_auth import get_speech_config
 from pyrit.common import default_values
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -93,6 +94,21 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         self._synthesis_voice_name = synthesis_voice_name
         self._output_format = output_format
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with speech synthesis parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "synthesis_language": self._synthesis_language,
+                "synthesis_voice_name": self._synthesis_voice_name,
+                "output_format": self._output_format,
+            }
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
         Convert the given text prompt into its audio representation.
@@ -114,7 +130,7 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
-                + "You may need to install it via 'pip install pyrit[speech]'"
+                "You may need to install it via 'pip install pyrit[speech]'"
             )
             raise e
 
@@ -151,18 +167,16 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
                 await audio_serializer.save_data(audio_data)
                 audio_serializer_file = str(audio_serializer.value)
                 logger.info(
-                    "Speech synthesized for text [{}], and the audio was saved to [{}]".format(
-                        prompt, audio_serializer_file
-                    )
+                    f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]"
                 )
             elif result.reason == speechsdk.ResultReason.Canceled:
                 cancellation_details = result.cancellation_details
-                logger.info("Speech synthesis canceled: {}".format(cancellation_details.reason))
+                logger.info(f"Speech synthesis canceled: {cancellation_details.reason}")
                 if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                    logger.error("Error details: {}".format(cancellation_details.error_details))
+                    logger.error(f"Error details: {cancellation_details.error_details}")
                 raise RuntimeError(
-                    "Speech synthesis canceled: {}".format(cancellation_details.reason)
-                    + "Error details: {}".format(cancellation_details.error_details)
+                    f"Speech synthesis canceled: {cancellation_details.reason}. "
+                    f"Error details: {cancellation_details.error_details}"
                 )
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))

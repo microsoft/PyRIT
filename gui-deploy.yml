@@ -1,0 +1,229 @@
+# CI/CD pipeline for CoPyRIT GUI deployment.
+#
+# Triggers on changes to GUI-relevant paths on the main branch.
+# Builds Docker image, pushes to ACR, deploys to test ACA environment.
+# Production deployment is opt-in via the deployToProd parameter.
+#
+# All infrastructure details (IDs, connection strings, resource names) are
+# stored in ADO variable groups — nothing sensitive appears in this file.
+# Required variable groups:
+#   - copyrit-gui-common  (azureServiceConnection, acrName, acrLoginServer, imageName)
+#   - copyrit-gui-test    (resourceGroup, appName, entraTenantId, entraClientId,
+#                           allowedGroupObjectIds, sqlServerFqdn, sqlDatabaseName,
+#                           keyVaultResourceId, acrResourceId, enablePrivateEndpoint, enableOtel)
+#   - copyrit-gui-prod    (same keys as test, with production values)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - pyrit/backend/**
+      - frontend/**
+      - docker/**
+      - infra/**
+
+pr: none
+
+parameters:
+  - name: deployToProd
+    displayName: 'Deploy to production'
+    type: boolean
+    default: false
+
+# Service connection must be a compile-time variable (not from a variable group)
+# because azureSubscription is validated during YAML parsing.
+variables:
+  azureServiceConnection: 'copyrit-gui-azure'
+
+stages:
+  # ──────────────────────────────────────────────
+  # Stage 1: Build Docker image and push to ACR
+  # ──────────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build and Push Image'
+    variables:
+      - group: copyrit-gui-common
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build Docker image and push to ACR'
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - task: AzureCLI@2
+            displayName: 'Build and push Docker image'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+
+                echo "=== Building devcontainer base image ==="
+                docker build \
+                  -f .devcontainer/Dockerfile \
+                  -t pyrit-devcontainer \
+                  .devcontainer/
+
+                echo "=== Building production image ==="
+                docker build --no-cache \
+                  -f docker/Dockerfile \
+                  -t $(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
+                  -t $(acrLoginServer)/$(imageName):latest \
+                  --build-arg BASE_IMAGE=pyrit-devcontainer \
+                  --build-arg PYRIT_SOURCE=local \
+                  --build-arg GIT_COMMIT=$(Build.SourceVersion) \
+                  --build-arg GIT_MODIFIED=false \
+                  .
+
+                echo "=== Pushing to ACR ==="
+                az acr login --name $(acrName)
+                docker push $(acrLoginServer)/$(imageName):$(Build.SourceVersion)
+                docker push $(acrLoginServer)/$(imageName):latest
+
+                echo "✅ Image pushed: $(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
+
+  # ──────────────────────────────────────────────
+  # Stage 2: Deploy to test environment
+  # ──────────────────────────────────────────────
+  - stage: DeployTest
+    displayName: 'Deploy to Test'
+    dependsOn: Build
+    variables:
+      - group: copyrit-gui-common
+      - group: copyrit-gui-test
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - deployment: DeployToTest
+        displayName: 'Deploy to test environment'
+        environment: 'copyrit-test'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 1
+
+                - task: AzureCLI@2
+                  displayName: 'Deploy Bicep to test'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -euo pipefail
+
+                      az deployment group create \
+                        --resource-group $(resourceGroup) \
+                        --template-file $(Build.SourcesDirectory)/infra/main.bicep \
+                        --parameters appName=$(appName) \
+                        --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
+                        --parameters entraTenantId=$(entraTenantId) \
+                        --parameters entraClientId=$(entraClientId) \
+                        --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
+                        --parameters sqlServerFqdn=$(sqlServerFqdn) \
+                        --parameters sqlDatabaseName=$(sqlDatabaseName) \
+                        --parameters keyVaultResourceId=$(keyVaultResourceId) \
+                        --parameters acrResourceId=$(acrResourceId) \
+                        --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
+                        --parameters enableOtel=$(enableOtel) \
+                        --parameters envSecretName=$(envSecretName)
+
+                - task: AzureCLI@2
+                  displayName: 'Health check'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -euo pipefail
+
+                      FQDN=$(az containerapp show \
+                        --name $(appName) \
+                        --resource-group $(resourceGroup) \
+                        --query "properties.configuration.ingress.fqdn" -o tsv)
+
+                      echo "Testing https://$FQDN/api/health"
+
+                      curl --retry 5 --retry-delay 15 --retry-all-errors \
+                        --fail --max-time 10 \
+                        "https://$FQDN/api/health"
+
+                      echo ""
+                      echo "✅ Test environment health check passed"
+
+  # ──────────────────────────────────────────────
+  # Stage 3: Deploy to production (manual trigger)
+  # ──────────────────────────────────────────────
+  - ${{ if eq(parameters.deployToProd, true) }}:
+    - stage: DeployProd
+      displayName: 'Deploy to Production'
+      dependsOn: DeployTest
+      variables:
+        - group: copyrit-gui-common
+        - group: copyrit-gui-prod
+      pool:
+        vmImage: 'ubuntu-latest'
+      jobs:
+        - deployment: DeployToProd
+          displayName: 'Deploy to production environment'
+          environment: 'copyrit-prod'
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
+                    fetchDepth: 1
+
+                  - task: AzureCLI@2
+                    displayName: 'Deploy Bicep to prod'
+                    inputs:
+                      azureSubscription: '$(azureServiceConnection)'
+                      scriptType: 'bash'
+                      scriptLocation: 'inlineScript'
+                      inlineScript: |
+                        set -euo pipefail
+
+                        az deployment group create \
+                          --resource-group $(resourceGroup) \
+                          --template-file $(Build.SourcesDirectory)/infra/main.bicep \
+                          --parameters appName=$(appName) \
+                          --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
+                          --parameters entraTenantId=$(entraTenantId) \
+                          --parameters entraClientId=$(entraClientId) \
+                          --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
+                          --parameters sqlServerFqdn=$(sqlServerFqdn) \
+                          --parameters sqlDatabaseName=$(sqlDatabaseName) \
+                          --parameters keyVaultResourceId=$(keyVaultResourceId) \
+                          --parameters acrResourceId=$(acrResourceId) \
+                          --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
+                          --parameters enableOtel=$(enableOtel) \
+                          --parameters envSecretName=$(envSecretName)
+
+                  - task: AzureCLI@2
+                    displayName: 'Health check'
+                    inputs:
+                      azureSubscription: '$(azureServiceConnection)'
+                      scriptType: 'bash'
+                      scriptLocation: 'inlineScript'
+                      inlineScript: |
+                        set -euo pipefail
+
+                        FQDN=$(az containerapp show \
+                          --name $(appName) \
+                          --resource-group $(resourceGroup) \
+                          --query "properties.configuration.ingress.fqdn" -o tsv)
+
+                        echo "Testing https://$FQDN/api/health"
+
+                        curl --retry 5 --retry-delay 15 --retry-all-errors \
+                          --fail --max-time 10 \
+                          "https://$FQDN/api/health"
+
+                        echo ""
+                        echo "✅ Production health check passed"

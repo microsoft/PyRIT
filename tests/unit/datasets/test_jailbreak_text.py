@@ -2,11 +2,14 @@
 # Licensed under the MIT license.
 
 import pathlib
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.datasets import TextJailBreak
+from pyrit.models import SeedPrompt
 
 
 @pytest.fixture
@@ -77,6 +80,13 @@ def test_get_file_name_subdirectory():
     result = jailbreak.get_jailbreak("Tell me a joke")
     assert "Tell me a joke" in result
     assert "{{ prompt }}" not in result
+
+
+def test_get_jailbreak_templates_includes_subdirectory_templates():
+    """Subdirectory templates must appear in the listing, not just top-level ones."""
+    templates = TextJailBreak.get_jailbreak_templates()
+    top_level_count = len(list(JAILBREAK_TEMPLATES_PATH.glob("*.yaml")))
+    assert len(templates) > top_level_count, "Subdirectory templates should be included in the listing"
 
 
 def test_all_templates_render_without_syntax_errors(jailbreak_dir):
@@ -186,3 +196,115 @@ def test_template_source_tracking(jailbreak_dir):
     # Test with string template
     jailbreak_string = TextJailBreak(string_template="Test {{ prompt }}")
     assert jailbreak_string.template_source == "<string_template>"
+
+
+def test_all_jailbreak_yaml_templates_have_is_general_technique(jailbreak_dir):
+    """Test that all jailbreak YAML templates have is_general_technique set to true."""
+    yaml_files = list(jailbreak_dir.rglob("*.yaml"))
+    assert len(yaml_files) > 0, "No YAML templates found in jailbreak directory"
+
+    missing = []
+    for yaml_file in yaml_files:
+        seed = SeedPrompt.from_yaml_file(yaml_file)
+        if seed.is_general_technique is not True:
+            missing.append(str(yaml_file.relative_to(jailbreak_dir)))
+
+    if missing:
+        pytest.fail(
+            f"{len(missing)} jailbreak template(s) missing is_general_technique: true:\n"
+            + "\n".join(f"  - {f}" for f in missing)
+        )
+
+
+class TestTextJailBreakTemplateCache:
+    """Tests for the template file caching mechanism."""
+
+    def setup_method(self) -> None:
+        """Reset the class-level cache before each test to ensure isolation."""
+        TextJailBreak._template_cache = None
+
+    def teardown_method(self) -> None:
+        """Reset the class-level cache after each test."""
+        TextJailBreak._template_cache = None
+
+    def test_scan_template_files_excludes_multi_parameter(self) -> None:
+        """Test that _scan_template_files excludes files under multi_parameter directories."""
+        result = TextJailBreak._scan_template_files()
+        for paths in result.values():
+            for path in paths:
+                assert "multi_parameter" not in path.parts
+
+    def test_scan_template_files_returns_grouped_dict(self) -> None:
+        """Test that _scan_template_files returns a dict mapping filenames to lists of paths."""
+        result = TextJailBreak._scan_template_files()
+        assert len(result) > 0
+        for filename, paths in result.items():
+            assert isinstance(filename, str)
+            assert filename.endswith(".yaml")
+            assert isinstance(paths, list)
+            assert all(isinstance(p, Path) for p in paths)
+
+    def test_get_template_cache_returns_same_instance(self) -> None:
+        """Test that _get_template_cache returns the same cached dict on repeated calls."""
+        first_call = TextJailBreak._get_template_cache()
+        second_call = TextJailBreak._get_template_cache()
+        assert first_call is second_call
+
+    def test_get_template_cache_populates_from_scan(self) -> None:
+        """Test that _get_template_cache populates the cache from _scan_template_files."""
+        assert TextJailBreak._template_cache is None
+        cache = TextJailBreak._get_template_cache()
+        assert TextJailBreak._template_cache is cache
+        assert len(cache) > 0
+
+
+class TestTextJailBreakResolveByName:
+    """Tests for template resolution by filename."""
+
+    def test_resolve_template_by_name_returns_path(self) -> None:
+        """Test that _resolve_template_by_name returns a valid Path for a known template."""
+        path = TextJailBreak._resolve_template_by_name("dan_1.yaml")
+        assert isinstance(path, Path)
+        assert path.name == "dan_1.yaml"
+
+    def test_resolve_template_by_name_not_found(self) -> None:
+        """Test that _resolve_template_by_name raises ValueError for an unknown filename."""
+        with pytest.raises(ValueError, match="not found"):
+            TextJailBreak._resolve_template_by_name("this_does_not_exist_12345.yaml")
+
+    def test_resolve_template_by_name_duplicate_raises(self) -> None:
+        """Test that _resolve_template_by_name raises ValueError when multiple files share a name."""
+        fake_cache = {"dup.yaml": [Path("/a/dup.yaml"), Path("/b/dup.yaml")]}
+        with patch.object(TextJailBreak, "_get_template_cache", return_value=fake_cache):
+            with pytest.raises(ValueError, match="Multiple files named"):
+                TextJailBreak._resolve_template_by_name("dup.yaml")
+
+
+class TestTextJailBreakGetAllPaths:
+    """Tests for _get_all_template_paths."""
+
+    def test_get_all_template_paths_returns_non_empty_list(self) -> None:
+        """Test that _get_all_template_paths returns a non-empty list of Paths."""
+        paths = TextJailBreak._get_all_template_paths()
+        assert len(paths) > 0
+        assert all(isinstance(p, Path) for p in paths)
+
+    def test_get_all_template_paths_raises_when_empty(self) -> None:
+        """Test that _get_all_template_paths raises ValueError when no templates exist."""
+        with patch.object(TextJailBreak, "_get_template_cache", return_value={}):
+            with pytest.raises(ValueError, match="No YAML templates found"):
+                TextJailBreak._get_all_template_paths()
+
+
+class TestTextJailBreakLoadRandom:
+    """Tests for _load_random_template."""
+
+    def test_load_random_template_raises_when_no_prompt_templates(self) -> None:
+        """Test that _load_random_template raises when no template has a single 'prompt' parameter."""
+        mock_template = SeedPrompt(value="no prompt param here", data_type="text")
+        # SeedPrompt with no {{ prompt }} has parameters == []
+        with patch.object(TextJailBreak, "_get_all_template_paths", return_value=[Path("/fake/t.yaml")]):
+            with patch.object(SeedPrompt, "from_yaml_file", return_value=mock_template):
+                instance = TextJailBreak.__new__(TextJailBreak)
+                with pytest.raises(ValueError, match="No jailbreak template with a single 'prompt' parameter"):
+                    instance._load_random_template()

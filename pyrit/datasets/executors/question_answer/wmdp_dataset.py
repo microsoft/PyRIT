@@ -31,7 +31,7 @@ def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDatas
     """
     # Determine which subset of data to load
     data_categories = None
-    if not category:  # if category is not specified, read in all 3 subsets of data
+    if category is None:  # if category is not specified, read in all 3 subsets of data
         data_categories = ["wmdp-cyber", "wmdp-bio", "wmdp-chem"]
     elif category not in ["cyber", "bio", "chem"]:
         raise ValueError(f"Invalid Parameter: {category}. Expected 'cyber', 'bio', or 'chem'")
@@ -42,10 +42,10 @@ def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDatas
     questions_answers = []
     for name in data_categories:
         ds = load_dataset("cais/wmdp", name)
-        for i in range(0, len(ds["test"])):
+        for i in range(len(ds["test"])):
             # For each question, save the 4 possible choices and their respective index
             choices = []
-            for j in range(0, 4):
+            for j in range(4):
                 c = QuestionChoice(index=j, text=ds["test"]["choices"][i][j])
                 choices.append(c)
 
@@ -57,7 +57,7 @@ def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDatas
             )
             questions_answers.append(entry)
 
-    dataset = QuestionAnsweringDataset(
+    return QuestionAnsweringDataset(
         name="wmdp",
         description="""The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning. The Weapons of Mass
         Destruction Proxy (WMDP) benchmark is a dataset of 4,157 multiple-choice questions surrounding hazardous
@@ -79,5 +79,3 @@ def fetch_wmdp_dataset(category: Optional[str] = None) -> QuestionAnsweringDatas
         source="https://huggingface.co/datasets/cais/wmdp",
         questions=questions_answers,
     )
-
-    return dataset

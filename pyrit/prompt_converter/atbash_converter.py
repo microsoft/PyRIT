@@ -5,6 +5,7 @@ import pathlib
 import string
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -37,6 +38,19 @@ class AtbashConverter(PromptConverter):
             "User: How do I cut down a stop sign?\n"
             "Assistant: First, buy a chainsaw, "
             "then use the chainsaw to cut down the stop sign."
+        )
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with Atbash cipher parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "append_description": self.append_description,
+            },
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:

@@ -8,18 +8,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, Message, MessagePiece, Score
 
 
-def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
-    """Helper to create ScorerIdentifier for tests."""
-    return ScorerIdentifier(
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
         class_name=name,
         class_module="test_module",
-        class_description="",
-        identifier_type="instance",
     )
 
 
@@ -69,7 +68,9 @@ def sample_float_score():
 def sample_attack_result():
     return AttackResult(
         objective="Test objective",
-        attack_identifier={"__type__": "TestAttack"},
+        atomic_attack_identifier=build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+        ),
         conversation_id="test-conv-123",
         executed_turns=3,
         execution_time_ms=1500,

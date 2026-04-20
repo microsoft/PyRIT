@@ -12,8 +12,16 @@ from pyrit.datasets.executors.question_answer import (
 from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
 from pyrit.datasets.seed_datasets import local, remote  # noqa: F401
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.seed_metadata import (
+    SeedDatasetFilter,
+    SeedDatasetLoadTime,
+    SeedDatasetMetadata,
+)
 
 __all__ = [
+    "SeedDatasetFilter",
+    "SeedDatasetMetadata",
+    "SeedDatasetLoadTime",
     "SeedDatasetProvider",
     "TextJailBreak",
     "fetch_anthropic_evals_dataset",

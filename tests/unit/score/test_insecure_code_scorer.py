@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, UnvalidatedScore
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import InsecureCodeScorer
@@ -31,11 +31,9 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
         score_category=["security"],
         score_rationale="This code has potential vulnerabilities.",
         score_metadata=None,
-        scorer_class_identifier=ScorerIdentifier(
+        scorer_class_identifier=ComponentIdentifier(
             class_name="InsecureCodeScorer",
             class_module="pyrit.score",
-            class_description="",
-            identifier_type="instance",
         ),
         message_piece_id="12345",
         objective=None,

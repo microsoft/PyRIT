@@ -5,6 +5,7 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
@@ -50,6 +51,7 @@ def scorer_category_response_false() -> Message:
 
 def test_category_scorer_set_no_category_found():
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskCategoryScorer(
         chat_target=chat_target,
         content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
@@ -63,6 +65,7 @@ def test_category_scorer_set_no_category_found():
 @pytest.mark.asyncio
 async def test_category_scorer_set_system_prompt(scorer_category_response_bullying: Message, patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_bullying])
     scorer = SelfAskCategoryScorer(
@@ -78,6 +81,7 @@ async def test_category_scorer_set_system_prompt(scorer_category_response_bullyi
 @pytest.mark.asyncio
 async def test_category_scorer_score(scorer_category_response_bullying: Message, patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_bullying])
 
@@ -100,6 +104,7 @@ async def test_category_scorer_score(scorer_category_response_bullying: Message,
 @pytest.mark.asyncio
 async def test_category_scorer_score_false(scorer_category_response_false: Message, patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_false])
 
@@ -122,6 +127,7 @@ async def test_category_scorer_score_false(scorer_category_response_false: Messa
 async def test_category_scorer_adds_to_memory(scorer_category_response_false: Message, patch_central_database):
     memory = MagicMock(MemoryInterface)
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_false])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = SelfAskCategoryScorer(
@@ -137,6 +143,7 @@ async def test_category_scorer_adds_to_memory(scorer_category_response_false: Me
 @pytest.mark.asyncio
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
@@ -155,6 +162,7 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
 @pytest.mark.asyncio
 async def test_self_ask_objective_scorer_json_missing_key_exception_retries(patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     json_response = (
         dedent(
@@ -192,6 +200,7 @@ async def test_score_prompts_batch_async(
     patch_central_database,
 ):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock()
     chat_target._max_requests_per_minute = max_requests_per_minute
     with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):

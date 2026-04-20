@@ -1,18 +1,21 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
 import uuid
-from contextlib import closing
+from collections.abc import MutableSequence, Sequence
+from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, MutableSequence, Optional, Sequence, TypeVar, Union
+from typing import Any, Optional, TypeVar, Union, cast
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import and_, create_engine, func, or_, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload, sessionmaker
+from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
 from pyrit.common.path import DB_DATA_PATH
@@ -23,12 +26,21 @@ from pyrit.memory.memory_models import (
     Base,
     EmbeddingDataEntry,
     PromptMemoryEntry,
+    ScenarioResultEntry,
 )
-from pyrit.models import DiskStorageIO, MessagePiece
+from pyrit.models import ConversationStats, DiskStorageIO, MessagePiece
 
 logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
+
+
+class _ExportableConversationPiece:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._data
 
 
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
@@ -58,7 +70,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             verbose (bool): Whether to enable verbose logging.
                 Defaults to False.
         """
-        super(SQLiteMemory, self).__init__()
+        super().__init__()
 
         if db_path == ":memory:":
             self.db_path: Union[Path, str] = ":memory:"
@@ -81,6 +93,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Creates an engine bound to the specified database file. The `has_echo` parameter
         controls the verbosity of SQL execution logging.
 
+        For in-memory databases (``db_path=":memory:"``), a ``StaticPool`` is used so
+        that a single shared connection backs all threads.  SQLAlchemy's default pool
+        for ``:memory:`` is ``SingletonThreadPool``, which gives each thread its own
+        connection — and therefore its own *separate* in-memory database.  That causes
+        tables created on one thread (e.g. a background initialisation thread) to be
+        invisible from another thread (e.g. the main thread), resulting in
+        "no such table" errors.
+
         Args:
             has_echo (bool): Flag to enable detailed SQL execution logging.
 
@@ -91,8 +111,17 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             SQLAlchemyError: If there's an issue creating the engine.
         """
         try:
-            # Create the SQLAlchemy engine.
-            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo)
+            extra_kwargs: dict[str, Any] = {}
+
+            if self.db_path == ":memory:":
+                # Use StaticPool so every checkout returns the same underlying
+                # DBAPI connection, keeping all threads on a single in-memory
+                # database.  ``check_same_thread=False`` is required because
+                # the connection will be shared across threads.
+                extra_kwargs["poolclass"] = StaticPool
+                extra_kwargs["connect_args"] = {"check_same_thread": False}
+
+            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo, **extra_kwargs)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:
@@ -156,15 +185,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         condition = text(json_conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
         return [condition]
 
-    def _get_message_pieces_attack_conditions(self, *, attack_id: str) -> Any:
-        """
-        Generate SQLAlchemy filter conditions for filtering by attack ID.
-
-        Returns:
-            Any: A SQLAlchemy text condition with bound parameters.
-        """
-        return text("JSON_EXTRACT(attack_identifier, '$.id') = :attack_id").bindparams(attack_id=str(attack_id))
-
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> Any:
         """
         Generate SQLAlchemy filter conditions for filtering seed prompts by metadata.
@@ -176,7 +196,94 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         # Create SQL condition using SQLAlchemy's text() with bindparams
         # Note: We do NOT convert values to string here, to allow integer comparison in JSON
-        return text(json_conditions).bindparams(**{key: value for key, value in metadata.items()})
+        return text(json_conditions).bindparams(**dict(metadata.items()))
+
+    def _get_condition_json_property_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        value: str,
+        partial_match: bool = False,
+        case_sensitive: bool = False,
+    ) -> Any:
+        """
+        Return a SQLite DB condition for matching a value at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
+            property_path (str): The JSON path for the property to match.
+            value (str): The string value that must match the extracted JSON property value.
+            partial_match (bool): Whether to perform a substring match.
+            case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
+
+        Returns:
+            Any: A SQLAlchemy condition for the backend-specific JSON query.
+        """
+        raw = func.json_extract(json_column, property_path)
+        if case_sensitive:
+            extracted_value, target = raw, value
+        else:
+            extracted_value, target = func.lower(raw), value.lower()
+
+        if partial_match:
+            escaped = target.replace("%", "\\%").replace("_", "\\_")
+            return extracted_value.like(f"%{escaped}%", escape="\\")
+        return extracted_value == target
+
+    def _get_condition_json_array_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        array_element_path: str | None = None,
+        array_to_match: Sequence[str],
+    ) -> Any:
+        """
+        Return a SQLite DB condition for matching an array at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
+            property_path (str): The JSON path for the target array.
+            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
+                For a match, ALL values in this array must be present in the JSON array.
+                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+
+        Returns:
+            Any: A database-specific SQLAlchemy condition.
+        """
+        array_expr = func.json_extract(json_column, property_path)
+        if len(array_to_match) == 0:
+            return or_(
+                json_column.is_(None),
+                array_expr.is_(None),
+                array_expr == "[]",
+            )
+
+        uid = self._uid()
+        table_name = json_column.class_.__tablename__
+        column_name = json_column.key
+        pp_param = f"property_path_{uid}"
+        sp_param = f"array_element_path_{uid}"
+        value_expression = f"LOWER(json_extract(value, :{sp_param}))" if array_element_path else "LOWER(value)"
+
+        conditions = []
+        bindparams_dict: dict[str, str] = {pp_param: property_path}
+        if array_element_path:
+            bindparams_dict[sp_param] = array_element_path
+
+        for index, match_value in enumerate(array_to_match):
+            mv_param = f"mv_{uid}_{index}"
+            conditions.append(
+                f"""EXISTS(SELECT 1 FROM json_each(
+                        json_extract("{table_name}".{column_name}, :{pp_param}))
+                        WHERE {value_expression} = :{mv_param})"""
+            )
+            bindparams_dict[mv_param] = match_value.lower()
+
+        combined = " AND ".join(conditions)
+        return text(combined).bindparams(**bindparams_dict)
 
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
@@ -239,7 +346,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     return query.distinct().all()
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[attr-defined]
                 raise
 
     def _insert_entry(self, entry: Base) -> None:
@@ -297,11 +404,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         with closing(self.get_session()) as session:
             try:
                 for entry in entries:
-                    # Ensure the entry is attached to the session. If it's detached, merge it.
-                    if not session.is_modified(entry):
+                    # Load a fresh copy by primary key so we only touch the
+                    # requested fields.  Using merge() would copy ALL
+                    # attributes from the (potentially stale) detached object
+                    # and silently overwrite concurrent updates to columns
+                    # that are NOT in update_fields.
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[attr-defined]
+                    if entry_in_session is None:
                         entry_in_session = session.merge(entry)
-                    else:
-                        entry_in_session = entry
                     for field, value in update_fields.items():
                         if field in vars(entry_in_session):
                             setattr(entry_in_session, field, value)
@@ -340,7 +450,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         if self.engine:
             self.engine.dispose()
-            logger.info("Engine disposed and all connections closed.")
+            # During interpreter shutdown, logging handler streams may already be closed,
+            # causing the framework to print "Logging error" to stderr (GH-1520).
+            # Temporarily suppress logging errors for this teardown message.
+            previous_raise = logging.raiseExceptions
+            logging.raiseExceptions = False
+            try:
+                logger.info("Engine disposed and all connections closed.")
+            finally:
+                logging.raiseExceptions = previous_raise
 
     def export_conversations(
         self,
@@ -364,6 +482,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         Returns:
             Path: The path to the exported file.
+
+        Raises:
+            ValueError: If the specified export format is not supported.
         """
         # Import here to avoid circular import issues
         from pyrit.memory.memory_exporter import MemoryExporter
@@ -412,11 +533,20 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             piece_data["scores"] = [score.to_dict() for score in piece_scores]
             merged_data.append(piece_data)
 
-        # Export to JSON manually since the exporter expects objects but we have dicts
-        with open(file_path, "w") as f:
-            import json
+        if not merged_data:
+            if export_type == "json":
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(merged_data, f, indent=4)
+            elif export_type in self.exporter.export_strategies:
+                file_path.write_text("", encoding="utf-8")
+            else:
+                raise ValueError(f"Unsupported export format: {export_type}")
+            return file_path
 
-            json.dump(merged_data, f, indent=4)
+        exportable_pieces = [_ExportableConversationPiece(data=piece_data) for piece_data in merged_data]
+        self.exporter.export_data(
+            cast("list[MessagePiece]", exportable_pieces), file_path=file_path, export_type=export_type
+        )
         return file_path
 
     def print_schema(self) -> None:
@@ -450,7 +580,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             file_extension = f".{export_type}"
             file_path = DB_DATA_PATH / f"{table_name}{file_extension}"
             # Convert to list for exporter compatibility
-            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore
+            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore[arg-type]
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """
@@ -479,7 +609,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 ),
             )
         )
-        return targeted_harm_categories_subquery
+        return targeted_harm_categories_subquery  # noqa: RET504
 
     def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
         """
@@ -502,7 +632,128 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 ),
             )
         )
-        return labels_subquery
+        return labels_subquery  # noqa: RET504
+
+    def get_unique_attack_class_names(self) -> list[str]:
+        """
+        SQLite implementation: extract unique class_name values from
+        the atomic_attack_identifier JSON column.
+
+        Returns:
+            Sorted list of unique attack class name strings.
+        """
+        with closing(self.get_session()) as session:
+            class_name_expr = func.json_extract(
+                AttackResultEntry.atomic_attack_identifier,
+                "$.children.attack_technique.children.attack.class_name",
+            )
+            rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
+        return sorted(row[0] for row in rows)
+
+    def get_unique_converter_class_names(self) -> list[str]:
+        """
+        SQLite implementation: extract unique converter class_name values
+        from the children.attack_technique.children.attack.children.request_converters
+        array in the atomic_attack_identifier JSON column.
+
+        Returns:
+            Sorted list of unique converter class name strings.
+        """
+        with closing(self.get_session()) as session:
+            rows = session.execute(
+                text(
+                    """SELECT DISTINCT json_extract(j.value, '$.class_name') AS cls
+                    FROM "AttackResultEntries",
+                    json_each(
+                        json_extract("AttackResultEntries".atomic_attack_identifier,
+                            '$.children.attack_technique.children.attack.children.request_converters')
+                    ) AS j
+                    WHERE cls IS NOT NULL"""
+                )
+            ).fetchall()
+        return sorted(row[0] for row in rows)
+
+    def get_conversation_stats(self, *, conversation_ids: Sequence[str]) -> dict[str, ConversationStats]:
+        """
+        SQLite implementation: lightweight aggregate stats per conversation.
+
+        Executes a single SQL query that returns message count (distinct
+        sequences), a truncated last-message preview, the first non-empty
+        labels dict, and the earliest timestamp for each conversation_id.
+
+        Args:
+            conversation_ids: The conversation IDs to query.
+
+        Returns:
+            Mapping from conversation_id to ConversationStats.
+        """
+        if not conversation_ids:
+            return {}
+
+        placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
+        params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
+
+        max_len = ConversationStats.PREVIEW_MAX_LEN
+        sql = text(
+            f"""
+            SELECT
+                pme.conversation_id,
+                COUNT(DISTINCT pme.sequence) AS msg_count,
+                (
+                    SELECT SUBSTR(p2.converted_value, 1, {max_len + 3})
+                    FROM "PromptMemoryEntries" p2
+                    WHERE p2.conversation_id = pme.conversation_id
+                    ORDER BY p2.sequence DESC, p2.id DESC
+                    LIMIT 1
+                ) AS last_preview,
+                (
+                    SELECT p3.labels
+                    FROM "PromptMemoryEntries" p3
+                    WHERE p3.conversation_id = pme.conversation_id
+                      AND p3.labels IS NOT NULL
+                      AND p3.labels != '{{}}'
+                      AND p3.labels != 'null'
+                    ORDER BY p3.sequence ASC, p3.id ASC
+                    LIMIT 1
+                ) AS first_labels,
+                MIN(pme.timestamp) AS created_at
+            FROM "PromptMemoryEntries" pme
+            WHERE pme.conversation_id IN ({placeholders})
+            GROUP BY pme.conversation_id
+            """
+        )
+
+        with closing(self.get_session()) as session:
+            rows = session.execute(sql, params).fetchall()
+
+        result: dict[str, ConversationStats] = {}
+        for row in rows:
+            conv_id, msg_count, last_preview, raw_labels, raw_created_at = row
+
+            preview = None
+            if last_preview:
+                preview = last_preview[:max_len] + "..." if len(last_preview) > max_len else last_preview
+
+            labels: dict[str, str] = {}
+            if raw_labels and raw_labels not in ("null", "{}"):
+                with suppress(ValueError, TypeError):
+                    labels = json.loads(raw_labels)
+
+            created_at = None
+            if raw_created_at is not None:
+                if isinstance(raw_created_at, str):
+                    created_at = datetime.fromisoformat(raw_created_at)
+                else:
+                    created_at = raw_created_at
+
+            result[conv_id] = ConversationStats(
+                message_count=msg_count,
+                last_message_preview=preview,
+                labels=labels,
+                created_at=created_at,
+            )
+
+        return result
 
     def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
         """
@@ -512,43 +763,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: A SQLAlchemy exists subquery condition.
         """
-        from sqlalchemy import and_, func
-
-        from pyrit.memory.memory_models import ScenarioResultEntry
-
-        # Return a combined condition that checks ALL labels must be present
         return and_(
             *[func.json_extract(ScenarioResultEntry.labels, f"$.{key}") == value for key, value in labels.items()]
-        )
-
-    def _get_scenario_result_target_endpoint_condition(self, *, endpoint: str) -> Any:
-        """
-        SQLite implementation for filtering ScenarioResults by target endpoint.
-        Uses json_extract() function specific to SQLite.
-
-        Returns:
-            Any: A SQLAlchemy subquery for filtering by target endpoint.
-        """
-        from sqlalchemy import func
-
-        from pyrit.memory.memory_models import ScenarioResultEntry
-
-        return func.lower(func.json_extract(ScenarioResultEntry.objective_target_identifier, "$.endpoint")).like(
-            f"%{endpoint.lower()}%"
-        )
-
-    def _get_scenario_result_target_model_condition(self, *, model_name: str) -> Any:
-        """
-        SQLite implementation for filtering ScenarioResults by target model name.
-        Uses json_extract() function specific to SQLite.
-
-        Returns:
-            Any: A SQLAlchemy subquery for filtering by target model name.
-        """
-        from sqlalchemy import func
-
-        from pyrit.memory.memory_models import ScenarioResultEntry
-
-        return func.lower(func.json_extract(ScenarioResultEntry.objective_target_identifier, "$.model_name")).like(
-            f"%{model_name.lower()}%"
         )

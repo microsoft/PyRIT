@@ -5,6 +5,7 @@ import random
 import string
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import (
     WordProportionSelectionStrategy,
     WordSelectionStrategy,
@@ -47,7 +48,20 @@ class CharSwapConverter(WordLevelConverter):
         if max_iterations <= 0:
             raise ValueError("max_iterations must be greater than 0")
 
-        self.max_iterations = max_iterations
+        self._max_iterations = max_iterations
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with charswap parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "max_iterations": self._max_iterations,
+            },
+        )
 
     async def convert_word_async(self, word: str) -> str:
         """
@@ -73,7 +87,7 @@ class CharSwapConverter(WordLevelConverter):
         """
         if word not in string.punctuation and len(word) > 3:
             idx_elements = list(word)
-            for _ in range(self.max_iterations):
+            for _ in range(self._max_iterations):
                 idx1 = random.randint(1, len(word) - 2)
                 # Swap characters
                 idx_elements[idx1], idx_elements[idx1 + 1] = (

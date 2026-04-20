@@ -4,6 +4,7 @@
 import re
 from typing import Literal, Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -46,8 +47,9 @@ class RepeatTokenConverter(PromptConverter):
             token_insert_mode (str, optional): The mode of insertion for the repeated token.
                 Can be "split", "prepend", "append", or "repeat".
         """
-        self.token_to_repeat = " " + token_to_repeat.strip()
-        self.times_to_repeat = times_to_repeat
+        self._token_to_repeat = " " + token_to_repeat.strip()
+        self._times_to_repeat = times_to_repeat
+        self._token_insert_mode = token_insert_mode if token_insert_mode else "split"
         if not token_insert_mode:
             token_insert_mode = "split"
 
@@ -80,6 +82,21 @@ class RepeatTokenConverter(PromptConverter):
 
                 self.insert = insert
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with repeat token parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "token_to_repeat": self._token_to_repeat.strip(),
+                "times_to_repeat": self._times_to_repeat,
+                "token_insert_mode": self._token_insert_mode,
+            },
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
         Convert the given prompt by repeating the specified token a specified number of times.
@@ -99,6 +116,6 @@ class RepeatTokenConverter(PromptConverter):
         prompt_parts = self.insert(prompt)
 
         return ConverterResult(
-            output_text=f"{prompt_parts[0]}{self.token_to_repeat * self.times_to_repeat}{prompt_parts[1]}",
+            output_text=f"{prompt_parts[0]}{self._token_to_repeat * self._times_to_repeat}{prompt_parts[1]}",
             output_type="text",
         )

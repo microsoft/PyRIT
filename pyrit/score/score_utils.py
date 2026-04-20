@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 from pyrit.common.utils import combine_dict
 from pyrit.models import Score
@@ -11,7 +11,7 @@ from pyrit.models import Score
 ORIGINAL_FLOAT_VALUE_KEY = "original_float_value"
 
 
-def combine_metadata_and_categories(scores: List[Score]) -> tuple[Dict[str, Union[str, int, float]], List[str]]:
+def combine_metadata_and_categories(scores: list[Score]) -> tuple[dict[str, Union[str, int, float]], list[str]]:
     """
     Combine metadata and categories from multiple scores with deduplication.
 
@@ -21,7 +21,7 @@ def combine_metadata_and_categories(scores: List[Score]) -> tuple[Dict[str, Unio
     Returns:
         Tuple of (metadata dict, sorted category list with empty strings filtered).
     """
-    metadata: Dict[str, Union[str, int, float]] = {}
+    metadata: dict[str, Union[str, int, float]] = {}
     category_set: set[str] = set()
 
     for s in scores:
@@ -43,10 +43,7 @@ def format_score_for_rationale(score: Score) -> str:
     Returns:
         Formatted string with scorer class, value, and rationale.
     """
-    if score.scorer_class_identifier:
-        class_type = score.scorer_class_identifier.class_name or "Unknown"
-    else:
-        class_type = "Unknown"
+    class_type = score.scorer_class_identifier.class_name or "Unknown" if score.scorer_class_identifier else "Unknown"
     return f"   - {class_type} {score.score_value}: {score.score_rationale or ''}"
 
 
@@ -83,7 +80,6 @@ def normalize_score_to_float(score: Optional[Score]) -> float:
     score_value = score.get_value()
     if isinstance(score_value, bool):
         return 1.0 if score_value else 0.0
-    elif isinstance(score_value, (int, float)):
+    if isinstance(score_value, (int, float)):
         return float(score_value)
-    else:
-        return 0.0
+    return 0.0

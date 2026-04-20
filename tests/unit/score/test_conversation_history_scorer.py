@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.score import (
@@ -21,13 +21,11 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
-def _make_scorer_id(name: str = "TestScorer") -> ScorerIdentifier:
-    """Helper to create ScorerIdentifier for tests."""
-    return ScorerIdentifier(
+def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
         class_name=name,
         class_module="test_module",
-        class_description="",
-        identifier_type="instance",
     )
 
 
@@ -37,8 +35,8 @@ class MockFloatScaleScorer(FloatScaleScorer):
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
-    def _build_identifier(self) -> None:
-        self._set_identifier()
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return []
@@ -50,8 +48,8 @@ class MockTrueFalseScorer(TrueFalseScorer):
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
-    def _build_identifier(self) -> None:
-        self._set_identifier()
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return []
@@ -63,8 +61,8 @@ class MockUnsupportedScorer(Scorer):
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
-    def _build_identifier(self) -> None:
-        self._set_identifier()
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return []
@@ -244,8 +242,8 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
         original_value="Response",
         conversation_id=conversation_id,
         labels={"test": "label"},
-        prompt_target_identifier={"target": "test"},
-        attack_identifier={"attack": "test"},
+        prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
+        attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
         sequence=1,
     )
 
@@ -307,7 +305,7 @@ async def test_conversation_scorer_regenerates_score_ids_to_prevent_collisions(p
         score_metadata={},
         score_category=["test"],
         scorer_class_identifier=_make_scorer_id(),
-        message_piece_id=message_piece.id,
+        message_piece_id=message_piece.id or uuid.uuid4(),
         objective="test",
         score_type="float_scale",
     )
@@ -339,7 +337,7 @@ def test_conversation_scorer_cannot_be_instantiated_directly():
         TypeError,
         match=r"Can't instantiate abstract class ConversationScorer.*_get_wrapped_scorer",
     ):
-        ConversationScorer(validator=validator)
+        ConversationScorer(validator=validator)  # type: ignore[abstract]
 
 
 def test_factory_returns_instance_of_float_scale_scorer():
@@ -363,7 +361,7 @@ def test_factory_returns_instance_of_true_false_scorer():
 def test_factory_preserves_wrapped_scorer():
     """Test that factory preserves reference to wrapped scorer."""
     original_scorer = MockFloatScaleScorer()
-    original_scorer.custom_attr = "test_value"  # type: ignore
+    original_scorer.custom_attr = "test_value"  # type: ignore[abstract]
 
     conv_scorer = create_conversation_scorer(scorer=original_scorer)
 
@@ -371,9 +369,9 @@ def test_factory_preserves_wrapped_scorer():
     assert isinstance(conv_scorer, ConversationScorer)
     # Access via attribute since _get_wrapped_scorer is available at runtime
     assert hasattr(conv_scorer, "_wrapped_scorer")
-    wrapped = getattr(conv_scorer, "_wrapped_scorer")
+    wrapped = conv_scorer._wrapped_scorer
     assert wrapped is original_scorer
-    assert wrapped.custom_attr == "test_value"  # type: ignore
+    assert wrapped.custom_attr == "test_value"  # type: ignore[abstract]
 
 
 def test_factory_with_custom_validator():

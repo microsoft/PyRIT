@@ -27,7 +27,24 @@ class ConversationReference:
 
     # Allow use in set / dict
     def __hash__(self) -> int:
+        """
+        Return a hash derived from conversation ID.
+
+        Returns:
+            int: Hash value for this reference.
+
+        """
         return hash(self.conversation_id)
 
     def __eq__(self, other: object) -> bool:
+        """
+        Compare two references by conversation ID.
+
+        Args:
+            other (object): Other object to compare.
+
+        Returns:
+            bool: True when the other object is a matching ConversationReference.
+
+        """
         return isinstance(other, ConversationReference) and self.conversation_id == other.conversation_id

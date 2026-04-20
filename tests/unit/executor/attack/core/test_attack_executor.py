@@ -45,7 +45,6 @@ def create_attack_result(objective: str) -> AttackResult:
     return AttackResult(
         conversation_id=str(uuid.uuid4()),
         objective=objective,
-        attack_identifier={"__type__": "TestAttack"},
         outcome=AttackOutcome.SUCCESS,
         executed_turns=1,
     )
@@ -172,6 +171,19 @@ class TestExecuteAttackAsync:
                 attack=attack,
                 objectives=["Obj1", "Obj2"],
                 field_overrides=[{}],  # Wrong length
+            )
+
+    @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides(self):
+        """Test that explicit empty field_overrides still validate length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Obj1", "Obj2"],
+                field_overrides=[],
             )
 
     @pytest.mark.asyncio
@@ -323,10 +335,64 @@ class TestExecuteAttackFromSeedGroupsAsync:
             # Restore the original to prevent test pollution in parallel test runs
             attack.params_type.from_seed_group_async = original_from_seed_group_async
 
+    @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
+        """Test that explicit empty field_overrides still validate seed group length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+        sg1 = create_seed_group("Objective 1")
+        sg2 = create_seed_group("Objective 2")
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[sg1, sg2],
+                field_overrides=[],
+            )
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPartialFailureHandling:
     """Tests for partial failure handling."""
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_preserves_input_indices(self):
+        """Test that input_indices correctly maps completed results when some fail."""
+        attack = create_mock_attack()
+
+        async def mock_execute(*, context):
+            if "fail" in context.params.objective:
+                raise RuntimeError("Execution failed")
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = mock_execute
+
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["success0", "fail1", "success2"],
+            return_partial_on_failure=True,
+        )
+
+        # success0 is input index 0, fail1 is index 1 (excluded), success2 is index 2
+        assert len(result.completed_results) == 2
+        assert result.input_indices == [0, 2]
+
+    @pytest.mark.asyncio
+    async def test_all_succeed_input_indices_sequential(self):
+        """Test that input_indices is [0, 1, 2, ...] when all succeed."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["obj0", "obj1", "obj2"],
+        )
+
+        assert result.input_indices == [0, 1, 2]
 
     @pytest.mark.asyncio
     async def test_partial_failure_with_return_partial(self):
@@ -453,60 +519,24 @@ class TestAttackExecutorResult:
 
         assert executor_result.get_results() == results
 
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestDeprecatedMethods:
-    """Tests for deprecated methods that should emit warnings."""
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_objective_attack_async_emits_warning(self):
-        """Test that deprecated method emits warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-
-        import warnings
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            await executor.execute_multi_objective_attack_async(
-                attack=attack,
-                objectives=["Test"],
-            )
-
-        # Check that a deprecation warning was logged (via logger.warning)
-        # The method uses logger.warning, not warnings.warn
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_single_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
+    def test_input_indices_default_empty(self):
+        """Test that input_indices defaults to empty list."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
         )
 
-        assert len(result) == 1
+        assert executor_result.input_indices == []
 
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        from pyrit.executor.attack import MultiTurnAttackContext
-
-        attack = create_mock_attack(context_type=MultiTurnAttackContext)
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_multi_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
+    def test_input_indices_preserved(self):
+        """Test that input_indices are preserved when set."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
+            input_indices=[2],
         )
 
-        assert len(result) == 1
+        assert executor_result.input_indices == [2]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -517,7 +547,7 @@ class TestParamsTypeIntegration:
     async def test_excluded_params_type_rejects_excluded_fields(self):
         """Test that params_type.excluding() properly rejects fields."""
         # Create a params type that excludes next_message
-        LimitedParams = AttackParameters.excluding("next_message", "prepended_conversation")
+        LimitedParams = AttackParameters.excluding("next_message", "prepended_conversation")  # noqa: N806
 
         attack = create_mock_attack(params_type=LimitedParams)
         attack.execute_with_context_async.return_value = create_attack_result("Test")

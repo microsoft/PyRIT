@@ -18,13 +18,16 @@ skipped_urls = [
     "https://platform.openai.com/docs/api-reference/responses",  # blocks python requests
     "https://platform.openai.com/docs/guides/function-calling",  # blocks python requests
     "https://platform.openai.com/docs/guides/structured-outputs",  # blocks python requests
+    "https://platform.openai.com/api-keys",  # blocks python requests (requires auth)
     "https://www.anthropic.com/research/many-shot-jailbreaking",  # blocks python requests
+    "https://doi.org/10.1145/3749447",  # ACM blocks automated requests
+    "https://azure.microsoft.com/free/",  # Azure blocks automated requests
     "https://code.visualstudio.com/docs/devcontainers/containers",
     "https://stackoverflow.com/questions/77134272/pip-install-dev-with-pyproject-toml-not-working",
     "https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers",
 ]
 
-custom_myst_references = ["notebook_tests"]
+custom_myst_references = ["notebook_tests", "mistralai_mixtral_8x7b_instruct_v0_1"]
 
 # Updated regex pattern to capture URLs from Markdown and HTML
 URL_PATTERN = re.compile(r'\[.*?\]\((.*?)\)|href="([^"]+)"|src="([^"]+)"')
@@ -34,7 +37,7 @@ GRID_LINK_PATTERN = re.compile(r"^:link:\s+(.+)$", re.MULTILINE)
 
 
 def extract_urls(file_path):
-    with open(file_path, "r", encoding="utf-8") as file:
+    with open(file_path, encoding="utf-8") as file:
         content = file.read()
     matches = URL_PATTERN.findall(content)
     # Flatten the list of tuples and filter out empty strings
@@ -89,8 +92,7 @@ def check_url(url, retries=2, delay=2):
         or any(url.endswith(reference) for reference in custom_myst_references)
         or os.path.isfile(url)
         or os.path.isdir(url)
-        or url.startswith("mailto:")
-        or url.startswith("attachment:")
+        or url.startswith(("mailto:", "attachment:"))
     ):
         return url, True
 
@@ -161,7 +163,7 @@ def check_all_links_parallel(file_urls, max_workers=20):
     # Check all unique URLs in parallel
     url_results = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(check_url, url): url for url in url_to_files.keys()}
+        futures = {executor.submit(check_url, url): url for url in url_to_files}
         for future in as_completed(futures):
             url = futures[future]
             _, is_valid = future.result()
@@ -189,7 +191,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     total_urls = sum(len(urls) for urls in file_urls.values())
-    unique_urls = len(set(url for urls in file_urls.values() for url in urls))
+    unique_urls = len({url for urls in file_urls.values() for url in urls})
     print(f"Checking {unique_urls} unique URL(s) across {len(file_urls)} file(s) (total: {total_urls})...")
 
     all_broken_urls = check_all_links_parallel(file_urls, max_workers=30)

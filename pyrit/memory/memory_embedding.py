@@ -46,12 +46,11 @@ class MemoryEmbedding:
         """
         if message_piece.converted_value_data_type == "text":
             embedding_response = self.embedding_model.generate_text_embedding(text=message_piece.converted_value)
-            embedding_data = EmbeddingDataEntry(
+            return EmbeddingDataEntry(
                 embedding=embedding_response.data[0].embedding,
                 embedding_type_name=self.embedding_model.__class__.__name__,
                 id=message_piece.id,
             )
-            return embedding_data
 
         raise ValueError("Only text data is supported for embedding.")
 
@@ -83,5 +82,7 @@ def default_memory_embedding_factory(embedding_model: Optional[EmbeddingSupport]
     try:
         model = OpenAITextEmbedding()
         return MemoryEmbedding(embedding_model=model)
-    except ValueError:
-        raise ValueError("No embedding model was provided and no OpenAI embedding model was found in the environment.")
+    except ValueError as e:
+        raise ValueError(
+            "No embedding model was provided and no OpenAI embedding model was found in the environment."
+        ) from e

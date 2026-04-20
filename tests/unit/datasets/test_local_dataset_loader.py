@@ -53,5 +53,5 @@ seeds:
     @pytest.mark.asyncio
     async def test_fetch_dataset_file_not_found(self):
         loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             await loader.fetch_dataset()

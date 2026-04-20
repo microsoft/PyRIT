@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
 
 from pyrit.executor.attack import (
+    AttackAdversarialConfig,
     AttackConverterConfig,
     AttackParameters,
     AttackScoringConfig,
@@ -25,7 +27,6 @@ from pyrit.prompt_converter import Base64Converter, StringJoinConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import Scorer, TrueFalseScorer
-from tests.unit.mocks import get_mock_scorer_identifier
 
 
 @pytest.fixture
@@ -33,7 +34,7 @@ def mock_objective_target():
     """Create a mock prompt target for testing"""
     target = MagicMock(spec=PromptChatTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     return target
 
 
@@ -42,7 +43,7 @@ def mock_adversarial_chat_target():
     """Create a mock adversarial chat target for testing"""
     target = MagicMock(spec=PromptChatTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_adversarial_chat_id"}
+    target.get_identifier.return_value = get_mock_target_identifier("MockAdversarialChat")
     return target
 
 
@@ -51,6 +52,7 @@ def mock_scorer():
     """Create a mock true/false scorer for testing"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
 
@@ -95,7 +97,7 @@ def role_play_attack(mock_objective_target, mock_adversarial_chat_target, role_p
     """Create a RolePlayAttack instance with default configuration"""
     return RolePlayAttack(
         objective_target=mock_objective_target,
-        adversarial_chat=mock_adversarial_chat_target,
+        attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
         role_play_definition_path=role_play_definition_file,
     )
 
@@ -117,7 +119,7 @@ class TestRolePlayAttackInitialization:
         """Test RolePlayAttack initialization with default parameters"""
         attack = RolePlayAttack(
             objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
             role_play_definition_path=role_play_definition_file,
         )
 
@@ -132,7 +134,7 @@ class TestRolePlayAttackInitialization:
         """Test RolePlayAttack initialization with a valid true/false scorer"""
         attack = RolePlayAttack(
             objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
             role_play_definition_path=role_play_definition_file,
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_scorer),
         )
@@ -147,7 +149,7 @@ class TestRolePlayAttackInitialization:
         with pytest.raises(ValueError, match="Objective scorer must be a TrueFalseScorer"):
             RolePlayAttack(
                 objective_target=mock_objective_target,
-                adversarial_chat=mock_adversarial_chat_target,
+                attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
                 role_play_definition_path=role_play_definition_file,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
             )
@@ -158,7 +160,7 @@ class TestRolePlayAttackInitialization:
         with pytest.raises(FileNotFoundError):
             RolePlayAttack(
                 objective_target=mock_objective_target,
-                adversarial_chat=mock_adversarial_chat_target,
+                attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
                 role_play_definition_path=invalid_path,
             )
 
@@ -171,7 +173,7 @@ class TestRolePlayAttackInitialization:
 
         attack = RolePlayAttack(
             objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
             role_play_definition_path=role_play_definition_file,
             attack_converter_config=AttackConverterConfig(
                 request_converters=request_converters, response_converters=response_converters
@@ -193,7 +195,7 @@ class TestRolePlayAttackInitialization:
         with pytest.raises(ValueError, match="max_attempts_on_failure must be a non-negative integer"):
             RolePlayAttack(
                 objective_target=mock_objective_target,
-                adversarial_chat=mock_adversarial_chat_target,
+                attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
                 role_play_definition_path=role_play_definition_file,
                 max_attempts_on_failure=-1,
             )
@@ -204,7 +206,7 @@ class TestRolePlayAttackInitialization:
         """Test that role play definitions are loaded correctly from YAML"""
         attack = RolePlayAttack(
             objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
             role_play_definition_path=role_play_definition_file,
         )
 
@@ -219,7 +221,7 @@ class TestRolePlayAttackInitialization:
         """Test that the rephrase converter is properly created"""
         attack = RolePlayAttack(
             objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat_target),
             role_play_definition_path=role_play_definition_file,
         )
 
@@ -242,7 +244,6 @@ class TestRolePlayAttack:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=role_play_attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
 
@@ -279,7 +280,6 @@ class TestRolePlayAttack:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=role_play_attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
 

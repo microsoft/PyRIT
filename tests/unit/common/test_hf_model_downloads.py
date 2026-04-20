@@ -37,6 +37,5 @@ async def test_download_specific_files(setup_environment):
     """Test downloading specific files"""
     token = setup_environment  # Get the token from the fixture
 
-    with patch("os.makedirs"):
-        with patch("pyrit.common.download_hf_model.download_files"):
-            await download_specific_files(MODEL_ID, FILE_PATTERNS, token, Path(""))
+    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files"):
+        await download_specific_files(MODEL_ID, FILE_PATTERNS, token, Path(""))

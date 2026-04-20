@@ -4,6 +4,7 @@
 import random
 import re
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -26,10 +27,23 @@ class SearchReplaceConverter(PromptConverter):
                 If a list is provided, a random element will be chosen for replacement.
             regex_flags (int): Regex flags to use for the replacement. Defaults to 0 (no flags).
         """
-        self.pattern = pattern
-        self.replace_list = [replace] if isinstance(replace, str) else replace
+        self._pattern = pattern
+        self._replace_list = [replace] if isinstance(replace, str) else replace
+        self._regex_flags = regex_flags
 
-        self.regex_flags = regex_flags
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with search/replace parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "pattern": self._pattern,
+                "replace_list": self._replace_list,
+            },
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -48,8 +62,8 @@ class SearchReplaceConverter(PromptConverter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        replace = random.choice(self.replace_list)
+        replace = random.choice(self._replace_list)
 
         return ConverterResult(
-            output_text=re.sub(self.pattern, replace, prompt, flags=self.regex_flags), output_type="text"
+            output_text=re.sub(self._pattern, replace, prompt, flags=self._regex_flags), output_type="text"
         )

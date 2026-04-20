@@ -115,15 +115,16 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
         # Target information
         print()
         self._print_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT)
-        target_type = result.objective_target_identifier.get("__type__", "Unknown")
-        target_model = result.objective_target_identifier.get("model_name", "Unknown")
-        target_endpoint = result.objective_target_identifier.get("endpoint", "Unknown")
+        target_id = result.objective_target_identifier
+        target_type = target_id.class_name if target_id else "Unknown"
+        target_model = target_id.params.get("model_name", "Unknown") if target_id else "Unknown"
+        target_endpoint = target_id.params.get("endpoint", "Unknown") if target_id else "Unknown"
 
         self._print_colored(f"{self._indent * 2}• Target Type: {target_type}", Fore.CYAN)
         self._print_colored(f"{self._indent * 2}• Target Model: {target_model}", Fore.CYAN)
         self._print_colored(f"{self._indent * 2}• Target Endpoint: {target_endpoint}", Fore.CYAN)
 
-        # Scorer information - use ScorerIdentifier from result
+        # Scorer information - use ComponentIdentifier from result
         scorer_identifier = result.objective_scorer_identifier
         if scorer_identifier:
             self._scorer_printer.print_objective_scorer(scorer_identifier=scorer_identifier)
@@ -195,9 +196,8 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
         """
         if rate >= 75:
             return str(Fore.RED)  # High success (bad for security)
-        elif rate >= 50:
+        if rate >= 50:
             return str(Fore.YELLOW)  # Medium success
-        elif rate >= 25:
+        if rate >= 25:
             return str(Fore.CYAN)  # Low success
-        else:
-            return str(Fore.GREEN)  # Very low success (good for security)
+        return str(Fore.GREEN)  # Very low success (good for security)

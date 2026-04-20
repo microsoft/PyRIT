@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import Score
 
@@ -15,12 +15,10 @@ class TestScoreEntryRoundtrip:
     """Tests for ScoreEntry roundtrip with nested scorer identifiers."""
 
     def test_score_entry_roundtrip_simple_identifier(self):
-        """Test that a Score with a simple ScorerIdentifier can be stored and retrieved."""
-        scorer_identifier = ScorerIdentifier(
+        """Test that a Score with a simple ComponentIdentifier can be stored and retrieved."""
+        scorer_identifier = ComponentIdentifier(
             class_name="SelfAskScorer",
             class_module="pyrit.score",
-            class_description="A self-ask scorer",
-            identifier_type="instance",
         )
 
         message_piece_id = uuid.uuid4()
@@ -42,26 +40,22 @@ class TestScoreEntryRoundtrip:
         # Get score back
         retrieved_score = score_entry.get_score()
 
-        # Verify the identifier is preserved as ScorerIdentifier
-        assert isinstance(retrieved_score.scorer_class_identifier, ScorerIdentifier)
+        # Verify the identifier is preserved as ComponentIdentifier
+        assert isinstance(retrieved_score.scorer_class_identifier, ComponentIdentifier)
         assert retrieved_score.scorer_class_identifier.class_name == "SelfAskScorer"
         assert retrieved_score.scorer_class_identifier.class_module == "pyrit.score"
 
-    def test_score_entry_roundtrip_with_nested_sub_identifier(self):
-        """Test roundtrip with nested ScorerIdentifier (composite scorer)."""
-        inner_scorer = ScorerIdentifier(
+    def test_score_entry_roundtrip_with_nested_children(self):
+        """Test roundtrip with nested ComponentIdentifier (composite scorer with children)."""
+        inner_scorer = ComponentIdentifier(
             class_name="SelfAskScorer",
             class_module="pyrit.score",
-            class_description="Inner scorer",
-            identifier_type="instance",
         )
 
-        outer_scorer = ScorerIdentifier(
+        outer_scorer = ComponentIdentifier(
             class_name="FloatScaleThresholdScorer",
             class_module="pyrit.score",
-            class_description="A threshold scorer",
-            identifier_type="instance",
-            sub_identifier=[inner_scorer],
+            children={"sub_scorers": [inner_scorer]},
         )
 
         message_piece_id = uuid.uuid4()
@@ -82,41 +76,42 @@ class TestScoreEntryRoundtrip:
 
         # Verify nested structure is serialized to dict in the entry
         assert isinstance(score_entry.scorer_class_identifier, dict)
-        assert isinstance(score_entry.scorer_class_identifier["sub_identifier"], list)
-        assert score_entry.scorer_class_identifier["sub_identifier"][0]["class_name"] == "SelfAskScorer"
+        children_key = ComponentIdentifier.KEY_CHILDREN
+        sub_scorers_key = "sub_scorers"
+        assert isinstance(score_entry.scorer_class_identifier[children_key][sub_scorers_key], list)
+        assert (
+            score_entry.scorer_class_identifier[children_key][sub_scorers_key][0][ComponentIdentifier.KEY_CLASS_NAME]
+            == "SelfAskScorer"
+        )
 
         # Get score back
         retrieved_score = score_entry.get_score()
 
-        # Verify the ScorerIdentifier is reconstructed with nested structure
-        assert isinstance(retrieved_score.scorer_class_identifier, ScorerIdentifier)
+        # Verify the ComponentIdentifier is reconstructed with nested children
+        assert isinstance(retrieved_score.scorer_class_identifier, ComponentIdentifier)
         assert retrieved_score.scorer_class_identifier.class_name == "FloatScaleThresholdScorer"
-        assert retrieved_score.scorer_class_identifier.sub_identifier is not None
-        assert len(retrieved_score.scorer_class_identifier.sub_identifier) == 1
-        assert retrieved_score.scorer_class_identifier.sub_identifier[0].class_name == "SelfAskScorer"
+        assert "sub_scorers" in retrieved_score.scorer_class_identifier.children
+        sub_scorers = retrieved_score.scorer_class_identifier.children["sub_scorers"]
+        assert isinstance(sub_scorers, list)
+        assert len(sub_scorers) == 1
+        assert sub_scorers[0].class_name == "SelfAskScorer"
 
-    def test_score_entry_roundtrip_with_multiple_sub_identifiers(self):
-        """Test roundtrip with multiple sub_identifiers (composite scorer with multiple scorers)."""
-        scorer_a = ScorerIdentifier(
+    def test_score_entry_roundtrip_with_multiple_children(self):
+        """Test roundtrip with multiple children (composite scorer with multiple scorers)."""
+        scorer_a = ComponentIdentifier(
             class_name="ScorerA",
             class_module="pyrit.score",
-            class_description="First scorer",
-            identifier_type="instance",
         )
 
-        scorer_b = ScorerIdentifier(
+        scorer_b = ComponentIdentifier(
             class_name="ScorerB",
             class_module="pyrit.score",
-            class_description="Second scorer",
-            identifier_type="instance",
         )
 
-        composite_scorer = ScorerIdentifier(
+        composite_scorer = ComponentIdentifier(
             class_name="TrueFalseCompositeScorer",
             class_module="pyrit.score",
-            class_description="Composite scorer",
-            identifier_type="instance",
-            sub_identifier=[scorer_a, scorer_b],
+            children={"sub_scorers": [scorer_a, scorer_b]},
         )
 
         message_piece_id = uuid.uuid4()
@@ -139,19 +134,19 @@ class TestScoreEntryRoundtrip:
         retrieved_score = score_entry.get_score()
 
         # Verify the list structure is preserved
-        assert isinstance(retrieved_score.scorer_class_identifier, ScorerIdentifier)
-        assert retrieved_score.scorer_class_identifier.sub_identifier is not None
-        assert len(retrieved_score.scorer_class_identifier.sub_identifier) == 2
-        assert retrieved_score.scorer_class_identifier.sub_identifier[0].class_name == "ScorerA"
-        assert retrieved_score.scorer_class_identifier.sub_identifier[1].class_name == "ScorerB"
+        assert isinstance(retrieved_score.scorer_class_identifier, ComponentIdentifier)
+        assert "sub_scorers" in retrieved_score.scorer_class_identifier.children
+        sub_scorers = retrieved_score.scorer_class_identifier.children["sub_scorers"]
+        assert isinstance(sub_scorers, list)
+        assert len(sub_scorers) == 2
+        assert sub_scorers[0].class_name == "ScorerA"
+        assert sub_scorers[1].class_name == "ScorerB"
 
     def test_score_entry_to_dict(self):
         """Test that to_dict includes all fields correctly."""
-        scorer_identifier = ScorerIdentifier(
+        scorer_identifier = ComponentIdentifier(
             class_name="TestScorer",
             class_module="pyrit.score",
-            class_description="A test scorer",
-            identifier_type="instance",
         )
 
         message_piece_id = uuid.uuid4()
@@ -173,16 +168,14 @@ class TestScoreEntryRoundtrip:
         assert result["score_value"] == "0.5"
         assert result["score_type"] == "float_scale"
         # to_dict returns the dict representation
-        assert result["scorer_class_identifier"]["class_name"] == "TestScorer"
+        assert result["scorer_class_identifier"][ComponentIdentifier.KEY_CLASS_NAME] == "TestScorer"
         assert result["objective"] == "objective"
 
     def test_score_to_dict_serializes_scorer_identifier(self):
-        """Test that Score.to_dict() properly serializes the ScorerIdentifier."""
-        scorer_identifier = ScorerIdentifier(
+        """Test that Score.to_dict() properly serializes the ComponentIdentifier."""
+        scorer_identifier = ComponentIdentifier(
             class_name="TestScorer",
             class_module="pyrit.score",
-            class_description="A test scorer",
-            identifier_type="instance",
         )
 
         message_piece_id = uuid.uuid4()
@@ -200,6 +193,6 @@ class TestScoreEntryRoundtrip:
 
         result = score.to_dict()
 
-        # to_dict should serialize ScorerIdentifier to dict
+        # to_dict should serialize ComponentIdentifier to dict
         assert isinstance(result["scorer_class_identifier"], dict)
-        assert result["scorer_class_identifier"]["class_name"] == "TestScorer"
+        assert result["scorer_class_identifier"][ComponentIdentifier.KEY_CLASS_NAME] == "TestScorer"

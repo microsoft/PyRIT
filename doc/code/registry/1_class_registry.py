@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit (3.13.5)
-#     language: python
-#     name: python3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -29,9 +25,8 @@ print(f"Available scenarios: {names[:5]}...")  # Show first 5
 # Get detailed metadata
 metadata = registry.list_metadata()
 for item in metadata[:2]:  # Show first 2
-    print(f"\n{item.name}:")
-    print(f"  Class: {item.class_name}")
-    print(f"  Description: {item.description[:80]}...")
+    print(f"\n{item.class_name}:")
+    print(f"  Description: {item.class_description[:80]}...")
 
 # %% [markdown]
 # ## Getting a Class
@@ -39,8 +34,6 @@ for item in metadata[:2]:  # Show first 2
 # Use `get_class()` to retrieve a class by name. This returns the class itself, not an instance.
 
 # %%
-# Get a scenario class
-
 scenario_class = registry.get_class("garak.encoding")
 
 print(f"Got class: {scenario_class}")
@@ -67,7 +60,7 @@ scenario = encoding_class()  # type: ignore
 await scenario.initialize_async(objective_target=target)  # type: ignore
 
 # Option 2: Use create_instance() shortcut
-# scenario = registry.create_instance("encoding", objective_target=my_target, ...)
+# scenario = registry.create_instance("garak.encoding", objective_target=my_target, ...)
 
 print("Scenarios can be instantiated with your target and parameters")
 
@@ -104,6 +97,6 @@ print(f"Available initializers: {initializer_names[:5]}...")  # Show first 5
 
 # Get detailed metadata
 for init_item in initializer_registry.list_metadata()[:2]:  # Show first 2
-    print(f"\n{init_item.name}:")
+    print(f"\n{init_item.display_name}:")
     print(f"  Class: {init_item.class_name}")
-    print(f"  Description: {init_item.description[:80]}...")
+    print(f"  Description: {init_item.class_description[:80]}...")

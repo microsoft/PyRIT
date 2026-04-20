@@ -6,7 +6,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
+#   kernelspec:
+#     display_name: pyrit-dev
+#     language: python
+#     name: python3
 # ---
 
 # %% [markdown]
@@ -17,16 +21,15 @@
 # In this example, we use the `SelfAskLikertScorer` to measure the severity of political misinformation in a text string.
 # Looking at the scored responses, we see that the `text_with_political_misinfo` is scored as 'Severe misinformation', while `text_without_political_misinfo` is scored as 'No misinformation'.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 
 # %%
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-self_ask_target = OpenAIChatTarget()
+self_ask_target = OpenAIResponseTarget()
 
 political_misinfo_scorer = SelfAskLikertScorer(
     likert_scale=LikertScalePaths.MISINFORMATION_SCALE, chat_target=self_ask_target

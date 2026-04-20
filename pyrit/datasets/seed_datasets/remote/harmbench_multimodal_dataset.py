@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -38,7 +38,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     Subsequent calls will be faster since images are cached locally.
 
     Reference: https://www.harmbench.org/
-    Paper: https://arxiv.org/abs/2402.04249
+    Paper: [@mazeika2024harmbench]
     """
 
     def __init__(
@@ -49,7 +49,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_multimodal_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[List[SemanticCategory]] = None,
+        categories: Optional[list[SemanticCategory]] = None,
     ):
         """
         Initialize the HarmBench multimodal dataset loader.
@@ -67,14 +67,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
         self.categories = categories
 
-        # Validate categories if provided
         if categories is not None:
-            valid_categories = {category.value for category in SemanticCategory}
-            invalid_categories = (
-                set(cat.value if isinstance(cat, SemanticCategory) else cat for cat in categories) - valid_categories
-            )
-            if invalid_categories:
-                raise ValueError(f"Invalid semantic categories: {', '.join(invalid_categories)}")
+            self._validate_enums(categories, SemanticCategory, "semantic category")
 
     @property
     def dataset_name(self) -> str:

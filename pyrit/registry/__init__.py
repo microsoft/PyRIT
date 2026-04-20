@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Registry module for PyRIT class and instance registries."""
+"""Registry module for PyRIT class and object registries."""
 
-from pyrit.identifiers import Identifier, class_name_to_snake_case, snake_case_to_class_name
 from pyrit.registry.base import RegistryProtocol
 from pyrit.registry.class_registries import (
     BaseClassRegistry,
@@ -18,25 +17,32 @@ from pyrit.registry.discovery import (
     discover_in_package,
     discover_subclasses_in_loaded_modules,
 )
-from pyrit.registry.instance_registries import (
+from pyrit.registry.object_registries import (
+    AttackTechniqueRegistry,
     BaseInstanceRegistry,
+    ConverterRegistry,
+    RegistryEntry,
+    RetrievableInstanceRegistry,
     ScorerRegistry,
+    TargetRegistry,
 )
 
 __all__ = [
+    "AttackTechniqueRegistry",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
+    "ConverterRegistry",
+    "RetrievableInstanceRegistry",
     "ClassEntry",
-    "class_name_to_snake_case",
     "discover_in_directory",
     "discover_in_package",
     "discover_subclasses_in_loaded_modules",
-    "Identifier",
     "InitializerMetadata",
     "InitializerRegistry",
+    "RegistryEntry",
     "RegistryProtocol",
-    "snake_case_to_class_name",
     "ScenarioMetadata",
     "ScenarioRegistry",
     "ScorerRegistry",
+    "TargetRegistry",
 ]

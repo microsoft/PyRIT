@@ -5,6 +5,7 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
 from pyrit.score import SelfAskGeneralTrueFalseScorer
@@ -30,6 +31,7 @@ def general_scorer_response() -> Message:
 @pytest.mark.asyncio
 async def test_general_scorer_score_async(patch_central_database, general_scorer_response: Message):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_scorer_response])
 
     scorer = SelfAskGeneralTrueFalseScorer(
@@ -54,6 +56,7 @@ async def test_general_scorer_score_async_with_prompt_f_string(
     general_scorer_response: Message, patch_central_database
 ):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_scorer_response])
 
     scorer = SelfAskGeneralTrueFalseScorer(
@@ -79,6 +82,7 @@ async def test_general_scorer_score_async_with_prompt_f_string(
 @pytest.mark.asyncio
 async def test_general_scorer_score_async_handles_custom_keys(patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     assert chat_target
 
     json_response = (

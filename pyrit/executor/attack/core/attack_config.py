@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.models import SeedPrompt
@@ -48,7 +48,7 @@ class AttackScoringConfig:
     refusal_scorer: Optional[TrueFalseScorer] = None
 
     # Additional scorers for auxiliary metrics or custom evaluations
-    auxiliary_scorers: List[Scorer] = field(default_factory=list)
+    auxiliary_scorers: list[Scorer] = field(default_factory=list)
 
     # Whether to use scoring results as feedback for iterative attacks
     use_score_as_feedback: bool = True

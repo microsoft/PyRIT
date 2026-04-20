@@ -5,15 +5,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Generic, Optional, Type, TypeVar, Union
-
-import numpy as np
+from typing import TYPE_CHECKING, Generic, Optional, TypeVar, Union
 
 from pyrit.common.utils import verify_and_resolve_path
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ScorerIdentifier
+    from pathlib import Path
+
+    import numpy as np
+
+    from pyrit.identifiers import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
 
 T = TypeVar("T", bound="ScorerMetrics")
@@ -55,7 +56,7 @@ class ScorerMetrics:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json(cls: Type[T], file_path: Union[str, Path]) -> T:
+    def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
         """
         Load the metrics from a JSON file.
 
@@ -69,7 +70,7 @@ class ScorerMetrics:
             FileNotFoundError: If the specified file does not exist.
         """
         file_path = verify_and_resolve_path(file_path)
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             data = json.load(f)
 
         # Extract metrics from nested structure (always under "metrics" key in evaluation result files)
@@ -121,9 +122,9 @@ class HarmScorerMetrics(ScorerMetrics):
     harm_definition_version: Optional[str] = field(default=None, kw_only=True)
     krippendorff_alpha_humans: Optional[float] = None
     krippendorff_alpha_model: Optional[float] = None
-    _harm_definition_obj: Optional["HarmDefinition"] = field(default=None, init=False, repr=False)
+    _harm_definition_obj: Optional[HarmDefinition] = field(default=None, init=False, repr=False)
 
-    def get_harm_definition(self) -> Optional["HarmDefinition"]:
+    def get_harm_definition(self) -> Optional[HarmDefinition]:
         """
         Load and return the HarmDefinition object for this metrics instance.
 
@@ -188,11 +189,11 @@ class ScorerMetricsWithIdentity(Generic[M]):
     - ScorerMetricsWithIdentity[HarmScorerMetrics] has metrics: HarmScorerMetrics
 
     Args:
-        scorer_identifier (ScorerIdentifier): The scorer's configuration identifier.
+        scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
         metrics (M): The evaluation metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """
 
-    scorer_identifier: "ScorerIdentifier"
+    scorer_identifier: ComponentIdentifier
     metrics: M
 
     def __repr__(self) -> str:

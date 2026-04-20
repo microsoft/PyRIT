@@ -37,7 +37,6 @@ class AttackResultPrinter(ABC):
                 conversation (the red teaming LLM's reasoning). Only shown for successful
                 attacks to avoid overwhelming output. Defaults to False.
         """
-        pass
 
     @abstractmethod
     async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
@@ -49,7 +48,6 @@ class AttackResultPrinter(ABC):
             include_scores (bool): Whether to include scores in the output.
                 Defaults to False.
         """
-        pass
 
     @abstractmethod
     async def print_summary_async(self, result: AttackResult) -> None:
@@ -59,7 +57,6 @@ class AttackResultPrinter(ABC):
         Args:
             result (AttackResult): The attack result to summarize
         """
-        pass
 
     @staticmethod
     def _get_outcome_icon(outcome: AttackOutcome) -> str:

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.score import (
@@ -17,13 +17,11 @@ from pyrit.score import (
 )
 
 
-def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
-    """Helper to create ScorerIdentifier for tests."""
-    return ScorerIdentifier(
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
         class_name=name,
         class_module="tests.unit.score",
-        class_description="",
-        identifier_type="instance",
     )
 
 
@@ -41,9 +39,13 @@ class MockScorer(TrueFalseScorer):
         # Call super().__init__() to properly initialize the scorer including _identifier
         super().__init__(validator=MagicMock())
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this mock scorer."""
-        self._set_identifier()
+    def _build_identifier(self) -> ComponentIdentifier:
+        """Build the scorer evaluation identifier for this mock scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         return [
@@ -156,8 +158,8 @@ def test_composite_scorer_invalid_scorer_type():
         def __init__(self):
             self._validator = MagicMock()
 
-        def _build_identifier(self) -> None:
-            self._set_identifier()
+        def _build_identifier(self) -> ComponentIdentifier:
+            return self._create_identifier()
 
         async def _score_piece_async(
             self, message_piece: MessagePiece, *, objective: Optional[str] = None
@@ -165,7 +167,7 @@ def test_composite_scorer_invalid_scorer_type():
             return []
 
     with pytest.raises(ValueError, match="All scorers must be true_false scorers"):
-        TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[InvalidScorer()])  # type: ignore
+        TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[InvalidScorer()])  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

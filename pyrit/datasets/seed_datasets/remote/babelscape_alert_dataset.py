@@ -20,7 +20,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     - 'alert': 15k red teaming prompts
     - 'alert_adversarial': 30k adversarial red teaming prompts
 
-    Reference: https://huggingface.co/datasets/Babelscape/ALERT
+    Reference: [@tedeschi2024alert]
     """
 
     def __init__(
@@ -64,12 +64,9 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         logger.info(f"Loading Babelscape ALERT dataset from {self.source}")
 
         # Determine which categories to load
-        if self.category is None:
-            data_categories = ["alert_adversarial", "alert"]
-        else:
-            data_categories = [self.category]
+        data_categories = ["alert_adversarial", "alert"] if self.category is None else [self.category]
 
-        prompts: list[str] = []
+        prompts: list[tuple[str, str]] = []
         for category_name in data_categories:
             data = await self._fetch_from_huggingface(
                 dataset_name=self.source,
@@ -77,11 +74,12 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                 split="test",
                 cache=cache,
             )
-            prompts.extend(item["prompt"] for item in data)
+            prompts.extend((item["prompt"], item["category"]) for item in data)
 
         seed_prompts = [
             SeedPrompt(
                 value=prompt,
+                harm_categories=[category],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 description=(
@@ -91,7 +89,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
             )
-            for prompt in prompts
+            for prompt, category in prompts
         ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from Babelscape Alert dataset")

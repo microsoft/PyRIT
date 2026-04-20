@@ -9,6 +9,7 @@ import yaml
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SCALES_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -34,7 +35,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         RED_TEAMER_SYSTEM_PROMPT = Path(SCORER_SCALES_PATH, "red_teamer_system_prompt.yaml").resolve()
         CRITERIA_SYSTEM_PROMPT = Path(SCORER_SCALES_PATH, "criteria_system_prompt.yaml").resolve()
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         is_objective_required=True,
     )
@@ -58,7 +59,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
                 Defaults to GENERAL_SYSTEM_PROMPT if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._default_validator)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self._prompt_target = chat_target
 
@@ -83,12 +84,21 @@ class SelfAskScaleScorer(FloatScaleScorer):
 
         self._system_prompt = scoring_instructions_template.render_template_value(**scale_args)
 
-    def _build_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_identifier(
-            system_prompt_template=self._system_prompt,
-            user_prompt_template="objective: {objective}\nresponse: {response}",
-            prompt_target=self._prompt_target,
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "system_prompt_template": self._system_prompt,
+                "user_prompt_template": "objective: {objective}\nresponse: {response}",
+            },
+            children={
+                "prompt_target": self._prompt_target.get_identifier(),
+            },
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
@@ -114,6 +124,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             scored_prompt_id=message_piece.id,
             category=self._category,
             objective=objective,
+            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(

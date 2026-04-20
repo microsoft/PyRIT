@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional
 
 import tenacity
 from openai import AsyncOpenAI
@@ -82,7 +83,7 @@ class OpenAITextEmbedding(EmbeddingSupport):
             The embedding response
         """
         embedding_obj = await self._async_client.embeddings.create(input=text, model=self._model, **kwargs)
-        embedding_response = EmbeddingResponse(
+        return EmbeddingResponse(
             model=embedding_obj.model,
             object=embedding_obj.object,
             data=[
@@ -97,7 +98,6 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 total_tokens=embedding_obj.usage.total_tokens,
             ),
         )
-        return embedding_response
 
     def generate_text_embedding(self, text: str, **kwargs: Any) -> EmbeddingResponse:
         """

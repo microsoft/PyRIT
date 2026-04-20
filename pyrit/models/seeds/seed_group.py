@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-import warnings
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models.message import Message
@@ -23,6 +22,9 @@ from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +42,13 @@ class SeedGroup(YamlLoadable):
     All prompts in the group share the same `prompt_group_id`.
     """
 
-    seeds: List[Seed]
+    seeds: list[Seed]
 
     def __init__(
         self,
         *,
-        seeds: Sequence[Union[Seed, Dict[str, Any]]],
+        seeds: Sequence[Union[Seed, dict[str, Any]]],
+        is_jinja_template: bool = False,
     ):
         """
         Initialize a SeedGroup.
@@ -55,12 +58,14 @@ class SeedGroup(YamlLoadable):
                 - SeedObjective (or dict with seed_type="objective")
                 - SeedSimulatedConversation (or dict with seed_type="simulated_conversation")
                 - SeedPrompt for prompts (or dict with seed_type="prompt" or no seed_type)
-                Note: is_objective and is_simulated_conversation are deprecated since 0.13.0.
+            is_jinja_template: When True, seed values are treated as Jinja2 templates.
+                Set automatically by from_yaml_file for trusted sources.
 
         Raises:
             ValueError: If seeds is empty.
             ValueError: If multiple objectives are provided.
             ValueError: If SeedPrompt sequences overlap with SeedSimulatedConversation range.
+
         """
         if not seeds:
             raise ValueError("SeedGroup cannot be empty.")
@@ -70,25 +75,14 @@ class SeedGroup(YamlLoadable):
             if isinstance(seed, Seed):
                 self.seeds.append(seed)
             elif isinstance(seed, dict):
-                # Support new seed_type field with backward compatibility for deprecated fields
+                seed["is_jinja_template"] = is_jinja_template
                 seed_type = seed.pop("seed_type", None)
-                is_objective = seed.pop("is_objective", False)
-
-                if is_objective:
-                    warnings.warn(
-                        "is_objective is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                    # Only error if seed_type is explicitly set to a conflicting value
-                    if seed_type is not None and seed_type != "objective":
-                        raise ValueError("Conflicting seed_type and is_objective values.")
 
                 if seed_type == "simulated_conversation":
                     # SeedSimulatedConversation doesn't use data_type (always text)
                     seed.pop("data_type", None)
                     self.seeds.append(SeedSimulatedConversation.from_dict(seed))
-                elif seed_type == "objective" or (seed_type is None and is_objective):
+                elif seed_type == "objective":
                     # SeedObjective doesn't use data_type (always text)
                     seed.pop("data_type", None)
                     self.seeds.append(SeedObjective(**seed))
@@ -129,6 +123,7 @@ class SeedGroup(YamlLoadable):
 
         Raises:
             ValueError: If validation fails.
+
         """
         if not self.seeds:
             raise ValueError("SeedGroup cannot be empty.")
@@ -139,12 +134,24 @@ class SeedGroup(YamlLoadable):
         self._enforce_no_sequence_overlap_with_simulated()
 
     def _enforce_max_one_objective(self) -> None:
-        """Ensure at most one objective is present."""
+        """
+        Ensure at most one objective is present.
+
+        Raises:
+            ValueError: If more than one SeedObjective exists.
+
+        """
         if len([s for s in self.seeds if isinstance(s, SeedObjective)]) > 1:
             raise ValueError("SeedGroup can only have one objective.")
 
     def _enforce_max_one_simulated_conversation(self) -> None:
-        """Ensure at most one simulated conversation is present."""
+        """
+        Ensure at most one simulated conversation is present.
+
+        Raises:
+            ValueError: If more than one SeedSimulatedConversation exists.
+
+        """
         if len([s for s in self.seeds if isinstance(s, SeedSimulatedConversation)]) > 1:
             raise ValueError("SeedGroup can only have one simulated conversation.")
 
@@ -156,12 +163,13 @@ class SeedGroup(YamlLoadable):
 
         Raises:
             ValueError: If multiple different group IDs exist.
+
         """
         existing_group_ids = {seed.prompt_group_id for seed in self.seeds if seed.prompt_group_id is not None}
 
         if len(existing_group_ids) > 1:
             raise ValueError("Inconsistent group IDs found across seeds.")
-        elif len(existing_group_ids) == 1:
+        if len(existing_group_ids) == 1:
             group_id = existing_group_ids.pop()
             for seed in self.seeds:
                 seed.prompt_group_id = group_id
@@ -177,6 +185,7 @@ class SeedGroup(YamlLoadable):
         Raises:
             ValueError: If roles are inconsistent within a sequence.
             ValueError: If no roles are set in a multi-sequence group.
+
         """
         grouped_prompts = defaultdict(list)
         for prompt in self.prompts:
@@ -206,6 +215,7 @@ class SeedGroup(YamlLoadable):
 
         Raises:
             ValueError: If any SeedPrompt sequence overlaps with the simulated range.
+
         """
         simulated_config = self._get_simulated_conversation()
         if simulated_config is None:
@@ -226,14 +236,26 @@ class SeedGroup(YamlLoadable):
     # =========================================================================
 
     def _get_objective(self) -> Optional[SeedObjective]:
-        """Get the objective seed if present."""
+        """
+        Get the objective seed if present.
+
+        Returns:
+            Optional[SeedObjective]: Objective seed when available; otherwise None.
+
+        """
         for seed in self.seeds:
             if isinstance(seed, SeedObjective):
                 return seed
         return None
 
     def _get_simulated_conversation(self) -> Optional[SeedSimulatedConversation]:
-        """Get the simulated conversation seed if present."""
+        """
+        Get the simulated conversation seed if present.
+
+        Returns:
+            Optional[SeedSimulatedConversation]: Simulated conversation seed when available; otherwise None.
+
+        """
         for seed in self.seeds:
             if isinstance(seed, SeedSimulatedConversation):
                 return seed
@@ -250,14 +272,15 @@ class SeedGroup(YamlLoadable):
         return self._get_objective()
 
     @property
-    def harm_categories(self) -> List[str]:
+    def harm_categories(self) -> list[str]:
         """
         Returns a deduplicated list of all harm categories from all seeds.
 
         Returns:
             List of harm categories with duplicates removed.
+
         """
-        categories: List[str] = []
+        categories: list[str] = []
         for seed in self.seeds:
             if seed.harm_categories:
                 categories.extend(seed.harm_categories)
@@ -282,7 +305,7 @@ class SeedGroup(YamlLoadable):
     # =========================================================================
 
     @property
-    def prepended_conversation(self) -> Optional[List[Message]]:
+    def prepended_conversation(self) -> Optional[list[Message]]:
         """
         Returns Messages that should be prepended as conversation history.
 
@@ -290,6 +313,7 @@ class SeedGroup(YamlLoadable):
 
         Returns:
             Messages for conversation history, or None if empty.
+
         """
         if not self.prompts:
             return None
@@ -308,8 +332,7 @@ class SeedGroup(YamlLoadable):
                 return None
 
             return self._prompts_to_messages(prepended_prompts)
-        else:
-            return self._prompts_to_messages(list(self.prompts))
+        return self._prompts_to_messages(list(self.prompts))
 
     @property
     def next_message(self) -> Optional[Message]:
@@ -318,6 +341,7 @@ class SeedGroup(YamlLoadable):
 
         Returns:
             Message for the current/last turn if user role, or None otherwise.
+
         """
         if not self.prompts:
             return None
@@ -338,12 +362,13 @@ class SeedGroup(YamlLoadable):
         return messages[0] if messages else None
 
     @property
-    def user_messages(self) -> List[Message]:
+    def user_messages(self) -> list[Message]:
         """
         Returns all prompts as user Messages, one per sequence.
 
         Returns:
             All user messages in sequence order, or empty list if no prompts.
+
         """
         if not self.prompts:
             return []
@@ -356,6 +381,7 @@ class SeedGroup(YamlLoadable):
 
         Returns:
             The role of the last sequence, or None if no prompts exist.
+
         """
         if not self.prompts:
             return None
@@ -366,7 +392,7 @@ class SeedGroup(YamlLoadable):
 
         return last_sequence_prompts[0].role if last_sequence_prompts else None
 
-    def _prompts_to_messages(self, prompts: Sequence[SeedPrompt]) -> List[Message]:
+    def _prompts_to_messages(self, prompts: Sequence[SeedPrompt]) -> list[Message]:
         """
         Convert a sequence of SeedPrompts to Messages.
 
@@ -377,6 +403,7 @@ class SeedGroup(YamlLoadable):
 
         Returns:
             Messages created from the prompts.
+
         """
         sequence_groups = defaultdict(list)
         for prompt in prompts:
@@ -413,27 +440,53 @@ class SeedGroup(YamlLoadable):
 
     def render_template_value(self, **kwargs: Any) -> None:
         """
-        Renders seed values as templates with provided parameters.
+        Render seed values as templates with provided parameters.
 
         Args:
             kwargs: Key-value pairs to replace in seed values.
+
         """
         for seed in self.seeds:
             seed.value = seed.render_template_value(**kwargs)
 
     def is_single_turn(self) -> bool:
-        """Check if this is a single-turn group (single request without objective)."""
+        """
+        Check if this is a single-turn group (single request without objective).
+
+        Returns:
+            bool: True when the group is a single request and has no objective.
+
+        """
         return self.is_single_request() and not self.objective
 
     def is_single_request(self) -> bool:
-        """Check if all prompts are in a single sequence."""
+        """
+        Check if all prompts are in a single sequence.
+
+        Returns:
+            bool: True when all prompts share one sequence number.
+
+        """
         unique_sequences = {prompt.sequence for prompt in self.prompts}
         return len(unique_sequences) == 1
 
     def is_single_part_single_text_request(self) -> bool:
-        """Check if this is a single text prompt."""
+        """
+        Check if this is a single text prompt.
+
+        Returns:
+            bool: True when there is exactly one prompt and it is text.
+
+        """
         return len(self.prompts) == 1 and self.prompts[0].data_type == "text"
 
     def __repr__(self) -> str:
+        """
+        Return a concise representation of the seed group.
+
+        Returns:
+            str: Seed group summary string.
+
+        """
         sim_info = " (simulated)" if self.has_simulated_conversation else ""
         return f"<SeedGroup(seeds={len(self.seeds)}{sim_info})>"

@@ -15,7 +15,7 @@ from pyrit.executor.attack import (
     MultiPromptSendingAttackParameters,
     MultiTurnAttackContext,
 )
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -29,13 +29,19 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
 
-def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
-    """Helper to create ScorerIdentifier for tests."""
-    return ScorerIdentifier(
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
         class_name=name,
         class_module="test_module",
-        class_description="",
-        identifier_type="instance",
+    )
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
     )
 
 
@@ -44,7 +50,7 @@ def mock_target():
     """Create a mock prompt target for testing"""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target
 
 
@@ -53,6 +59,7 @@ def mock_true_false_scorer():
     """Create a mock true/false scorer for testing"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
+    scorer.get_identifier.return_value = _mock_scorer_id()
     return scorer
 
 
@@ -60,6 +67,7 @@ def mock_true_false_scorer():
 def mock_non_true_false_scorer():
     """Create a mock scorer that is not a true/false type"""
     scorer = MagicMock(spec=Scorer)
+    scorer.get_identifier.return_value = _mock_scorer_id()
     return scorer
 
 
@@ -152,7 +160,8 @@ class TestMultiPromptSendingAttackInitialization:
 
     def test_init_with_all_custom_configurations(self, mock_target, mock_true_false_scorer, mock_prompt_normalizer):
         converter_cfg = AttackConverterConfig(
-            request_converters=[Base64Converter()], response_converters=[StringJoinConverter()]
+            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])],
+            response_converters=[PromptConverterConfiguration(converters=[StringJoinConverter()])],
         )
         scoring_cfg = AttackScoringConfig(objective_scorer=mock_true_false_scorer)
 
@@ -414,6 +423,21 @@ class TestAttackExecution:
         assert result.last_response is not None
 
     @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(
+        self, mock_target, mock_prompt_normalizer, basic_context, sample_response
+    ):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        attack = MultiPromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
+
+        result = await attack._perform_async(context=basic_context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
+    @pytest.mark.asyncio
     async def test_perform_async_stops_on_failed_prompt(self, mock_target, mock_prompt_normalizer, basic_context):
         # First prompt succeeds, second fails
         mock_prompt_normalizer.send_prompt_async.side_effect = [
@@ -523,7 +547,6 @@ class TestExecuteAsync:
             mock_perform.return_value = AttackResult(
                 conversation_id=str(uuid.uuid4()),
                 objective="test",
-                attack_identifier=attack.get_identifier(),
                 outcome=AttackOutcome.UNDETERMINED,
                 outcome_reason="test",
                 executed_turns=0,
@@ -572,7 +595,6 @@ class TestExecuteAsync:
             mock_perform.return_value = AttackResult(
                 conversation_id=str(uuid.uuid4()),
                 objective="test",
-                attack_identifier=attack.get_identifier(),
                 outcome=AttackOutcome.UNDETERMINED,
                 outcome_reason="test",
                 executed_turns=0,
@@ -594,7 +616,9 @@ class TestConverterIntegration:
     async def test_perform_attack_with_converters(
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
-        converter_config = AttackConverterConfig(request_converters=[Base64Converter()])
+        converter_config = AttackConverterConfig(
+            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])]
+        )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
         attack = MultiPromptSendingAttack(
@@ -613,7 +637,9 @@ class TestConverterIntegration:
     async def test_perform_attack_with_response_converters(
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
-        converter_config = AttackConverterConfig(response_converters=[StringJoinConverter()])
+        converter_config = AttackConverterConfig(
+            response_converters=[PromptConverterConfiguration(converters=[StringJoinConverter()])]
+        )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
         attack = MultiPromptSendingAttack(
@@ -673,11 +699,13 @@ class TestEdgeCasesAndErrorHandling:
         assert result.last_response is not None
         assert mock_prompt_normalizer.send_prompt_async.call_count == 1
 
-    def test_attack_has_unique_identifier(self, mock_target):
+    def test_attack_has_same_identifier_for_same_config(self, mock_target):
         attack1 = MultiPromptSendingAttack(objective_target=mock_target)
         attack2 = MultiPromptSendingAttack(objective_target=mock_target)
 
-        assert attack1.get_identifier() != attack2.get_identifier()
+        # Same config produces the same deterministic identifier
+        assert attack1.get_identifier().hash == attack2.get_identifier().hash
+        assert attack1.get_identifier().class_name == "MultiPromptSendingAttack"
 
     @pytest.mark.asyncio
     async def test_teardown_async_is_noop(self, mock_target, basic_context):

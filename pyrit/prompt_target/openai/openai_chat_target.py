@@ -4,7 +4,9 @@
 import base64
 import json
 import logging
-from typing import Any, Dict, MutableSequence, Optional
+from collections.abc import MutableSequence
+from dataclasses import replace
+from typing import Any, Optional
 
 from pyrit.common import convert_local_image_to_data_url
 from pyrit.exceptions import (
@@ -12,6 +14,7 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     ChatMessage,
     DataTypeSerializer,
@@ -22,6 +25,8 @@ from pyrit.models import (
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
@@ -61,6 +66,18 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
     """
 
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            input_modalities=frozenset(
+                {frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}
+            ),
+        )
+    )
+
     def __init__(
         self,
         *,
@@ -75,6 +92,8 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         is_json_supported: bool = True,
         audio_response_config: Optional[OpenAIChatAudioConfig] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -93,7 +112,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             max_completion_tokens (int, Optional): An upper bound for the number of tokens that
                 can be generated for a completion, including visible output tokens and
                 reasoning tokens.
-
                 NOTE: Specify this value when using an o1 series model.
             max_tokens (int, Optional): The maximum number of tokens that can be
                 generated in the chat completion. This value can be used to control
@@ -116,9 +134,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 setting the response_format header. Official OpenAI models all support this, but if you are using
                 this target with different models, is_json_supported should be set correctly to avoid issues when
                 using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
+                This value is now deprecated in favor of `custom_configuration`.
             audio_response_config (OpenAIChatAudioConfig, Optional): Configuration for audio output from models
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
+            custom_configuration (TargetConfiguration, Optional): Override the default target configuration.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -133,7 +155,25 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(**kwargs)
+        # Resolve configuration:
+        # 1. Resolve deprecated custom_capabilities into custom_configuration.
+        # 2. Explicit custom_configuration always wins.
+        # 3. If is_json_supported was explicitly set to False (deprecated), apply that override.
+        # 4. Otherwise, pass None so the parent can resolve via get_default_configuration(underlying_model),
+        #    which checks _KNOWN_CAPABILITIES (e.g., gpt-4o gets image input support).
+        custom_configuration = resolve_configuration_compat(
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
+        if custom_configuration is not None:
+            effective_configuration: TargetConfiguration | None = custom_configuration
+        elif not is_json_supported:
+            effective_configuration = TargetConfiguration(
+                capabilities=replace(type(self)._DEFAULT_CONFIGURATION.capabilities, supports_json_output=False)
+            )
+        else:
+            effective_configuration = None
+        super().__init__(custom_configuration=effective_configuration, custom_capabilities=None, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
@@ -144,7 +184,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         self._temperature = temperature
         self._top_p = top_p
-        self._is_json_supported = is_json_supported
         self._max_completion_tokens = max_completion_tokens
         self._max_tokens = max_tokens
         self._frequency_penalty = frequency_penalty
@@ -156,12 +195,29 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         # Merge audio config into extra_body_parameters if provided
         if audio_response_config:
             audio_params = audio_response_config.to_extra_body_parameters()
-            if extra_body_parameters:
-                extra_body_parameters = {**audio_params, **extra_body_parameters}
-            else:
-                extra_body_parameters = audio_params
+            extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier with OpenAI chat-specific parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this target instance.
+        """
+        return self._create_identifier(
+            params={
+                "temperature": self._temperature,
+                "top_p": self._top_p,
+                "max_completion_tokens": self._max_completion_tokens,
+                "max_tokens": self._max_tokens,
+                "frequency_penalty": self._frequency_penalty,
+                "presence_penalty": self._presence_penalty,
+                "seed": self._seed,
+                "n": self._n,
+            },
+        )
 
     def _set_openai_env_configuration_vars(self) -> None:
         """
@@ -171,7 +227,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         self.model_name_environment_variable = "OPENAI_CHAT_MODEL"
         self.endpoint_environment_variable = "OPENAI_CHAT_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_CHAT_KEY"
-        self.underlying_model_environment_variable = "OPENAI_CHAT_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -188,28 +243,25 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously sends a message and handles the response within a managed conversation context.
 
         Args:
-            message (Message): The message object.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
         """
-        self._validate_request(message=message)
-
+        message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
         json_config = self._get_json_response_config(message_piece=message_piece)
 
-        # Get conversation from memory and append the current message
-        conversation = self._memory.get_conversation(conversation_id=message_piece.conversation_id)
-        conversation.append(message)
-
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
-        body = await self._construct_request_body(conversation=conversation, json_config=json_config)
+        body = await self._construct_request_body(conversation=normalized_conversation, json_config=json_config)
 
         # Use unified error handling - automatically detects ChatCompletion and validates
         response = await self._handle_openai_request(
@@ -325,16 +377,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             return True
 
         # Skip historical user audio if prefer_transcript_for_history is enabled and we have a transcript
-        if (
+        return bool(
             api_role == "user"
             and not is_last_message
             and has_text_piece
             and self._audio_response_config
             and self._audio_response_config.prefer_transcript_for_history
-        ):
-            return True
-
-        return False
+        )
 
     async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
         """
@@ -417,6 +466,14 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         if not pieces:
             raise EmptyResponseException(message="Failed to extract any response content.")
 
+        # Capture token usage from the API response and store in the first piece's metadata
+        if hasattr(response, "usage") and response.usage and pieces:
+            pieces[0].prompt_metadata["token_usage_model_name"] = getattr(response, "model", "unknown")
+            pieces[0].prompt_metadata["token_usage_prompt_tokens"] = getattr(response.usage, "prompt_tokens", 0)
+            pieces[0].prompt_metadata["token_usage_completion_tokens"] = getattr(response.usage, "completion_tokens", 0)
+            pieces[0].prompt_metadata["token_usage_total_tokens"] = getattr(response.usage, "total_tokens", 0)
+            pieces[0].prompt_metadata["token_usage_cached_tokens"] = getattr(response.usage, "cached_tokens", 0)
+
         return Message(message_pieces=pieces)
 
     async def _save_audio_response_async(self, *, audio_data_base64: str) -> str:
@@ -455,15 +512,6 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
         return audio_serializer.value
 
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return self._is_json_supported
-
     async def _build_chat_messages_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries.
@@ -476,8 +524,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         """
         if self._is_text_message_format(conversation):
             return self._build_chat_messages_for_text(conversation)
-        else:
-            return await self._build_chat_messages_for_multi_modal_async(conversation)
+        return await self._build_chat_messages_for_multi_modal_async(conversation)
 
     def _is_text_message_format(self, conversation: MutableSequence[Message]) -> bool:
         """
@@ -492,14 +539,14 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         for turn in conversation:
             if len(turn.message_pieces) != 1:
                 return False
-            if turn.message_pieces[0].converted_value_data_type != "text":
+            if turn.message_pieces[0].converted_value_data_type not in ("text", "error"):
                 return False
         return True
 
     def _build_chat_messages_for_text(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build chat messages based on message entries. This is needed because many
-        openai "compatible" models don't support ChatMessageListDictContent format (this is more universally accepted).
+        openai "compatible" models don't support multi-part content format (this is more universally accepted).
 
         Args:
             conversation (list[Message]): A list of Message objects.
@@ -520,8 +567,11 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
 
             message_piece = message.message_pieces[0]
 
-            if message_piece.converted_value_data_type != "text":
-                raise ValueError("_build_chat_messages_for_text only supports text.")
+            if message_piece.converted_value_data_type not in ("text", "error"):
+                raise ValueError(
+                    f"_build_chat_messages_for_text only supports text and error data types."
+                    f" Received: {message_piece.converted_value_data_type}."
+                )
 
             chat_message = ChatMessage(role=message_piece.api_role, content=message_piece.converted_value)
             chat_messages.append(chat_message.model_dump(exclude_none=True))
@@ -566,13 +616,13 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 ):
                     continue
 
-                if message_piece.converted_value_data_type == "text":
+                if message_piece.converted_value_data_type in ("text", "error"):
                     entry = {"type": "text", "text": message_piece.converted_value}
                     content.append(entry)
                 elif message_piece.converted_value_data_type == "image_path":
                     data_base64_encoded_url = await convert_local_image_to_data_url(message_piece.converted_value)
                     image_url_entry = {"url": data_base64_encoded_url}
-                    entry = {"type": "image_url", "image_url": image_url_entry}  # type: ignore
+                    entry = {"type": "image_url", "image_url": image_url_entry}  # type: ignore[dict-item]
                     content.append(entry)
                 elif message_piece.converted_value_data_type == "audio_path":
                     ext = DataTypeSerializer.get_extension(message_piece.converted_value)
@@ -593,7 +643,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                     base64_data = await audio_serializer.read_data_base64()
                     audio_format = ext.lower().lstrip(".")
                     input_audio_entry = {"data": base64_data, "format": audio_format}
-                    entry = {"type": "input_audio", "input_audio": input_audio_entry}  # type: ignore
+                    entry = {"type": "input_audio", "input_audio": input_audio_entry}  # type: ignore[dict-item]
                     content.append(entry)
                 else:
                     raise ValueError(
@@ -629,34 +679,12 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
         }
 
         if self._extra_body_parameters:
-            for key, value in self._extra_body_parameters.items():
-                body_parameters[key] = value
+            body_parameters.update(self._extra_body_parameters)
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _validate_request(self, *, message: Message) -> None:
-        """
-        Validate the structure and content of a message for compatibility of this target.
-
-        Args:
-            message (Message): The message object.
-
-        Raises:
-            ValueError: If any of the message pieces have a data type other than 'text' or 'image_path'.
-        """
-        converted_prompt_data_types = [
-            message_piece.converted_value_data_type for message_piece in message.message_pieces
-        ]
-
-        # Some models may not support all of these
-        for prompt_data_type in converted_prompt_data_types:
-            if prompt_data_type not in ["text", "image_path", "audio_path"]:
-                raise ValueError(
-                    f"This target only supports text, image_path, and audio_path. Received: {prompt_data_type}."
-                )
-
-    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[Dict[str, Any]]:
+    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
         if not json_config.enabled:
             return None
 

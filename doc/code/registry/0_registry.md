@@ -45,7 +45,7 @@ def show_registry_contents(registry: RegistryProtocol) -> None:
 | Aspect | Class Registry | Instance Registry |
 |--------|----------------|-------------------|
 | Stores | Classes (Type[T]) | Instances (T) |
-| Registration | Automatic discovery | Explicit via `register_instance()` |
+| Registration | Automatic discovery | Explicit via `register()` |
 | Returns | Class to instantiate | Ready-to-use instance |
 | Instantiation | Caller provides parameters | Pre-configured by initializer |
 | When to use | Self-contained components with deferred configuration | Components requiring constructor parameters or compositional setup |
@@ -53,4 +53,4 @@ def show_registry_contents(registry: RegistryProtocol) -> None:
 ## See Also
 
 - [Class Registries](1_class_registry.ipynb) - ScenarioRegistry, InitializerRegistry
-- [Instance Registries](2_instance_registry.ipynb) - ScorerRegistry
+- [Instance Registries](2_instance_registry.ipynb) - ConverterRegistry, ScorerRegistry, TargetRegistry

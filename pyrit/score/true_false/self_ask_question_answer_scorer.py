@@ -3,19 +3,22 @@
 
 from __future__ import annotations
 
-import pathlib
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import verify_and_resolve_path
-from pyrit.models import MessagePiece, Score, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.self_ask_true_false_scorer import SelfAskTrueFalseScorer
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
+
+if TYPE_CHECKING:
+    import pathlib
+
+    from pyrit.models import MessagePiece, Score, UnvalidatedScore
+    from pyrit.prompt_target import PromptChatTarget
 
 
 class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
@@ -26,7 +29,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
     to objective target or you need more flexibility in determining if the questions were answered correctly.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         is_objective_required=True,
     )

@@ -25,8 +25,8 @@ class NormalizerRequest:
         self,
         *,
         message: Message,
-        request_converter_configurations: list[PromptConverterConfiguration] = [],
-        response_converter_configurations: list[PromptConverterConfiguration] = [],
+        request_converter_configurations: list[PromptConverterConfiguration] = None,
+        response_converter_configurations: list[PromptConverterConfiguration] = None,
         conversation_id: Optional[str] = None,
     ):
         """
@@ -40,6 +40,10 @@ class NormalizerRequest:
                 the response. Defaults to an empty list.
             conversation_id (Optional[str]): The ID of the conversation. Defaults to None.
         """
+        if response_converter_configurations is None:
+            response_converter_configurations = []
+        if request_converter_configurations is None:
+            request_converter_configurations = []
         self.message = message
         self.request_converter_configurations = request_converter_configurations
         self.response_converter_configurations = response_converter_configurations

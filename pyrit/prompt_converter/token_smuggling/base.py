@@ -3,9 +3,10 @@
 
 import abc
 import logging
-from typing import Literal, Tuple
+from typing import Literal
 
-from pyrit.models import PromptDataType
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.literals import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,19 @@ class SmugglerConverter(PromptConverter, abc.ABC):
             raise ValueError("Action must be either 'encode' or 'decode'")
         self.action = action
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with smuggler action.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "action": self.action,
+            }
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
         Convert the given prompt by either encoding or decoding it based on the specified action.
@@ -56,9 +70,8 @@ class SmugglerConverter(PromptConverter, abc.ABC):
             summary, encoded = self.encode_message(message=prompt)
             logger.info(f"Encoded message summary: {summary}")
             return ConverterResult(output_text=encoded, output_type="text")
-        else:
-            decoded = self.decode_message(message=prompt)
-            return ConverterResult(output_text=decoded, output_type="text")
+        decoded = self.decode_message(message=prompt)
+        return ConverterResult(output_text=decoded, output_type="text")
 
     def input_supported(self, input_type: PromptDataType) -> bool:
         """
@@ -85,7 +98,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
         return output_type == "text"
 
     @abc.abstractmethod
-    def encode_message(self, *, message: str) -> Tuple[str, str]:
+    def encode_message(self, *, message: str) -> tuple[str, str]:
         """
         Encode the given message.
 

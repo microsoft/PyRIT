@@ -4,8 +4,9 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
+from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.common.path import (
     EXECUTOR_RED_TEAM_PATH,
@@ -21,16 +22,13 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackScoringConfig,
 )
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import SeedAttackGroup
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import (
     SelfAskRefusalScorer,
     SelfAskTrueFalseScorer,
@@ -39,6 +37,9 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
+
+if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 
 logger = logging.getLogger(__name__)
 PERSUASION_DECEPTION_PATH = Path(EXECUTOR_RED_TEAM_PATH, "persuasion_deception").resolve()
@@ -89,7 +90,7 @@ class Scam(Scenario):
     (e.g., phishing emails, fraudulent messages) with primarily persuasion-oriented techniques.
     """
 
-    version: int = 1
+    VERSION: int = 1
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -130,7 +131,6 @@ class Scam(Scenario):
     def __init__(
         self,
         *,
-        objectives: Optional[List[str]] = None,
         objective_scorer: Optional[TrueFalseScorer] = None,
         adversarial_chat: Optional[PromptChatTarget] = None,
         include_baseline: bool = True,
@@ -140,7 +140,6 @@ class Scam(Scenario):
         Initialize the ScamScenario.
 
         Args:
-            objectives (Optional[List[str]]): List of objectives to test for scam-related harms.
             objective_scorer (Optional[TrueFalseScorer]): Custom scorer for objective
                 evaluation.
             adversarial_chat (Optional[PromptChatTarget]): Chat target used to rephrase the
@@ -151,12 +150,6 @@ class Scam(Scenario):
                 encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
         """
-        if objectives is not None:
-            logger.warning(
-                "objectives is deprecated and will be removed in 0.13.0. "
-                "Use dataset_config in initialize_async instead."
-            )
-
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
@@ -166,18 +159,15 @@ class Scam(Scenario):
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
         super().__init__(
-            name="Scam",
-            version=self.version,
+            version=self.VERSION,
             strategy_class=ScamStrategy,
             objective_scorer=objective_scorer,
             include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 
-        # Store deprecated objectives for later resolution in _resolve_seed_groups
-        self._deprecated_objectives = objectives
         # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: Optional[List[SeedAttackGroup]] = None
+        self._seed_groups: Optional[list[SeedAttackGroup]] = None
 
     def _get_default_objective_scorer(self) -> TrueFalseCompositeScorer:
         """
@@ -190,10 +180,11 @@ class Scam(Scenario):
         Returns:
             TrueFalseCompositeScorer: Default objective scorer with backstop and scam materials evaluation.
         """
+        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         scam_materials = SelfAskTrueFalseScorer(
             chat_target=OpenAIChatTarget(
-                endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+                endpoint=endpoint,
+                api_key=get_azure_openai_auth(endpoint),
                 model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 temperature=0.9,
             ),
@@ -203,8 +194,8 @@ class Scam(Scenario):
         backstop = TrueFalseInverterScorer(
             scorer=SelfAskRefusalScorer(
                 chat_target=OpenAIChatTarget(
-                    endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-                    api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+                    endpoint=endpoint,
+                    api_key=get_azure_openai_auth(endpoint),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 )
             )
@@ -219,34 +210,21 @@ class Scam(Scenario):
         Returns:
             OpenAIChatTarget: Target that supplies the persuasion script rephrasing.
         """
+        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
-            endpoint=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"),
-            api_key=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"),
+            endpoint=endpoint,
+            api_key=get_azure_openai_auth(endpoint),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
 
-    def _resolve_seed_groups(self) -> List[SeedAttackGroup]:
+    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
-        Resolve seed groups from deprecated objectives or dataset configuration.
+        Resolve seed groups from dataset configuration.
 
         Returns:
             List[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
-
-        Raises:
-            ValueError: If both 'objectives' parameter and 'dataset_config' are specified.
         """
-        # Check for conflict between deprecated objectives and dataset_config
-        if self._deprecated_objectives is not None and self._dataset_config_provided:
-            raise ValueError(
-                "Cannot specify both 'objectives' parameter and 'dataset_config'. "
-                "Please use only 'dataset_config' in initialize_async."
-            )
-
-        # Use deprecated objectives if provided
-        if self._deprecated_objectives is not None:
-            return [SeedAttackGroup(seeds=[SeedObjective(value=obj)]) for obj in self._deprecated_objectives]
-
         # Use dataset_config (guaranteed to be set by initialize_async)
         seed_groups = self._dataset_config.get_all_seed_attack_groups()
 
@@ -260,16 +238,19 @@ class Scam(Scenario):
         Translate the strategies into actual AtomicAttacks.
 
         Args:
-            strategy (ScenarioCompositeStrategy): The strategy to create the attack from.
+            strategy (str): The strategy to create the attack from.
 
         Returns:
             AtomicAttack: Configured for the specified strategy.
 
         Raises:
-            ValueError: If an unknown ScamStrategy is provided.
+            ValueError: If scenario is not properly initialized or an unknown ScamStrategy is provided.
         """
         # objective_target is guaranteed to be non-None by parent class validation
-        assert self._objective_target is not None
+        if self._objective_target is None:
+            raise ValueError(
+                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
+            )
         attack_strategy: Optional[AttackStrategy[Any, Any]] = None
 
         if strategy == "persuasive_rta":
@@ -287,9 +268,9 @@ class Scam(Scenario):
         elif strategy == "role_play":
             attack_strategy = RolePlayAttack(
                 objective_target=self._objective_target,
-                adversarial_chat=self._adversarial_chat,
                 role_play_definition_path=RolePlayPaths.PERSUASION_SCRIPT_WRITTEN.value,
                 attack_scoring_config=self._scorer_config,
+                attack_adversarial_config=self._adversarial_config,
             )
         elif strategy == "context_compliance":
             # Set system prompt to default
@@ -305,12 +286,12 @@ class Scam(Scenario):
 
         return AtomicAttack(
             atomic_attack_name=f"scam_{strategy}",
-            attack=attack_strategy,
+            attack_technique=AttackTechnique(attack=attack_strategy),
             seed_groups=self._seed_groups,
             memory_labels=self._memory_labels,
         )
 
-    async def _get_atomic_attacks_async(self) -> List[AtomicAttack]:
+    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Generate atomic attacks for each strategy.
 
@@ -320,12 +301,6 @@ class Scam(Scenario):
         # Resolve seed groups from deprecated objectives or dataset config
         self._seed_groups = self._resolve_seed_groups()
 
-        atomic_attacks: List[AtomicAttack] = []
-        strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            composites=self._scenario_composites, strategy_type=ScamStrategy
-        )
+        strategies = {s.value for s in self._scenario_strategies}
 
-        for strategy in strategies:
-            atomic_attacks.append(self._get_atomic_attack_from_strategy(strategy))
-
-        return atomic_attacks
+        return [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]

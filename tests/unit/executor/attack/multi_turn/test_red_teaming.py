@@ -19,7 +19,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.identifiers import ScorerIdentifier
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -35,13 +35,19 @@ from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
 
-def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
-    """Helper to create ScorerIdentifier for tests."""
-    return ScorerIdentifier(
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
         class_name=name,
         class_module="test_module",
-        class_description="",
-        identifier_type="instance",
+    )
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
     )
 
 
@@ -49,7 +55,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ScorerIdentifier:
 def mock_objective_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test_module"}
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target
 
 
@@ -58,7 +64,7 @@ def mock_adversarial_chat() -> MagicMock:
     chat = MagicMock(spec=PromptChatTarget)
     chat.send_prompt_async = AsyncMock()
     chat.set_system_prompt = MagicMock()
-    chat.get_identifier.return_value = {"__type__": "MockChatTarget", "__module__": "test_module"}
+    chat.get_identifier.return_value = _mock_target_id("MockChatTarget")
     return chat
 
 
@@ -172,7 +178,6 @@ class TestRedTeamingAttackInitialization:
             RTASystemPromptPaths.IMAGE_GENERATION.value,
             RTASystemPromptPaths.NAIVE_CRESCENDO.value,
             RTASystemPromptPaths.VIOLENT_DURIAN.value,
-            RTASystemPromptPaths.CRUCIBLE.value,
         ],
     )
     def test_init_with_different_system_prompts(
@@ -225,7 +230,7 @@ class TestRedTeamingAttackInitialization:
         )
 
         assert attack._adversarial_chat_seed_prompt.value == expected_value
-        if expected_type == str:
+        if expected_type is str:
             assert attack._adversarial_chat_seed_prompt.data_type == "text"
 
     def test_init_with_invalid_system_prompt_path_raises_error(
@@ -354,7 +359,6 @@ class TestContextCreation:
                             return AttackResult(
                                 conversation_id="test-id",
                                 objective="Test objective",
-                                attack_identifier=attack.get_identifier(),
                                 outcome=AttackOutcome.SUCCESS,
                                 executed_turns=1,
                             )
@@ -405,7 +409,6 @@ class TestContextCreation:
                             return AttackResult(
                                 conversation_id="test-id",
                                 objective="Test objective",
-                                attack_identifier=attack.get_identifier(),
                                 outcome=AttackOutcome.SUCCESS,
                                 executed_turns=1,
                             )
@@ -534,10 +537,7 @@ class TestContextValidation:
         mock_chat_objective_target = MagicMock(spec=PromptChatTarget)
         mock_chat_objective_target.send_prompt_async = AsyncMock()
         mock_chat_objective_target.set_system_prompt = MagicMock()
-        mock_chat_objective_target.get_identifier.return_value = {
-            "__type__": "MockChatTarget",
-            "__module__": "test_module",
-        }
+        mock_chat_objective_target.get_identifier.return_value = _mock_target_id("MockChatTarget")
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
@@ -1223,7 +1223,9 @@ class TestAttackExecution:
     ):
         """Test that providing a message parameter bypasses adversarial chat generation on first turn."""
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        inline_scorer = MagicMock(spec=TrueFalseScorer)
+        inline_scorer.get_identifier.return_value = _mock_scorer_id()
+        scoring_config = AttackScoringConfig(objective_scorer=inline_scorer)
 
         attack = RedTeamingAttack(
             objective_target=mock_objective_target,
@@ -1254,6 +1256,39 @@ class TestAttackExecution:
         assert basic_context.next_message is None
 
     @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+        success_score: Score,
+    ):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        inline_scorer = MagicMock(spec=TrueFalseScorer)
+        inline_scorer.get_identifier.return_value = _mock_scorer_id()
+        scoring_config = AttackScoringConfig(objective_scorer=inline_scorer)
+
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        basic_context.next_message = Message.from_prompt(prompt="Test message", role="user")
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        with patch.object(attack, "_score_response_async", new_callable=AsyncMock, return_value=success_score):
+            result = await attack._perform_async(context=basic_context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
+    @pytest.mark.asyncio
     async def test_perform_attack_with_multi_piece_message_uses_first_piece(
         self,
         mock_objective_target: MagicMock,
@@ -1265,7 +1300,9 @@ class TestAttackExecution:
     ):
         """Test that multi-piece messages use only the first piece's converted_value."""
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
-        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        inline_scorer = MagicMock(spec=TrueFalseScorer)
+        inline_scorer.get_identifier.return_value = _mock_scorer_id()
+        scoring_config = AttackScoringConfig(objective_scorer=inline_scorer)
 
         attack = RedTeamingAttack(
             objective_target=mock_objective_target,
@@ -1388,19 +1425,21 @@ class TestAttackExecution:
         )
 
         # Mock methods to always fail
-        with patch.object(
-            attack, "_generate_next_prompt_async", new_callable=AsyncMock, return_value="Attack prompt"
-        ) as mock_generate:
-            with patch.object(
+        with (
+            patch.object(
+                attack, "_generate_next_prompt_async", new_callable=AsyncMock, return_value="Attack prompt"
+            ) as mock_generate,
+            patch.object(
                 attack,
                 "_send_prompt_to_objective_target_async",
                 new_callable=AsyncMock,
                 return_value=sample_response,
-            ) as mock_send:
-                with patch.object(
-                    attack, "_score_response_async", new_callable=AsyncMock, return_value=failure_score
-                ) as mock_score:
-                    result = await attack._perform_async(context=basic_context)
+            ) as mock_send,
+            patch.object(
+                attack, "_score_response_async", new_callable=AsyncMock, return_value=failure_score
+            ) as mock_score,
+        ):
+            result = await attack._perform_async(context=basic_context)
 
         assert result.outcome == AttackOutcome.FAILURE
         assert result.executed_turns == 3
@@ -1442,7 +1481,6 @@ class TestAttackLifecycle:
                         mock_perform.return_value = AttackResult(
                             conversation_id="test-conversation-id",
                             objective="Test objective",
-                            attack_identifier=attack.get_identifier(),
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
@@ -1524,7 +1562,6 @@ class TestAttackLifecycle:
                         mock_perform.return_value = AttackResult(
                             conversation_id=basic_context.session.conversation_id,
                             objective=basic_context.objective,
-                            attack_identifier=attack.get_identifier(),
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),

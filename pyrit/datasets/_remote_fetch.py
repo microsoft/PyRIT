@@ -12,8 +12,10 @@ each loader family keeps a separate on-disk cache namespace under
 import hashlib
 import io
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Literal, Optional, cast
+from urllib.parse import urlparse
 
 import requests
 
@@ -22,7 +24,7 @@ from pyrit.common.json_helper import read_json, read_jsonl, write_json, write_js
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 
-FILE_TYPE_HANDLERS: Dict[str, Dict[str, Callable[..., Any]]] = {
+FILE_TYPE_HANDLERS: dict[str, dict[str, Callable[..., Any]]] = {
     "json": {"read": read_json, "write": write_json},
     "jsonl": {"read": read_jsonl, "write": write_jsonl},
     "csv": {"read": read_csv, "write": write_csv},
@@ -40,6 +42,23 @@ def validate_file_type(file_type: str) -> None:
     if file_type not in FILE_TYPE_HANDLERS:
         valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
         raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
+
+
+def get_file_type(*, source: str) -> str:
+    """
+    Infer the source file type from a URL or local path.
+
+    Query strings and fragments are ignored for URLs, and the result is
+    normalized to lowercase so ``.JSON`` and ``.json`` are treated identically.
+
+    Returns:
+        The lowercase file extension without the leading dot, or an empty string
+        if the source has no suffix.
+    """
+    parsed = urlparse(source)
+    source_path = parsed.path if parsed.scheme else source
+    suffix = Path(source_path).suffix
+    return suffix.lstrip(".").lower()
 
 
 def get_cache_file_name(*, source: str, file_type: str) -> str:
@@ -63,7 +82,7 @@ def get_cache_file(*, source: str, file_type: str, cache_subdir: str) -> Path:
     return DB_DATA_PATH / cache_subdir / get_cache_file_name(source=source, file_type=file_type)
 
 
-def read_cache(*, cache_file: Path, file_type: str) -> List[Dict[str, str]]:
+def read_cache(*, cache_file: Path, file_type: str) -> list[dict[str, str]]:
     """
     Read cached examples from disk.
 
@@ -75,10 +94,10 @@ def read_cache(*, cache_file: Path, file_type: str) -> List[Dict[str, str]]:
     """
     validate_file_type(file_type)
     with cache_file.open("r", encoding="utf-8") as file:
-        return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](file))
+        return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](file))
 
 
-def write_cache(*, cache_file: Path, examples: List[Dict[str, str]], file_type: str) -> None:
+def write_cache(*, cache_file: Path, examples: list[dict[str, str]], file_type: str) -> None:
     """
     Write examples to the cache file, creating parent directories as needed.
 
@@ -91,7 +110,7 @@ def write_cache(*, cache_file: Path, examples: List[Dict[str, str]], file_type: 
         FILE_TYPE_HANDLERS[file_type]["write"](file, examples)
 
 
-def fetch_from_public_url(*, source: str, file_type: str) -> List[Dict[str, str]]:
+def fetch_from_public_url(*, source: str, file_type: str) -> list[dict[str, str]]:
     """
     Fetch and parse examples from a public HTTP(S) URL.
 
@@ -107,14 +126,14 @@ def fetch_from_public_url(*, source: str, file_type: str) -> List[Dict[str, str]
     if response.status_code != 200:
         raise Exception(f"Failed to fetch examples from public URL. Status code: {response.status_code}")
     if file_type == "json":
-        return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text)))
+        return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text)))
     return cast(
-        List[Dict[str, str]],
+        "list[dict[str, str]]",
         FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines()))),
     )
 
 
-def fetch_from_file(*, source: str, file_type: str) -> List[Dict[str, str]]:
+def fetch_from_file(*, source: str, file_type: str) -> list[dict[str, str]]:
     """
     Read and parse examples from a local file.
 
@@ -125,8 +144,8 @@ def fetch_from_file(*, source: str, file_type: str) -> List[Dict[str, str]]:
         ValueError: If ``file_type`` is not supported.
     """
     validate_file_type(file_type)
-    with open(source, "r", encoding="utf-8") as file:
-        return cast(List[Dict[str, str]], FILE_TYPE_HANDLERS[file_type]["read"](file))
+    with open(source, encoding="utf-8") as file:
+        return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](file))
 
 
 def fetch_with_cache(
@@ -136,7 +155,7 @@ def fetch_with_cache(
     source_type: Literal["public_url", "file"] = "public_url",
     file_type: Optional[str] = None,
     cache: bool = True,
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """
     Fetch examples from a source with an MD5-keyed disk cache under `DB_DATA_PATH/<cache_subdir>`.
 
@@ -155,7 +174,7 @@ def fetch_with_cache(
             ``source_type`` is not ``'public_url'`` or ``'file'``.
     """
     if file_type is None:
-        file_type = source.rsplit(".", 1)[-1]
+        file_type = get_file_type(source=source)
     validate_file_type(file_type)
 
     cache_file = get_cache_file(source=source, file_type=file_type, cache_subdir=cache_subdir)

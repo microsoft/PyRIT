@@ -41,4 +41,4 @@ input_image = str(pathlib.Path(".") / ".." / ".." / ".." / "assets" / "pyrit_arc
 
 video = AddImageVideoConverter(video_path=input_video)
 converted_vid = await video.convert_async(prompt=input_image, input_type="image_path")  # type: ignore
-converted_vid
+print(converted_vid)

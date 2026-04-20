@@ -17,10 +17,10 @@ import numpy as np
 
 
 def _validate_and_prepare_data(
-    reliability_data: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
+    reliability_data: np.ndarray,  # type: ignore[type-arg, unused-ignore]
     level_of_measurement: str,
     missing: float | None,
-) -> tuple["np.ndarray", "np.ndarray", "np.ndarray"]:  # type: ignore[type-arg, unused-ignore]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # type: ignore[type-arg, unused-ignore]
     """
     Validate inputs and prepare data for reliability calculation.
 
@@ -50,10 +50,7 @@ def _validate_and_prepare_data(
         missing = np.nan
 
     # Identify valid (non-missing) values
-    if np.isnan(missing):
-        valid_mask = ~np.isnan(data)
-    else:
-        valid_mask = data != missing
+    valid_mask = ~np.isnan(data) if np.isnan(missing) else data != missing
 
     # Get sorted unique categories
     valid_ratings = data[valid_mask]
@@ -63,10 +60,10 @@ def _validate_and_prepare_data(
 
 
 def _build_value_counts_matrix(
-    data: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
-    valid_mask: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
-    categories: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
-) -> "np.ndarray":  # type: ignore[type-arg, unused-ignore]
+    data: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+    valid_mask: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+    categories: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+) -> np.ndarray:  # type: ignore[type-arg, unused-ignore]
     """
     Build matrix counting how many raters assigned each category to each item.
 
@@ -95,8 +92,8 @@ def _build_value_counts_matrix(
 
 
 def _build_coincidence_matrix(
-    value_counts: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
-) -> "np.ndarray":  # type: ignore[type-arg, unused-ignore]
+    value_counts: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+) -> np.ndarray:  # type: ignore[type-arg, unused-ignore]
     """
     Build coincidence matrix from value counts.
 
@@ -132,8 +129,8 @@ def _build_coincidence_matrix(
 
 
 def _build_expected_matrix(
-    coincidence_matrix: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
-) -> tuple["np.ndarray", "np.ndarray", float]:  # type: ignore[type-arg, unused-ignore]
+    coincidence_matrix: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+) -> tuple[np.ndarray, np.ndarray, float]:  # type: ignore[type-arg, unused-ignore]
     """
     Build expected coincidence matrix from observed coincidences.
 
@@ -160,8 +157,8 @@ def _build_expected_matrix(
 
 def _build_ordinal_distance_matrix(
     num_categories: int,
-    n_v: "np.ndarray",  # type: ignore[type-arg, unused-ignore]
-) -> "np.ndarray":  # type: ignore[type-arg, unused-ignore]
+    n_v: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+) -> np.ndarray:  # type: ignore[type-arg, unused-ignore]
     """
     Build ordinal distance matrix using category marginals.
 
@@ -216,7 +213,7 @@ def _compute_alpha_from_disagreements(
 
 
 def krippendorff_alpha(
-    reliability_data: "np.ndarray",  # type: ignore[type-arg, unused-ignore]  # shape: (num_raters_or_trials, num_items); dtype float
+    reliability_data: np.ndarray,  # type: ignore[type-arg, unused-ignore]  # shape: (num_raters_or_trials, num_items); dtype float
     level_of_measurement: str = "ordinal",
     missing: float | None = np.nan,
 ) -> float:

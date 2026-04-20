@@ -41,7 +41,7 @@ class _TextEmbedding(EmbeddingSupport, abc.ABC):
             The embedding response
         """
         embedding_obj = self._client.embeddings.create(input=text, model=self._model, **kwargs)
-        embedding_response = EmbeddingResponse(
+        return EmbeddingResponse(
             model=embedding_obj.model,
             object=embedding_obj.object,
             data=[
@@ -56,4 +56,3 @@ class _TextEmbedding(EmbeddingSupport, abc.ABC):
                 total_tokens=embedding_obj.usage.total_tokens,
             ),
         )
-        return embedding_response

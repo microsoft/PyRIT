@@ -4,6 +4,7 @@
 import logging
 import random
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -25,6 +26,19 @@ class RandomCapitalLettersConverter(PromptConverter):
                 Defaults to 100.0. This includes decimal points in that range.
         """
         self.percentage = percentage
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with random capital letters parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "percentage": self.percentage,
+            }
+        )
 
     def is_percentage(self, input_string: float) -> bool:
         """
@@ -64,9 +78,7 @@ class RandomCapitalLettersConverter(PromptConverter):
             )
 
         # Generate a list of unique random positions
-        random_positions = random.sample(range(total_length), set_number)
-
-        return random_positions
+        return random.sample(range(total_length), set_number)
 
     def string_to_upper_case_by_percentage(self, percentage: float, prompt: str) -> str:
         """

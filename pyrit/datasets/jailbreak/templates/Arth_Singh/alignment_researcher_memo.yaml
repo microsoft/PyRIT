@@ -7,6 +7,7 @@ source: https://github.com/Arth-Singh/Arth-Jailbreak-Templates
 parameters:
   - prompt
 data_type: text
+is_general_technique: true
 value: |
   ══════════════════════════════════════════════════════════════════════════════
                           NEXUS AI INTERNAL MEMORANDUM

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from datasets import load_dataset
 
@@ -21,7 +21,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     This dataset contains unsafe prompts annotated with harm categories from interactions
     between humans and LLMs. The dataset can be filtered by harm categories.
 
-    Reference: https://huggingface.co/datasets/nvidia/Aegis-AI-Content-Safety-Dataset-2.0
+    Reference: [@ghosh2025aegis]
     License: CC-BY-4.0
 
     The NVIDIA Aegis AI Content Safety Dataset 2.0 (also known as Nemotron Content Safety
@@ -64,7 +64,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         self,
         *,
         harm_categories: Optional[
-            List[
+            list[
                 Literal[
                     "Controlled/Regulated Substances",
                     "Copyright/Trademark/Plagiarism",
@@ -140,7 +140,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
         seed_prompts = []
 
-        for split_name in hf_dataset.keys():
+        for split_name in hf_dataset:
             for example in hf_dataset[split_name]:
                 # Skip safe prompts
                 prompt_label = example.get("prompt_label", "")
@@ -161,15 +161,15 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                     prompt_harm_categories = categories
 
                 # Filter by harm_categories if specified
-                if self.harm_categories_filter is not None:
-                    if not prompt_harm_categories or not any(
-                        cat in prompt_harm_categories for cat in self.harm_categories_filter
-                    ):
-                        continue
+                if self.harm_categories_filter is not None and (
+                    not prompt_harm_categories
+                    or not any(cat in prompt_harm_categories for cat in self.harm_categories_filter)
+                ):
+                    continue
 
                 # Escape Jinja2 template syntax by wrapping the entire prompt in raw tags
                 # This tells Jinja2 to treat everything inside as literal text
-                prompt_value = f"{{% raw %}}{prompt_value}{{% endraw %}}"
+                prompt_value = prompt_value
 
                 seed_prompts.append(
                     SeedPrompt(
