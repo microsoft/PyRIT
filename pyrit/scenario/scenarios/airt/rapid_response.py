@@ -30,33 +30,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RapidResponseStrategy(ScenarioStrategy):
+def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     """
-    Attack-technique strategies for the RapidResponse scenario.
+    Build the RapidResponse strategy class dynamically from SCENARIO_TECHNIQUES.
 
-    Each non-aggregate member maps to a single attack technique.
-    Aggregates (ALL, DEFAULT, SINGLE_TURN, MULTI_TURN) expand to
-    all techniques that share the corresponding tag.
-
-    ``ScenarioStrategy`` members should map 1:1 to selectable attack
-    techniques or aggregates of techniques. They are the user-facing
-    selection API; ``AttackTechniqueFactory`` is the execution
-    abstraction.
+    Reads the spec list (pure data) — no registry interaction or target resolution.
     """
+    from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
-    ALL = ("all", {"all"})
-    DEFAULT = ("default", {"default"})
-    SINGLE_TURN = ("single_turn", {"single_turn"})
-    MULTI_TURN = ("multi_turn", {"multi_turn"})
+    core_specs = [s for s in SCENARIO_TECHNIQUES if "core" in s.tags]
 
-    PromptSending = ("prompt_sending", {"single_turn", "default"})
-    RolePlay = ("role_play", {"single_turn"})
-    ManyShot = ("many_shot", {"multi_turn", "default"})
-    TAP = ("tap", {"multi_turn"})
+    return AttackTechniqueRegistry.build_strategy_class_from_specs(
+        class_name="RapidResponseStrategy",
+        specs=core_specs,
+        aggregate_tags={
+            "default": {"default"},
+            "single_turn": {"single_turn"},
+            "multi_turn": {"multi_turn"},
+        },
+    )
 
-    @classmethod
-    def get_aggregate_tags(cls) -> set[str]:
-        return {"all", "default", "single_turn", "multi_turn"}
+
+# Module-level symbol — populated lazily by get_strategy_class().
+# Preserved for backward-compatible imports (e.g. content_harms.py alias).
+RapidResponseStrategy: type[ScenarioStrategy] | None = None
 
 
 class RapidResponse(Scenario):
@@ -74,11 +72,15 @@ class RapidResponse(Scenario):
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
+        global RapidResponseStrategy
+        if RapidResponseStrategy is None:
+            RapidResponseStrategy = _build_rapid_response_strategy()
         return RapidResponseStrategy
 
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
-        return RapidResponseStrategy.DEFAULT
+        strategy_class = cls.get_strategy_class()
+        return strategy_class("default")
 
     @classmethod
     def default_dataset_config(cls) -> DatasetConfiguration:
@@ -124,7 +126,7 @@ class RapidResponse(Scenario):
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=RapidResponseStrategy,
+            strategy_class=self.get_strategy_class(),
             scenario_result_id=scenario_result_id,
         )
 

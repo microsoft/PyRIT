@@ -3,16 +3,23 @@
 
 """AIRT scenario classes."""
 
-from pyrit.scenario.scenarios.airt.content_harms import (
-    ContentHarms,
-    ContentHarmsStrategy,
-)
+from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
 from pyrit.scenario.scenarios.airt.cyber import Cyber, CyberStrategy
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
 from pyrit.scenario.scenarios.airt.leakage import Leakage, LeakageStrategy
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial, PsychosocialStrategy
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, RapidResponseStrategy
+from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
+
+
+def __getattr__(name: str):
+    """Lazily resolve dynamic strategy classes."""
+    if name == "RapidResponseStrategy":
+        return RapidResponse.get_strategy_class()
+    if name == "ContentHarmsStrategy":
+        return RapidResponse.get_strategy_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "ContentHarms",

@@ -158,6 +158,62 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         )
 
     @staticmethod
+    def build_strategy_class_from_specs(
+        *,
+        class_name: str,
+        specs: list[TechniqueSpec],
+        aggregate_tags: dict[str, set[str]],
+    ) -> type:
+        """
+        Build a ``ScenarioStrategy`` enum subclass dynamically from technique specs.
+
+        Creates an enum class with:
+        - An ``ALL`` aggregate member (always included).
+        - Additional aggregate members from ``aggregate_tags`` keys.
+        - One technique member per spec, with tags from the spec.
+
+        This reads from the **spec list** (pure data), not from the mutable
+        registry. This ensures deterministic output regardless of registry state.
+
+        Args:
+            class_name: Name for the generated enum class.
+            specs: Technique specifications to include as enum members.
+            aggregate_tags: Maps aggregate member names to the set of tags they
+                expand to. For example, ``{"default": {"default"}, "single_turn": {"single_turn"}}``.
+                An ``ALL`` aggregate (expanding to all techniques) is always added.
+
+        Returns:
+            A ``ScenarioStrategy`` subclass with the generated members.
+        """
+        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+
+        all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
+
+        members: dict[str, tuple[str, set[str]]] = {}
+
+        # Aggregate members first (ALL is always present)
+        members["ALL"] = ("all", {"all"})
+        for agg_name, agg_tag_set in aggregate_tags.items():
+            members[agg_name.upper()] = (agg_name, {agg_name})
+
+        # Technique members from specs
+        for spec in specs:
+            tag_set = {t for t in spec.tags if t not in ("accepts_scorer_override",)}
+            members[spec.name] = (spec.name, tag_set)
+
+        # Build the enum class dynamically
+        strategy_cls = ScenarioStrategy(class_name, members)
+
+        # Override get_aggregate_tags on the generated class
+        @classmethod  # type: ignore[misc]
+        def _get_aggregate_tags(cls: type) -> set[str]:
+            return set(all_aggregate_tag_names)
+
+        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[attr-defined]
+
+        return strategy_cls
+
+    @staticmethod
     def build_factory_from_spec(
         spec: TechniqueSpec,
         *,

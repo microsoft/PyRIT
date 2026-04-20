@@ -31,7 +31,6 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse,
-    RapidResponseStrategy,
 )
 from pyrit.score import TrueFalseScorer
 
@@ -49,6 +48,11 @@ _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"test question {i}", "answer": f"test 
 
 def _mock_id(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test")
+
+
+def _strategy_class():
+    """Get the dynamically-generated RapidResponseStrategy class."""
+    return RapidResponse.get_strategy_class()
 
 
 # ---------------------------------------------------------------------------
@@ -79,14 +83,18 @@ def mock_objective_scorer():
 
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
-    """Reset the AttackTechniqueRegistry and TargetRegistry singletons between tests."""
+    """Reset the AttackTechniqueRegistry, TargetRegistry, and cached strategy class between tests."""
+    import pyrit.scenario.scenarios.airt.rapid_response as rr_module
+
     from pyrit.registry import TargetRegistry
 
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
+    rr_module.RapidResponseStrategy = None
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
+    rr_module.RapidResponseStrategy = None
 
 
 @pytest.fixture(autouse=True)
@@ -139,67 +147,76 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 
 class TestRapidResponseStrategy:
-    """Tests for the RapidResponseStrategy enum."""
+    """Tests for the dynamically-generated RapidResponseStrategy enum."""
 
     def test_technique_members_exist(self):
-        """All four technique members are accessible."""
-        assert RapidResponseStrategy.PromptSending.value == "prompt_sending"
-        assert RapidResponseStrategy.RolePlay.value == "role_play"
-        assert RapidResponseStrategy.ManyShot.value == "many_shot"
-        assert RapidResponseStrategy.TAP.value == "tap"
+        """All four technique members are accessible by value."""
+        S = _strategy_class()
+        assert S("prompt_sending").value == "prompt_sending"
+        assert S("role_play").value == "role_play"
+        assert S("many_shot").value == "many_shot"
+        assert S("tap").value == "tap"
 
     def test_aggregate_members_exist(self):
         """All four aggregate members are accessible."""
-        assert RapidResponseStrategy.ALL.value == "all"
-        assert RapidResponseStrategy.DEFAULT.value == "default"
-        assert RapidResponseStrategy.SINGLE_TURN.value == "single_turn"
-        assert RapidResponseStrategy.MULTI_TURN.value == "multi_turn"
+        S = _strategy_class()
+        assert S.ALL.value == "all"
+        assert S.DEFAULT.value == "default"
+        assert S.SINGLE_TURN.value == "single_turn"
+        assert S.MULTI_TURN.value == "multi_turn"
 
     def test_total_member_count(self):
         """4 aggregates + 4 techniques = 8 members."""
-        assert len(list(RapidResponseStrategy)) == 8
+        assert len(list(_strategy_class())) == 8
 
     def test_non_aggregate_count(self):
         """get_all_strategies returns only the 4 technique members."""
-        non_aggregate = RapidResponseStrategy.get_all_strategies()
+        non_aggregate = _strategy_class().get_all_strategies()
         assert len(non_aggregate) == 4
 
     def test_aggregate_tags(self):
-        tags = RapidResponseStrategy.get_aggregate_tags()
+        tags = _strategy_class().get_aggregate_tags()
         assert tags == {"all", "default", "single_turn", "multi_turn"}
 
     def test_default_expands_to_prompt_sending_and_many_shot(self):
-        """DEFAULT aggregate should expand to PromptSending + ManyShot."""
-        expanded = RapidResponseStrategy.normalize_strategies({RapidResponseStrategy.DEFAULT})
+        """DEFAULT aggregate should expand to prompt_sending + many_shot."""
+        S = _strategy_class()
+        expanded = S.normalize_strategies({S.DEFAULT})
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "many_shot"}
 
     def test_single_turn_expands_to_prompt_sending_and_role_play(self):
-        expanded = RapidResponseStrategy.normalize_strategies({RapidResponseStrategy.SINGLE_TURN})
+        S = _strategy_class()
+        expanded = S.normalize_strategies({S.SINGLE_TURN})
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "role_play"}
 
     def test_multi_turn_expands_to_many_shot_and_tap(self):
-        expanded = RapidResponseStrategy.normalize_strategies({RapidResponseStrategy.MULTI_TURN})
+        S = _strategy_class()
+        expanded = S.normalize_strategies({S.MULTI_TURN})
         values = {s.value for s in expanded}
         assert values == {"many_shot", "tap"}
 
     def test_all_expands_to_all_techniques(self):
-        expanded = RapidResponseStrategy.normalize_strategies({RapidResponseStrategy.ALL})
+        S = _strategy_class()
+        expanded = S.normalize_strategies({S.ALL})
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "role_play", "many_shot", "tap"}
 
     def test_strategy_values_are_unique(self):
-        values = [s.value for s in RapidResponseStrategy]
+        S = _strategy_class()
+        values = [s.value for s in S]
         assert len(values) == len(set(values))
 
     def test_invalid_strategy_value_raises(self):
+        S = _strategy_class()
         with pytest.raises(ValueError):
-            RapidResponseStrategy("nonexistent")
+            S("nonexistent")
 
     def test_invalid_strategy_name_raises(self):
+        S = _strategy_class()
         with pytest.raises(KeyError):
-            RapidResponseStrategy["Nonexistent"]
+            S["Nonexistent"]
 
 
 # ===========================================================================
@@ -215,10 +232,12 @@ class TestRapidResponseBasic:
         assert RapidResponse.VERSION == 2
 
     def test_get_strategy_class(self):
-        assert RapidResponse.get_strategy_class() is RapidResponseStrategy
+        S = _strategy_class()
+        assert RapidResponse.get_strategy_class() is S
 
     def test_get_default_strategy_returns_default(self):
-        assert RapidResponse.get_default_strategy() == RapidResponseStrategy.DEFAULT
+        S = _strategy_class()
+        assert RapidResponse.get_default_strategy() == S.DEFAULT
 
     def test_default_dataset_config_has_all_harm_datasets(self):
         config = RapidResponse.default_dataset_config()
@@ -321,7 +340,7 @@ class TestRapidResponseAttackGeneration:
         mock_objective_target,
         mock_adversarial_target,
         mock_objective_scorer,
-        strategies: list[RapidResponseStrategy] | None = None,
+        strategies=None,
         seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
     ):
         """Helper: initialize scenario and return atomic attacks."""
@@ -357,7 +376,7 @@ class TestRapidResponseAttackGeneration:
             mock_objective_target=mock_objective_target,
             mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[RapidResponseStrategy.SINGLE_TURN],
+            strategies=[_strategy_class().SINGLE_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, RolePlayAttack}
@@ -370,7 +389,7 @@ class TestRapidResponseAttackGeneration:
             mock_objective_target=mock_objective_target,
             mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[RapidResponseStrategy.MULTI_TURN],
+            strategies=[_strategy_class().MULTI_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack}
@@ -383,7 +402,7 @@ class TestRapidResponseAttackGeneration:
             mock_objective_target=mock_objective_target,
             mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[RapidResponseStrategy.ALL],
+            strategies=[_strategy_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {
@@ -401,7 +420,7 @@ class TestRapidResponseAttackGeneration:
             mock_objective_target=mock_objective_target,
             mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[RapidResponseStrategy.PromptSending],
+            strategies=[_strategy_class()("prompt_sending")],
         )
         assert len(attacks) > 0
         for a in attacks:
@@ -503,7 +522,7 @@ class TestRapidResponseAttackGeneration:
             # Select ALL which includes role_play, many_shot, tap — none have factories
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
-                scenario_strategies=[RapidResponseStrategy.ALL],
+                scenario_strategies=[_strategy_class().ALL],
             )
             attacks = await scenario._get_atomic_attacks_async()
             # Only prompt_sending should have produced attacks
@@ -519,7 +538,7 @@ class TestRapidResponseAttackGeneration:
             mock_objective_target=mock_objective_target,
             mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
-            strategies=[RapidResponseStrategy.PromptSending],
+            strategies=[_strategy_class()("prompt_sending")],
         )
         for a in attacks:
             assert len(a.objectives) > 0
@@ -608,7 +627,7 @@ class TestDeprecatedAliases:
     def test_content_harms_strategy_is_rapid_response_strategy(self):
         from pyrit.scenario.scenarios.airt.content_harms import ContentHarmsStrategy
 
-        assert ContentHarmsStrategy is RapidResponseStrategy
+        assert ContentHarmsStrategy is _strategy_class()
 
     def test_content_harms_instance_name_is_rapid_response(self, mock_adversarial_target, mock_objective_scorer):
         """ContentHarms() creates a RapidResponse with name 'RapidResponse'."""

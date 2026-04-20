@@ -37,12 +37,12 @@ SCENARIO_TECHNIQUES: list[TechniqueSpec] = [
     TechniqueSpec(
         name="prompt_sending",
         attack_class=PromptSendingAttack,
-        tags=["single_turn"],
+        tags=["core", "single_turn", "default"],
     ),
     TechniqueSpec(
         name="role_play",
         attack_class=RolePlayAttack,
-        tags=["single_turn"],
+        tags=["core", "single_turn"],
         extra_kwargs_builder=lambda _adv: {
             "role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value,
         },
@@ -50,12 +50,12 @@ SCENARIO_TECHNIQUES: list[TechniqueSpec] = [
     TechniqueSpec(
         name="many_shot",
         attack_class=ManyShotJailbreakAttack,
-        tags=["multi_turn"],
+        tags=["core", "multi_turn", "default"],
     ),
     TechniqueSpec(
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
-        tags=["multi_turn"],
+        tags=["core", "multi_turn"],
         accepts_scorer_override=False,
     ),
 ]
