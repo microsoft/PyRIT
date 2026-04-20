@@ -135,6 +135,7 @@ async def _assert_can_send_video_prompt(target):
         ("AZURE_FOUNDRY_PHI4_ENDPOINT", "AZURE_CHAT_PHI4_KEY", "AZURE_CHAT_PHI4_MODEL", True),
         ("GOOGLE_GEMINI_ENDPOINT", "GOOGLE_GEMINI_API_KEY", "GOOGLE_GEMINI_MODEL", False),
         ("ANTHROPIC_CHAT_ENDPOINT", "ANTHROPIC_CHAT_KEY", "ANTHROPIC_CHAT_MODEL", False),
+        ("AWS_ENDPOINT", "AWS_KEY", "AWS_CHAT_MODEL", False),
     ],
 )
 async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, api_key, model_name, supports_seed):
@@ -178,6 +179,7 @@ async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, a
             "AZURE_OPENAI_GPT5_KEY",
             "AZURE_OPENAI_GPT5_MODEL",
         ),
+        ("AWS_ENDPOINT", "AWS_KEY", "AWS_RESPONSES_MODEL"),
     ],
 )
 async def test_connect_required_openai_response_targets(sqlite_instance, endpoint, api_key, model_name):
@@ -243,7 +245,7 @@ async def test_realtime_target_multi_objective(sqlite_instance, endpoint, api_ke
     second_prompt_to_send = "What is the size of that city?"
 
     attack = PromptSendingAttack(objective_target=target)
-    results = await AttackExecutor().execute_multi_objective_attack_async(
+    results = await AttackExecutor().execute_attack_async(
         attack=attack,
         objectives=[prompt_to_send, second_prompt_to_send],
     )
@@ -515,9 +517,9 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     attack = PromptSendingAttack(objective_target=target)
     executor = AttackExecutor()
 
-    # Send two prompts using execute_multi_objective_attack_async
+    # Send two prompts using execute_attack_async
     objectives = ["A cat walking on a beach", "A dog running in a park"]
-    results = await executor.execute_multi_objective_attack_async(attack=attack, objectives=objectives)
+    results = await executor.execute_attack_async(attack=attack, objectives=objectives)
 
     # Verify we got 2 results
     assert len(results) == 2, f"Expected 2 results, got {len(results)}"

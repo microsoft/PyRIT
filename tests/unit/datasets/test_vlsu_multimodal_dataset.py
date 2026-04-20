@@ -39,8 +39,13 @@ class TestVLSUMultimodalDataset:
 
     def test_init_with_invalid_categories(self):
         """Test that invalid categories raise ValueError."""
-        with pytest.raises(ValueError, match="Invalid VLSU categories"):
+        with pytest.raises(ValueError, match="Expected VLSUCategory"):
             _VLSUMultimodalDataset(categories=["invalid_category"])
+
+    def test_init_rejects_raw_string_matching_enum_value_for_categories(self):
+        """Test that raw strings matching enum values are rejected."""
+        with pytest.raises(ValueError, match="Expected VLSUCategory"):
+            _VLSUMultimodalDataset(categories=["C1: Slurs, Hate Speech, Hate Symbols"])
 
     def test_init_with_unsafe_grades(self):
         """Test initialization with custom unsafe grades."""

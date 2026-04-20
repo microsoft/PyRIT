@@ -10,12 +10,14 @@ from __future__ import annotations
 import logging
 import random
 import uuid
-import warnings
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+import yaml
+
 from pyrit.common import utils
+from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_group import SeedGroup
@@ -25,6 +27,7 @@ from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversa
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from pydantic.types import PositiveInt
 
@@ -55,6 +58,34 @@ class SeedDataset(YamlLoadable):
     # Now the actual prompts
     seeds: Sequence[Seed]
 
+    @classmethod
+    def from_yaml_file(cls, file: Union[str, Path]) -> SeedDataset:
+        """
+        Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
+
+        Args:
+            file: The input file path.
+
+        Returns:
+            SeedDataset: The loaded dataset.
+
+        Raises:
+            ValueError: If the YAML file is invalid.
+        """
+        file = verify_and_resolve_path(file)
+        try:
+            yaml_data = yaml.safe_load(file.read_text("utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
+
+        if yaml_data is None:
+            raise ValueError(f"YAML file '{file}' is empty.")
+
+        yaml_data["is_jinja_template"] = True
+        if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
+            return cls.from_dict(yaml_data)
+        return cls(**yaml_data)
+
     def __init__(
         self,
         *,
@@ -70,7 +101,7 @@ class SeedDataset(YamlLoadable):
         date_added: Optional[datetime] = None,
         added_by: Optional[str] = None,
         seed_type: Optional[SeedType] = None,
-        is_objective: bool = False,  # Deprecated in 0.13.0: Use seed_type="objective" instead
+        is_jinja_template: bool = False,
     ):
         """
         Initialize the dataset.
@@ -92,7 +123,7 @@ class SeedDataset(YamlLoadable):
             date_added: Date when the dataset was added.
             added_by: User who added the dataset.
             seed_type: The type of seeds in this dataset ("prompt", "objective", or "simulated_conversation").
-            is_objective: Deprecated in 0.13.0. Use seed_type="objective" instead.
+            is_jinja_template: When True, seed values are Jinja2 templates. Set by from_yaml_file.
 
         Raises:
             ValueError: If seeds are missing or contain invalid/contradictory seed definitions.
@@ -100,14 +131,6 @@ class SeedDataset(YamlLoadable):
         """
         if not seeds:
             raise ValueError("SeedDataset cannot be empty.")
-
-        # Emit deprecation warning for legacy is_objective parameter
-        if is_objective:
-            warnings.warn(
-                "is_objective parameter is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         input_seeds = seeds
 
@@ -128,23 +151,10 @@ class SeedDataset(YamlLoadable):
         self.seeds = []
         for p in input_seeds:
             if isinstance(p, dict):
-                # Support new seed_type field with backward compatibility for deprecated is_objective
                 p_seed_type = p.get("seed_type", seed_type)
-                p_is_objective = p.get("is_objective", is_objective)
-
-                # Emit deprecation warning if is_objective is used in dict
-                if "is_objective" in p and p["is_objective"]:
-                    warnings.warn(
-                        "is_objective in seed dict is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                    # Only error if seed_type is explicitly set to a conflicting value
-                    if p_seed_type is not None and p_seed_type != "objective":
-                        raise ValueError("Conflicting seed_type and is_objective values.")
 
                 effective_type: SeedType = "prompt"
-                if p_seed_type == "objective" or (p_is_objective):
+                if p_seed_type == "objective":
                     effective_type = "objective"
                 elif p_seed_type == "simulated_conversation":
                     effective_type = "simulated_conversation"
@@ -168,6 +178,7 @@ class SeedDataset(YamlLoadable):
                     "added_by": p.get("added_by"),
                     "metadata": p.get("metadata", {}),
                     "prompt_group_id": p.get("prompt_group_id"),
+                    "is_jinja_template": is_jinja_template,
                 }
 
                 if effective_type == "simulated_conversation":

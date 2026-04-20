@@ -1,0 +1,66 @@
+# Single place for all coverage checks: overall threshold + diff coverage on PRs.
+# Runs once on Ubuntu/Python 3.12 instead of across the full OS x Python matrix.
+
+name: coverage
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+      - "release/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.17"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install dev extras
+        run: uv sync --extra dev --extra all
+
+      - name: Run unit tests with coverage (fail under 78%)
+        run: make unit-test-cov-xml
+
+      - name: Code Coverage Report
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        if: always()
+        with:
+          filename: coverage.xml
+          badge: true
+          fail_below_min: false
+          format: markdown
+          hide_branch_rate: false
+          hide_complexity: true
+          indicators: true
+          output: both
+          thresholds: '60 80'
+
+      - name: Check diff coverage on PR (>=90% on changed lines)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main
+          make unit-test-diff-cover

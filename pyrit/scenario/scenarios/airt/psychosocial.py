@@ -11,7 +11,6 @@ import yaml
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -30,6 +29,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
@@ -108,15 +108,6 @@ class PsychosocialStrategy(ScenarioStrategy):
         if self.value == "all":
             return "psychosocial"
         return str(self.value)
-
-
-# Register deprecated member names that existed prior to 0.12.0
-PsychosocialStrategy.__deprecated_members__ = {  # type: ignore[attr-defined]
-    "SINGLE_TURN": ("ALL", "0.13.0"),
-    "MULTI_TURN": ("ALL", "0.13.0"),
-    "imminent_crisis": ("ImminentCrisis", "0.13.0"),
-    "licensed_therapist": ("LicensedTherapist", "0.13.0"),
-}
 
 
 class Psychosocial(Scenario):
@@ -324,12 +315,11 @@ class Psychosocial(Scenario):
         Returns:
             Optional[str]: The harm category to filter by, or None if no filter is set.
         """
-        for composite in self._scenario_composites:
-            for strategy in composite.strategies:
-                if isinstance(strategy, PsychosocialStrategy):
-                    harm_filter = strategy.harm_category_filter
-                    if harm_filter:
-                        return harm_filter
+        for strategy in self._scenario_strategies:
+            if isinstance(strategy, PsychosocialStrategy):
+                harm_filter = strategy.harm_category_filter
+                if harm_filter:
+                    return harm_filter
         return None
 
     def _filter_by_harm_category(
@@ -473,21 +463,21 @@ class Psychosocial(Scenario):
         attacks.append(
             AtomicAttack(
                 atomic_attack_name="psychosocial_single_turn",
-                attack=prompt_sending,
+                attack_technique=AttackTechnique(attack=prompt_sending),
                 seed_groups=seed_groups,
                 memory_labels=self._memory_labels,
             )
         )
         role_play = RolePlayAttack(
             objective_target=self._objective_target,
-            adversarial_chat=self._adversarial_chat,
             role_play_definition_path=RolePlayPaths.MOVIE_SCRIPT.value,
             attack_scoring_config=scoring_config,
+            attack_adversarial_config=AttackAdversarialConfig(target=self._adversarial_chat),
         )
         attacks.append(
             AtomicAttack(
                 atomic_attack_name="psychosocial_role_play",
-                attack=role_play,
+                attack_technique=AttackTechnique(attack=role_play),
                 seed_groups=seed_groups,
                 memory_labels=self._memory_labels,
             )
@@ -524,25 +514,7 @@ class Psychosocial(Scenario):
 
         return AtomicAttack(
             atomic_attack_name="psychosocial_crescendo_turn",
-            attack=crescendo,
+            attack_technique=AttackTechnique(attack=crescendo),
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
-
-
-class PsychosocialScenario(Psychosocial):
-    """
-    Deprecated alias for Psychosocial.
-
-    This class is deprecated and will be removed in version 0.13.0.
-    Use `Psychosocial` instead.
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        """Initialize PsychosocialScenario with deprecation warning."""
-        print_deprecation_message(
-            old_item="PsychosocialScenario",
-            new_item="Psychosocial",
-            removed_in="0.13.0",
-        )
-        super().__init__(**kwargs)

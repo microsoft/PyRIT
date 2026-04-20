@@ -17,6 +17,16 @@ describe("ChatInputArea", () => {
   const defaultProps = {
     onSend: jest.fn(),
     disabled: false,
+    onNewConversation: jest.fn(),
+    onUseAsTemplate: jest.fn(),
+    onConfigureTarget: jest.fn(),
+    onToggleConverterPanel: jest.fn(),
+    isConverterPanelOpen: false,
+    onInputChange: jest.fn(),
+    onAttachmentsChange: jest.fn(),
+    onClearConversion: jest.fn(),
+    onConvertedValueChange: jest.fn(),
+    onClearMediaConversion: jest.fn(),
   };
 
   beforeEach(() => {
@@ -32,6 +42,25 @@ describe("ChatInputArea", () => {
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(getSendButton()).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /convert/i })).toBeInTheDocument();
+  });
+
+  it("should call converter panel toggle handler when convert button is clicked", async () => {
+    const user = userEvent.setup();
+    const onToggleConverterPanel = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          onToggleConverterPanel={onToggleConverterPanel}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /convert/i }));
+
+    expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
   it("should call onSend with input value when send button clicked", async () => {
@@ -233,7 +262,10 @@ describe("ChatInputArea", () => {
 
     render(
       <TestWrapper>
-        <ChatInputArea {...defaultProps} />
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+        />
       </TestWrapper>
     );
 
@@ -248,16 +280,12 @@ describe("ChatInputArea", () => {
       expect(screen.getByText(/remove-me\.txt/)).toBeInTheDocument();
     });
 
-    // Find and click the dismiss button
-    const dismissButtons = screen.getAllByRole("button");
-    const dismissButton = dismissButtons.find(
-      (btn) =>
-        btn.querySelector("svg") && btn.getAttribute("aria-label") !== "Send"
-    );
+    // Click the dismiss button for the first attachment
+    await user.click(screen.getByTestId("remove-attachment-0"));
 
-    if (dismissButton) {
-      await user.click(dismissButton);
-    }
+    await waitFor(() => {
+      expect(screen.queryByText(/remove-me\.txt/)).not.toBeInTheDocument();
+    });
   });
 
   it("should send with attachments even without text", async () => {
@@ -474,7 +502,7 @@ describe("ChatInputArea", () => {
     expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
 
-  it("should not show New Conversation button when onNewConversation is not provided", () => {
+  it("should show New Conversation button when singleTurnLimitReached", () => {
     render(
       <TestWrapper>
         <ChatInputArea
@@ -485,7 +513,7 @@ describe("ChatInputArea", () => {
     );
 
     expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
-    expect(screen.queryByTestId("new-conversation-btn")).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
   });
 
   it("should show normal input when singleTurnLimitReached is false", () => {
@@ -500,5 +528,123 @@ describe("ChatInputArea", () => {
 
     expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
     expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Converter integration: attachment with media conversions
+  // ---------------------------------------------------------------------------
+
+  it("should show converted indicator for media attachments when mediaConversions provided", async () => {
+    const file = new File(["img"], "photo.png", { type: "image/png" });
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png" }]}
+        />
+      </TestWrapper>
+    );
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    await waitFor(() => {
+      expect(screen.getByText("photo.png", { exact: false })).toBeInTheDocument();
+    });
+
+    // Should show Original and Converted badges
+    expect(screen.getByText("Original")).toBeInTheDocument();
+    expect(screen.getByText("Converted")).toBeInTheDocument();
+    expect(screen.getByText("converted.png")).toBeInTheDocument();
+  });
+
+  it("should call onClearMediaConversion when dismiss is clicked on converted attachment", async () => {
+    const file = new File(["img"], "photo.png", { type: "image/png" });
+    const user = userEvent.setup();
+    const onClearMediaConversion = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png" }]}
+          onClearMediaConversion={onClearMediaConversion}
+        />
+      </TestWrapper>
+    );
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    await waitFor(() => {
+      expect(screen.getByText("Converted")).toBeInTheDocument();
+    });
+
+    // Click the dismiss button for the converted media
+    await user.click(screen.getByTestId("clear-media-conversion-image"));
+    expect(onClearMediaConversion).toHaveBeenCalledWith("image");
+  });
+
+  it("should show converted value textarea and call onConvertedValueChange", async () => {
+    const onConvertedValueChange = jest.fn();
+    const onClearConversion = jest.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedValue="aGVsbG8="
+          originalValue="hello"
+          onConvertedValueChange={onConvertedValueChange}
+          onClearConversion={onClearConversion}
+        />
+      </TestWrapper>
+    );
+
+    // Should show original banner and converted indicator
+    expect(screen.getByTestId("original-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("converted-indicator")).toBeInTheDocument();
+
+    // Edit the converted value
+    const convertedInput = screen.getByTestId("converted-value-input");
+    await user.clear(convertedInput);
+    await user.type(convertedInput, "new");
+    expect(onConvertedValueChange).toHaveBeenCalled();
+
+    // Clear the conversion
+    await user.click(screen.getByTestId("clear-conversion-btn"));
+    expect(onClearConversion).toHaveBeenCalled();
+  });
+
+  it("should pass convertedValue to onSend when sending with conversion", async () => {
+    const onSend = jest.fn();
+    const onClearConversion = jest.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          onSend={onSend}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedValue="convertedHello"
+          originalValue="hello"
+          onClearConversion={onClearConversion}
+        />
+      </TestWrapper>
+    );
+
+    const input = screen.getByTestId("chat-input");
+    await user.type(input, "hello");
+    await user.click(getSendButton());
+
+    expect(onSend).toHaveBeenCalledWith("hello", "convertedHello", []);
+    expect(onClearConversion).toHaveBeenCalled();
   });
 });

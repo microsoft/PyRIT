@@ -4,7 +4,7 @@
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter import ConverterResult, PromptConverter
-from pyrit.registry.instance_registries.converter_registry import ConverterRegistry
+from pyrit.registry.object_registries.converter_registry import ConverterRegistry
 
 
 class MockTextConverter(PromptConverter):
@@ -300,7 +300,7 @@ class TestConverterRegistryListMetadataFiltering:
 
 
 class TestConverterRegistryInheritedMethods:
-    """Tests for inherited methods from BaseInstanceRegistry."""
+    """Tests for inherited methods from RetrievableInstanceRegistry."""
 
     def setup_method(self):
         """Reset and get a fresh registry."""

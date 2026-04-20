@@ -17,6 +17,7 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -28,20 +29,22 @@ class OpenAIImageTarget(OpenAITarget):
 
     # Maximum number of image inputs supported by the OpenAI image API
     _MAX_INPUT_IMAGES = 16
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_message_pieces=True,
-        input_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["image_path"]),
-                frozenset(["text", "image_path"]),
-            }
-        ),
-        output_modalities=frozenset(
-            {
-                frozenset(["image_path"]),
-            }
-        ),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["image_path"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+            output_modalities=frozenset(
+                {
+                    frozenset(["image_path"]),
+                }
+            ),
+        )
     )
 
     def __init__(
@@ -52,6 +55,7 @@ class OpenAIImageTarget(OpenAITarget):
         output_format: Optional[Literal["png", "jpeg", "webp"]] = None,
         quality: Optional[Literal["standard", "hd", "low", "medium", "high"]] = None,
         style: Optional[Literal["natural", "vivid"]] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
@@ -91,8 +95,10 @@ class OpenAIImageTarget(OpenAITarget):
             style (Literal["natural", "vivid"], Optional): The style of the generated images.
                 This parameter is only supported for DALL-E-3.
                 Default is to not specify.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             *args: Additional positional arguments to be passed to AzureOpenAITarget.
             **kwargs: Additional keyword arguments to be passed to AzureOpenAITarget.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
@@ -104,13 +110,14 @@ class OpenAIImageTarget(OpenAITarget):
         self.style = style
         self.image_size = image_size
 
-        super().__init__(*args, custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(
+            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
+        )
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_IMAGE_MODEL"
         self.endpoint_environment_variable = "OPENAI_IMAGE_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_IMAGE_API_KEY"
-        self.underlying_model_environment_variable = "OPENAI_IMAGE_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -140,22 +147,24 @@ class OpenAIImageTarget(OpenAITarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(
+    async def _send_prompt_to_target_async(
         self,
         *,
-        message: Message,
+        normalized_conversation: list[Message],
     ) -> list[Message]:
         """
         Send a prompt to the OpenAI image target and return the response.
         Supports both image generation (text input) and image editing (text + images input).
 
         Args:
-            message (Message): The message to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the image target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
@@ -313,8 +322,9 @@ class OpenAIImageTarget(OpenAITarget):
 
         raise EmptyResponseException(message="The image generation returned an empty response.")
 
-    def _validate_request(self, *, message: Message) -> None:
-        super()._validate_request(message=message)
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
+        super()._validate_request(normalized_conversation=normalized_conversation)
+        message = normalized_conversation[-1]
 
         text_pieces = [p for p in message.message_pieces if p.converted_value_data_type == "text"]
         image_pieces = [p for p in message.message_pieces if p.converted_value_data_type == "image_path"]

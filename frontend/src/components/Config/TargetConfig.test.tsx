@@ -97,8 +97,8 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
-      expect(screen.getByText("OpenAIImageTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("OpenAIImageTarget").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -159,7 +159,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
     const setActiveButtons = screen.getAllByText("Set Active");
@@ -184,7 +184,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Active")).toBeInTheDocument();
+      expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -201,7 +201,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
@@ -254,7 +254,7 @@ describe("TargetConfig", () => {
     await userEvent.click(screen.getByTestId("dialog-create"));
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -271,7 +271,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+      expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("gpt-4")).toBeInTheDocument();
       expect(
         screen.getAllByText("https://api.openai.com").length
@@ -363,5 +363,30 @@ describe("TargetConfig", () => {
     await userEvent.click(screen.getByText("Create First Target"));
 
     expect(screen.getByTestId("create-dialog")).toBeInTheDocument();
+  });
+
+  it("should close the create dialog when Cancel is clicked", async () => {
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+
+    render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("New Target")).toBeInTheDocument();
+    });
+
+    // Open the dialog
+    await userEvent.click(screen.getByText("New Target"));
+    expect(screen.getByTestId("create-dialog")).toBeInTheDocument();
+
+    // Close via Cancel
+    await userEvent.click(screen.getByTestId("dialog-close"));
+    expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
   });
 });

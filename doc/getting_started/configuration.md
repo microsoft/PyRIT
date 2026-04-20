@@ -64,4 +64,4 @@ Set up `~/.pyrit/.pyrit_conf` for persistent config with initializers that regis
 
 ## What's Next?
 
-Once you're configured, head to the [User Guide](../code/user_guide.md) to start using PyRIT.
+Once you're configured, head to the [Framework](../code/framework.md) to start using PyRIT.

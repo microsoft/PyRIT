@@ -9,6 +9,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 # Avoid errors for users who don't have playwright installed
@@ -52,15 +53,17 @@ class PlaywrightTarget(PromptTarget):
 
     # Supported data types
     SUPPORTED_DATA_TYPES = {"text", "image_path"}
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        input_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["text", "image_path"]),
-            }
-        ),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        )
     )
 
     def __init__(
@@ -69,6 +72,7 @@ class PlaywrightTarget(PromptTarget):
         interaction_func: InteractionFunction,
         page: "Page",
         max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
@@ -80,23 +84,30 @@ class PlaywrightTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         endpoint = page.url if page else ""
         super().__init__(
-            max_requests_per_minute=max_requests_per_minute, endpoint=endpoint, custom_capabilities=custom_capabilities
+            max_requests_per_minute=max_requests_per_minute,
+            endpoint=endpoint,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
         )
         self._interaction_func = interaction_func
         self._page = page
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the Playwright target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
@@ -104,7 +115,7 @@ class PlaywrightTarget(PromptTarget):
         Raises:
             RuntimeError: If the Playwright page is not initialized or if an error occurs during interaction.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         if not self._page:
             raise RuntimeError(
                 "Playwright page is not initialized. Please pass a Page object when initializing PlaywrightTarget."

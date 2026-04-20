@@ -16,8 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import pyrit
-from pyrit.backend.middleware import RequestIdMiddleware, register_error_handlers
-from pyrit.backend.routes import attacks, converters, health, labels, media, targets, version
+from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
+from pyrit.backend.middleware.auth import EntraAuthMiddleware
+from pyrit.backend.routes import attacks, auth, converters, health, labels, media, targets, version
 from pyrit.memory import CentralMemory
 
 # Check for development mode from environment variable
@@ -47,13 +48,24 @@ app = FastAPI(
     description="Python Risk Identification Tool for LLMs - REST API",
     version=pyrit.__version__,
     lifespan=lifespan,
+    docs_url="/docs" if DEV_MODE else None,
+    redoc_url="/redoc" if DEV_MODE else None,
+    openapi_url="/openapi.json" if DEV_MODE else None,
 )
 
 # Register RFC 7807 error handlers
 register_error_handlers(app)
 
+# Security response headers (CSP, HSTS, X-Frame-Options, etc.)
+# Registered first so headers are applied even on early returns (e.g. auth 401s)
+app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
+
 # Attach X-Request-ID to every request/response for log correlation
 app.add_middleware(RequestIdMiddleware)
+
+# Entra ID JWT validation (PKCE — no client secrets needed)
+# Disabled automatically if ENTRA_TENANT_ID / ENTRA_CLIENT_ID are not set
+app.add_middleware(EntraAuthMiddleware)
 
 
 # Configure CORS
@@ -64,8 +76,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 
@@ -75,6 +87,7 @@ app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(media.router, prefix="/api", tags=["media"])
 app.include_router(version.router, tags=["version"])
 

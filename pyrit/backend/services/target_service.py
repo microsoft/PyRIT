@@ -24,7 +24,7 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.instance_registries import TargetRegistry
+from pyrit.registry.object_registries import TargetRegistry
 
 
 def _build_target_class_registry() -> dict[str, type]:

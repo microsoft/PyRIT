@@ -58,6 +58,7 @@ export interface TargetInstance {
   target_type: string
   endpoint?: string | null
   model_name?: string | null
+  underlying_model_name?: string | null
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
@@ -73,6 +74,44 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
+}
+
+// --- Converters ---
+
+export interface ConverterInstance {
+  converter_id: string
+  converter_type: string
+  display_name?: string | null
+  supported_input_types: string[]
+  supported_output_types: string[]
+  converter_specific_params?: Record<string, unknown> | null
+  sub_converter_ids?: string[] | null
+}
+
+export interface ConverterListResponse {
+  items: ConverterInstance[]
+}
+
+export interface ConverterParameterSchema {
+  name: string
+  type_name: string
+  required: boolean
+  default_value?: string | null
+  choices?: string[] | null
+  description?: string | null
+}
+
+export interface ConverterCatalogEntry {
+  converter_type: string
+  supported_input_types: string[]
+  supported_output_types: string[]
+  parameters: ConverterParameterSchema[]
+  is_llm_based: boolean
+  description?: string | null
+}
+
+export interface ConverterCatalogResponse {
+  items: ConverterCatalogEntry[]
 }
 
 // --- Attacks ---

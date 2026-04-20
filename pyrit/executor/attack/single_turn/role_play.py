@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
@@ -20,7 +20,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_converter import LLMGenericTextConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class RolePlayAttack(PromptSendingAttack):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
-        adversarial_chat: PromptChatTarget,
+        attack_adversarial_config: AttackAdversarialConfig,
         role_play_definition_path: pathlib.Path,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -78,8 +78,8 @@ class RolePlayAttack(PromptSendingAttack):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            adversarial_chat (PromptChatTarget): The adversarial chat target used to rephrase
-                objectives into role-play scenarios.
+            attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
+                including the adversarial chat target used to rephrase objectives into role-play scenarios.
             role_play_definition_path (pathlib.Path): Path to the YAML file containing role-play
                 definitions (rephrase instructions, user start turn, assistant start turn).
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
@@ -102,7 +102,7 @@ class RolePlayAttack(PromptSendingAttack):
         )
 
         # Store the adversarial chat for role-play rephrasing
-        self._adversarial_chat = adversarial_chat
+        self._adversarial_chat = attack_adversarial_config.target
 
         # Load role-play definitions
         role_play_definition = SeedDataset.from_yaml_file(role_play_definition_path)

@@ -30,6 +30,7 @@ from pyrit.models import (
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
@@ -68,21 +69,23 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
     https://platform.openai.com/docs/api-reference/responses/create
     """
 
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_json_output=True,
-        supports_multi_message_pieces=True,
-        supports_system_prompt=True,
-        input_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["text", "image_path"]),
-                frozenset(["function_call"]),
-                frozenset(["tool_call"]),
-                frozenset(["function_call_output"]),
-                frozenset(["reasoning"]),
-            }
-        ),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_json_output=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                    frozenset(["function_call"]),
+                    frozenset(["tool_call"]),
+                    frozenset(["function_call_output"]),
+                    frozenset(["reasoning"]),
+                }
+            ),
+        )
     )
 
     def __init__(
@@ -96,6 +99,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
         fail_on_missing_function: bool = False,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
@@ -136,8 +140,10 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                 an unknown function or does not output a function; if False, return a structured error so we can
                 wrap it as function_call_output and let the model potentially recover
                 (e.g., pick another tool or ask for clarification).
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
              httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -153,7 +159,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
@@ -208,7 +214,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         self.model_name_environment_variable = "OPENAI_RESPONSES_MODEL"
         self.endpoint_environment_variable = "OPENAI_RESPONSES_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_RESPONSES_KEY"
-        self.underlying_model_environment_variable = "OPENAI_RESPONSES_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -512,7 +517,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send prompt, handle agentic tool calls (function_call), return all messages.
 
@@ -521,25 +526,20 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         - Agentic tool-calling loops that may require multiple back-and-forth exchanges
 
         Args:
-            message: The initial prompt from the user.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             List of messages generated during the interaction (assistant responses and tool messages).
             The normalizer will persist all of these to memory.
         """
-        self._validate_request(message=message)
-
+        message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
-        json_config = _JsonResponseConfig(enabled=False)
-        if message.message_pieces:
-            last_piece = message.message_pieces[-1]
-            json_config = self._get_json_response_config(message_piece=last_piece)
+        last_piece = message.message_pieces[-1]
+        json_config = self._get_json_response_config(message_piece=last_piece)
 
-        # Get full conversation history from memory and append the current message
-        conversation: MutableSequence[Message] = self._memory.get_conversation(
-            conversation_id=message_piece.conversation_id
-        )
-        conversation.append(message)
+        working_conversation: MutableSequence[Message] = list(normalized_conversation)
 
         # Track all responses generated during this interaction
         responses_to_return: list[Message] = []
@@ -548,9 +548,9 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         tool_call_section: Optional[dict[str, Any]] = None
 
         while True:
-            logger.info(f"Sending conversation with {len(conversation)} messages to the prompt target")
+            logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            body = await self._construct_request_body(conversation=conversation, json_config=json_config)
+            body = await self._construct_request_body(conversation=working_conversation, json_config=json_config)
 
             # Use unified error handling - automatically detects Response and validates
             result = await self._handle_openai_request(
@@ -559,7 +559,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             )
 
             # Add result to conversation and responses list
-            conversation.append(result)
+            working_conversation.append(result)
             responses_to_return.append(result)
 
             # Extract tool call if present
@@ -577,7 +577,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             tool_message = Message(message_pieces=[tool_piece], skip_validation=True)
 
             # Add tool output message to conversation and responses list
-            conversation.append(tool_message)
+            working_conversation.append(tool_message)
             responses_to_return.append(tool_message)
 
             # Continue loop to send tool result and get next response

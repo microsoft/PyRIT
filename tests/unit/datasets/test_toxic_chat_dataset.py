@@ -92,8 +92,8 @@ class TestToxicChatDataset:
             assert dataset.seeds[1].value == "<!DOCTYPE html>{%block%}broken"
 
     @pytest.mark.asyncio
-    async def test_fetch_dataset_skips_jinja2_incompatible_entries(self):
-        """Test that entries with Jinja2-incompatible content are skipped."""
+    async def test_fetch_dataset_preserves_jinja2_syntax_in_entries(self):
+        """Test that entries with Jinja2 syntax are preserved as literal text."""
         data_with_endraw = [
             {
                 "conv_id": "good1",
@@ -105,7 +105,7 @@ class TestToxicChatDataset:
                 "openai_moderation": "[]",
             },
             {
-                "conv_id": "bad1",
+                "conv_id": "jinja1",
                 "user_input": "This has {% endraw %} in it",
                 "model_output": "N/A",
                 "human_annotation": "False",
@@ -128,9 +128,11 @@ class TestToxicChatDataset:
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_endraw)):
             dataset = await loader.fetch_dataset()
 
-            assert len(dataset.seeds) == 2
+            # All entries are preserved — untrusted text is never passed through Jinja
+            assert len(dataset.seeds) == 3
             assert dataset.seeds[0].value == "Normal question"
-            assert dataset.seeds[1].value == "Another normal question"
+            assert dataset.seeds[1].value == "This has {% endraw %} in it"
+            assert dataset.seeds[2].value == "Another normal question"
 
     @pytest.mark.asyncio
     async def test_fetch_dataset_preserves_for_loop_content(self):

@@ -7,6 +7,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import App from "./App";
 import { attacksApi } from "./services/api";
 
+// Mock MSAL — App uses useMsal() to wire the instance into the API client
+jest.mock("@azure/msal-react", () => ({
+  useMsal: () => ({ instance: { getActiveAccount: () => null, getAllAccounts: () => [] } }),
+}));
+
 jest.mock("./services/api", () => ({
   attacksApi: {
     getAttack: jest.fn(),
@@ -17,6 +22,7 @@ jest.mock("./services/api", () => ({
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
+  setMsalInstance: jest.fn(),
 }));
 
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;

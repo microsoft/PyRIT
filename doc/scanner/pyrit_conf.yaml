@@ -1,0 +1,10 @@
+memory_db_type: in_memory
+
+initializers:
+  - name: target
+    args:
+      tags:
+        - default
+        - scorer
+  - name: scorer
+  - name: load_default_datasets

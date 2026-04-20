@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "value": "pyrit-gui"
+    },
+    "containerImage": {
+      "value": "YOUR_ACR.azurecr.io/pyrit:COMMIT_SHA_OR_DIGEST"
+    },
+    "entraTenantId": {
+      "value": "YOUR_TENANT_ID"
+    },
+    "entraClientId": {
+      "value": "YOUR_APP_REGISTRATION_CLIENT_ID"
+    },
+    "allowedGroupObjectIds": {
+      "value": "YOUR_ENTRA_GROUP_OBJECT_IDS"
+    },
+    "allowedCidr": {
+      "value": ""
+    },
+    "sqlServerFqdn": {
+      "value": "YOUR_SQL_SERVER.database.windows.net"
+    },
+    "sqlDatabaseName": {
+      "value": "YOUR_DATABASE_NAME"
+    },
+    "pyritInitializer": {
+      "value": "targets airt"
+    },
+    "envSecretName": {
+      "value": "env-global"
+    },
+    "logRetentionDays": {
+      "value": 90
+    },
+    "enableOtel": {
+      "value": false
+    },
+    "tags": {
+      "value": {
+        "Service": "pyrit-gui",
+        "Owner": "<your-team>",
+        "DataClass": "<your-data-classification>"
+      }
+    },
+
+    "_comment_optional": "--- Below are optional: omit to let the template create resources ---",
+
+    "infrastructureSubnetId": {
+      "value": ""
+    },
+    "acrName": {
+      "value": ""
+    },
+    "acrResourceId": {
+      "value": ""
+    },
+    "keyVaultResourceId": {
+      "value": "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.KeyVault/vaults/YOUR_VAULT"
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": ""
+    },
+    "logAnalyticsCustomerId": {
+      "value": ""
+    },
+    "logAnalyticsSharedKey": {
+      "value": ""
+    }
+  }
+}

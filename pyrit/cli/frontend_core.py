@@ -27,6 +27,7 @@ from pyrit.cli._cli_args import _argparse_validator as _argparse_validator
 from pyrit.cli._cli_args import _parse_initializer_arg as _parse_initializer_arg
 from pyrit.cli._cli_args import add_common_arguments as add_common_arguments
 from pyrit.cli._cli_args import non_negative_int as non_negative_int
+from pyrit.cli._cli_args import parse_list_targets_arguments as parse_list_targets_arguments
 from pyrit.cli._cli_args import parse_memory_labels as parse_memory_labels
 from pyrit.cli._cli_args import parse_run_arguments as parse_run_arguments
 from pyrit.cli._cli_args import positive_int as positive_int
@@ -135,9 +136,6 @@ class FrontendCore:
                 ) from e
             raise
 
-        # Store the merged configuration
-        self._config = config
-
         # Extract values from config for internal use
         # Use canonical mapping from configuration_loader
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
@@ -186,6 +184,63 @@ class FrontendCore:
         self._initializer_registry = InitializerRegistry()
 
         self._initialized = True
+
+    def with_overrides(
+        self,
+        *,
+        initializer_names: Optional[list[Any]] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
+    ) -> FrontendCore:
+        """
+        Create a derived FrontendCore with per-command overrides.
+
+        Copies inherited state (database, env_files, operator, operation, config)
+        from this instance and applies the given overrides. Shares registries
+        with the parent to avoid redundant re-discovery and skips re-reading
+        config files.
+
+        Args:
+            initializer_names (Optional[list[Any]]): Per-command initializer overrides.
+                Each entry can be a string name or a dict with 'name' and optional 'args'.
+                None keeps the parent's value.
+            initialization_scripts (Optional[list[Path]]): Per-command script overrides.
+                None keeps the parent's value.
+            log_level (Optional[int]): Per-command log level override.
+                None keeps the parent's value.
+
+        Returns:
+            FrontendCore: A new context ready for use, without re-reading config files.
+        """
+        derived = object.__new__(FrontendCore)
+
+        # Inherit from parent
+        derived._database = self._database
+        derived._env_files = self._env_files
+        derived._operator = self._operator
+        derived._operation = self._operation
+
+        # Apply overrides or inherit
+        derived._log_level = log_level if log_level is not None else self._log_level
+
+        if initializer_names is not None:
+            loader = ConfigurationLoader.from_dict({"initializers": initializer_names})
+            derived._initializer_configs = loader._initializer_configs
+        else:
+            derived._initializer_configs = self._initializer_configs
+
+        if initialization_scripts is not None:
+            derived._initialization_scripts = initialization_scripts
+        else:
+            derived._initialization_scripts = self._initialization_scripts
+
+        # Share registries (singletons, no need to re-discover)
+        derived._scenario_registry = self._scenario_registry
+        derived._initializer_registry = self._initializer_registry
+        derived._initialized = True
+        derived._silent_reinit = True
+
+        return derived
 
     @property
     def scenario_registry(self) -> ScenarioRegistry:
@@ -254,18 +309,16 @@ async def list_initializers_async(
 async def list_targets_async(
     *,
     context: FrontendCore,
-    initializer_names: Optional[list[Any]] = None,
 ) -> list[str]:
     """
     List available target names from the TargetRegistry.
 
     Since targets are registered by initializers, this function requires initializers
-    to have been run first. If initializer_names are provided, they will be resolved
-    and run before querying the registry.
+    to have been run first. Configure initializers on the FrontendCore context
+    (via initializer_names or initialization_scripts) before calling this function.
 
     Args:
         context: PyRIT context with loaded registries.
-        initializer_names: Optional list of initializer entries to run before listing.
 
     Returns:
         Sorted list of registered target names.
@@ -273,25 +326,24 @@ async def list_targets_async(
     if not context._initialized:
         await context.initialize_async()
 
-    # If initializer names are provided, run them to populate the target registry
-    if initializer_names or context._initializer_configs:
-        configs = context._initializer_configs
-        if configs:
-            initializer_instances = []
-            for config in configs:
+    # Run initializers and/or initialization scripts to populate the target registry
+    if context._initializer_configs or context._initialization_scripts:
+        initializer_instances = []
+        if context._initializer_configs:
+            for config in context._initializer_configs:
                 initializer_class = context.initializer_registry.get_class(config.name)
                 instance = initializer_class()
                 if config.args:
                     instance.set_params_from_args(args=config.args)
                 initializer_instances.append(instance)
 
-            await initialize_pyrit_async(
-                memory_db_type=context._database,
-                initialization_scripts=context._initialization_scripts,
-                initializers=initializer_instances,
-                env_files=context._env_files,
-                silent=getattr(context, "_silent_reinit", False),
-            )
+        await initialize_pyrit_async(
+            memory_db_type=context._database,
+            initialization_scripts=context._initialization_scripts,
+            initializers=initializer_instances or None,
+            env_files=context._env_files,
+            silent=getattr(context, "_silent_reinit", False),
+        )
 
     target_registry = TargetRegistry.get_registry_singleton()
     return target_registry.get_names()

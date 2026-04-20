@@ -170,6 +170,58 @@ class TestSeedAttackTechniqueGroupValidation:
             )
 
 
+class TestSeedAttackTechniqueGroupNoObjectives:
+    """Tests for _enforce_no_objectives validation."""
+
+    def test_rejects_seed_objective(self):
+        """Test that _enforce_no_objectives rejects SeedObjective seeds."""
+        group = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="ok", data_type="text", is_general_technique=True)],
+        )
+        # Inject a SeedObjective after construction to bypass the general-technique check.
+        group.seeds.append(SeedObjective(value="sneaky objective"))
+
+        with pytest.raises(ValueError, match="must not contain objectives"):
+            group._enforce_no_objectives()
+
+    def test_init_rejects_objective_via_general_technique_check(self):
+        """Test that constructing with a SeedObjective fails (caught by general-technique check)."""
+        with pytest.raises(ValueError, match="is_general_technique"):
+            SeedAttackTechniqueGroup(
+                seeds=[
+                    SeedObjective(value="objective"),
+                    SeedPrompt(value="ok", data_type="text", is_general_technique=True),
+                ]
+            )
+
+
+class TestSeedAttackTechniqueGroupInsertionIndex:
+    """Tests for insertion_index parameter."""
+
+    def test_default_insertion_index_is_none(self):
+        """Test that insertion_index defaults to None."""
+        group = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
+        )
+        assert group.insertion_index is None
+
+    def test_insertion_index_set_to_int(self):
+        """Test that insertion_index can be set to an integer."""
+        group = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
+            insertion_index=2,
+        )
+        assert group.insertion_index == 2
+
+    def test_insertion_index_zero(self):
+        """Test that insertion_index can be zero (insert at beginning)."""
+        group = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
+            insertion_index=0,
+        )
+        assert group.insertion_index == 0
+
+
 class TestSeedAttackTechniqueGroupRepr:
     """Tests for SeedAttackTechniqueGroup.__repr__ method."""
 

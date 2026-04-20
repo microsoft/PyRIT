@@ -19,6 +19,7 @@ from pyrit.models import (
 from pyrit.models.literals import PromptDataType
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -79,22 +80,24 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     # Supported data types
     SUPPORTED_DATA_TYPES = {"text", "image_path"}
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(
-        supports_multi_turn=True,
-        supports_multi_message_pieces=True,
-        input_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["text", "image_path"]),
-            }
-        ),
-        output_modalities=frozenset(
-            {
-                frozenset(["text"]),
-                frozenset(["image_path"]),
-                frozenset(["text", "image_path"]),
-            }
-        ),
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+            output_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["image_path"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        )
     )
 
     # Placeholder text constants
@@ -125,6 +128,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         *,
         page: "Page",
         copilot_type: CopilotType = CopilotType.CONSUMER,
+        custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
@@ -134,14 +138,16 @@ class PlaywrightCopilotTarget(PromptTarget):
             page (Page): The Playwright page object for browser interaction.
             copilot_type (CopilotType): The type of Copilot to interact with.
                 Defaults to CopilotType.CONSUMER.
-            custom_capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             RuntimeError: If the Playwright page is not initialized.
             ValueError: If the page URL doesn't match the specified copilot_type.
         """
-        super().__init__(custom_capabilities=custom_capabilities)
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities)
         self._page = page
         self._type = copilot_type
 
@@ -199,13 +205,14 @@ class PlaywrightCopilotTarget(PromptTarget):
             file_picker_selector='span.fui-MenuItem__content:has-text("Upload images and files")',
         )
 
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send a message to Microsoft Copilot and return the response.
 
         Args:
-            message (Message): The message to send. Can contain multiple pieces
-                of type 'text' or 'image_path'.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from Copilot.
@@ -213,7 +220,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         Raises:
             RuntimeError: If an error occurs during interaction.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         try:
             response_content = await self._interact_with_copilot_async(message)
