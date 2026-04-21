@@ -103,10 +103,7 @@ class _BaseImageTextConverter(PromptConverter):
         *,
         image: Image.Image,
         overlay: Image.Image,
-        x1: int,
-        y1: int,
-        x2: int,
-        y2: int,
+        bounding_box: tuple[int, int, int, int],
         rotation: float = 0.0,
     ) -> Image.Image:
         """
@@ -115,15 +112,13 @@ class _BaseImageTextConverter(PromptConverter):
         Args:
             image (Image.Image): The base image.
             overlay (Image.Image): The text overlay.
-            x1 (int): Left coordinate of the bounding box.
-            y1 (int): Top coordinate of the bounding box.
-            x2 (int): Right coordinate of the bounding box.
-            y2 (int): Bottom coordinate of the bounding box.
+            bounding_box (tuple[int, int, int, int]): The (x1, y1, x2, y2) region.
             rotation (float): Rotation angle in degrees. Defaults to 0.0.
 
         Returns:
             Image.Image: The composited image.
         """
+        x1, y1, x2, y2 = bounding_box
         if rotation != 0:
             overlay = overlay.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
             center_x = (x1 + x2) // 2
@@ -175,4 +170,4 @@ class _BaseImageTextConverter(PromptConverter):
         overlay = self._draw_text_overlay(
             lines=lines, font=font, color=color, box_width=box_width, box_height=box_height, center_text=center_text
         )
-        return self._composite_overlay(image=image, overlay=overlay, x1=x1, y1=y1, x2=x2, y2=y2, rotation=rotation)
+        return self._composite_overlay(image=image, overlay=overlay, bounding_box=bounding_box, rotation=rotation)

@@ -63,6 +63,24 @@ def test_add_image_text_converter_x_pos_y_pos_deprecation(image_text_converter_s
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=50, y_pos=50)
 
 
+def test_add_image_text_converter_x_pos_y_pos_deprecation_default_value(image_text_converter_sample_image):
+    with pytest.warns(FutureWarning, match="x_pos and y_pos are deprecated"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=10)
+
+
+def test_add_image_text_converter_no_x_pos_y_pos_no_warning(image_text_converter_sample_image):
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image)
+
+
+def test_add_image_text_converter_x_pos_with_bounding_box_raises(image_text_converter_sample_image):
+    with pytest.raises(ValueError, match="Cannot pass x_pos/y_pos together with bounding_box"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=10, bounding_box=(0, 0, 100, 100))
+
+
 def test_add_image_text_converter_invalid_font(image_text_converter_sample_image):
     with pytest.raises(ValueError):
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, font_name="helvetica.otf")

@@ -17,6 +17,8 @@ from pyrit.prompt_converter.prompt_converter import ConverterResult
 
 logger = logging.getLogger(__name__)
 
+_UNSET = object()
+
 
 class AddImageTextConverter(_BaseImageTextConverter):
     """
@@ -42,8 +44,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int | tuple[int, int] = 15,
-        x_pos: int = 10,
-        y_pos: int = 10,
+        x_pos: int = _UNSET,  # type: ignore[assignment]
+        y_pos: int = _UNSET,  # type: ignore[assignment]
         bounding_box: tuple[int, int, int, int] | None = None,
         rotation: float = 0.0,
         center_text: bool = False,
@@ -72,13 +74,12 @@ class AddImageTextConverter(_BaseImageTextConverter):
             TypeError: If more than one positional argument is passed, or if img_to_add
                 is passed as both positional and keyword argument.
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
-                font_size tuple is invalid, or bounding_box coordinates are invalid.
-            TypeError: If more than one positional argument is passed, or if img_to_add
-                is provided as both positional and keyword argument.
+                font_size tuple is invalid, bounding_box coordinates are invalid,
+                or x_pos/y_pos are used together with bounding_box.
         """
         if args:
             if len(args) > 1:
-                raise TypeError(f"AddImageTextConverter() takes at most 1 positional argument, got {len(args)}")
+                raise TypeError(f"AddImageTextConverter takes at most 1 positional argument, got {len(args)}")
             if img_to_add:
                 raise TypeError("Cannot pass img_to_add as both positional and keyword argument")
             warnings.warn(
@@ -89,27 +90,27 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 stacklevel=2,
             )
             img_to_add = args[0]
-        if x_pos != 10 or y_pos != 10:
+        if x_pos is not _UNSET or y_pos is not _UNSET:
+            if bounding_box is not None:
+                raise ValueError(
+                    "Cannot pass x_pos/y_pos together with bounding_box. Use bounding_box=(x, y, x2, y2) instead."
+                )
             warnings.warn(
                 "x_pos and y_pos are deprecated. Use bounding_box=(x, y, x2, y2) instead. "
                 "They will be removed in version 0.15.0.",
                 FutureWarning,
                 stacklevel=2,
             )
+        # Resolve defaults after deprecation check
+        if x_pos is _UNSET:
+            x_pos = 10
+        if y_pos is _UNSET:
+            y_pos = 10
         if not img_to_add:
             raise ValueError("Please provide valid image path")
         if not font_name.endswith(".ttf"):
             raise ValueError("The specified font must be a TrueType font with a .ttf extension")
-        if isinstance(font_size, tuple):
-            if len(font_size) != 2 or font_size[0] > font_size[1] or font_size[0] < 1:
-                raise ValueError("font_size tuple must be (min, max) with 1 <= min <= max")
-            self._font_size_min = font_size[0]
-            self._font_size_max = font_size[1]
-            self._auto_font_size = True
-        else:
-            self._font_size_min = font_size
-            self._font_size_max = font_size
-            self._auto_font_size = False
+        self._extract_font_size(font_size)
         if bounding_box is not None:
             x1, y1, x2, y2 = bounding_box
             if x2 <= x1 or y2 <= y1:
@@ -145,6 +146,27 @@ class AddImageTextConverter(_BaseImageTextConverter):
         params["rotation"] = self._rotation
         params["center_text"] = self._center_text
         return self._create_identifier(params=params)
+
+    def _extract_font_size(self, font_size: int | tuple[int, int]) -> None:
+        """
+        Parse font_size into internal min/max/auto fields.
+
+        Args:
+            font_size (int | tuple[int, int]): Fixed size or (min, max) range.
+
+        Raises:
+            ValueError: If font_size tuple is invalid.
+        """
+        if isinstance(font_size, tuple):
+            if len(font_size) != 2 or font_size[0] > font_size[1] or font_size[0] < 1:
+                raise ValueError("font_size tuple must be (min, max) with 1 <= min <= max")
+            self._font_size_min = font_size[0]
+            self._font_size_max = font_size[1]
+            self._auto_font_size = True
+        else:
+            self._font_size_min = font_size
+            self._font_size_max = font_size
+            self._auto_font_size = False
 
     def _load_font(self) -> FreeTypeFont:
         """
@@ -198,11 +220,15 @@ class AddImageTextConverter(_BaseImageTextConverter):
 
         min_font = self._load_font_at_size(self._font_size_min)
         lines = self._wrap_text(text=text, font=min_font, max_width=usable_width)
+        logger.warning(
+            f"Text does not fit in bounding box ({box_width}x{box_height}) even at minimum font size "
+            f"{self._font_size_min}. Text may be clipped."
+        )
         return min_font, lines
 
     def _add_text_to_image(self, text: str) -> Image.Image:
         """
-        Add wrapped text to the image at ``self._img_to_add``.
+        Add wrapped text to the image at `self._img_to_add`.
 
         Args:
             text (str): The text to add to the image.
@@ -237,7 +263,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 center_text=self._center_text,
             )
             return self._composite_overlay(
-                image=image, overlay=overlay, x1=x1, y1=y1, x2=x2, y2=y2, rotation=self._rotation
+                image=image, overlay=overlay, bounding_box=bounding_box, rotation=self._rotation
             )
 
         return self._render_text_on_image(

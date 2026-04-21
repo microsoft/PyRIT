@@ -126,7 +126,10 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
 
         invalid = set(self.templates) - set(self.TEMPLATE_NAMES)
         if invalid:
-            raise ValueError(f"Invalid template names: {', '.join(invalid)}")
+            raise ValueError(
+                f"Invalid template names: {', '.join(invalid)}. "
+                f"Valid template names are {', '.join(list(self.TEMPLATE_NAMES))}"
+            )
 
     @property
     def dataset_name(self) -> str:
@@ -177,6 +180,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 continue
 
             category = example.get("Category", "").strip()
+            harm_categories = [category] if category else []
 
             for template_name in self.templates:
                 col_name = template_name.capitalize()
@@ -195,7 +199,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
 
                 pair = self._build_seed_group(
                     image_path=rendered_path,
-                    category=category,
+                    harm_categories=harm_categories,
                     goal=goal,
                     template_name=template_name,
                     behavior=example.get("Behavior", ""),
@@ -216,7 +220,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         self,
         *,
         image_path: str,
-        category: str,
+        harm_categories: list[str],
         goal: str,
         template_name: str,
         behavior: str,
@@ -229,7 +233,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
 
         Args:
             image_path: Local path to the rendered comic image.
-            category: Harm category string.
+            harm_categories: Harm category labels from the dataset.
             goal: The harmful goal text.
             template_name: Which comic template was used.
             behavior: The behavior label from the dataset.
@@ -239,7 +243,6 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 image (sequence=0), and text query (sequence=1).
         """
         group_id = uuid.uuid4()
-        harm_cats = [category] if category else []
         metadata: dict[str, str | int] = {
             "goal": goal,
             "template": template_name,
@@ -250,7 +253,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             value=goal,
             name=f"ComicJailbreak Objective - {template_name}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_cats,
+            harm_categories=harm_categories,
             description=_DESCRIPTION,
             authors=_AUTHORS,
             source=self.PAPER_URL,
@@ -262,7 +265,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"ComicJailbreak Image - {template_name}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_cats,
+            harm_categories=harm_categories,
             description=_DESCRIPTION,
             authors=_AUTHORS,
             source=self.PAPER_URL,
@@ -276,7 +279,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"ComicJailbreak Text - {template_name}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_cats,
+            harm_categories=harm_categories,
             description=_DESCRIPTION,
             authors=_AUTHORS,
             source=self.PAPER_URL,
@@ -316,9 +319,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             bounding_box=bounding_box,
             rotation=float(rotation),
             center_text=True,
-            auto_font_size=True,
-            font_size=60,
-            min_font_size=30,
+            font_size=(30, 60),
         )
 
         result = await converter.convert_async(prompt=text, input_type="text")

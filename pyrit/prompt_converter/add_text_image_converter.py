@@ -60,7 +60,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         """
         if args:
             if len(args) > 1:
-                raise TypeError(f"AddTextImageConverter() takes at most 1 positional argument, got {len(args)}")
+                raise TypeError(f"AddTextImageConverter takes at most 1 positional argument, got {len(args)}")
             if text_to_add:
                 raise TypeError("Cannot pass text_to_add as both positional and keyword argument")
             warnings.warn(
