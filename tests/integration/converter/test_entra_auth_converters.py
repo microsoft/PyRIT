@@ -19,9 +19,7 @@ async def test_azure_speech_text_to_audio_converter_entra_auth():
 
     # The Azure Speech resource should have Entra authentication enabled in the current context.
     # e.g. Cognitive Services Speech Contributor role
-    converter = AzureSpeechTextToAudioConverter(
-        azure_speech_region=region, azure_speech_resource_id=resource_id, use_entra_auth=True
-    )
+    converter = AzureSpeechTextToAudioConverter(azure_speech_region=region, azure_speech_resource_id=resource_id)
 
     # Test conversion with simple text
     test_text = "Hello, this is a test."
@@ -45,9 +43,7 @@ async def test_azure_speech_audio_to_text_converter_entra_auth():
     region = os.getenv("AZURE_SPEECH_REGION")
     resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
 
-    converter = AzureSpeechAudioToTextConverter(
-        azure_speech_region=region, azure_speech_resource_id=resource_id, use_entra_auth=True
-    )
+    converter = AzureSpeechAudioToTextConverter(azure_speech_region=region, azure_speech_resource_id=resource_id)
 
     # Create a temporary audio file
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
