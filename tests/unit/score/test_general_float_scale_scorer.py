@@ -164,7 +164,6 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
     """Test that get_scorer_metrics returns None when eval_hash is None."""
     from unittest.mock import patch as _patch
 
-    from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 
     chat_target = MagicMock()
