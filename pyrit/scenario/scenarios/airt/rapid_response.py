@@ -16,13 +16,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackScoringConfig
-from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -146,82 +143,3 @@ class RapidResponse(Scenario):
             str: The seed group name used as the display group.
         """
         return seed_group_name
-
-    def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
-        """
-        Register core techniques and return factories from the registry.
-
-        Returns:
-            dict[str, AttackTechniqueFactory]: Name-to-factory mapping.
-        """
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
-
-        register_scenario_techniques()
-        return AttackTechniqueRegistry.get_registry_singleton().get_factories()
-
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        """
-        Build atomic attacks from selected techniques x harm datasets.
-
-        Iterates over every (technique, harm-dataset) pair and creates
-        an ``AtomicAttack`` for each.  Each has a unique compound
-        ``atomic_attack_name`` and a ``display_group`` for user-facing
-        aggregation by harm category.
-
-        Returns:
-            list[AtomicAttack]: The generated atomic attacks.
-
-        Raises:
-            ValueError: If the scenario has not been initialized.
-        """
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
-        selected_techniques = {s.value for s in self._scenario_strategies}
-
-        factories = self._get_attack_technique_factories()
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
-
-        scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
-
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-
-        atomic_attacks: list[AtomicAttack] = []
-        for technique_name in selected_techniques:
-            factory = factories.get(technique_name)
-            if factory is None:
-                logger.warning(f"No factory for technique '{technique_name}', skipping.")
-                continue
-
-            # Only pass scorer override if the technique accepts it.
-            # Some techniques (e.g. TAP) manage their own scoring internally.
-            scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
-
-            for dataset_name, seed_groups in seed_groups_by_dataset.items():
-                # Each AtomicAttack gets a fresh, independent attack instance
-                attack_technique = factory.create(
-                    objective_target=self._objective_target,
-                    attack_scoring_config_override=scoring_for_technique,
-                )
-                display_group = self._build_display_group(
-                    technique_name=technique_name,
-                    seed_group_name=dataset_name,
-                )
-                atomic_attacks.append(
-                    AtomicAttack(
-                        atomic_attack_name=f"{technique_name}_{dataset_name}",
-                        attack_technique=attack_technique,
-                        seed_groups=list(seed_groups),
-                        adversarial_chat=factory.adversarial_chat,
-                        objective_scorer=self._objective_scorer,
-                        memory_labels=self._memory_labels,
-                        display_group=display_group,
-                    )
-                )
-
-        return atomic_attacks

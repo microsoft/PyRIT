@@ -11,7 +11,7 @@ Scenarios orchestrate multi-attack security testing campaigns. Each scenario gro
 All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
-2. **Implement four abstract methods:**
+2. **Implement three abstract methods:**
 
 ```python
 class MyScenario(Scenario):
@@ -28,10 +28,11 @@ class MyScenario(Scenario):
     @classmethod
     def default_dataset_config(cls) -> DatasetConfiguration:
         return DatasetConfiguration(dataset_names=["my_dataset"])
-
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        ...
 ```
+
+3. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
+   that uses the factory/registry pattern (see "AtomicAttack Construction" below).
+   Only override if your scenario needs custom attack construction logic.
 
 ## Constructor Pattern
 
@@ -132,7 +133,28 @@ def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> 
 Note: `atomic_attack_name` must remain unique per `AtomicAttack` for correct resume behaviour.
 `display_group` controls user-facing aggregation only.
 
-## AtomicAttack Construction
+## AtomicAttack Construction — Default Base Class Behaviour
+
+The `Scenario` base class provides a default `_get_atomic_attacks_async()` that uses the
+factory/registry pattern.  Scenarios that register their techniques via `_get_attack_technique_factories()`
+get atomic-attack construction **for free** — no override needed.
+
+The default implementation:
+1. Calls `self._get_attack_technique_factories()` to get name→factory mapping
+2. Iterates over every (technique × dataset) pair from `self._dataset_config`
+3. Calls `factory.create()` with `objective_target` and conditional scorer override
+4. Uses `self._build_display_group()` for user-facing grouping
+5. Builds `AtomicAttack` with unique `atomic_attack_name` = `"{technique}_{dataset}"`
+
+### Customization hooks (no need to override `_get_atomic_attacks_async`):
+- **`_get_attack_technique_factories()`** — override to add/remove/replace factories
+- **`_build_display_group()`** — override to change grouping (default: by technique)
+
+### When to override `_get_atomic_attacks_async`:
+Only override when the scenario **cannot** use the factory/registry pattern — e.g., scenarios
+with custom composite logic, per-strategy converter stacks, or non-standard attack construction.
+
+### Manual AtomicAttack construction (for overrides):
 
 ```python
 AtomicAttack(

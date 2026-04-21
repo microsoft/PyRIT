@@ -587,17 +587,71 @@ class Scenario(ABC):
                     f"for atomic attack '{atomic_attack_name}'"
                 )
 
-    @abstractmethod
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
-        Retrieve the list of AtomicAttack instances in this scenario.
+        Build atomic attacks from the cross-product of selected techniques and datasets.
 
-        This method can be overridden by subclasses to perform async operations
-        needed to build or fetch the atomic attacks.
+        Uses ``_get_attack_technique_factories()`` to obtain factories, then
+        iterates over every (technique, dataset) pair to create an
+        ``AtomicAttack`` for each.  Grouping for display is controlled by
+        ``_build_display_group()``.
+
+        Subclasses that do **not** use the factory/registry pattern should
+        override this method entirely.
 
         Returns:
-            List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
+            list[AtomicAttack]: The generated atomic attacks.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
         """
+        if self._objective_target is None:
+            raise ValueError(
+                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
+            )
+
+        from pyrit.executor.attack import AttackScoringConfig
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+
+        selected_techniques = {s.value for s in self._scenario_strategies}
+
+        factories = self._get_attack_technique_factories()
+        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+
+        scoring_config = AttackScoringConfig(objective_scorer=cast(TrueFalseScorer, self._objective_scorer))
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+
+        atomic_attacks: list[AtomicAttack] = []
+        for technique_name in selected_techniques:
+            factory = factories.get(technique_name)
+            if factory is None:
+                logger.warning(f"No factory for technique '{technique_name}', skipping.")
+                continue
+
+            scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
+
+            for dataset_name, seed_groups in seed_groups_by_dataset.items():
+                attack_technique = factory.create(
+                    objective_target=self._objective_target,
+                    attack_scoring_config_override=scoring_for_technique,
+                )
+                display_group = self._build_display_group(
+                    technique_name=technique_name,
+                    seed_group_name=dataset_name,
+                )
+                atomic_attacks.append(
+                    AtomicAttack(
+                        atomic_attack_name=f"{technique_name}_{dataset_name}",
+                        attack_technique=attack_technique,
+                        seed_groups=list(seed_groups),
+                        adversarial_chat=factory.adversarial_chat,
+                        objective_scorer=cast(TrueFalseScorer, self._objective_scorer),
+                        memory_labels=self._memory_labels,
+                        display_group=display_group,
+                    )
+                )
+
+        return atomic_attacks
 
     async def run_async(self) -> ScenarioResult:
         """
