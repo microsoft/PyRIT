@@ -5,7 +5,7 @@ import inspect
 import logging
 import warnings
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal, Optional, Union
+from typing import TYPE_CHECKING, Literal, Optional
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk  # noqa: F401
@@ -23,13 +23,13 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
     """
     Generates a wave file from a text prompt using Azure AI Speech service.
 
-    Authentication is auto-detected from the provided credentials:
+    Authentication is auto-detected from the provided credentials, in priority order:
 
-    - If ``azure_speech_key`` is a string (or the ``AZURE_SPEECH_KEY`` env var is set), API key auth is used.
-    - If ``azure_speech_key`` is a callable token provider, it is resolved at conversion time and used with
-      Entra ID auth. The ``azure_speech_resource_id`` must also be provided in this case.
-    - If neither is provided, Entra ID auth is used automatically via ``DefaultAzureCredential``
-      and ``azure_speech_resource_id`` must be set.
+    1. If ``azure_speech_key`` is a **callable** token provider, it takes highest priority — it is
+       resolved at conversion time and used with Entra ID auth (``azure_speech_resource_id`` required).
+    2. If ``azure_speech_key`` is a **string** (or the ``AZURE_SPEECH_KEY`` env var is set), API key auth is used.
+    3. If **neither** is provided, Entra ID auth is used automatically via ``DefaultAzureCredential``
+       and ``azure_speech_resource_id`` must be set.
 
     https://learn.microsoft.com/en-us/azure/ai-services/speech-service/text-to-speech
     """
@@ -51,7 +51,7 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         self,
         *,
         azure_speech_region: Optional[str] = None,
-        azure_speech_key: Union[str, Callable[[], str | Awaitable[str]], None] = None,
+        azure_speech_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
         azure_speech_resource_id: Optional[str] = None,
         use_entra_auth: Optional[bool] = None,
         synthesis_language: str = "en_US",
@@ -96,24 +96,27 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
             passed_value=azure_speech_region,
         )
 
+        self._token_provider: Callable[[], str | Awaitable[str]] | None = None
+        self._azure_speech_key: str | None = None
+        self._azure_speech_resource_id: str | None = None
+
         if azure_speech_key is not None and callable(azure_speech_key):
-            self._token_provider: Callable[[], str | Awaitable[str]] | None = azure_speech_key
-            self._azure_speech_key: str | None = None
-            self._azure_speech_resource_id: str | None = default_values.get_required_value(
+            self._token_provider = azure_speech_key
+            self._azure_speech_resource_id = default_values.get_required_value(
                 env_var_name=self.AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE,
                 passed_value=azure_speech_resource_id,
             )
         else:
-            self._token_provider = None
             key_value = default_values.get_non_required_value(
                 env_var_name=self.AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE,
                 passed_value=azure_speech_key,
             )
             if key_value:
                 self._azure_speech_key = key_value
-                self._azure_speech_resource_id = None
             else:
-                self._azure_speech_key = None
+                logger.info(
+                    "No azure_speech_key provided. Falling back to Entra ID authentication via DefaultAzureCredential."
+                )
                 self._azure_speech_resource_id = default_values.get_required_value(
                     env_var_name=self.AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE,
                     passed_value=azure_speech_resource_id,
