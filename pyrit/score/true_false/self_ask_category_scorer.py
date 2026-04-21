@@ -11,7 +11,7 @@ from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_CONTENT_CLASSIFIERS_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -41,7 +41,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         content_classifier_path: Union[str, Path],
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         validator: Optional[ScorerPromptValidator] = None,
@@ -58,6 +58,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         """
         super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
+        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
         self._prompt_target = chat_target
 
         content_classifier_path = verify_and_resolve_path(content_classifier_path)

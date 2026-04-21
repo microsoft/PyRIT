@@ -494,7 +494,7 @@ class Scorer(Identifiable, abc.ABC):
     async def _score_value_with_llm(
         self,
         *,
-        prompt_target: PromptChatTarget,
+        prompt_target: PromptTarget,
         system_prompt: str,
         message_value: str,
         message_data_type: PromptDataType,

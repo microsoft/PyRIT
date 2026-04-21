@@ -44,6 +44,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     Scorer,
@@ -148,10 +150,17 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 application by role, message normalization, and non-chat target behavior.
 
         Raises:
-            ValueError: If objective_target is not a PromptChatTarget.
+            ValueError: If objective_target is not a PromptChatTarget, or does not
+                natively support multi-turn conversations.
         """
         # Initialize base class
         super().__init__(objective_target=objective_target, logger=logger, context_type=CrescendoAttackContext)
+
+        # Crescendo fundamentally relies on multi-turn conversation history to
+        # gradually escalate prompts; history-squash adaptation would defeat it.
+        TargetRequirements(
+            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}),
+        ).validate(configuration=objective_target.configuration)
 
         self._memory = CentralMemory.get_memory_instance()
 
@@ -257,16 +266,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         Args:
             context (CrescendoAttackContext): Attack context with configuration
-
-        Raises:
-            ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.capabilities.supports_multi_turn:
-            raise ValueError(
-                "CrescendoAttack requires a multi-turn target. Crescendo fundamentally relies on "
-                "multi-turn conversation history to gradually escalate prompts. "
-                "Use RedTeamingAttack or TreeOfAttacksWithPruning instead."
-            )
 
         # Ensure the context has a session
         context.session = ConversationSession()

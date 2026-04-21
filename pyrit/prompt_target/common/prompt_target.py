@@ -8,7 +8,7 @@ from typing import Any, Union, final
 
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
 
@@ -269,6 +269,56 @@ class PromptTarget(Identifiable):
             model_name (str): The model name to set.
         """
         self._model_name = model_name
+
+    def set_system_prompt(
+        self,
+        *,
+        system_prompt: str,
+        conversation_id: str,
+        attack_identifier: ComponentIdentifier | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> None:
+        """
+        Inject a system prompt into memory for the given conversation.
+
+        Writes a ``system``-role message so the target's normalization pipeline
+        (or the target itself, when it natively supports system prompts) will
+        pick it up on the next ``send_prompt_async`` call.
+
+        If the target does not natively support system prompts, whether this
+        call is ultimately honored depends on the target's
+        :class:`CapabilityHandlingPolicy`:
+
+        * ``ADAPT`` — the normalization pipeline (e.g. system squash) will
+          fold the system message into user content on the wire.
+        * ``RAISE`` — the first send after the system prompt is set will
+          raise, because the pipeline cannot adapt the missing capability.
+
+        Args:
+            system_prompt (str): The system prompt text to set.
+            conversation_id (str): The conversation id to attach the prompt to.
+            attack_identifier (ComponentIdentifier | None): Optional attack identifier.
+            labels (dict[str, str] | None): Optional labels.
+
+        Raises:
+            RuntimeError: If the conversation already has messages.
+        """
+        messages = self._memory.get_conversation(conversation_id=conversation_id)
+
+        if messages:
+            raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
+
+        self._memory.add_message_to_memory(
+            request=MessagePiece(
+                role="system",
+                conversation_id=conversation_id,
+                original_value=system_prompt,
+                converted_value=system_prompt,
+                prompt_target_identifier=self.get_identifier(),
+                attack_identifier=attack_identifier,
+                labels=labels,
+            ).to_message()
+        )
 
     def dispose_db_engine(self) -> None:
         """

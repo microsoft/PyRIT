@@ -129,3 +129,50 @@ def test_validate_mixed_adapt_and_raise(adapt_all_policy):
     )
     with pytest.raises(ValueError, match="supports_json_output"):
         reqs.validate(configuration=config)
+
+
+# ---------------------------------------------------------------------------
+# required_native_capabilities
+# ---------------------------------------------------------------------------
+
+
+def test_validate_native_passes_when_supported_natively():
+    caps = TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True)
+    config = TargetConfiguration(capabilities=caps)
+    reqs = TargetRequirements(required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}))
+    reqs.validate(configuration=config)
+
+
+def test_validate_native_raises_when_only_adapted(adapt_all_policy):
+    # multi_turn is missing but ADAPT — acceptable for required_capabilities
+    # but not for required_native_capabilities.
+    caps = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=True)
+    config = TargetConfiguration(capabilities=caps, policy=adapt_all_policy)
+    reqs = TargetRequirements(required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}))
+    with pytest.raises(ValueError, match="natively support 'supports_multi_turn'"):
+        reqs.validate(configuration=config)
+
+
+def test_validate_native_and_adapted_mixed(adapt_all_policy):
+    # system_prompt adapted (OK for required_capabilities); multi_turn required
+    # natively (FAIL — only adapted).
+    caps = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False)
+    config = TargetConfiguration(capabilities=caps, policy=adapt_all_policy)
+    reqs = TargetRequirements(
+        required_capabilities=frozenset({CapabilityName.SYSTEM_PROMPT}),
+        required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}),
+    )
+    with pytest.raises(ValueError, match="natively support 'supports_multi_turn'"):
+        reqs.validate(configuration=config)
+
+
+def test_validate_native_collects_multiple_violations():
+    caps = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False)
+    config = TargetConfiguration(capabilities=caps)
+    reqs = TargetRequirements(
+        required_native_capabilities=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT})
+    )
+    with pytest.raises(ValueError, match="2 required capability") as exc_info:
+        reqs.validate(configuration=config)
+    assert "supports_multi_turn" in str(exc_info.value)
+    assert "supports_system_prompt" in str(exc_info.value)

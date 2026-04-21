@@ -9,7 +9,7 @@ from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -25,7 +25,7 @@ class InsecureCodeScorer(FloatScaleScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         system_prompt_path: Optional[Union[str, Path]] = None,
         validator: Optional[ScorerPromptValidator] = None,
     ):
@@ -40,6 +40,7 @@ class InsecureCodeScorer(FloatScaleScorer):
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
+        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
         self._prompt_target = chat_target
 
         if not system_prompt_path:

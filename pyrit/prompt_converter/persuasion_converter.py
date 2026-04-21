@@ -21,7 +21,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +52,14 @@ class PersuasionConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         persuasion_technique: str,
     ):
         """
         Initialize the converter with the specified target and prompt template.
 
         Args:
-            converter_target (PromptChatTarget): The chat target used to perform rewriting on user prompts.
+            converter_target (PromptTarget): The chat target used to perform rewriting on user prompts.
                 Can be omitted if a default has been configured via PyRIT initialization.
             persuasion_technique (str): Persuasion technique to be used by the converter, determines the system prompt
                 to be used to generate new prompts. Must be one of "authority_endorsement", "evidence_based",
@@ -69,6 +69,7 @@ class PersuasionConverter(PromptConverter):
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If the persuasion technique is not supported or does not exist.
         """
+        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=converter_target.configuration)
         self.converter_target = converter_target
 
         try:

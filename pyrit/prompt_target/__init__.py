@@ -20,7 +20,10 @@ from pyrit.prompt_target.common.target_capabilities import (
     UnsupportedCapabilityBehavior,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target.common.target_requirements import (
+    CHAT_CONSUMER_REQUIREMENTS,
+    TargetRequirements,
+)
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
@@ -51,6 +54,7 @@ __all__ = [
     "AzureMLChatTarget",
     "CapabilityName",
     "CapabilityHandlingPolicy",
+    "CHAT_CONSUMER_REQUIREMENTS",
     "CopilotType",
     "ConversationNormalizationPipeline",
     "GandalfLevel",

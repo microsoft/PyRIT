@@ -8,7 +8,7 @@ from typing import Optional, Union
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -68,7 +68,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         refusal_system_prompt_path: Union[RefusalScorerPaths, Path, str] = RefusalScorerPaths.OBJECTIVE_STRICT,
         prompt_format_string: Optional[str] = None,
         validator: Optional[ScorerPromptValidator] = None,
@@ -102,6 +102,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
 
         super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
+        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
         self._prompt_target = chat_target
 
         # Resolve the system prompt path

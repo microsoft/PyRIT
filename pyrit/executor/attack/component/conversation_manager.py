@@ -21,6 +21,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core import AttackContext
@@ -321,8 +322,11 @@ class ConversationManager:
             logger.debug(f"No prepended conversation for context initialization: {conversation_id}")
             return state
 
-        # Handle target type compatibility
-        is_chat_target = isinstance(target, PromptChatTarget)
+        # Targets that don't natively support multi-turn history cannot consume a
+        # prepended multi-message conversation as-is — route them to the
+        # single-string fallback path. Type identity (PromptChatTarget) is a
+        # legacy signal for this; capability-based routing is the durable form.
+        is_chat_target = target.configuration.includes(capability=CapabilityName.MULTI_TURN)
         if not is_chat_target:
             return await self._handle_non_chat_target_async(
                 context=context,

@@ -73,26 +73,16 @@ class PromptChatTarget(PromptTarget):
         labels: Optional[dict[str, str]] = None,
     ) -> None:
         """
-        Set the system prompt for the prompt target. May be overridden by subclasses.
+        Deprecated shim. Use :meth:`PromptTarget.set_system_prompt` on the base class.
 
-        Raises:
-            RuntimeError: If the conversation already exists.
+        Retained on ``PromptChatTarget`` so subclasses that override this method
+        continue to work. Delegates to the base-class implementation.
         """
-        messages = self._memory.get_conversation(conversation_id=conversation_id)
-
-        if messages:
-            raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
-
-        self._memory.add_message_to_memory(
-            request=MessagePiece(
-                role="system",
-                conversation_id=conversation_id,
-                original_value=system_prompt,
-                converted_value=system_prompt,
-                prompt_target_identifier=self.get_identifier(),
-                attack_identifier=attack_identifier,
-                labels=labels,
-            ).to_message()
+        super().set_system_prompt(
+            system_prompt=system_prompt,
+            conversation_id=conversation_id,
+            attack_identifier=attack_identifier,
+            labels=labels,
         )
 
     def is_response_format_json(self, message_piece: MessagePiece) -> bool:

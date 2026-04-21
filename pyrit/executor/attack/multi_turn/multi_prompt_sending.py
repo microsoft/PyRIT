@@ -29,6 +29,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import Scorer
 
 if TYPE_CHECKING:
@@ -152,6 +154,12 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             params_type=MultiPromptSendingAttackParameters,
         )
 
+        # Sending a sequence of prompts requires a real multi-turn target;
+        # history-squash adaptation would collapse them into one message.
+        TargetRequirements(
+            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}),
+        ).validate(configuration=objective_target.configuration)
+
         # Initialize the converter configuration
         attack_converter_config = attack_converter_config or AttackConverterConfig()
         self._request_converters = attack_converter_config.request_converters
@@ -204,16 +212,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         Args:
             context (MultiTurnAttackContext): The attack context containing attack parameters.
-
-        Raises:
-            ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.capabilities.supports_multi_turn:
-            raise ValueError(
-                "MultiPromptSendingAttack requires a multi-turn target. "
-                "The objective target does not support multi-turn conversations."
-            )
-
         # Ensure the context has a session (like red_teaming.py does)
         context.session = ConversationSession()
 

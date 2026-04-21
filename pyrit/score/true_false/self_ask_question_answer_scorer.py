@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from pyrit.models import MessagePiece, Score, UnvalidatedScore
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 
 class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
@@ -37,7 +37,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         true_false_question_path: Optional[pathlib.Path] = None,
         validator: Optional[ScorerPromptValidator] = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,

@@ -29,6 +29,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -141,6 +143,12 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             params_type=ChunkedRequestAttackParameters,
         )
 
+        # Chunked request issues multiple distinct turns; history-squash
+        # adaptation would collapse them into a single prompt.
+        TargetRequirements(
+            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}),
+        ).validate(configuration=objective_target.configuration)
+
         # Store chunk configuration
         self._chunk_size = chunk_size
         self._total_length = total_length
@@ -226,15 +234,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
 
         Args:
             context (ChunkedRequestAttackContext): The attack context containing attack parameters.
-
-        Raises:
-            ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.capabilities.supports_multi_turn:
-            raise ValueError(
-                "ChunkedRequestAttack requires a multi-turn target. "
-                "The objective target does not support multi-turn conversations."
-            )
 
         # Ensure the context has a session
         context.session = ConversationSession()

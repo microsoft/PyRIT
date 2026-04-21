@@ -7,7 +7,7 @@ from uuid import UUID
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, Score, UnvalidatedScore
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -66,7 +66,7 @@ class FloatScaleScorer(Scorer):
     async def _score_value_with_llm(
         self,
         *,
-        prompt_target: PromptChatTarget,
+        prompt_target: PromptTarget,
         system_prompt: str,
         message_value: str,
         message_data_type: PromptDataType,
