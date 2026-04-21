@@ -175,6 +175,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         endpoint_var="ADVERSARIAL_CHAT_ENDPOINT",
         key_var="ADVERSARIAL_CHAT_KEY",
         model_var="ADVERSARIAL_CHAT_MODEL",
+        underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL",
         temperature=1.2,
         tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
@@ -358,8 +359,10 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
     ),
 ]
 
-# Scorer-specific temperature variant targets.
+# Temperature variant targets for scorers.
 # These reuse the same endpoints as their base targets but with different temperatures.
+# The temp9 variants are tagged DEFAULT because the default scale and task_achieved
+# scorers depend on them. The temp0 variants remain SCORER-only.
 SCORER_TARGET_CONFIGS: list[TargetConfig] = [
     TargetConfig(
         registry_name="azure_openai_gpt4o_temp0",
@@ -379,7 +382,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL",
         temperature=0.9,
-        tags=[TargetInitializerTags.SCORER],
+        tags=[TargetInitializerTags.DEFAULT],
     ),
     TargetConfig(
         registry_name="azure_gpt4o_unsafe_chat_temp0",
@@ -399,7 +402,7 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL",
         temperature=0.9,
-        tags=[TargetInitializerTags.SCORER],
+        tags=[TargetInitializerTags.DEFAULT],
     ),
 ]
 

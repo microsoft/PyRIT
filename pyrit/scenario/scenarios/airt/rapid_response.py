@@ -59,11 +59,8 @@ class RapidResponse(Scenario):
     """
     Rapid Response scenario for content-harms testing.
 
-    Tests model behaviour across harm categories using selectable attack
-    techniques. Strategies control *how* prompts are delivered (e.g.
-    prompt_sending, role_play, many_shot, TAP). Datasets control *what*
-    harm content is tested (e.g. hate, violence, sexual). Use
-    ``--dataset-names`` to filter harm categories.
+    Tests model behaviour across multiple harm categories using selectable attack
+    techniques.
     """
 
     VERSION: int = 2
