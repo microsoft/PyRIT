@@ -81,7 +81,12 @@ class AttackTechniqueSpec:
     accepts_scorer_override: bool = True
 
     def __post_init__(self) -> None:
-        """Validate mutually exclusive fields."""
+        """
+        Validate mutually exclusive fields.
+
+        Raises:
+            ValueError: If both adversarial_chat and adversarial_chat_key are set.
+        """
         if self.adversarial_chat and self.adversarial_chat_key:
             raise ValueError(
                 f"Technique spec '{self.name}' sets both adversarial_chat and "

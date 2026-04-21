@@ -149,8 +149,8 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
             result.append(
                 dataclasses.replace(
                     spec,
-                    adversarial_chat=resolved,
-                    adversarial_chat_key=None,  # type: ignore[arg-type]
+                    adversarial_chat=resolved,  # type: ignore[arg-type]
+                    adversarial_chat_key=None,
                 )
             )
         elif "attack_adversarial_config" in inspect.signature(spec.attack_class.__init__).parameters:  # type: ignore[misc]
