@@ -425,6 +425,7 @@ def _try_instantiate_converter(converter_name: str):
     # Converter-specific overrides for params with validation
     overrides: dict = {
         "AddImageTextConverter": {"img_to_add": "test_image.png"},
+        "AddTextImageConverter": {"text_to_add": "test text"},
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
