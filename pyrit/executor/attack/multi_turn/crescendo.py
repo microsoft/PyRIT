@@ -267,7 +267,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Args:
             context (CrescendoAttackContext): Attack context with configuration
         """
-
         # Ensure the context has a session
         context.session = ConversationSession()
 

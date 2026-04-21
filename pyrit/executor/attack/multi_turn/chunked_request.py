@@ -235,7 +235,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         Args:
             context (ChunkedRequestAttackContext): The attack context containing attack parameters.
         """
-
         # Ensure the context has a session
         context.session = ConversationSession()
 

@@ -84,9 +84,7 @@ def _build_chat_consumer_requirements() -> TargetRequirements:
     from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
     return TargetRequirements(
-        required_capabilities=frozenset(
-            {CapabilityName.SYSTEM_PROMPT, CapabilityName.MULTI_TURN}
-        ),
+        required_capabilities=frozenset({CapabilityName.SYSTEM_PROMPT, CapabilityName.MULTI_TURN}),
     )
 
 

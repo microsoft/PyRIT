@@ -39,7 +39,7 @@ from pyrit.prompt_target.batch_helper import batch_task_async
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import (
         ScorerEvalDatasetFiles,

@@ -1327,9 +1327,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # TAP sets a system prompt on the adversarial target and drives a
         # multi-turn dialogue through it; both capabilities must be native.
         TargetRequirements(
-            required_native_capabilities=frozenset(
-                {CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}
-            ),
+            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
         ).validate(configuration=self._adversarial_chat.configuration)
 
         # Load system prompts
