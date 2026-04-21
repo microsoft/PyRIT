@@ -27,6 +27,15 @@ def mock_templates() -> list[str]:
 
 
 @pytest.fixture
+def mock_jailbreak_paths() -> list[str]:
+    """Two real jailbreak template paths for path-based selection tests."""
+    return [
+        str(JAILBREAK_TEMPLATES_PATH / "dan_1.yaml"),
+        str(JAILBREAK_TEMPLATES_PATH / "aim.yaml"),
+    ]
+
+
+@pytest.fixture
 def mock_random_num_attempts() -> int:
     """Mock constant for n-many attempts per jailbreak."""
     return 2
@@ -174,11 +183,30 @@ class TestJailbreakInitialization:
             scenario = Jailbreak(num_attempts=mock_random_num_attempts)
             assert scenario._num_attempts == mock_random_num_attempts
 
-    def test_init_raises_exception_when_both_num_and_which_jailbreaks(self, mock_random_num_templates, mock_templates):
+    def test_init_with_jailbreak_paths(self, mock_jailbreak_paths, mock_memory_seed_groups):
+        """Test initialization with explicit jailbreak file paths."""
+        with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = Jailbreak(jailbreak_paths=mock_jailbreak_paths)
+            assert scenario._jailbreak_paths == mock_jailbreak_paths
+            assert scenario._jailbreaks == []
+
+    def test_init_raises_exception_when_both_num_and_names(self, mock_random_num_templates, mock_templates):
         """Test failure on providing mutually exclusive arguments."""
 
         with pytest.raises(ValueError):
             Jailbreak(num_templates=mock_random_num_templates, jailbreak_names=mock_templates)
+
+    def test_init_raises_exception_when_both_num_and_paths(self, mock_jailbreak_paths, mock_random_num_templates):
+        """Test failure when num_templates and jailbreak_paths are both provided."""
+        with pytest.raises(ValueError):
+            Jailbreak(num_templates=mock_random_num_templates, jailbreak_paths=mock_jailbreak_paths)
+
+    def test_init_raises_exception_when_both_paths_and_names(
+        self, mock_jailbreak_paths, mock_templates, mock_memory_seed_groups
+    ):
+        """Test failure when jailbreak_paths and jailbreak_names are both provided."""
+        with pytest.raises(ValueError):
+            Jailbreak(jailbreak_paths=mock_jailbreak_paths, jailbreak_names=mock_templates)
 
     def test_init_accepts_subdirectory_jailbreak_names(self, mock_objective_scorer, mock_memory_seed_groups):
         """Test that explicit jailbreak names can reference templates stored in subdirectories."""
@@ -202,6 +230,11 @@ class TestJailbreakInitialization:
         # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
+
+    def test_init_raises_exception_when_path_not_found(self):
+        """Test failure when a jailbreak path does not exist on disk."""
+        with pytest.raises(ValueError, match="not found"):
+            Jailbreak(jailbreak_paths=["/nonexistent/path/template.yaml"])
 
 
 @pytest.mark.usefixtures(*FIXTURES)
