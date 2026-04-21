@@ -10,7 +10,7 @@ from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective, SeedPrompt, data_serializer_factory
+from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt, data_serializer_factory
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         "https://raw.githubusercontent.com/Social-AI-Studio/ComicJailbreak/"
         "5fca32012ccac34dbd080df247926366249b4fb1/template/"
     )
-    TEMPLATE_NAMES: tuple[str, ...] = ("article", "speech", "instruction", "message", "code")
+    TEMPLATE_NAMES: tuple[str, ...] = tuple(COMIC_JAILBREAK_TEMPLATES.keys())
     PAPER_URL: str = "https://arxiv.org/abs/2603.21697"
 
     # Metadata
@@ -166,7 +166,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         for template_name in self.templates:
             template_paths[template_name] = await self._fetch_template_async(template_name)
 
-        seeds: list[SeedObjective | SeedPrompt] = []
+        seeds: list[Seed] = []
         pair_count = 0
 
         for row_idx, example in enumerate(examples):
@@ -224,7 +224,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         goal: str,
         template_name: str,
         behavior: str,
-    ) -> list[SeedObjective | SeedPrompt]:
+    ) -> list[Seed]:
         """
         Build a SeedObjective + image+text SeedPrompt group for a single rendered comic.
 
@@ -239,7 +239,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             behavior: The behavior label from the dataset.
 
         Returns:
-            list[SeedObjective | SeedPrompt]: A three-element list with objective,
+            list[Seed]: A three-element list with objective,
                 image (sequence=0), and text query (sequence=1).
         """
         group_id = uuid.uuid4()
