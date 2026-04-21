@@ -152,9 +152,7 @@ async def test_send_prompt_async(
 async def test_upload_blob_async_raises_when_client_async_none(azure_blob_storage_target: AzureBlobStorageTarget):
     """Guard at line 169: _client_async is None after _create_container_client_async still leaves it None."""
     azure_blob_storage_target._client_async = None
-    with patch.object(
-        AzureBlobStorageTarget, "_create_container_client_async", new_callable=AsyncMock
-    ):
+    with patch.object(AzureBlobStorageTarget, "_create_container_client_async", new_callable=AsyncMock):
         # After the mock _create_container_client_async, _client_async remains None
         with patch.object(AzureBlobStorageTarget, "_parse_url", return_value=("container", "")):
             with pytest.raises(RuntimeError, match="Blob storage client not initialized"):

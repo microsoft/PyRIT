@@ -137,7 +137,5 @@ async def test_add_image_to_video_raises_when_decode_returns_none(video_converte
         side_effect=factory_side_effect,
     ):
         with pytest.raises(ValueError, match="Failed to decode overlay image"):
-            await converter._add_image_to_video(
-                image_path="fake_image.png", output_path="output_video_test.mp4"
-            )
+            await converter._add_image_to_video(image_path="fake_image.png", output_path="output_video_test.mp4")
     os.remove(video_converter_sample_video)

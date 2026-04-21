@@ -632,9 +632,7 @@ class TestXPIAGuards:
         )
         workflow = XPIAWorkflow(attack_setup_target=mock_target)
 
-        attack_msg = Message(
-            message_pieces=[MessagePiece(role="user", original_value="attack content")]
-        )
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
         context = XPIAContext(attack_content=attack_msg, processing_callback=None)
 
         with pytest.raises(ValueError, match="processing_callback is not set"):
@@ -653,9 +651,7 @@ class TestXPIAGuards:
         workflow._memory = None
 
         mock_callback = AsyncMock(return_value="response")
-        attack_msg = Message(
-            message_pieces=[MessagePiece(role="user", original_value="attack content")]
-        )
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
         context = XPIAContext(attack_content=attack_msg, processing_callback=mock_callback)
 
         with pytest.raises(RuntimeError, match="Memory not initialized"):
@@ -686,9 +682,7 @@ class TestXPIAGuards:
             scorer=mock_scorer,
         )
 
-        attack_msg = Message(
-            message_pieces=[MessagePiece(role="user", original_value="attack content")]
-        )
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
         context = XPIAContext(attack_content=attack_msg, processing_prompt=None)
 
         await workflow._setup_async(context=context)
