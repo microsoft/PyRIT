@@ -81,7 +81,7 @@ async def test_image_resizing_converter_format_preservation_and_conversion(
     converter = ImageResizingConverter(output_format=output_format)
     image_bytes = sample_image_bytes(format=input_format)
 
-    with patch("pyrit.prompt_converter.image_resizing_converter.data_serializer_factory") as mock_factory:
+    with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_serializer.read_data.return_value = image_bytes
         mock_serializer.save_b64_image = AsyncMock()
@@ -124,7 +124,7 @@ async def test_image_resizing_converter_transparency_handling(
 
     assert image.has_transparency_data  # before conversion, the image should have transparency
 
-    res_converted_io, res_output_format = converter._resize_image(image, input_format)
+    res_converted_io, res_output_format = converter._transform_image(image, input_format)
     assert res_converted_io
     assert res_output_format == expected_output_format
 
@@ -139,7 +139,7 @@ async def test_image_resizing_converter_convert_async_url_input(sample_image_byt
     test_url = "https://example.com/test_image.jpeg"
     image_bytes = sample_image_bytes(format="JPEG")
 
-    with patch("pyrit.prompt_converter.image_resizing_converter.data_serializer_factory") as mock_factory:
+    with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_serializer.file_extension = "jpeg"
         mock_serializer.value = "resized_image.webp"
@@ -164,7 +164,7 @@ async def test_image_resizing_converter_url_format_conversion(sample_image_bytes
     test_url = "https://example.com/test_image.jpeg"
     large_image_bytes = sample_image_bytes(format="JPEG", size=(2048, 2048))
 
-    with patch("pyrit.prompt_converter.image_resizing_converter.data_serializer_factory") as mock_factory:
+    with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_serializer.file_extension = "jpeg"
         mock_serializer.value = "converted_image.webp"
@@ -198,7 +198,7 @@ async def test_image_resizing_converter_corrupted_image_bytes():
     """Test handling of corrupted image bytes."""
     converter = ImageResizingConverter()
     corrupted_bytes = b"notanimagefile"
-    with patch("pyrit.prompt_converter.image_resizing_converter.data_serializer_factory") as mock_factory:
+    with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_serializer.read_data.return_value = corrupted_bytes
         mock_factory.return_value = mock_serializer
@@ -214,7 +214,7 @@ async def test_image_resizing_converter_output_format_fallback():
     img.save(img_bytes, format="TIFF")
     img_bytes = img_bytes.getvalue()
     converter = ImageResizingConverter(output_format=None)
-    with patch("pyrit.prompt_converter.image_resizing_converter.data_serializer_factory") as mock_factory:
+    with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_factory.return_value = mock_serializer
         mock_serializer.read_data.return_value = img_bytes
@@ -231,7 +231,7 @@ async def test_image_resizing_converter_output_dimensions(sample_image_bytes):
     image_bytes = sample_image_bytes(format="PNG", size=original_size)
     image = Image.open(BytesIO(image_bytes))
 
-    resized_io, _ = converter._resize_image(image, "PNG")
+    resized_io, _ = converter._transform_image(image, "PNG")
     resized_image = Image.open(resized_io)
 
     expected_width = int(original_size[0] * scale_factor)
