@@ -929,9 +929,12 @@ class TestAuthenticateWithPlaywrightGuards:
             mock_async_playwright.__aenter__ = AsyncMock(return_value=mock_playwright)
             mock_async_playwright.__aexit__ = AsyncMock(return_value=False)
 
-            with patch(
-                "playwright.async_api.async_playwright",
-                return_value=mock_async_playwright,
+            mock_pw_module = MagicMock()
+            mock_pw_module.async_playwright = MagicMock(return_value=mock_async_playwright)
+
+            with patch.dict(
+                "sys.modules",
+                {"playwright": MagicMock(), "playwright.async_api": mock_pw_module},
             ):
                 result = await authenticator._run_playwright_browser_automation()
                 assert result is None
@@ -971,9 +974,12 @@ class TestAuthenticateWithPlaywrightGuards:
             mock_async_playwright.__aenter__ = AsyncMock(return_value=mock_playwright)
             mock_async_playwright.__aexit__ = AsyncMock(return_value=False)
 
-            with patch(
-                "playwright.async_api.async_playwright",
-                return_value=mock_async_playwright,
+            mock_pw_module = MagicMock()
+            mock_pw_module.async_playwright = MagicMock(return_value=mock_async_playwright)
+
+            with patch.dict(
+                "sys.modules",
+                {"playwright": MagicMock(), "playwright.async_api": mock_pw_module},
             ):
                 result = await authenticator._run_playwright_browser_automation()
                 assert result is None
