@@ -189,9 +189,9 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # Tests whether a target can be induced to leak sensitive data or intellectual property, scored using
 # plagiarism detection.
 #
-# `ash
+# ```bash
 # pyrit_scan airt.leakage --target openai_chat --strategies first_letter --max-dataset-size 1
-# `
+# ```
 #
 # **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN, IP, SENSITIVE_DATA, FirstLetter, Image, RolePlay, Crescendo
 #

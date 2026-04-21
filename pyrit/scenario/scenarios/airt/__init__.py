@@ -27,7 +27,7 @@ def __getattr__(name: str) -> Any:
     if name == "RapidResponseStrategy":
         return RapidResponse.get_strategy_class()
     if name == "ContentHarmsStrategy":
-        return RapidResponse.get_strategy_class()
+        return ContentHarms.get_strategy_class()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
