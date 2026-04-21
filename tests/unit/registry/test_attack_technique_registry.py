@@ -120,7 +120,9 @@ class TestAttackTechniqueRegistryCreateTechnique:
         target = MagicMock(spec=PromptTarget)
         scoring = MagicMock(spec=AttackScoringConfig)
 
-        technique = self.registry.create_technique("stub", objective_target=target, attack_scoring_config_override=scoring)
+        technique = self.registry.create_technique(
+            "stub", objective_target=target, attack_scoring_config_override=scoring
+        )
 
         assert isinstance(technique, AttackTechnique)
         assert isinstance(technique.attack, _StubAttack)

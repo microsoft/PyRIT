@@ -14,20 +14,22 @@ from __future__ import annotations
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
 )
-from pyrit.registry.tag_query import TagQuery
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyrit.executor.attack.core.attack_config import (
         AttackAdversarialConfig,
         AttackConverterConfig,
         AttackScoringConfig,
     )
     from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.registry.tag_query import TagQuery
     from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -60,7 +62,7 @@ class AttackTechniqueSpec:
     name: str
     attack_class: type
     tags: list[str] = field(default_factory=list)
-    extra_kwargs_builder: Callable[["PromptChatTarget"], dict[str, Any]] | None = None
+    extra_kwargs_builder: Callable[[PromptChatTarget], dict[str, Any]] | None = None
     accepts_scorer_override: bool = True
 
 
@@ -92,7 +94,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         self.register(factory, name=name, tags=tags)
         logger.debug(f"Registered attack technique factory: {name} ({factory.attack_class.__name__})")
 
-    def get_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+    def get_factories(self) -> dict[str, AttackTechniqueFactory]:
         """
         Return all registered factories as a name→factory dict.
 
@@ -203,29 +205,27 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         # Technique members from specs — assign aggregate tags based on TagQuery matching
         for spec in specs:
             spec_tags = set(spec.tags) - {"accepts_scorer_override"}
-            matched_agg_tags = {
-                agg_name for agg_name, query in aggregate_tags.items() if query.matches(spec_tags)
-            }
+            matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(spec_tags)}
             members[spec.name] = (spec.name, spec_tags | matched_agg_tags)
 
         # Build the enum class dynamically
-        strategy_cls = ScenarioStrategy(class_name, members)
+        strategy_cls = ScenarioStrategy(class_name, members)  # type: ignore[arg-type]
 
         # Override get_aggregate_tags on the generated class
         @classmethod  # type: ignore[misc]
         def _get_aggregate_tags(cls: type) -> set[str]:
             return set(all_aggregate_tag_names)
 
-        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[attr-defined]
+        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[method-assign, assignment]
 
-        return strategy_cls
+        return strategy_cls  # type: ignore[return-value]
 
     @staticmethod
     def build_factory_from_spec(
         spec: AttackTechniqueSpec,
         *,
-        adversarial_chat: "PromptChatTarget | None" = None,
-    ) -> "AttackTechniqueFactory":
+        adversarial_chat: PromptChatTarget | None = None,
+    ) -> AttackTechniqueFactory:
         """
         Build an ``AttackTechniqueFactory`` from a ``AttackTechniqueSpec``.
 
@@ -258,15 +258,20 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
     @staticmethod
     def _accepts_adversarial(attack_class: type) -> bool:
-        """Check if an attack class accepts ``attack_adversarial_config``."""
-        sig = inspect.signature(attack_class.__init__)
+        """
+        Check if an attack class accepts ``attack_adversarial_config``.
+
+        Returns:
+            bool: Whether the parameter is present in the class constructor.
+        """
+        sig = inspect.signature(attack_class.__init__)  # type: ignore[misc]
         return "attack_adversarial_config" in sig.parameters
 
     def register_from_specs(
         self,
         specs: list[AttackTechniqueSpec],
         *,
-        adversarial_chat: "PromptChatTarget | None" = None,
+        adversarial_chat: PromptChatTarget | None = None,
     ) -> None:
         """
         Build factories from specs and register them.
@@ -281,7 +286,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         for spec in specs:
             if spec.name not in self:
                 factory = self.build_factory_from_spec(spec, adversarial_chat=adversarial_chat)
-                tags: dict[str, str] = {t: "" for t in spec.tags}
+                tags: dict[str, str] = dict.fromkeys(spec.tags, "")
                 tags["accepts_scorer_override"] = str(spec.accepts_scorer_override).lower()
                 self.register_technique(name=spec.name, factory=factory, tags=tags)
 

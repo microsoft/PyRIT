@@ -7,7 +7,6 @@ import pytest
 
 from pyrit.registry.tag_query import TagQuery
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -109,7 +108,7 @@ class TestTagQueryOperators:
 
 
 # ---------------------------------------------------------------------------
-# filter()
+# Filter
 # ---------------------------------------------------------------------------
 
 
@@ -141,6 +140,58 @@ class TestTagQueryFilter:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
+
+class TestTagQueryValidation:
+    """Tests for __post_init__ validation."""
+
+    def test_invalid_op_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid TagQuery op"):
+            TagQuery(_op="xor", _children=(TagQuery(), TagQuery()))
+
+    def test_not_requires_exactly_one_child(self) -> None:
+        with pytest.raises(ValueError, match="'not' TagQuery must have exactly 1 child"):
+            TagQuery(_op="not", _children=(TagQuery(), TagQuery()))
+
+    def test_not_rejects_zero_children(self) -> None:
+        with pytest.raises(ValueError, match="'not' TagQuery must have exactly 1 child"):
+            TagQuery(_op="not", _children=())
+
+    def test_and_requires_at_least_two_children(self) -> None:
+        with pytest.raises(ValueError, match="'and' TagQuery must have at least 2 children"):
+            TagQuery(_op="and", _children=(TagQuery(),))
+
+    def test_or_requires_at_least_two_children(self) -> None:
+        with pytest.raises(ValueError, match="'or' TagQuery must have at least 2 children"):
+            TagQuery(_op="or", _children=(TagQuery(),))
+
+    def test_leaf_rejects_children(self) -> None:
+        with pytest.raises(ValueError, match="Leaf TagQuery must not have children"):
+            TagQuery(_op="", _children=(TagQuery(),))
+
+    def test_valid_composite_accepted(self) -> None:
+        # Should not raise
+        TagQuery(_op="and", _children=(TagQuery(), TagQuery()))
+        TagQuery(_op="or", _children=(TagQuery(), TagQuery()))
+        TagQuery(_op="not", _children=(TagQuery(),))
+
+
+class TestTagQueryFilterWithSetTags:
+    """Test filter() with items whose tags are set[str] rather than list[str]."""
+
+    @dataclass
+    class _SetTagSpec:
+        name: str
+        tags: set[str]
+
+    def test_filter_works_with_set_tags(self) -> None:
+        items = [
+            self._SetTagSpec(name="a", tags={"core", "single_turn"}),
+            self._SetTagSpec(name="b", tags={"experimental"}),
+        ]
+        q = TagQuery(include_all=frozenset({"core"}))
+        result = q.filter(items)
+        assert [i.name for i in result] == ["a"]
 
 
 class TestTagQueryEdgeCases:

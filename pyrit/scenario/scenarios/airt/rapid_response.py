@@ -17,15 +17,15 @@ from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.prompt_target import PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptChatTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,9 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     Build the RapidResponse strategy class dynamically from SCENARIO_TECHNIQUES.
 
     Reads the spec list (pure data) — no registry interaction or target resolution.
+
+    Returns:
+        type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
     from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
     from pyrit.registry.tag_query import TagQuery
@@ -73,6 +76,12 @@ class RapidResponse(Scenario):
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
+        """
+        Return the dynamically generated strategy class, building it on first access.
+
+        Returns:
+            type[ScenarioStrategy]: The RapidResponseStrategy enum class.
+        """
         global RapidResponseStrategy
         if RapidResponseStrategy is None:
             RapidResponseStrategy = _build_rapid_response_strategy()
@@ -80,11 +89,23 @@ class RapidResponse(Scenario):
 
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
+        """
+        Return the default strategy member (``DEFAULT``).
+
+        Returns:
+            ScenarioStrategy: The default strategy value.
+        """
         strategy_class = cls.get_strategy_class()
         return strategy_class("default")
 
     @classmethod
     def default_dataset_config(cls) -> DatasetConfiguration:
+        """
+        Return the default dataset configuration for AIRT harm categories.
+
+        Returns:
+            DatasetConfiguration: Configuration with standard harm-category datasets.
+        """
         return DatasetConfiguration(
             dataset_names=[
                 "airt_hate",
@@ -132,12 +153,20 @@ class RapidResponse(Scenario):
         )
 
     def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
-        """Group results by harm category (dataset) rather than technique."""
+        """
+        Group results by harm category (dataset) rather than technique.
+
+        Returns:
+            str: The seed group name used as the display group.
+        """
         return seed_group_name
 
-    def get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+    def get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
         """
         Register core techniques and return factories from the registry.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Name-to-factory mapping.
         """
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
         from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
@@ -153,6 +182,12 @@ class RapidResponse(Scenario):
         an ``AtomicAttack`` for each.  Each has a unique compound
         ``atomic_attack_name`` and a ``display_group`` for user-facing
         aggregation by harm category.
+
+        Returns:
+            list[AtomicAttack]: The generated atomic attacks.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
         """
         if self._objective_target is None:
             raise ValueError(

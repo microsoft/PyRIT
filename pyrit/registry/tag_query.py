@@ -28,14 +28,20 @@ items expose a ``tags`` attribute (``list[str]`` or ``set[str]``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 
 @runtime_checkable
 class Taggable(Protocol):
     """Any object that exposes a ``tags`` attribute."""
 
-    tags: list[str]
+    @property
+    def tags(self) -> list[str]: ...
+
+
+_T = TypeVar("_T", bound=Taggable)
+
+_VALID_OPS = frozenset({"", "and", "or", "not"})
 
 
 @dataclass(frozen=True)
@@ -60,20 +66,51 @@ class TagQuery:
     _op: str = field(default="", repr=False)
     _children: tuple[TagQuery, ...] = field(default=(), repr=False)
 
+    def __post_init__(self) -> None:
+        """
+        Validate composite TagQuery invariants.
+
+        Raises:
+            ValueError: If the operator or children are inconsistent.
+        """
+        if self._op not in _VALID_OPS:
+            raise ValueError(f"Invalid TagQuery op {self._op!r}; must be one of {sorted(_VALID_OPS)}")
+        if self._op == "not" and len(self._children) != 1:
+            raise ValueError("'not' TagQuery must have exactly 1 child")
+        if self._op in ("and", "or") and len(self._children) < 2:
+            raise ValueError(f"'{self._op}' TagQuery must have at least 2 children")
+        if self._op == "" and self._children:
+            raise ValueError("Leaf TagQuery must not have children")
+
     # ------------------------------------------------------------------
     # Operators
     # ------------------------------------------------------------------
 
     def __and__(self, other: TagQuery) -> TagQuery:
-        """Both sub-queries must match."""
+        """
+        Both sub-queries must match.
+
+        Returns:
+            TagQuery: A composite AND query.
+        """
         return TagQuery(_op="and", _children=(self, other))
 
     def __or__(self, other: TagQuery) -> TagQuery:
-        """Either sub-query must match."""
+        """
+        Either sub-query must match.
+
+        Returns:
+            TagQuery: A composite OR query.
+        """
         return TagQuery(_op="or", _children=(self, other))
 
     def __invert__(self) -> TagQuery:
-        """Negate: matches when the inner query does **not** match."""
+        """
+        Negate: matches when the inner query does **not** match.
+
+        Returns:
+            TagQuery: A composite NOT query.
+        """
         return TagQuery(_op="not", _children=(self,))
 
     # ------------------------------------------------------------------
@@ -103,15 +140,13 @@ class TagQuery:
             return False
         if self.include_all and not self.include_all <= tags:
             return False
-        if self.include_any and not self.include_any & tags:
-            return False
-        return True
+        return not (self.include_any and not self.include_any & tags)
 
     # ------------------------------------------------------------------
     # Convenience helpers
     # ------------------------------------------------------------------
 
-    def filter(self, items: list[Taggable]) -> list[Taggable]:
+    def filter(self, items: list[_T]) -> list[_T]:
         """
         Return *items* whose tags satisfy this query.
 

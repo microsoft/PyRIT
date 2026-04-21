@@ -161,9 +161,7 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
             print()
             self._print_colored(f"{self._indent}🔸 Strategy: {group_name}", Style.BRIGHT)
             self._print_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW)
-            self._print_colored(
-                f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate)
-            )
+            self._print_colored(f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate))
 
         # Print footer
         self._print_footer()

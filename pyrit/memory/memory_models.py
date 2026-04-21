@@ -998,9 +998,7 @@ class ScenarioResultEntry(Base):
         self.attack_results_json = json.dumps(serialized_attack_results)
 
         # Serialize display_group_map if present
-        self.display_group_map_json = (
-            json.dumps(entry._display_group_map) if entry._display_group_map else None
-        )
+        self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
 
         self.timestamp = datetime.now(tz=timezone.utc)
 

@@ -74,6 +74,12 @@ def get_default_adversarial_target() -> PromptChatTarget:
     (populated by ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars).
     Falls back to a plain ``OpenAIChatTarget(temperature=1.2)`` using
     ``@apply_defaults`` resolution.
+
+    Returns:
+        PromptChatTarget: The resolved adversarial chat target.
+
+    Raises:
+        ValueError: If the registered target does not support multi-turn.
     """
     from pyrit.registry import TargetRegistry
 
@@ -111,4 +117,3 @@ def register_scenario_techniques() -> None:
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
     registry.register_from_specs(SCENARIO_TECHNIQUES, adversarial_chat=adversarial_chat)
-

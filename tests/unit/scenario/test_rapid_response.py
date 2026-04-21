@@ -10,7 +10,6 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
-    AttackAdversarialConfig,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RolePlayAttack,
@@ -21,19 +20,17 @@ from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
-
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import (
     SCENARIO_TECHNIQUES,
     get_default_adversarial_target,
     register_scenario_techniques,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse,
 )
 from pyrit.score import TrueFalseScorer
-
 
 # ---------------------------------------------------------------------------
 # Synthetic many-shot examples — prevents reading the real JSON during tests
@@ -85,7 +82,6 @@ def mock_objective_scorer():
 def reset_technique_registry():
     """Reset the AttackTechniqueRegistry, TargetRegistry, and cached strategy class between tests."""
     import pyrit.scenario.scenarios.airt.rapid_response as rr_module
-
     from pyrit.registry import TargetRegistry
 
     AttackTechniqueRegistry.reset_instance()
@@ -151,19 +147,19 @@ class TestRapidResponseStrategy:
 
     def test_technique_members_exist(self):
         """All four technique members are accessible by value."""
-        S = _strategy_class()
-        assert S("prompt_sending").value == "prompt_sending"
-        assert S("role_play").value == "role_play"
-        assert S("many_shot").value == "many_shot"
-        assert S("tap").value == "tap"
+        strat = _strategy_class()
+        assert strat("prompt_sending").value == "prompt_sending"
+        assert strat("role_play").value == "role_play"
+        assert strat("many_shot").value == "many_shot"
+        assert strat("tap").value == "tap"
 
     def test_aggregate_members_exist(self):
         """All four aggregate members are accessible."""
-        S = _strategy_class()
-        assert S.ALL.value == "all"
-        assert S.DEFAULT.value == "default"
-        assert S.SINGLE_TURN.value == "single_turn"
-        assert S.MULTI_TURN.value == "multi_turn"
+        strat = _strategy_class()
+        assert strat.ALL.value == "all"
+        assert strat.DEFAULT.value == "default"
+        assert strat.SINGLE_TURN.value == "single_turn"
+        assert strat.MULTI_TURN.value == "multi_turn"
 
     def test_total_member_count(self):
         """4 aggregates + 4 techniques = 8 members."""
@@ -180,43 +176,43 @@ class TestRapidResponseStrategy:
 
     def test_default_expands_to_prompt_sending_and_many_shot(self):
         """DEFAULT aggregate should expand to prompt_sending + many_shot."""
-        S = _strategy_class()
-        expanded = S.normalize_strategies({S.DEFAULT})
+        strat = _strategy_class()
+        expanded = strat.normalize_strategies({strat.DEFAULT})
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "many_shot"}
 
     def test_single_turn_expands_to_prompt_sending_and_role_play(self):
-        S = _strategy_class()
-        expanded = S.normalize_strategies({S.SINGLE_TURN})
+        strat = _strategy_class()
+        expanded = strat.normalize_strategies({strat.SINGLE_TURN})
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "role_play"}
 
     def test_multi_turn_expands_to_many_shot_and_tap(self):
-        S = _strategy_class()
-        expanded = S.normalize_strategies({S.MULTI_TURN})
+        strat = _strategy_class()
+        expanded = strat.normalize_strategies({strat.MULTI_TURN})
         values = {s.value for s in expanded}
         assert values == {"many_shot", "tap"}
 
     def test_all_expands_to_all_techniques(self):
-        S = _strategy_class()
-        expanded = S.normalize_strategies({S.ALL})
+        strat = _strategy_class()
+        expanded = strat.normalize_strategies({strat.ALL})
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "role_play", "many_shot", "tap"}
 
     def test_strategy_values_are_unique(self):
-        S = _strategy_class()
-        values = [s.value for s in S]
+        strat = _strategy_class()
+        values = [s.value for s in strat]
         assert len(values) == len(set(values))
 
     def test_invalid_strategy_value_raises(self):
-        S = _strategy_class()
+        strat = _strategy_class()
         with pytest.raises(ValueError):
-            S("nonexistent")
+            strat("nonexistent")
 
     def test_invalid_strategy_name_raises(self):
-        S = _strategy_class()
+        strat = _strategy_class()
         with pytest.raises(KeyError):
-            S["Nonexistent"]
+            strat["Nonexistent"]
 
 
 # ===========================================================================
@@ -232,12 +228,12 @@ class TestRapidResponseBasic:
         assert RapidResponse.VERSION == 2
 
     def test_get_strategy_class(self):
-        S = _strategy_class()
-        assert RapidResponse.get_strategy_class() is S
+        strat = _strategy_class()
+        assert RapidResponse.get_strategy_class() is strat
 
     def test_get_default_strategy_returns_default(self):
-        S = _strategy_class()
-        assert RapidResponse.get_default_strategy() == S.DEFAULT
+        strat = _strategy_class()
+        assert RapidResponse.get_default_strategy() == strat.DEFAULT
 
     def test_default_dataset_config_has_all_harm_datasets(self):
         config = RapidResponse.default_dataset_config()
@@ -821,7 +817,8 @@ class TestAttackTechniqueSpec:
         assert spec.extra_kwargs_builder is None
 
     def test_extra_kwargs_builder(self, mock_adversarial_target):
-        builder = lambda _adv: {"role_play_definition_path": "/custom/path.yaml"}
+        def builder(_adv):
+            return {"role_play_definition_path": "/custom/path.yaml"}
         spec = AttackTechniqueSpec(
             name="complex",
             attack_class=RolePlayAttack,
@@ -838,7 +835,7 @@ class TestAttackTechniqueSpec:
         factory = AttackTechniqueRegistry.build_factory_from_spec(spec, adversarial_chat=mock_adversarial_target)
         assert "attack_adversarial_config" not in (factory._attack_kwargs or {})
 
-    def test_SCENARIO_TECHNIQUES_list_has_four_entries(self):
+    def test_scenario_techniques_list_has_four_entries(self):
         assert len(SCENARIO_TECHNIQUES) == 4
         names = {s.name for s in SCENARIO_TECHNIQUES}
         assert names == {"prompt_sending", "role_play", "many_shot", "tap"}

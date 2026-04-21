@@ -346,9 +346,7 @@ class Scenario(ABC):
                 self._scenario_result_id = None
 
         # Build display group mapping from atomic attacks
-        self._display_group_map = {
-            aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks
-        }
+        self._display_group_map = {aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks}
 
         # Create new scenario result
         attack_results: dict[str, list[AttackResult]] = {

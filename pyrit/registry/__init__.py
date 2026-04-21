@@ -19,13 +19,13 @@ from pyrit.registry.discovery import (
 )
 from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
+    AttackTechniqueSpec,
     BaseInstanceRegistry,
     ConverterRegistry,
     RegistryEntry,
     RetrievableInstanceRegistry,
     ScorerRegistry,
     TargetRegistry,
-    AttackTechniqueSpec,
 )
 from pyrit.registry.tag_query import TagQuery
 
