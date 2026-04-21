@@ -271,3 +271,69 @@ class TestAttackTechniqueRegistryInherited:
     def test_get_factories_empty_registry(self):
         result = self.registry.get_factories()
         assert result == {}
+
+
+class TestAttackTechniqueRegistryAcceptsScorerOverride:
+    """Tests for the accepts_scorer_override() method."""
+
+    def setup_method(self):
+        AttackTechniqueRegistry.reset_instance()
+        self.registry = AttackTechniqueRegistry.get_registry_singleton()
+
+    def teardown_method(self):
+        AttackTechniqueRegistry.reset_instance()
+
+    def test_accepts_scorer_override_defaults_to_true(self):
+        """Technique registered without explicit setting defaults to True."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        self.registry.register_technique(name="default_technique", factory=factory)
+
+        assert self.registry.accepts_scorer_override("default_technique") is True
+
+    def test_accepts_scorer_override_explicit_false(self):
+        """Technique registered with accepts_scorer_override=False returns False."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        self.registry.register_technique(name="tap_like", factory=factory, accepts_scorer_override=False)
+
+        assert self.registry.accepts_scorer_override("tap_like") is False
+
+    def test_accepts_scorer_override_explicit_true(self):
+        """Technique registered with accepts_scorer_override=True returns True."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        self.registry.register_technique(name="standard", factory=factory, accepts_scorer_override=True)
+
+        assert self.registry.accepts_scorer_override("standard") is True
+
+    def test_accepts_scorer_override_raises_on_missing_name(self):
+        """KeyError when querying a non-existent technique."""
+        with pytest.raises(KeyError):
+            self.registry.accepts_scorer_override("nonexistent")
+
+    def test_accepts_scorer_override_not_stored_in_tags(self):
+        """The accepts_scorer_override flag must not pollute the tag namespace."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        self.registry.register_technique(
+            name="clean_tags",
+            factory=factory,
+            tags=["single_turn"],
+            accepts_scorer_override=False,
+        )
+
+        entry = self.registry._registry_items["clean_tags"]
+        assert "accepts_scorer_override" not in entry.tags
+
+    def test_accepts_scorer_override_stored_in_metadata(self):
+        """The flag is stored in entry.metadata as a native bool."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        self.registry.register_technique(name="meta_check", factory=factory, accepts_scorer_override=False)
+
+        entry = self.registry._registry_items["meta_check"]
+        assert entry.metadata["accepts_scorer_override"] is False
+
+    def test_get_by_tag_does_not_return_accepts_scorer_override(self):
+        """get_by_tag('accepts_scorer_override') must return empty — it's not a tag."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        self.registry.register_technique(name="technique", factory=factory, accepts_scorer_override=False)
+
+        results = self.registry.get_by_tag(tag="accepts_scorer_override")
+        assert results == []

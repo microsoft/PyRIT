@@ -16,13 +16,12 @@ import logging
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
@@ -56,11 +55,6 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     )
 
 
-# Module-level symbol — populated lazily by get_strategy_class().
-# Preserved for backward-compatible imports (e.g. content_harms.py alias).
-RapidResponseStrategy: type[ScenarioStrategy] | None = None
-
-
 class RapidResponse(Scenario):
     """
     Rapid Response scenario for content-harms testing.
@@ -73,6 +67,7 @@ class RapidResponse(Scenario):
     """
 
     VERSION: int = 2
+    _strategy_class: type[ScenarioStrategy] | None = None
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -82,10 +77,9 @@ class RapidResponse(Scenario):
         Returns:
             type[ScenarioStrategy]: The RapidResponseStrategy enum class.
         """
-        global RapidResponseStrategy
-        if RapidResponseStrategy is None:
-            RapidResponseStrategy = _build_rapid_response_strategy()
-        return RapidResponseStrategy
+        if cls._strategy_class is None:
+            cls._strategy_class = _build_rapid_response_strategy()
+        return cls._strategy_class
 
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
@@ -123,7 +117,6 @@ class RapidResponse(Scenario):
     def __init__(
         self,
         *,
-        adversarial_chat: PromptChatTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -131,9 +124,6 @@ class RapidResponse(Scenario):
         Initialize the Rapid Response scenario.
 
         Args:
-            adversarial_chat: Chat target for multi-turn / adversarial
-                attacks (RolePlay, TAP). When provided, overrides the
-                default adversarial target baked into technique factories.
             objective_scorer: Scorer for evaluating attack success.
                 Defaults to a composite Azure-Content-Filter + refusal
                 scorer.
@@ -143,7 +133,6 @@ class RapidResponse(Scenario):
         self._objective_scorer: TrueFalseScorer = (
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
-        self._adversarial_chat = adversarial_chat
 
         super().__init__(
             version=self.VERSION,
@@ -161,7 +150,7 @@ class RapidResponse(Scenario):
         """
         return seed_group_name
 
-    def get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
+    def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
         """
         Register core techniques and return factories from the registry.
 
@@ -176,7 +165,7 @@ class RapidResponse(Scenario):
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
-        Build atomic attacks from selected techniques × harm datasets.
+        Build atomic attacks from selected techniques x harm datasets.
 
         Iterates over every (technique, harm-dataset) pair and creates
         an ``AtomicAttack`` for each.  Each has a unique compound
@@ -196,17 +185,14 @@ class RapidResponse(Scenario):
 
         selected_techniques = {s.value for s in self._scenario_strategies}
 
-        factories = self.get_attack_technique_factories()
+        factories = self._get_attack_technique_factories()
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
 
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
 
-        # Resolve adversarial_chat for AtomicAttack parameter building.
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-        from pyrit.scenario.core.scenario_techniques import get_default_adversarial_target
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
 
         atomic_attacks: list[AtomicAttack] = []
         for technique_name in selected_techniques:
@@ -219,17 +205,11 @@ class RapidResponse(Scenario):
             # Some techniques (e.g. TAP) manage their own scoring internally.
             scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
 
-            # Build adversarial config override if scenario has a custom adversarial target
-            adversarial_override = None
-            if self._adversarial_chat is not None:
-                adversarial_override = AttackAdversarialConfig(target=self._adversarial_chat)
-
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
                 # Each AtomicAttack gets a fresh, independent attack instance
                 attack_technique = factory.create(
                     objective_target=self._objective_target,
                     attack_scoring_config_override=scoring_for_technique,
-                    attack_adversarial_config_override=adversarial_override,
                 )
                 display_group = self._build_display_group(
                     technique_name=technique_name,
@@ -240,7 +220,7 @@ class RapidResponse(Scenario):
                         atomic_attack_name=f"{technique_name}_{dataset_name}",
                         attack_technique=attack_technique,
                         seed_groups=list(seed_groups),
-                        adversarial_chat=adversarial_chat,
+                        adversarial_chat=factory.adversarial_chat,
                         objective_scorer=self._objective_scorer,
                         memory_labels=self._memory_labels,
                         display_group=display_group,

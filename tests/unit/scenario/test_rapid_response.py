@@ -24,6 +24,7 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import (
     SCENARIO_TECHNIQUES,
+    build_scenario_techniques,
     get_default_adversarial_target,
     register_scenario_techniques,
 )
@@ -81,16 +82,15 @@ def mock_objective_scorer():
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
     """Reset the AttackTechniqueRegistry, TargetRegistry, and cached strategy class between tests."""
-    import pyrit.scenario.scenarios.airt.rapid_response as rr_module
     from pyrit.registry import TargetRegistry
 
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    rr_module.RapidResponseStrategy = None
+    RapidResponse._strategy_class = None
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    rr_module.RapidResponseStrategy = None
+    RapidResponse._strategy_class = None
 
 
 @pytest.fixture(autouse=True)
@@ -120,12 +120,8 @@ def mock_runtime_env():
 def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
     """Create two seed attack groups for a given category."""
     return [
-        SeedAttackGroup(
-            seeds=[SeedObjective(value=f"{name} objective 1"), SeedPrompt(value=f"{name} prompt 1")]
-        ),
-        SeedAttackGroup(
-            seeds=[SeedObjective(value=f"{name} objective 2"), SeedPrompt(value=f"{name} prompt 2")]
-        ),
+        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 1"), SeedPrompt(value=f"{name} prompt 1")]),
+        SeedAttackGroup(seeds=[SeedObjective(value=f"{name} objective 2"), SeedPrompt(value=f"{name} prompt 2")]),
     ]
 
 
@@ -249,25 +245,16 @@ class TestRapidResponseBasic:
         assert config.max_dataset_size == 4
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    def test_initialization_minimal(self, mock_get_scorer, mock_adversarial_target, mock_objective_scorer):
+    def test_initialization_minimal(self, mock_get_scorer, mock_objective_scorer):
         mock_get_scorer.return_value = mock_objective_scorer
-        scenario = RapidResponse(adversarial_chat=mock_adversarial_target)
-        assert scenario._adversarial_chat == mock_adversarial_target
+        scenario = RapidResponse()
         assert scenario.name == "RapidResponse"
 
-    def test_initialization_with_custom_scorer(self, mock_adversarial_target, mock_objective_scorer):
+    def test_initialization_with_custom_scorer(self, mock_objective_scorer):
         scenario = RapidResponse(
-            adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
         assert scenario._objective_scorer == mock_objective_scorer
-
-    @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    def test_no_adversarial_chat_stored_when_not_provided(self, mock_get_scorer, mock_objective_scorer):
-        """When adversarial_chat is not provided, it stays None (factories own the default)."""
-        mock_get_scorer.return_value = mock_objective_scorer
-        scenario = RapidResponse()
-        assert scenario._adversarial_chat is None
 
     @pytest.mark.asyncio
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
@@ -277,22 +264,18 @@ class TestRapidResponseBasic:
         _mock_groups,
         mock_get_scorer,
         mock_objective_target,
-        mock_adversarial_target,
         mock_objective_scorer,
     ):
         mock_get_scorer.return_value = mock_objective_scorer
-        scenario = RapidResponse(adversarial_chat=mock_adversarial_target)
+        scenario = RapidResponse()
         await scenario.initialize_async(objective_target=mock_objective_target)
         # DEFAULT expands to PromptSending + ManyShot → 2 composites
         assert len(scenario._scenario_strategies) == 2
 
     @pytest.mark.asyncio
-    async def test_initialize_raises_when_no_datasets(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
         scenario = RapidResponse(
-            adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
@@ -306,12 +289,11 @@ class TestRapidResponseBasic:
         _mock_groups,
         mock_get_scorer,
         mock_objective_target,
-        mock_adversarial_target,
         mock_objective_scorer,
     ):
         mock_get_scorer.return_value = mock_objective_scorer
         labels = {"test_run": "123"}
-        scenario = RapidResponse(adversarial_chat=mock_adversarial_target)
+        scenario = RapidResponse()
         await scenario.initialize_async(objective_target=mock_objective_target, memory_labels=labels)
         assert scenario._memory_labels == labels
 
@@ -334,7 +316,6 @@ class TestRapidResponseAttackGeneration:
         self,
         *,
         mock_objective_target,
-        mock_adversarial_target,
         mock_objective_scorer,
         strategies=None,
         seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
@@ -343,7 +324,6 @@ class TestRapidResponseAttackGeneration:
         groups = seed_groups or {"hate": _make_seed_groups("hate")}
         with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
             scenario = RapidResponse(
-                adversarial_chat=mock_adversarial_target,
                 objective_scorer=mock_objective_scorer,
             )
             init_kwargs = {"objective_target": mock_objective_target}
@@ -354,11 +334,10 @@ class TestRapidResponseAttackGeneration:
 
     @pytest.mark.asyncio
     async def test_default_strategy_produces_prompt_sending_and_many_shot(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
+        self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
@@ -366,11 +345,10 @@ class TestRapidResponseAttackGeneration:
 
     @pytest.mark.asyncio
     async def test_single_turn_strategy_produces_prompt_sending_and_role_play(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
+        self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class().SINGLE_TURN],
         )
@@ -378,12 +356,9 @@ class TestRapidResponseAttackGeneration:
         assert technique_classes == {PromptSendingAttack, RolePlayAttack}
 
     @pytest.mark.asyncio
-    async def test_multi_turn_strategy_produces_many_shot_and_tap(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_multi_turn_strategy_produces_many_shot_and_tap(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class().MULTI_TURN],
         )
@@ -391,12 +366,9 @@ class TestRapidResponseAttackGeneration:
         assert technique_classes == {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack}
 
     @pytest.mark.asyncio
-    async def test_all_strategy_produces_all_four_techniques(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_all_strategy_produces_all_four_techniques(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class().ALL],
         )
@@ -409,12 +381,9 @@ class TestRapidResponseAttackGeneration:
         }
 
     @pytest.mark.asyncio
-    async def test_single_technique_selection(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_single_technique_selection(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class()("prompt_sending")],
         )
@@ -423,9 +392,7 @@ class TestRapidResponseAttackGeneration:
             assert isinstance(a.attack_technique.attack, PromptSendingAttack)
 
     @pytest.mark.asyncio
-    async def test_attack_count_is_techniques_times_datasets(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_attack_count_is_techniques_times_datasets(self, mock_objective_target, mock_objective_scorer):
         """With 2 datasets and DEFAULT (2 techniques), expect 4 atomic attacks."""
         two_datasets = {
             "hate": _make_seed_groups("hate"),
@@ -433,7 +400,6 @@ class TestRapidResponseAttackGeneration:
         }
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             seed_groups=two_datasets,
         )
@@ -441,9 +407,7 @@ class TestRapidResponseAttackGeneration:
         assert len(attacks) == 4
 
     @pytest.mark.asyncio
-    async def test_atomic_attack_names_are_unique_compound_keys(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_atomic_attack_names_are_unique_compound_keys(self, mock_objective_target, mock_objective_scorer):
         """Each AtomicAttack has a unique compound atomic_attack_name for resume correctness."""
         two_datasets = {
             "hate": _make_seed_groups("hate"),
@@ -451,7 +415,6 @@ class TestRapidResponseAttackGeneration:
         }
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             seed_groups=two_datasets,
         )
@@ -463,9 +426,7 @@ class TestRapidResponseAttackGeneration:
             assert "_" in name
 
     @pytest.mark.asyncio
-    async def test_display_groups_by_harm_category(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_display_groups_by_harm_category(self, mock_objective_target, mock_objective_scorer):
         """display_group groups by dataset (harm category), not technique."""
         two_datasets = {
             "hate": _make_seed_groups("hate"),
@@ -473,7 +434,6 @@ class TestRapidResponseAttackGeneration:
         }
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             seed_groups=two_datasets,
         )
@@ -481,18 +441,15 @@ class TestRapidResponseAttackGeneration:
         assert display_groups == {"hate", "violence"}
 
     @pytest.mark.asyncio
-    async def test_raises_when_not_initialized(self, mock_adversarial_target, mock_objective_scorer):
+    async def test_raises_when_not_initialized(self, mock_objective_scorer):
         scenario = RapidResponse(
-            adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
         with pytest.raises(ValueError, match="Scenario not properly initialized"):
             await scenario._get_atomic_attacks_async()
 
     @pytest.mark.asyncio
-    async def test_unknown_technique_skipped_with_warning(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_unknown_technique_skipped_with_warning(self, mock_objective_target, mock_objective_scorer):
         """If a technique name has no factory, it's skipped (not an error)."""
         groups = {"hate": _make_seed_groups("hate")}
 
@@ -512,7 +469,6 @@ class TestRapidResponseAttackGeneration:
             ),
         ):
             scenario = RapidResponse(
-                adversarial_chat=mock_adversarial_target,
                 objective_scorer=mock_objective_scorer,
             )
             # Select ALL which includes role_play, many_shot, tap — none have factories
@@ -526,13 +482,10 @@ class TestRapidResponseAttackGeneration:
             assert isinstance(attacks[0].attack_technique.attack, PromptSendingAttack)
 
     @pytest.mark.asyncio
-    async def test_attacks_include_seed_groups(
-        self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
-    ):
+    async def test_attacks_include_seed_groups(self, mock_objective_target, mock_objective_scorer):
         """Each atomic attack carries the correct seed groups."""
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
-            mock_adversarial_target=mock_adversarial_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class()("prompt_sending")],
         )
@@ -547,17 +500,15 @@ class TestRapidResponseAttackGeneration:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestBuildDisplayGroup:
-    def test_rapid_response_groups_by_seed_group_name(self, mock_adversarial_target, mock_objective_scorer):
+    def test_rapid_response_groups_by_seed_group_name(self, mock_objective_scorer):
         scenario = RapidResponse(
-            adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
         result = scenario._build_display_group(technique_name="prompt_sending", seed_group_name="hate")
         assert result == "hate"
 
-    def test_rapid_response_ignores_technique_name(self, mock_adversarial_target, mock_objective_scorer):
+    def test_rapid_response_ignores_technique_name(self, mock_objective_scorer):
         scenario = RapidResponse(
-            adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
         r1 = scenario._build_display_group(technique_name="prompt_sending", seed_group_name="hate")
@@ -574,9 +525,9 @@ class TestBuildDisplayGroup:
 class TestCoreTechniques:
     """Tests for shared AttackTechniqueFactory builders in scenario_techniques.py."""
 
-    def test_instance_returns_all_four_factories(self, mock_adversarial_target, mock_objective_scorer):
-        scenario = RapidResponse(adversarial_chat=mock_adversarial_target, objective_scorer=mock_objective_scorer)
-        factories = scenario.get_attack_technique_factories()
+    def test_instance_returns_all_four_factories(self, mock_objective_scorer):
+        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+        factories = scenario._get_attack_technique_factories()
         assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
         assert factories["prompt_sending"].attack_class is PromptSendingAttack
         assert factories["role_play"].attack_class is RolePlayAttack
@@ -584,26 +535,24 @@ class TestCoreTechniques:
         assert factories["tap"].attack_class is TreeOfAttacksWithPruningAttack
 
     def test_factories_use_default_adversarial_when_none(self, mock_objective_scorer):
-        """When no adversarial_chat is passed, factories use get_default_adversarial_target."""
+        """Factories use get_default_adversarial_target for adversarial config."""
         scenario = RapidResponse(objective_scorer=mock_objective_scorer)
-        factories = scenario.get_attack_technique_factories()
+        factories = scenario._get_attack_technique_factories()
         # role_play and tap should have attack_adversarial_config baked in
         assert "attack_adversarial_config" in factories["role_play"]._attack_kwargs
         assert "attack_adversarial_config" in factories["tap"]._attack_kwargs
 
-    def test_factories_always_use_default_adversarial(self, mock_adversarial_target, mock_objective_scorer):
-        """Registry always bakes default adversarial target, not the scenario's custom one."""
-        scenario = RapidResponse(adversarial_chat=mock_adversarial_target, objective_scorer=mock_objective_scorer)
-        factories = scenario.get_attack_technique_factories()
+    def test_factories_always_use_default_adversarial(self, mock_objective_scorer):
+        """Registry always bakes default adversarial target from get_default_adversarial_target."""
+        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+        factories = scenario._get_attack_technique_factories()
 
-        # Factories have an adversarial config, but it's the default, not the custom mock
+        # Factories have an adversarial config from the default target
         rp_kwargs = factories["role_play"]._attack_kwargs
         assert "attack_adversarial_config" in rp_kwargs
-        assert rp_kwargs["attack_adversarial_config"].target is not mock_adversarial_target
 
         tap_kwargs = factories["tap"]._attack_kwargs
         assert "attack_adversarial_config" in tap_kwargs
-        assert tap_kwargs["attack_adversarial_config"].target is not mock_adversarial_target
 
 
 # ===========================================================================
@@ -625,12 +574,11 @@ class TestDeprecatedAliases:
 
         assert ContentHarmsStrategy is _strategy_class()
 
-    def test_content_harms_instance_name_is_rapid_response(self, mock_adversarial_target, mock_objective_scorer):
+    def test_content_harms_instance_name_is_rapid_response(self, mock_objective_scorer):
         """ContentHarms() creates a RapidResponse with name 'RapidResponse'."""
         from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
 
         scenario = ContentHarms(
-            adversarial_chat=mock_adversarial_target,
             objective_scorer=mock_objective_scorer,
         )
         assert scenario.name == "RapidResponse"
@@ -683,10 +631,10 @@ class TestRegistryIntegration:
         assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
         assert factories["prompt_sending"].attack_class is PromptSendingAttack
 
-    def test_scenario_base_class_reads_from_registry(self, mock_adversarial_target, mock_objective_scorer):
-        """Scenario.get_attack_technique_factories() triggers registration and reads from registry."""
-        scenario = RapidResponse(adversarial_chat=mock_adversarial_target, objective_scorer=mock_objective_scorer)
-        factories = scenario.get_attack_technique_factories()
+    def test_scenario_base_class_reads_from_registry(self, mock_objective_scorer):
+        """Scenario._get_attack_technique_factories() triggers registration and reads from registry."""
+        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+        factories = scenario._get_attack_technique_factories()
 
         # Should have all 4 core techniques from the registry
         assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
@@ -769,7 +717,7 @@ class TestRegistrationAndFactoryFromSpec:
             AttackTechniqueSpec(name="custom_attack", attack_class=PromptSendingAttack, tags=["custom"]),
         ]
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        registry.register_from_specs(custom_specs, adversarial_chat=mock_adversarial_target)
+        registry.register_from_specs(custom_specs)
         assert set(registry.get_names()) == {"custom_attack"}
 
     def test_get_default_adversarial_target_from_registry(self, mock_adversarial_target):
@@ -801,6 +749,86 @@ class TestRegistrationAndFactoryFromSpec:
 
 
 # ===========================================================================
+# build_scenario_techniques tests
+# ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestBuildScenarioTechniques:
+    """Tests for build_scenario_techniques() — the runtime spec transform."""
+
+    def test_returns_same_count_as_static_catalog(self):
+        specs = build_scenario_techniques()
+        assert len(specs) == len(SCENARIO_TECHNIQUES)
+
+    def test_adversarial_specs_get_target(self):
+        specs = build_scenario_techniques()
+        by_name = {s.name: s for s in specs}
+        assert by_name["role_play"].adversarial_chat is not None
+        assert by_name["tap"].adversarial_chat is not None
+
+    def test_non_adversarial_specs_unchanged(self):
+        specs = build_scenario_techniques()
+        by_name = {s.name: s for s in specs}
+        assert by_name["prompt_sending"].adversarial_chat is None
+        assert by_name["many_shot"].adversarial_chat is None
+
+    def test_extra_kwargs_preserved(self):
+        specs = build_scenario_techniques()
+        by_name = {s.name: s for s in specs}
+        assert "role_play_definition_path" in by_name["role_play"].extra_kwargs
+
+    def test_derived_from_static_catalog(self):
+        """build_scenario_techniques is a transform of SCENARIO_TECHNIQUES — names match."""
+        runtime_names = {s.name for s in build_scenario_techniques()}
+        static_names = {s.name for s in SCENARIO_TECHNIQUES}
+        assert runtime_names == static_names
+
+    def test_adversarial_chat_key_resolves_from_registry(self, mock_adversarial_target):
+        """When adversarial_chat_key is set, it resolves the target from TargetRegistry."""
+        from pyrit.registry import TargetRegistry
+
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_instance(mock_adversarial_target, name="custom_adversarial")
+
+        original = SCENARIO_TECHNIQUES.copy()
+        custom_spec = AttackTechniqueSpec(
+            name="tap",
+            attack_class=TreeOfAttacksWithPruningAttack,
+            tags=["core", "multi_turn"],
+            adversarial_chat_key="custom_adversarial",
+        )
+        try:
+            SCENARIO_TECHNIQUES.clear()
+            SCENARIO_TECHNIQUES.append(custom_spec)
+
+            specs = build_scenario_techniques()
+            assert specs[0].adversarial_chat is mock_adversarial_target
+        finally:
+            SCENARIO_TECHNIQUES.clear()
+            SCENARIO_TECHNIQUES.extend(original)
+
+    def test_adversarial_chat_key_missing_raises(self):
+        """When adversarial_chat_key references a missing registry entry, ValueError is raised."""
+        original = SCENARIO_TECHNIQUES.copy()
+        custom_spec = AttackTechniqueSpec(
+            name="tap",
+            attack_class=TreeOfAttacksWithPruningAttack,
+            tags=["core", "multi_turn"],
+            adversarial_chat_key="nonexistent_key",
+        )
+        try:
+            SCENARIO_TECHNIQUES.clear()
+            SCENARIO_TECHNIQUES.append(custom_spec)
+
+            with pytest.raises(ValueError, match="no such entry exists in TargetRegistry"):
+                build_scenario_techniques()
+        finally:
+            SCENARIO_TECHNIQUES.clear()
+            SCENARIO_TECHNIQUES.extend(original)
+
+
+# ===========================================================================
 # AttackTechniqueSpec tests
 # ===========================================================================
 
@@ -814,26 +842,42 @@ class TestAttackTechniqueSpec:
         assert spec.name == "test"
         assert spec.attack_class is PromptSendingAttack
         assert spec.tags == ["single_turn"]
-        assert spec.extra_kwargs_builder is None
+        assert spec.adversarial_chat is None
+        assert spec.extra_kwargs == {}
 
-    def test_extra_kwargs_builder(self, mock_adversarial_target):
-        def builder(_adv):
-            return {"role_play_definition_path": "/custom/path.yaml"}
+    def test_extra_kwargs(self, mock_adversarial_target):
         spec = AttackTechniqueSpec(
             name="complex",
             attack_class=RolePlayAttack,
             tags=["single_turn"],
-            extra_kwargs_builder=builder,
+            adversarial_chat=mock_adversarial_target,
+            extra_kwargs={"role_play_definition_path": "/custom/path.yaml"},
         )
-        factory = AttackTechniqueRegistry.build_factory_from_spec(spec, adversarial_chat=mock_adversarial_target)
+        factory = AttackTechniqueRegistry.build_factory_from_spec(spec)
         assert factory._attack_kwargs["role_play_definition_path"] == "/custom/path.yaml"
         assert "attack_adversarial_config" in factory._attack_kwargs
 
-    def test_build_factory_no_adversarial(self, mock_adversarial_target):
-        """Non-adversarial spec should not have attack_adversarial_config."""
-        spec = AttackTechniqueSpec(name="simple", attack_class=PromptSendingAttack, tags=[])
-        factory = AttackTechniqueRegistry.build_factory_from_spec(spec, adversarial_chat=mock_adversarial_target)
+    def test_build_factory_no_adversarial_injected_when_attack_does_not_accept_it(self, mock_adversarial_target):
+        """adversarial_chat on a non-adversarial spec is ignored (with a warning)."""
+        spec = AttackTechniqueSpec(
+            name="simple",
+            attack_class=PromptSendingAttack,
+            tags=[],
+            adversarial_chat=mock_adversarial_target,
+        )
+        factory = AttackTechniqueRegistry.build_factory_from_spec(spec)
         assert "attack_adversarial_config" not in (factory._attack_kwargs or {})
+
+    def test_extra_kwargs_reserved_key_raises(self):
+        """attack_adversarial_config must not appear in extra_kwargs."""
+        spec = AttackTechniqueSpec(
+            name="bad",
+            attack_class=RolePlayAttack,
+            tags=[],
+            extra_kwargs={"attack_adversarial_config": "oops"},
+        )
+        with pytest.raises(ValueError, match="attack_adversarial_config"):
+            AttackTechniqueRegistry.build_factory_from_spec(spec)
 
     def test_scenario_techniques_list_has_four_entries(self):
         assert len(SCENARIO_TECHNIQUES) == 4
@@ -846,18 +890,29 @@ class TestAttackTechniqueSpec:
         with pytest.raises(AttributeError):
             spec.name = "modified"
 
-    def test_adversarial_auto_detected_from_signature(self, mock_adversarial_target):
-        """Adversarial config is injected based on attack class signature, not a manual flag."""
-        # RolePlayAttack accepts attack_adversarial_config → should be injected
-        rp_spec = AttackTechniqueSpec(name="rp", attack_class=RolePlayAttack, tags=[])
-        rp_factory = AttackTechniqueRegistry.build_factory_from_spec(
-            rp_spec, adversarial_chat=mock_adversarial_target
+    def test_adversarial_injected_when_attack_accepts_it(self, mock_adversarial_target):
+        """Adversarial config is injected based on attack class signature."""
+        # RolePlayAttack accepts attack_adversarial_config → injected
+        rp_spec = AttackTechniqueSpec(
+            name="rp", attack_class=RolePlayAttack, tags=[], adversarial_chat=mock_adversarial_target
         )
+        rp_factory = AttackTechniqueRegistry.build_factory_from_spec(rp_spec)
         assert "attack_adversarial_config" in rp_factory._attack_kwargs
 
-        # PromptSendingAttack does NOT accept it → should not be injected
-        ps_spec = AttackTechniqueSpec(name="ps", attack_class=PromptSendingAttack, tags=[])
-        ps_factory = AttackTechniqueRegistry.build_factory_from_spec(
-            ps_spec, adversarial_chat=mock_adversarial_target
+        # PromptSendingAttack does NOT accept it → not injected even with adversarial_chat set
+        ps_spec = AttackTechniqueSpec(
+            name="ps", attack_class=PromptSendingAttack, tags=[], adversarial_chat=mock_adversarial_target
         )
+        ps_factory = AttackTechniqueRegistry.build_factory_from_spec(ps_spec)
         assert "attack_adversarial_config" not in (ps_factory._attack_kwargs or {})
+
+    def test_adversarial_chat_and_key_both_set_raises(self, mock_adversarial_target):
+        """Setting both adversarial_chat and adversarial_chat_key raises ValueError at construction."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            AttackTechniqueSpec(
+                name="tap",
+                attack_class=TreeOfAttacksWithPruningAttack,
+                tags=["core", "multi_turn"],
+                adversarial_chat=mock_adversarial_target,
+                adversarial_chat_key="some_key",
+            )

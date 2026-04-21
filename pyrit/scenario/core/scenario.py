@@ -174,7 +174,7 @@ class Scenario(ABC):
             DatasetConfiguration: The default dataset configuration.
         """
 
-    def get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+    def _get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
         """
         Return the attack technique factories for this scenario.
 

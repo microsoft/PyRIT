@@ -36,7 +36,8 @@ class Taggable(Protocol):
     """Any object that exposes a ``tags`` attribute."""
 
     @property
-    def tags(self) -> list[str]: ...
+    def tags(self) -> list[str]:  # noqa: D102
+        ...
 
 
 _T = TypeVar("_T", bound=Taggable)

@@ -21,8 +21,6 @@ from pyrit.registry.object_registries.base_instance_registry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from pyrit.executor.attack.core.attack_config import (
         AttackAdversarialConfig,
         AttackConverterConfig,
@@ -44,16 +42,31 @@ class AttackTechniqueSpec:
     Each spec describes one registrable technique. The registry converts
     specs into ``AttackTechniqueFactory`` instances and registers them.
 
+    The ``adversarial_chat`` field is part of technique identity: two specs
+    with the same name but different adversarial targets are different
+    techniques with different expected success rates. For the standard catalog,
+    build runtime specs with a resolved target via
+    ``build_scenario_techniques(adversarial_chat)``.
+
     Whether a technique receives an ``AttackAdversarialConfig`` is determined
     automatically: the registry inspects the attack class constructor and
-    injects one when ``attack_adversarial_config`` is an accepted parameter.
+    injects one when ``attack_adversarial_config`` is an accepted parameter
+    and ``adversarial_chat`` is set.
 
     Args:
         name: Registry name (must match the strategy enum value).
         attack_class: The ``AttackStrategy`` subclass.
         tags: Classification tags (e.g. ``["single_turn"]``).
-        extra_kwargs_builder: Optional callback that returns additional kwargs
-            for the factory. Receives the resolved adversarial target.
+        adversarial_chat: Live adversarial chat target for multi-turn attacks.
+            Part of technique identity. ``None`` means no adversarial target.
+        adversarial_chat_key: Optional ``TargetRegistry`` key to resolve as the
+            adversarial chat target at registration time. If specified,
+            ``build_scenario_techniques`` will look it up and raise
+            ``ValueError`` if the key is not found. Mutually exclusive with
+            ``adversarial_chat`` — a spec must not set both.
+        extra_kwargs: Static extra keyword arguments forwarded to the attack
+            constructor. Must not contain ``attack_adversarial_config`` (use
+            ``adversarial_chat`` instead).
         accepts_scorer_override: Whether the technique accepts a scenario-level
             scorer override. Set to False for techniques (e.g. TAP) that manage
             their own scoring internally. Defaults to True.
@@ -62,8 +75,18 @@ class AttackTechniqueSpec:
     name: str
     attack_class: type
     tags: list[str] = field(default_factory=list)
-    extra_kwargs_builder: Callable[[PromptChatTarget], dict[str, Any]] | None = None
+    adversarial_chat: PromptChatTarget | None = field(default=None)
+    adversarial_chat_key: str | None = None
+    extra_kwargs: dict[str, Any] = field(default_factory=dict)
     accepts_scorer_override: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate mutually exclusive fields."""
+        if self.adversarial_chat and self.adversarial_chat_key:
+            raise ValueError(
+                f"Technique spec '{self.name}' sets both adversarial_chat and "
+                f"adversarial_chat_key — these are mutually exclusive."
+            )
 
 
 class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
@@ -81,6 +104,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         name: str,
         factory: AttackTechniqueFactory,
         tags: dict[str, str] | list[str] | None = None,
+        accepts_scorer_override: bool = True,
     ) -> None:
         """
         Register an attack technique factory.
@@ -90,8 +114,15 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             factory: The factory that produces attack techniques.
             tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
                 or a ``list[str]`` (each string becomes a key with value ``""``).
+            accepts_scorer_override: Whether the technique accepts a scenario-level
+                scorer override. Defaults to True.
         """
-        self.register(factory, name=name, tags=tags)
+        self.register(
+            factory,
+            name=name,
+            tags=tags,
+            metadata={"accepts_scorer_override": accepts_scorer_override},
+        )
         logger.debug(f"Registered attack technique factory: {name} ({factory.attack_class.__name__})")
 
     def get_factories(self) -> dict[str, AttackTechniqueFactory]:
@@ -120,7 +151,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             KeyError: If no technique is registered with the given name.
         """
         entry = self._registry_items[name]
-        return entry.tags.get("accepts_scorer_override", "true") == "true"
+        return bool(entry.metadata.get("accepts_scorer_override", True))
 
     def create_technique(
         self,
@@ -204,7 +235,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
         # Technique members from specs — assign aggregate tags based on TagQuery matching
         for spec in specs:
-            spec_tags = set(spec.tags) - {"accepts_scorer_override"}
+            spec_tags = set(spec.tags)
             matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(spec_tags)}
             members[spec.name] = (spec.name, spec_tags | matched_agg_tags)
 
@@ -221,35 +252,48 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         return strategy_cls  # type: ignore[return-value]
 
     @staticmethod
-    def build_factory_from_spec(
-        spec: AttackTechniqueSpec,
-        *,
-        adversarial_chat: PromptChatTarget | None = None,
-    ) -> AttackTechniqueFactory:
+    def build_factory_from_spec(spec: AttackTechniqueSpec) -> AttackTechniqueFactory:
         """
-        Build an ``AttackTechniqueFactory`` from a ``AttackTechniqueSpec``.
+        Build an ``AttackTechniqueFactory`` from an ``AttackTechniqueSpec``.
 
-        Automatically injects ``AttackAdversarialConfig`` when the attack
-        class accepts ``attack_adversarial_config`` as a constructor parameter.
+        Injects ``AttackAdversarialConfig`` when both ``spec.adversarial_chat``
+        is set and the attack class accepts ``attack_adversarial_config`` as a
+        constructor parameter.  If ``adversarial_chat`` is set but the class
+        does not accept it, a warning is logged and the field is ignored.
 
         Args:
-            spec: The technique specification.
-            adversarial_chat: Shared adversarial chat target for techniques
-                that require one. If None, no adversarial config is injected.
+            spec: The technique specification. Must not contain
+                ``attack_adversarial_config`` in ``extra_kwargs``; use
+                ``spec.adversarial_chat`` instead.
 
         Returns:
             AttackTechniqueFactory: A factory ready for registration.
+
+        Raises:
+            ValueError: If ``extra_kwargs`` contains the reserved key
+                ``attack_adversarial_config``.
         """
         from pyrit.executor.attack import AttackAdversarialConfig
         from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
-        kwargs: dict[str, Any] = {}
+        if "attack_adversarial_config" in spec.extra_kwargs:
+            raise ValueError(
+                f"Spec '{spec.name}': 'attack_adversarial_config' must not appear in extra_kwargs. "
+                "Set spec.adversarial_chat instead."
+            )
 
-        if adversarial_chat is not None and AttackTechniqueRegistry._accepts_adversarial(spec.attack_class):
-            kwargs["attack_adversarial_config"] = AttackAdversarialConfig(target=adversarial_chat)
+        kwargs: dict[str, Any] = dict(spec.extra_kwargs)
 
-        if spec.extra_kwargs_builder:
-            kwargs.update(spec.extra_kwargs_builder(adversarial_chat))
+        if spec.adversarial_chat is not None:
+            if AttackTechniqueRegistry._accepts_adversarial(spec.attack_class):
+                kwargs["attack_adversarial_config"] = AttackAdversarialConfig(target=spec.adversarial_chat)
+            else:
+                logger.warning(
+                    "Spec '%s': adversarial_chat is set but %s does not accept "
+                    "'attack_adversarial_config'. The adversarial_chat will be ignored.",
+                    spec.name,
+                    spec.attack_class.__name__,
+                )
 
         return AttackTechniqueFactory(
             attack_class=spec.attack_class,
@@ -270,8 +314,6 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
     def register_from_specs(
         self,
         specs: list[AttackTechniqueSpec],
-        *,
-        adversarial_chat: PromptChatTarget | None = None,
     ) -> None:
         """
         Build factories from specs and register them.
@@ -279,15 +321,19 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Per-name idempotent: existing entries are not overwritten.
 
         Args:
-            specs: Technique specifications to register.
-            adversarial_chat: Shared adversarial chat target for techniques
-                that require one.
+            specs: Technique specifications to register. Each spec is
+                self-contained: the adversarial chat target (if any) is
+                declared on the spec itself via ``spec.adversarial_chat``.
         """
         for spec in specs:
             if spec.name not in self:
-                factory = self.build_factory_from_spec(spec, adversarial_chat=adversarial_chat)
+                factory = self.build_factory_from_spec(spec)
                 tags: dict[str, str] = dict.fromkeys(spec.tags, "")
-                tags["accepts_scorer_override"] = str(spec.accepts_scorer_override).lower()
-                self.register_technique(name=spec.name, factory=factory, tags=tags)
+                self.register_technique(
+                    name=spec.name,
+                    factory=factory,
+                    tags=tags,
+                    accepts_scorer_override=spec.accepts_scorer_override,
+                )
 
         logger.debug("Technique registration complete (%d total in registry)", len(self))

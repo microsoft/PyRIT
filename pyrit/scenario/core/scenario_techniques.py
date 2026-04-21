@@ -4,15 +4,22 @@
 """
 Scenario attack technique definitions and registration.
 
-Provides ``SCENARIO_TECHNIQUES`` (the standard catalog) and
-``register_scenario_techniques`` (registers specs into the
-``AttackTechniqueRegistry`` singleton).
+Provides ``SCENARIO_TECHNIQUES`` (the static catalog used for strategy enum
+construction) and ``register_scenario_techniques`` (registers specs with
+resolved live targets into the ``AttackTechniqueRegistry`` singleton).
 
-To add a new technique, append a ``AttackTechniqueSpec`` to ``SCENARIO_TECHNIQUES``.
+To add a new technique, append an ``AttackTechniqueSpec`` to
+``SCENARIO_TECHNIQUES``. If the technique requires an adversarial chat
+target, it will be automatically resolved in ``build_scenario_techniques``
+by inspecting the attack class constructor signature. To use a specific
+adversarial chat target from ``TargetRegistry``, set
+``adversarial_chat_key`` on the spec.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
 import logging
 
 from pyrit.executor.attack import (
@@ -30,8 +37,11 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Scenario technique catalog
+# Static technique catalog
 # ---------------------------------------------------------------------------
+# Used for strategy enum construction (import-time safe — no live targets).
+# adversarial_chat is always None here; resolved at registration time by
+# build_scenario_techniques().
 
 SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
@@ -43,9 +53,7 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         name="role_play",
         attack_class=RolePlayAttack,
         tags=["core", "single_turn"],
-        extra_kwargs_builder=lambda _adv: {
-            "role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value,
-        },
+        extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
     ),
     AttackTechniqueSpec(
         name="many_shot",
@@ -86,14 +94,70 @@ def get_default_adversarial_target() -> PromptChatTarget:
     registry = TargetRegistry.get_registry_singleton()
     if "adversarial_chat" in registry:
         target = registry.get("adversarial_chat")
-        if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
-            raise ValueError(
-                f"Registry entry 'adversarial_chat' must support multi-turn conversations, "
-                f"but {type(target).__name__} does not."
-            )
-        return target  # type: ignore[return-value]
+        if target:
+            if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
+                raise ValueError(
+                    f"Registry entry 'adversarial_chat' must support multi-turn conversations, "
+                    f"but {type(target).__name__} does not."
+                )
+            return target  # type: ignore[return-value]
 
     return OpenAIChatTarget(temperature=1.2)
+
+
+# ---------------------------------------------------------------------------
+# Runtime spec builder
+# ---------------------------------------------------------------------------
+
+
+def build_scenario_techniques() -> list[AttackTechniqueSpec]:
+    """
+    Return a copy of ``SCENARIO_TECHNIQUES`` with ``adversarial_chat`` baked
+    into each spec whose attack class accepts ``attack_adversarial_config``.
+
+    This is a mechanical transform of the static catalog.
+
+    Resolution order for each spec:
+
+    1. If ``adversarial_chat_key`` is set, look it up in ``TargetRegistry``.
+       Raises ``ValueError`` if the key is not found.
+    2. Otherwise, if the attack class accepts ``attack_adversarial_config``,
+       fill in the default from ``get_default_adversarial_target()``.
+    3. Otherwise, pass through unchanged.
+
+    Returns:
+        list[AttackTechniqueSpec]: Specs ready for registration.
+
+    Raises:
+        ValueError: If a spec declares ``adversarial_chat_key`` but the key
+            is not found in ``TargetRegistry``.
+    """
+    from pyrit.registry import TargetRegistry
+
+    default_adversarial: PromptChatTarget | None = None
+
+    result = []
+    for spec in SCENARIO_TECHNIQUES:
+        if spec.adversarial_chat_key:
+            registry = TargetRegistry.get_registry_singleton()
+            resolved = registry.get(spec.adversarial_chat_key)
+            if resolved is None:
+                raise ValueError(
+                    f"Technique spec '{spec.name}' references adversarial_chat_key "
+                    f"'{spec.adversarial_chat_key}', but no such entry exists in TargetRegistry."
+                )
+            result.append(
+                dataclasses.replace(
+                    spec, adversarial_chat=resolved, adversarial_chat_key=None  # type: ignore[arg-type]
+                )
+            )
+        elif "attack_adversarial_config" in inspect.signature(spec.attack_class.__init__).parameters:  # type: ignore[misc]
+            if default_adversarial is None:
+                default_adversarial = get_default_adversarial_target()
+            result.append(dataclasses.replace(spec, adversarial_chat=default_adversarial))
+        else:
+            result.append(spec)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +171,12 @@ def register_scenario_techniques() -> None:
 
     Per-name idempotent: existing entries are not overwritten.
 
-    The registry always stores the **default** adversarial target. Scenarios
-    that need a custom adversarial target should pass it at ``factory.create()``
-    time via ``attack_adversarial_config_override``.
+    Resolves the default adversarial target, bakes it into the specs that
+    require it, then registers the resulting factories.
     """
     from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
-    adversarial_chat = get_default_adversarial_target()
+    specs = build_scenario_techniques()
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
-    registry.register_from_specs(SCENARIO_TECHNIQUES, adversarial_chat=adversarial_chat)
+    registry.register_from_specs(specs)
