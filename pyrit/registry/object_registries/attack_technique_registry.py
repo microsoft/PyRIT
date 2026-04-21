@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
 )
+from pyrit.registry.tag_query import TagQuery
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import (
@@ -162,7 +163,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         *,
         class_name: str,
         specs: list[AttackTechniqueSpec],
-        aggregate_tags: dict[str, set[str]],
+        aggregate_tags: dict[str, TagQuery],
     ) -> type:
         """
         Build a ``ScenarioStrategy`` enum subclass dynamically from technique specs.
@@ -172,14 +173,17 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         - Additional aggregate members from ``aggregate_tags`` keys.
         - One technique member per spec, with tags from the spec.
 
+        Each aggregate maps to a :class:`TagQuery` that determines which
+        technique specs belong to it.
+
         This reads from the **spec list** (pure data), not from the mutable
         registry. This ensures deterministic output regardless of registry state.
 
         Args:
             class_name: Name for the generated enum class.
             specs: Technique specifications to include as enum members.
-            aggregate_tags: Maps aggregate member names to the set of tags they
-                expand to. For example, ``{"default": {"default"}, "single_turn": {"single_turn"}}``.
+            aggregate_tags: Maps aggregate member names to a :class:`TagQuery`
+                that selects which techniques belong to the aggregate.
                 An ``ALL`` aggregate (expanding to all techniques) is always added.
 
         Returns:
@@ -193,13 +197,16 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
         # Aggregate members first (ALL is always present)
         members["ALL"] = ("all", {"all"})
-        for agg_name, agg_tag_set in aggregate_tags.items():
+        for agg_name in aggregate_tags:
             members[agg_name.upper()] = (agg_name, {agg_name})
 
-        # Technique members from specs
+        # Technique members from specs — assign aggregate tags based on TagQuery matching
         for spec in specs:
-            tag_set = {t for t in spec.tags if t not in ("accepts_scorer_override",)}
-            members[spec.name] = (spec.name, tag_set)
+            spec_tags = set(spec.tags) - {"accepts_scorer_override"}
+            matched_agg_tags = {
+                agg_name for agg_name, query in aggregate_tags.items() if query.matches(spec_tags)
+            }
+            members[spec.name] = (spec.name, spec_tags | matched_agg_tags)
 
         # Build the enum class dynamically
         strategy_cls = ScenarioStrategy(class_name, members)

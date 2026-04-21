@@ -27,6 +27,7 @@ from pyrit.registry.object_registries import (
     TargetRegistry,
     AttackTechniqueSpec,
 )
+from pyrit.registry.tag_query import TagQuery
 
 __all__ = [
     "AttackTechniqueRegistry",
@@ -47,4 +48,5 @@ __all__ = [
     "ScorerRegistry",
     "TargetRegistry",
     "AttackTechniqueSpec",
+    "TagQuery",
 ]

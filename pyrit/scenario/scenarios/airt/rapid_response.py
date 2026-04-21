@@ -37,17 +37,18 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     Reads the spec list (pure data) — no registry interaction or target resolution.
     """
     from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry.tag_query import TagQuery
     from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
-    core_specs = [s for s in SCENARIO_TECHNIQUES if "core" in s.tags]
+    core_specs = TagQuery(include_all=frozenset({"core"})).filter(SCENARIO_TECHNIQUES)
 
     return AttackTechniqueRegistry.build_strategy_class_from_specs(
         class_name="RapidResponseStrategy",
         specs=core_specs,
         aggregate_tags={
-            "default": {"default"},
-            "single_turn": {"single_turn"},
-            "multi_turn": {"multi_turn"},
+            "default": TagQuery(include_any=frozenset({"default"})),
+            "single_turn": TagQuery(include_any=frozenset({"single_turn"})),
+            "multi_turn": TagQuery(include_any=frozenset({"multi_turn"})),
         },
     )
 
