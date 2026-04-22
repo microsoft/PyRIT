@@ -80,7 +80,7 @@ jobs:
   # Main job runs only if pre-commit succeeded
   main-job:
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
