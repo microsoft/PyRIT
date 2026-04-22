@@ -70,10 +70,10 @@ class MemoryInterface(abc.ABC):
     such as files, databases, or cloud storage services.
     """
 
-    memory_embedding: MemoryEmbedding = None
-    results_storage_io: StorageIO = None
-    results_path: str = None
-    engine: Engine = None
+    memory_embedding: MemoryEmbedding | None = None
+    results_storage_io: StorageIO | None = None
+    results_path: str | None = None
+    engine: Engine | None = None
 
     @staticmethod
     def _uid() -> str:
@@ -1100,7 +1100,7 @@ class MemoryInterface(abc.ABC):
             audio_bytes = await serializer.read_data()
             await serializer.save_data(data=audio_bytes)
             serialized_prompt_value = str(serializer.value)
-        return serialized_prompt_value
+        return serialized_prompt_value or ""
 
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: Optional[str] = None) -> None:
         """
@@ -1137,8 +1137,9 @@ class MemoryInterface(abc.ABC):
 
             await prompt.set_sha256_value_async()
 
-            existing = self.get_seeds(value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name)
-            if not existing:
+            if prompt.value_sha256 and not self.get_seeds(
+                value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
+            ):
                 entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
@@ -1875,8 +1876,15 @@ class MemoryInterface(abc.ABC):
             raise
 
     def print_schema(self) -> None:
-        """Print the schema of all tables in the database."""
+        """
+        Print the schema of all tables in the database.
+
+        Raises:
+            RuntimeError: If the engine is not initialized.
+        """
         metadata = MetaData()
+        if self.engine is None:
+            raise RuntimeError("Engine is not initialized")
         metadata.reflect(bind=self.engine)
 
         for table_name in metadata.tables:

@@ -167,11 +167,14 @@ asyncio_mode = "auto"
 [tool.mypy]
 plugins = []
 ignore_missing_imports = true
-strict = false
+strict = true
 follow_imports = "silent"
-strict_optional = false
 disable_error_code = ["empty-body"]
 exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
+
+[[tool.mypy.overrides]]
+module = "pyrit.prompt_target.hugging_face.*"
+disallow_untyped_calls = false
 
 [tool.uv]
 constraint-dependencies = [

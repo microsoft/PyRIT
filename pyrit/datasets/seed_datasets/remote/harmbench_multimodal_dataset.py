@@ -221,14 +221,24 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         Returns:
             Local path to the saved image.
+
+        Raises:
+            RuntimeError: If the serializer memory is not properly configured.
         """
         filename = f"harmbench_{behavior_id}.png"
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
         # Return existing path if image already exists for this BehaviorID
-        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
+        results_path = serializer._memory.results_path
+        results_storage_io = serializer._memory.results_storage_io
+        if not results_path or results_storage_io is None:
+            raise RuntimeError(
+                "[HarmBench-Multimodal] Serializer memory is not properly configured: "
+                "results_path and results_storage_io must be set."
+            )
+        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:
-            if await serializer._memory.results_storage_io.path_exists(serializer.value):
+            if await results_storage_io.path_exists(serializer.value):
                 return serializer.value
         except Exception as e:
             logger.warning(f"[HarmBench-Multimodal] Failed to check if image for {behavior_id} exists in cache: {e}")

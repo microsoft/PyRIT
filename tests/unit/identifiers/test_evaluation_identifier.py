@@ -319,3 +319,12 @@ class TestEvaluationIdentifier:
         # Second retrieve
         r2 = ComponentIdentifier.from_dict(d2)
         assert _StubEvaluationIdentifier(r2).eval_hash == correct_eval_hash
+
+
+def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
+    identifier = ComponentIdentifier.__new__(ComponentIdentifier)
+    object.__setattr__(identifier, "hash", None)
+    object.__setattr__(identifier, "class_name", "Test")
+    object.__setattr__(identifier, "class_module", "test.module")
+    with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
+        compute_eval_hash(identifier, child_eval_rules={})

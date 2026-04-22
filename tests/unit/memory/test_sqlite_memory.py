@@ -699,3 +699,21 @@ def test_create_engine_uses_static_pool_for_in_memory(sqlite_instance):
     from sqlalchemy.pool import StaticPool
 
     assert isinstance(sqlite_instance.engine.pool, StaticPool)
+
+
+def test_create_tables_raises_when_engine_none():
+    from pyrit.memory import SQLiteMemory
+
+    obj = SQLiteMemory.__new__(SQLiteMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj._create_tables_if_not_exist()
+
+
+def test_reset_database_raises_when_engine_none():
+    from pyrit.memory import SQLiteMemory
+
+    obj = SQLiteMemory.__new__(SQLiteMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj.reset_database()

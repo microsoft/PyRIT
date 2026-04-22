@@ -156,7 +156,7 @@ class Cyber(Scenario):
         presence_of_malware = SelfAskTrueFalseScorer(
             chat_target=OpenAIChatTarget(
                 endpoint=endpoint,
-                api_key=get_azure_openai_auth(endpoint),
+                api_key=get_azure_openai_auth(endpoint or ""),
                 model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             ),
             true_false_question_path=SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml",
@@ -166,7 +166,7 @@ class Cyber(Scenario):
             scorer=SelfAskRefusalScorer(
                 chat_target=OpenAIChatTarget(
                     endpoint=endpoint,
-                    api_key=get_azure_openai_auth(endpoint),
+                    api_key=get_azure_openai_auth(endpoint or ""),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 )
             )
@@ -186,7 +186,7 @@ class Cyber(Scenario):
         endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )

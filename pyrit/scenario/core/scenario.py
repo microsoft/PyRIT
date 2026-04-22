@@ -640,7 +640,8 @@ class Scenario(ABC):
 
         # Type narrowing: _scenario_result_id is guaranteed to be non-None at this point
         # (verified in run_async before calling this method)
-        assert self._scenario_result_id is not None
+        if self._scenario_result_id is None:
+            raise ValueError("self._scenario_result_id is not initialized")
         scenario_result_id: str = self._scenario_result_id
 
         # Increment number_tries at the start of each run

@@ -32,7 +32,19 @@ class PromptNormalizer:
     Handles normalization and processing of prompts before they are sent to targets.
     """
 
-    _memory: MemoryInterface = None
+    _memory: MemoryInterface | None = None
+
+    @property
+    def memory(self) -> MemoryInterface:
+        """
+        Get the memory instance.
+
+        Raises:
+            RuntimeError: If memory is not initialized.
+        """
+        if self._memory is None:
+            raise RuntimeError("Memory is not initialized")
+        return self._memory
 
     def __init__(self, start_token: str = "⟪", end_token: str = "⟫") -> None:
         """
@@ -74,6 +86,7 @@ class PromptNormalizer:
         Raises:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
+            EmptyResponseException: If the target returns no valid responses.
 
         Returns:
             Message: The response received from the target.
@@ -105,10 +118,10 @@ class PromptNormalizer:
 
         try:
             responses = await target.send_prompt_async(message=request)
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
         except EmptyResponseException:
             # Empty responses are retried, but we don't want them to stop execution
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
 
             responses = [
                 construct_response_from_request(
@@ -121,7 +134,7 @@ class PromptNormalizer:
 
         except Exception as ex:
             # Ensure request to memory before processing exception
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
 
             error_response = construct_response_from_request(
                 request=request.message_pieces[0],
@@ -131,13 +144,19 @@ class PromptNormalizer:
             )
 
             await self._calc_hash(request=error_response)
-            self._memory.add_message_to_memory(request=error_response)
+            self.memory.add_message_to_memory(request=error_response)
             cid = request.message_pieces[0].conversation_id if request and request.message_pieces else None
             raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            return None
+            # An empty list is valid for write-only targets (e.g., TextTarget)
+            # that don't produce responses. Return the request as-is.
+            if responses is not None and len(responses) == 0:
+                await self._calc_hash(request=request)
+                self.memory.add_message_to_memory(request=request)
+                return request
+            raise EmptyResponseException(message="Target returned no valid responses")
 
         # Process all response messages (targets return list[Message])
         # Only apply response converters to the last message (final response)
@@ -147,7 +166,7 @@ class PromptNormalizer:
             if is_last:
                 await self.convert_values(converter_configurations=response_converter_configurations, message=resp)
             await self._calc_hash(request=resp)
-            self._memory.add_message_to_memory(request=resp)
+            self.memory.add_message_to_memory(request=resp)
 
         # Return the last response for backward compatibility
         return responses[-1]
@@ -312,6 +331,6 @@ class PromptNormalizer:
                 # and if not, this won't hurt anything
                 piece.id = uuid4()
 
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
 
         return prepended_conversation

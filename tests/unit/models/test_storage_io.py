@@ -301,3 +301,98 @@ def test_resolve_blob_name_with_path_object(azure_blob_storage_io):
 
     result = azure_blob_storage_io._resolve_blob_name(PurePosixPath("dir1/dir2/file.txt"))
     assert result == "dir1/dir2/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_upload_blob_raises_when_client_async_none():
+    obj = AzureBlobStorageIO.__new__(AzureBlobStorageIO)
+    obj._client_async = None
+    with pytest.raises(RuntimeError, match="Azure container client not initialized"):
+        await obj._upload_blob_async(file_name="test.txt", data=b"data", content_type="text/plain")
+
+
+@pytest.mark.asyncio
+async def test_read_file_lazy_initializes_client(azure_blob_storage_io):
+    mock_container_client = AsyncMock()
+    mock_blob_client = AsyncMock()
+    mock_blob_stream = AsyncMock()
+
+    mock_container_client.get_blob_client = Mock(return_value=mock_blob_client)
+    mock_blob_client.download_blob = AsyncMock(return_value=mock_blob_stream)
+    mock_blob_stream.readall = AsyncMock(return_value=b"content")
+    mock_container_client.close = AsyncMock()
+
+    azure_blob_storage_io._client_async = None
+    with patch.object(
+        azure_blob_storage_io,
+        "_create_container_client_async",
+        new_callable=AsyncMock,
+        return_value=mock_container_client,
+    ) as mock_create:
+        result = await azure_blob_storage_io.read_file("dir1/file.txt")
+
+    mock_create.assert_called_once()
+    assert result == b"content"
+
+
+@pytest.mark.asyncio
+async def test_write_file_lazy_initializes_client(azure_blob_storage_io):
+    mock_container_client = AsyncMock()
+    mock_container_client.close = AsyncMock()
+
+    azure_blob_storage_io._client_async = None
+    with patch.object(
+        azure_blob_storage_io,
+        "_create_container_client_async",
+        new_callable=AsyncMock,
+        return_value=mock_container_client,
+    ) as mock_create:
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+        await azure_blob_storage_io.write_file("dir1/file.txt", b"data")
+
+    mock_create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_path_exists_lazy_initializes_client(azure_blob_storage_io):
+    mock_container_client = AsyncMock()
+    mock_blob_client = AsyncMock()
+
+    mock_container_client.get_blob_client = Mock(return_value=mock_blob_client)
+    mock_blob_client.get_blob_properties = AsyncMock()
+    mock_container_client.close = AsyncMock()
+
+    azure_blob_storage_io._client_async = None
+    with patch.object(
+        azure_blob_storage_io,
+        "_create_container_client_async",
+        new_callable=AsyncMock,
+        return_value=mock_container_client,
+    ) as mock_create:
+        result = await azure_blob_storage_io.path_exists("dir1/file.txt")
+
+    mock_create.assert_called_once()
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_is_file_lazy_initializes_client(azure_blob_storage_io):
+    mock_container_client = AsyncMock()
+    mock_blob_client = AsyncMock()
+    mock_blob_properties = Mock(size=512)
+
+    mock_container_client.get_blob_client = Mock(return_value=mock_blob_client)
+    mock_blob_client.get_blob_properties = AsyncMock(return_value=mock_blob_properties)
+    mock_container_client.close = AsyncMock()
+
+    azure_blob_storage_io._client_async = None
+    with patch.object(
+        azure_blob_storage_io,
+        "_create_container_client_async",
+        new_callable=AsyncMock,
+        return_value=mock_container_client,
+    ) as mock_create:
+        result = await azure_blob_storage_io.is_file("dir1/file.txt")
+
+    mock_create.assert_called_once()
+    assert result is True

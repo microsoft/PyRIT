@@ -568,11 +568,11 @@ def _render_line_with_segments(
     result: list[str] = []
     current_role: Optional[ColorRole] = None
     for pos, ch in enumerate(line):
-        role = char_roles[pos]
-        if role != current_role:
-            color = _get_color(role, theme) if role else reset
+        char_role = char_roles[pos]
+        if char_role != current_role:
+            color = _get_color(char_role, theme) if char_role else reset
             result.append(color)
-            current_role = role
+            current_role = char_role
         result.append(ch)
     result.append(reset)
     return "".join(result)
