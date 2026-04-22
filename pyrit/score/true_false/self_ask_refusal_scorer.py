@@ -64,6 +64,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
+    target_requirements = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
@@ -102,7 +103,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
 
         super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
-        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
+        self._validate_target_requirements(target=chat_target)
         self._prompt_target = chat_target
 
         # Resolve the system prompt path

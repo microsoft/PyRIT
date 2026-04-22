@@ -12,6 +12,7 @@ from abc import abstractmethod
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Optional,
     Union,
     cast,
@@ -35,6 +36,7 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,6 +61,11 @@ class Scorer(Identifiable, abc.ABC):
     # Specifies glob patterns for datasets and a result file name.
     evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
 
+    #: Capability requirements placed on the scorer's chat target (if any).
+    #: Subclasses that use a chat target should override this and call
+    #: ``self._validate_target_requirements(target=chat_target)`` in ``__init__``.
+    target_requirements: ClassVar[TargetRequirements] = TargetRequirements()
+
     _identifier: Optional[ComponentIdentifier] = None
 
     def __init__(self, *, validator: ScorerPromptValidator):
@@ -69,6 +76,20 @@ class Scorer(Identifiable, abc.ABC):
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
         """
         self._validator = validator
+
+    def _validate_target_requirements(self, *, target: PromptTarget) -> None:
+        """
+        Validate ``target`` against this scorer's declared
+        :attr:`target_requirements`.
+
+        Args:
+            target (PromptTarget): The target to validate.
+
+        Raises:
+            ValueError: If any required capability cannot be satisfied.
+        """
+        for capability in type(self).target_requirements.required:
+            target.configuration.ensure_can_handle(capability=capability)
 
     def get_identifier(self) -> ComponentIdentifier:
         """

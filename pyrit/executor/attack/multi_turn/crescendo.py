@@ -45,7 +45,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     Scorer,
@@ -158,9 +157,11 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Crescendo fundamentally relies on multi-turn conversation history to
         # gradually escalate prompts; history-squash adaptation would defeat it.
-        TargetRequirements(
-            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}),
-        ).validate(configuration=objective_target.configuration)
+        if not objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
+            raise ValueError(
+                "CrescendoAttack requires a target that natively supports "
+                f"'{CapabilityName.MULTI_TURN.value}'."
+            )
 
         self._memory = CentralMemory.get_memory_instance()
 

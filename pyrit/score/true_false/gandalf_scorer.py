@@ -30,6 +30,7 @@ class GandalfScorer(TrueFalseScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    target_requirements = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
@@ -51,7 +52,7 @@ class GandalfScorer(TrueFalseScorer):
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
 
-        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
+        self._validate_target_requirements(target=chat_target)
         self._prompt_target = chat_target
         self._defender = level.value
         self._endpoint = "https://gandalf-api.lakera.ai/api/guess-password"

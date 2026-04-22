@@ -8,7 +8,7 @@ import logging  # noqa: TC003
 import time
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -27,6 +27,7 @@ from pyrit.models import (
     ConversationReference,
     Message,
 )
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -233,6 +234,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     Defines the interface for executing attacks and handling results.
     """
 
+    #: Capability requirements placed on ``objective_target``. Subclasses override
+    #: to declare what the attack needs. Validated in ``__init__``.
+    target_requirements: ClassVar[TargetRequirements] = TargetRequirements()
+
     def __init__(
         self,
         *,
@@ -259,6 +264,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             ),
             logger=logger,
         )
+        for capability in type(self).target_requirements.required:
+            objective_target.configuration.ensure_can_handle(capability=capability)
         self._objective_target = objective_target
         self._params_type = params_type
         # Guard so subclasses that set converters before calling super() aren't clobbered

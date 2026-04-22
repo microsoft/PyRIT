@@ -30,7 +30,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -145,9 +144,11 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
 
         # Chunked request issues multiple distinct turns; history-squash
         # adaptation would collapse them into a single prompt.
-        TargetRequirements(
-            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN}),
-        ).validate(configuration=objective_target.configuration)
+        if not objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
+            raise ValueError(
+                "ChunkedRequestAttack requires a target that natively supports "
+                f"'{CapabilityName.MULTI_TURN.value}'."
+            )
 
         # Store chunk configuration
         self._chunk_size = chunk_size

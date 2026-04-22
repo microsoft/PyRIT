@@ -52,7 +52,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     Scorer,
@@ -1326,9 +1325,17 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._adversarial_chat = attack_adversarial_config.target
         # TAP sets a system prompt on the adversarial target and drives a
         # multi-turn dialogue through it; both capabilities must be native.
-        TargetRequirements(
-            required_native_capabilities=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
-        ).validate(configuration=self._adversarial_chat.configuration)
+        adversarial_config = self._adversarial_chat.configuration
+        missing_native = [
+            capability.value
+            for capability in (CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT)
+            if not adversarial_config.includes(capability=capability)
+        ]
+        if missing_native:
+            raise ValueError(
+                "TreeOfAttacksWithPruningAttack requires an adversarial target that natively supports: "
+                + ", ".join(missing_native)
+            )
 
         # Load system prompts
         self._adversarial_chat_system_prompt_path = (

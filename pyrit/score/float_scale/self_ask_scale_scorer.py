@@ -39,6 +39,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
+    target_requirements = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
@@ -61,7 +62,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
-        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
+        self._validate_target_requirements(target=chat_target)
         self._prompt_target = chat_target
 
         if not system_prompt_path:

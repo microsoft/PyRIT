@@ -73,7 +73,7 @@ class PromptChatTarget(PromptTarget):
         labels: Optional[dict[str, str]] = None,
     ) -> None:
         """
-        Deprecated shim. Use :meth:`PromptTarget.set_system_prompt` on the base class.
+        Use :meth:`PromptTarget.set_system_prompt` on the base class.
 
         Retained on ``PromptChatTarget`` so subclasses that override this method
         continue to work. Delegates to the base-class implementation.

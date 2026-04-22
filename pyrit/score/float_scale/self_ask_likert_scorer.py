@@ -173,6 +173,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    target_requirements = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
@@ -203,7 +204,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
-        CHAT_CONSUMER_REQUIREMENTS.validate(configuration=chat_target.configuration)
+        self._validate_target_requirements(target=chat_target)
         self._prompt_target = chat_target
         self._likert_scale = likert_scale
 

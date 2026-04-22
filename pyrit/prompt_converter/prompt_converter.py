@@ -6,11 +6,15 @@ import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import Any, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
 
 from pyrit import prompt_converter
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import PromptDataType
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 
 @dataclass
@@ -48,6 +52,11 @@ class PromptConverter(Identifiable):
     #: Tuple of output modalities supported by this converter. Subclasses must override this.
     SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ()
 
+    #: Capability requirements placed on the converter's target (if any).
+    #: Subclasses that use a target should override this and call
+    #: ``self._validate_target_requirements(target=converter_target)`` in ``__init__``.
+    target_requirements: ClassVar[TargetRequirements] = TargetRequirements()
+
     _identifier: Optional[ComponentIdentifier] = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
@@ -80,6 +89,20 @@ class PromptConverter(Identifiable):
         Initialize the prompt converter.
         """
         super().__init__()
+
+    def _validate_target_requirements(self, *, target: "PromptTarget") -> None:
+        """
+        Validate ``target`` against this converter's declared
+        :attr:`target_requirements`.
+
+        Args:
+            target (PromptTarget): The target to validate.
+
+        Raises:
+            ValueError: If any required capability cannot be satisfied.
+        """
+        for capability in type(self).target_requirements.required:
+            target.configuration.ensure_can_handle(capability=capability)
 
     @abc.abstractmethod
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
