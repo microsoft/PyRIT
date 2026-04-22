@@ -1,7 +1,6 @@
 import {
   Button,
   Tooltip,
-  Dropdown,
   Option,
   OptionGroup,
   Combobox,
@@ -16,6 +15,20 @@ import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 
 const NO_CONVERTERS_SENTINEL = '__no_converters__'
+
+const OUTCOME_LABELS: Record<string, string> = {
+  success: 'Success',
+  failure: 'Failure',
+  undetermined: 'Undetermined',
+}
+
+// Fluent's multiselect Combobox doesn't auto-populate its input from selectedOptions;
+// we have to drive the displayed text via `value` ourselves.
+function formatMultiSelectValue(selected: string[]): string {
+  if (selected.length === 0) return ''
+  if (selected.length === 1) return selected[0]
+  return `${selected[0]} (+${selected.length - 1})`
+}
 
 interface HistoryFiltersBarProps {
   filters: HistoryFilters
@@ -106,6 +119,7 @@ export default function HistoryFiltersBar({
         placeholder="All attack types"
         multiselect
         selectedOptions={attackClassFilters}
+        value={formatMultiSelectValue(attackClassFilters)}
         onOptionSelect={(_e, data) => setFilter('attackClasses', data.selectedOptions)}
         data-testid="attack-class-filter"
       >
@@ -113,24 +127,31 @@ export default function HistoryFiltersBar({
           <Option key={cls} value={cls}>{cls}</Option>
         ))}
       </Combobox>
-      <Dropdown
+      <Combobox
         className={styles.filterDropdown}
         placeholder="All outcomes"
-        value={outcomeFilter || undefined}
+        value={OUTCOME_LABELS[outcomeFilter] ?? ''}
         selectedOptions={outcomeFilter ? [outcomeFilter] : []}
-        onOptionSelect={(_e, data) => setFilter('outcome', data.optionValue ?? '')}
+        onOptionSelect={(_e, data) =>
+          setFilter('outcome', data.selectedOptions[0] ?? '')
+        }
         data-testid="outcome-filter"
       >
         <Option value="">All outcomes</Option>
         <Option value="success">Success</Option>
         <Option value="failure">Failure</Option>
         <Option value="undetermined">Undetermined</Option>
-      </Dropdown>
+      </Combobox>
       <Combobox
         className={styles.filterDropdown}
         placeholder="All converters"
         multiselect
         selectedOptions={converterSelectedOptions}
+        value={
+          hasConverters === false
+            ? '(No converters)'
+            : formatMultiSelectValue(converterFilter)
+        }
         onOptionSelect={(_e, data) => handleConverterSelect(data.selectedOptions)}
         data-testid="converter-filter"
       >
@@ -167,6 +188,7 @@ export default function HistoryFiltersBar({
         placeholder="All operators"
         multiselect
         selectedOptions={operatorFilters}
+        value={formatMultiSelectValue(operatorFilters)}
         onOptionSelect={(_e, data) => setFilter('operator', data.selectedOptions)}
         data-testid="operator-filter"
       >
@@ -179,6 +201,7 @@ export default function HistoryFiltersBar({
         placeholder="All operations"
         multiselect
         selectedOptions={operationFilters}
+        value={formatMultiSelectValue(operationFilters)}
         onOptionSelect={(_e, data) => setFilter('operation', data.selectedOptions)}
         data-testid="operation-filter"
       >

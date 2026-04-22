@@ -368,4 +368,66 @@ describe('HistoryFiltersBar', () => {
       expect.objectContaining({ converterMatchMode: 'all' })
     )
   })
+
+  it('should display "name (+N)" when multiple values are selected in a multi-select Combobox', () => {
+    const props = {
+      ...defaultProps,
+      operatorOptions: ['alice', 'bob', 'carol'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, operator: ['alice', 'bob', 'carol'] },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    const input = screen.getByTestId('operator-filter') as HTMLInputElement
+    expect(input.value).toBe('alice (+2)')
+  })
+
+  it('should display just the name when exactly one value is selected in a multi-select Combobox', () => {
+    const props = {
+      ...defaultProps,
+      operatorOptions: ['alice', 'bob'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, operator: ['alice'] },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    const input = screen.getByTestId('operator-filter') as HTMLInputElement
+    expect(input.value).toBe('alice')
+  })
+
+  it('should keep the outcome Dropdown display label after a sibling filter changes', () => {
+    const props = {
+      ...defaultProps,
+      attackClassOptions: ['PromptSendingAttack'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' },
+    }
+
+    const { rerender } = render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    const outcomeInput = screen.getByTestId('outcome-filter') as HTMLInputElement
+    expect(outcomeInput.value).toBe('Success')
+
+    rerender(
+      <TestWrapper>
+        <HistoryFiltersBar
+          {...props}
+          filters={{ ...props.filters, attackClasses: ['PromptSendingAttack'] }}
+        />
+      </TestWrapper>
+    )
+
+    expect((screen.getByTestId('outcome-filter') as HTMLInputElement).value).toBe('Success')
+  })
 })
