@@ -229,6 +229,45 @@ class TestAudioFloatScaleScorer:
             assert len(scores) == 0
 
 
+@pytest.mark.usefixtures("patch_central_database")
+class TestAudioTranscriptHelper:
+    """Tests for AudioTranscriptHelper deprecation and transcription."""
+
+    def test_use_entra_auth_emits_deprecation_warning(self):
+        """Test that passing use_entra_auth to AudioTranscriptHelper emits DeprecationWarning."""
+        from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
+
+        text_scorer = MockTextTrueFalseScorer()
+        with pytest.warns(DeprecationWarning, match="use_entra_auth.*deprecated"):
+            AudioTranscriptHelper(text_capable_scorer=text_scorer, use_entra_auth=True)
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_async_creates_converter(self, audio_message_piece):
+        """Test that _transcribe_audio_async creates AzureSpeechAudioToTextConverter and calls convert_async."""
+        from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
+
+        text_scorer = MockTextTrueFalseScorer()
+        helper = AudioTranscriptHelper(text_capable_scorer=text_scorer)
+
+        mock_converter = AsyncMock()
+        mock_result = AsyncMock()
+        mock_result.output_text = "transcribed text"
+        mock_converter.convert_async.return_value = mock_result
+
+        with (
+            patch.object(helper, "_ensure_wav_format", return_value=audio_message_piece.converted_value),
+            patch(
+                "pyrit.score.audio_transcript_scorer.AzureSpeechAudioToTextConverter",
+                return_value=mock_converter,
+            ) as mock_cls,
+        ):
+            result = await helper._transcribe_audio_async(audio_message_piece.converted_value)
+
+        assert result == "transcribed text"
+        mock_cls.assert_called_once()
+        mock_converter.convert_async.assert_called_once()
+
+
 class TestPyAVAudioConversion:
     """Tests for PyAV audio conversion functions"""
 
