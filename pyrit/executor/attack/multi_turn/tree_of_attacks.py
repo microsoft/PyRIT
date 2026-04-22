@@ -50,7 +50,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.score import (
     FloatScaleThresholdScorer,
@@ -258,7 +258,7 @@ class _TreeOfAttacksNode:
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget,
+        objective_target: PromptTarget,
         adversarial_chat: PromptChatTarget,
         adversarial_chat_seed_prompt: SeedPrompt,
         adversarial_chat_prompt_template: SeedPrompt,
@@ -280,7 +280,7 @@ class _TreeOfAttacksNode:
         Initialize a tree node.
 
         Args:
-            objective_target (PromptChatTarget): The target to attack.
+            objective_target (PromptTarget): The target to attack.
             adversarial_chat (PromptChatTarget): The chat target for generating adversarial prompts.
             adversarial_chat_seed_prompt (SeedPrompt): The seed prompt for the first turn.
             adversarial_chat_prompt_template (SeedPrompt): The template for subsequent turns.
@@ -1255,7 +1255,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -1272,7 +1272,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Initialize the Tree of Attacks with Pruning attack strategy.
 
         Args:
-            objective_target (PromptChatTarget): The target system to attack.
+            objective_target (PromptTarget): The target system to attack.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial chat component.
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters.
                 Defaults to None.
@@ -1294,7 +1294,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         Raises:
             ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,
-                if target is not PromptChatTarget, or if parameters are invalid.
+                if the adversarial target does not natively support the capabilities TAP needs,
+                or if parameters are invalid.
         """
         # Validate tree parameters
         if tree_depth < 1:
@@ -1869,7 +1870,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 generate adversarial prompts and evaluate responses.
         """
         node = _TreeOfAttacksNode(
-            objective_target=cast("PromptChatTarget", self._objective_target),
+            objective_target=self._objective_target,
             adversarial_chat=self._adversarial_chat,
             adversarial_chat_seed_prompt=self._adversarial_chat_seed_prompt,
             adversarial_chat_system_seed_prompt=self._adversarial_chat_system_seed_prompt,

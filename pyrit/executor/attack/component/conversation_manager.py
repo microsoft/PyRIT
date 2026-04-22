@@ -20,7 +20,6 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 )
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:
@@ -243,7 +242,7 @@ class ConversationManager:
     def set_system_prompt(
         self,
         *,
-        target: PromptChatTarget,
+        target: PromptTarget,
         conversation_id: str,
         system_prompt: str,
         labels: Optional[dict[str, str]] = None,
@@ -252,11 +251,16 @@ class ConversationManager:
         Set or update the system prompt for a conversation.
 
         Args:
-            target: The chat target to set the system prompt on.
+            target: The target to set the system prompt on. Must handle the
+                ``SYSTEM_PROMPT`` capability (natively or via an ``ADAPT`` policy).
             conversation_id: Unique identifier for the conversation.
             system_prompt: The system prompt text.
             labels: Optional labels to associate with the system prompt.
+
+        Raises:
+            ValueError: If ``target`` cannot handle the ``SYSTEM_PROMPT`` capability.
         """
+        target.configuration.ensure_can_handle(capability=CapabilityName.SYSTEM_PROMPT)
         target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,

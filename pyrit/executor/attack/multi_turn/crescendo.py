@@ -43,7 +43,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.score import (
     FloatScaleThresholdScorer,
@@ -122,7 +122,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -135,7 +135,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Initialize the Crescendo attack strategy.
 
         Args:
-            objective_target (PromptChatTarget): The target system to attack. Must be a PromptChatTarget.
+            objective_target (PromptTarget): The target system to attack. Must natively
+                support multi-turn conversations.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
                 including the adversarial chat target and optional system prompt path.
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters,
@@ -149,8 +150,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 application by role, message normalization, and non-chat target behavior.
 
         Raises:
-            ValueError: If objective_target is not a PromptChatTarget, or does not
-                natively support multi-turn conversations.
+            ValueError: If ``objective_target`` does not natively support multi-turn conversations.
         """
         # Initialize base class
         super().__init__(objective_target=objective_target, logger=logger, context_type=CrescendoAttackContext)
@@ -159,8 +159,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # gradually escalate prompts; history-squash adaptation would defeat it.
         if not objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
             raise ValueError(
-                "CrescendoAttack requires a target that natively supports "
-                f"'{CapabilityName.MULTI_TURN.value}'."
+                f"CrescendoAttack requires a target that natively supports '{CapabilityName.MULTI_TURN.value}'."
             )
 
         self._memory = CentralMemory.get_memory_instance()

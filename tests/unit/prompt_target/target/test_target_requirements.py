@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from pyrit.prompt_target import (
@@ -8,6 +10,18 @@ from pyrit.prompt_target import (
     CapabilityName,
     TargetRequirements,
 )
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityHandlingPolicy,
+    TargetCapabilities,
+    UnsupportedCapabilityBehavior,
+)
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+
+
+def _make_target(*, configuration: TargetConfiguration) -> MagicMock:
+    target = MagicMock()
+    target.configuration = configuration
+    return target
 
 
 def test_default_requirements_require_nothing():
@@ -32,3 +46,71 @@ def test_requirements_are_frozen():
     reqs = TargetRequirements(required=frozenset({CapabilityName.MULTI_TURN}))
     with pytest.raises(Exception):
         reqs.required = frozenset()  # type: ignore[misc]
+
+
+def test_validate_passes_on_native_support():
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_system_prompt=True,
+            ),
+        ),
+    )
+
+    CHAT_CONSUMER_REQUIREMENTS.validate(target=target)
+
+
+def test_validate_passes_when_policy_is_adapt():
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=False,
+                supports_system_prompt=False,
+            ),
+            policy=CapabilityHandlingPolicy(
+                behaviors={
+                    CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT,
+                    CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.ADAPT,
+                },
+            ),
+        ),
+    )
+
+    CHAT_CONSUMER_REQUIREMENTS.validate(target=target)
+
+
+def test_validate_raises_when_capability_neither_native_nor_adapt():
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_system_prompt=False,
+            ),
+            policy=CapabilityHandlingPolicy(
+                behaviors={
+                    CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+                    CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+                },
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match=CapabilityName.SYSTEM_PROMPT.value):
+        CHAT_CONSUMER_REQUIREMENTS.validate(target=target)
+
+
+def test_validate_empty_required_always_passes():
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(),
+            policy=CapabilityHandlingPolicy(
+                behaviors={
+                    CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+                    CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+                },
+            ),
+        ),
+    )
+
+    TargetRequirements().validate(target=target)

@@ -146,8 +146,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         # adaptation would collapse them into a single prompt.
         if not objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
             raise ValueError(
-                "ChunkedRequestAttack requires a target that natively supports "
-                f"'{CapabilityName.MULTI_TURN.value}'."
+                f"ChunkedRequestAttack requires a target that natively supports '{CapabilityName.MULTI_TURN.value}'."
             )
 
         # Store chunk configuration
