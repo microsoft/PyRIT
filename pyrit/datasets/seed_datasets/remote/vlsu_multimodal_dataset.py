@@ -193,12 +193,12 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         Raises:
             Exception: If the image cannot be fetched.
         """
-        text = example.get("prompt")
-        image_url = example.get("web_path")
+        text = example.get("prompt", "")
+        image_url = example.get("web_path", "")
         text_grade = example.get("consensus_text_grade", "").lower()
         image_grade = example.get("image_grade", "").lower()
         combined_grade = example.get("consensus_combined_grade", "").lower()
-        combined_category = example.get("combined_category")
+        combined_category = example.get("combined_category", "")
 
         group_id = uuid.uuid4()
         local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
@@ -248,14 +248,21 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
         Returns:
             Local path to the saved image.
+
+        Raises:
+            RuntimeError: If the serializer memory is not properly configured.
         """
         filename = f"ml_vlsu_{group_id}.png"
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
         # Return existing path if image already exists
-        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
+        results_path = serializer._memory.results_path
+        results_storage_io = serializer._memory.results_storage_io
+        if not results_path or results_storage_io is None:
+            raise RuntimeError("[ML-VLSU] Serializer memory is not properly configured.")
+        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:
-            if await serializer._memory.results_storage_io.path_exists(serializer.value):
+            if await results_storage_io.path_exists(serializer.value):
                 return serializer.value
         except Exception as e:
             logger.warning(f"[ML-VLSU] Failed to check if image for {group_id} exists in cache: {e}")

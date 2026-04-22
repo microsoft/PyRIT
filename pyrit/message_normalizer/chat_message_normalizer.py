@@ -164,7 +164,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             ValueError: If the audio format is not supported.
             FileNotFoundError: If the audio file does not exist.
         """
-        ext = DataTypeSerializer.get_extension(audio_path).lower()
+        ext = (DataTypeSerializer.get_extension(audio_path) or "").lower()
         if ext not in SUPPORTED_AUDIO_FORMATS:
             raise ValueError(
                 f"Unsupported audio format: {ext}. Supported formats are: {list(SUPPORTED_AUDIO_FORMATS.keys())}"

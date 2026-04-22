@@ -168,7 +168,7 @@ class AddImageTextConverter(PromptConverter):
         updated_img = self._add_text_to_image(text=prompt)
 
         image_bytes = BytesIO()
-        mime_type = img_serializer.get_mime_type(self._img_to_add)
+        mime_type = img_serializer.get_mime_type(self._img_to_add) or "image/png"
         image_type = mime_type.split("/")[-1]
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue())

@@ -852,3 +852,17 @@ class TestGetDefaultObjectiveScorer:
 
         result = Scenario._get_default_objective_scorer(MagicMock())
         assert isinstance(result, TrueFalseInverterScorer)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_execute_scenario_raises_when_scenario_result_id_is_none():
+    """Test that _execute_scenario_async raises ValueError when _scenario_result_id is None."""
+    scenario = ConcreteScenario.__new__(ConcreteScenario)
+    scenario._scenario_result_id = None
+    scenario._name = "test_scenario"
+    scenario._atomic_attacks = []
+    scenario._memory = MagicMock()
+
+    with pytest.raises(ValueError, match="self._scenario_result_id is not initialized"):
+        await scenario._execute_scenario_async()

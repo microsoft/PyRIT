@@ -1333,3 +1333,12 @@ class TestCollectChildEvalHashes:
             children={"sub_scorers": [child_with, child_without]},
         )
         assert parent._collect_child_eval_hashes() == {"has_hash"}
+
+
+def test_short_hash_raises_when_hash_none():
+    obj = ComponentIdentifier.__new__(ComponentIdentifier)
+    object.__setattr__(obj, "hash", None)
+    object.__setattr__(obj, "class_name", "Test")
+    object.__setattr__(obj, "class_module", "test.module")
+    with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
+        _ = obj.short_hash

@@ -295,6 +295,10 @@ class ScorerEvaluator(abc.ABC):
         try:
             scorer_hash = self.scorer.get_identifier().eval_hash
 
+            if scorer_hash is None:
+                logger.debug("No eval_hash available for scorer, cannot check existing metrics")
+                return (False, None)
+
             # Determine if this is a harm or objective evaluation
             metrics_type = MetricsType.OBJECTIVE if isinstance(self.scorer, TrueFalseScorer) else MetricsType.HARM
 
@@ -504,10 +508,14 @@ class ScorerEvaluator(abc.ABC):
             result_file_path (Path): The full path to the result file.
         """
         try:
+            eval_hash = self.scorer.get_identifier().eval_hash
+            if eval_hash is None:
+                logger.warning("Cannot write metrics: no eval_hash available for scorer")
+                return
             replace_evaluation_results(
                 file_path=result_file_path,
                 scorer_identifier=self.scorer.get_identifier(),
-                eval_hash=self.scorer.get_identifier().eval_hash,
+                eval_hash=eval_hash,
                 metrics=metrics,
             )
         except Exception as e:

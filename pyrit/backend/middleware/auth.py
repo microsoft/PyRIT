@@ -61,6 +61,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         self._allowed_group_ids: set[str] = {g.strip() for g in groups_raw.split(",") if g.strip()}
         self._enabled = bool(self._tenant_id and self._client_id)
 
+        self._jwks_client: PyJWKClient | None
         if self._enabled:
             jwks_url = f"https://login.microsoftonline.com/{self._tenant_id}/discovery/v2.0/keys"
             self._jwks_client = PyJWKClient(jwks_url, cache_keys=True)
@@ -251,6 +252,8 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             Tuple of (AuthenticatedUser, claims) if valid, (None, {}) if validation fails.
         """
         try:
+            if self._jwks_client is None:
+                raise RuntimeError("JWKS client not initialized")
             signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             claims = jwt.decode(
                 token,

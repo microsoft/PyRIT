@@ -35,7 +35,7 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None
+    data_type: Optional[PromptDataType] = None  # type: ignore[assignment]
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: Optional[ChatMessageRole] = None
@@ -98,13 +98,15 @@ class SeedPrompt(Seed):
             if TinyTag.is_supported(self.value):
                 try:
                     tag = TinyTag.get(self.value)
+                    bitrate = int(round(tag.bitrate)) if tag.bitrate is not None else 0
+                    duration = int(round(tag.duration)) if tag.duration is not None else 0
                     self.metadata.update(
                         {
-                            "bitrate": int(round(tag.bitrate)),
-                            "samplerate": tag.samplerate,
-                            "bitdepth": tag.bitdepth,
-                            "filesize": tag.filesize,
-                            "duration": int(round(tag.duration)),
+                            "bitrate": bitrate,
+                            "samplerate": tag.samplerate if tag.samplerate is not None else 0,
+                            "bitdepth": tag.bitdepth if tag.bitdepth is not None else 0,
+                            "filesize": tag.filesize if tag.filesize is not None else 0,
+                            "duration": duration,
                         }
                     )
                 except Exception as ex:

@@ -151,6 +151,9 @@ class AzureBlobStorageTarget(PromptTarget):
             file_name (str): File name to assign to uploaded blob.
             data (bytes): Byte representation of content to upload to container.
             content_type (str): Content type to upload.
+
+        Raises:
+            RuntimeError: If blob storage client is not initialized.
         """
         content_settings = ContentSettings(content_type=f"{content_type}")  # type: ignore[no-untyped-call, unused-ignore]
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
@@ -163,6 +166,8 @@ class AzureBlobStorageTarget(PromptTarget):
         # If not, the file will be put in the root of the container.
         blob_path = f"{blob_prefix}/{file_name}" if blob_prefix else file_name
         try:
+            if self._client_async is None:
+                raise RuntimeError("Blob storage client not initialized")
             blob_client = self._client_async.get_blob_client(blob=blob_path)
             if await blob_client.exists():
                 logger.info(msg=f"Blob {blob_path} already exists. Deleting it before uploading a new version.")

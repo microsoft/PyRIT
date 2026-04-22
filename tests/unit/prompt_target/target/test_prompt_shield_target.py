@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from collections.abc import MutableSequence
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from unit.mocks import get_audio_message_piece, get_sample_conversations
@@ -110,3 +110,20 @@ def test_token_provider_authentication():
     assert target is not None
     assert target._api_key == token_provider
     assert callable(target._api_key)
+
+
+def test_init_raises_when_endpoint_none():
+    """Guard at line 98: endpoint_value is None raises ValueError."""
+    with patch("pyrit.prompt_target.prompt_shield_target.default_values") as mock_dv:
+        mock_dv.get_required_value = MagicMock(return_value=None)
+        with pytest.raises(ValueError, match="Endpoint value is required"):
+            PromptShieldTarget(endpoint=None, api_key="test_key")
+
+
+def test_init_raises_when_api_key_none(sqlite_instance):
+    """Guard at line 113: _api_key_value is None raises ValueError."""
+    with patch("pyrit.prompt_target.prompt_shield_target.default_values") as mock_dv:
+        # First call for endpoint returns valid, second call for api_key returns None
+        mock_dv.get_required_value = MagicMock(side_effect=["https://test.endpoint.com", None])
+        with pytest.raises(ValueError, match="API key is required"):
+            PromptShieldTarget(endpoint=None, api_key=None)

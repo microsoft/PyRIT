@@ -601,7 +601,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
             if piece_type == "image_path":
                 mime_type = DataTypeSerializer.get_mime_type(piece.converted_value)
-                if not mime_type.startswith("image/"):
+                if not mime_type or not mime_type.startswith("image/"):
                     raise ValueError(
                         f"Invalid image format for image_path: {piece.converted_value}. "
                         f"Detected MIME type: {mime_type}."

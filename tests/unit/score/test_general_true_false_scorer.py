@@ -114,3 +114,57 @@ async def test_general_scorer_score_async_handles_custom_keys(patch_central_data
     assert score[0].score_value == "false"
     assert "This is the rationale." in score[0].score_rationale
     assert "This is the description." in score[0].score_value_description
+
+
+def test_true_false_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
+    """Test that TrueFalseScorer.get_scorer_metrics returns None when eval_hash is None."""
+    from unittest.mock import patch as _patch
+
+    from pyrit.score.true_false.self_ask_true_false_scorer import (
+        SelfAskTrueFalseScorer,
+    )
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
+    mock_identifier = MagicMock()
+    mock_identifier.eval_hash = None
+    with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
+        result = scorer.get_scorer_metrics()
+    assert result is None
+
+
+def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(patch_central_database):
+    """Test that TrueFalseScorer.get_scorer_metrics returns metrics when eval_hash is set."""
+    from unittest.mock import patch as _patch
+
+    from pyrit.score.true_false.self_ask_true_false_scorer import (
+        SelfAskTrueFalseScorer,
+    )
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
+
+    mock_identifier = MagicMock()
+    mock_identifier.eval_hash = "abc123"
+
+    mock_metrics = MagicMock()
+    mock_result_file = MagicMock()
+    mock_result_file.exists.return_value = True
+
+    with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
+        with _patch(
+            "pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash",
+            return_value=mock_metrics,
+        ) as mock_find:
+            with _patch(
+                "pyrit.common.path.SCORER_EVALS_PATH",
+                new=MagicMock(__truediv__=MagicMock(return_value=mock_result_file)),
+            ):
+                result = scorer.get_scorer_metrics()
+
+    assert result is mock_metrics
+    mock_find.assert_called_once()

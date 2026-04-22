@@ -65,3 +65,14 @@ def test_seed_attack_group_with_multiple_prompts():
     p2 = _make_prompt(value="p2", sequence=1)
     group = SeedAttackGroup(seeds=[objective, p1, p2])
     assert len(group.prompts) == 2
+
+
+def test_seed_attack_group_objective_raises_when_get_objective_returns_none():
+    from unittest.mock import patch
+
+    prompt = _make_prompt()
+    objective = _make_objective()
+    group = SeedAttackGroup(seeds=[objective, prompt])
+    with patch.object(type(group), "_get_objective", return_value=None):
+        with pytest.raises(ValueError, match="SeedAttackGroup should always have an objective"):
+            _ = group.objective

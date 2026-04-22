@@ -3,6 +3,7 @@
 
 import json
 from collections.abc import MutableSequence
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -497,3 +498,149 @@ async def test_no_warning_when_message_count_unchanged():
             await target._get_normalized_conversation_async(message=user_msg)
 
         mock_warn.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _create_identifier — target configuration in the identifier
+# ---------------------------------------------------------------------------
+
+
+def _make_identifier_target(
+    *,
+    capabilities: TargetCapabilities | None = None,
+    policy: CapabilityHandlingPolicy | None = None,
+) -> OpenAIChatTarget:
+    kwargs: dict[str, Any] = {}
+    if capabilities is not None or policy is not None:
+        kwargs["custom_configuration"] = TargetConfiguration(
+            capabilities=capabilities or TargetCapabilities(),
+            policy=policy,
+        )
+    return OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        **kwargs,
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_includes_capability_params():
+    target = _make_identifier_target(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_json_schema=True,
+            supports_json_output=True,
+            supports_editable_history=False,
+            supports_system_prompt=True,
+        ),
+    )
+
+    params = target.get_identifier().params
+    target_config = params["target_configuration"]
+    capabilities = target_config["capabilities"]
+
+    # Config-derived fields are nested under ``target_configuration``, not
+    # spread at the top level — guards against accidental re-flattening.
+    assert "supports_multi_turn" not in params
+    assert set(target_config.keys()) == {"capabilities", "capability_policy", "normalization_pipeline"}
+
+    assert capabilities["supports_multi_turn"] is True
+    assert capabilities["supports_multi_message_pieces"] is True
+    assert capabilities["supports_json_schema"] is True
+    assert capabilities["supports_json_output"] is True
+    assert capabilities["supports_editable_history"] is False
+    assert capabilities["supports_system_prompt"] is True
+    assert capabilities["input_modalities"] == [["text"]]
+    assert capabilities["output_modalities"] == [["text"]]
+    assert isinstance(target_config["capability_policy"], dict)
+    assert isinstance(target_config["normalization_pipeline"], list)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_differs_when_capabilities_differ():
+    a = _make_identifier_target(capabilities=TargetCapabilities(supports_json_schema=False))
+    b = _make_identifier_target(capabilities=TargetCapabilities(supports_json_schema=True))
+
+    assert a.get_identifier().hash != b.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_differs_when_policy_differs():
+    capabilities = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False)
+    a = _make_identifier_target(
+        capabilities=capabilities,
+        policy=CapabilityHandlingPolicy(
+            behaviors={
+                CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+                CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+            }
+        ),
+    )
+    b = _make_identifier_target(
+        capabilities=capabilities,
+        policy=CapabilityHandlingPolicy(
+            behaviors={
+                CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT,
+                CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+            }
+        ),
+    )
+
+    assert a.get_identifier().hash != b.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_is_deterministic_across_instances():
+    capabilities = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        input_modalities=frozenset({frozenset(["text"]), frozenset(["image_path"])}),
+        output_modalities=frozenset({frozenset(["text"])}),
+    )
+
+    a = _make_identifier_target(capabilities=capabilities)
+    b = _make_identifier_target(capabilities=capabilities)
+
+    assert a.get_identifier().hash == b.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_differs_when_normalizer_overrides_differ():
+    from pyrit.message_normalizer import GenericSystemSquashNormalizer, MessageListNormalizer
+    from pyrit.models import Message
+    from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+    class _CustomSystemSquash(MessageListNormalizer[Message]):
+        async def normalize_async(self, messages):  # pragma: no cover - not exercised
+            return messages
+
+    capabilities = TargetCapabilities(supports_multi_turn=True, supports_system_prompt=False)
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.ADAPT})
+
+    default_cfg = TargetConfiguration(
+        capabilities=capabilities,
+        policy=policy,
+        normalizer_overrides={CapabilityName.SYSTEM_PROMPT: GenericSystemSquashNormalizer()},
+    )
+    custom_cfg = TargetConfiguration(
+        capabilities=capabilities,
+        policy=policy,
+        normalizer_overrides={CapabilityName.SYSTEM_PROMPT: _CustomSystemSquash()},
+    )
+
+    a = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_configuration=default_cfg,
+    )
+    b = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_configuration=custom_cfg,
+    )
+
+    assert a.get_identifier().hash != b.get_identifier().hash
