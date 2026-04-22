@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Generator, MutableSequence, Sequence
 from datetime import timezone
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -405,3 +406,48 @@ def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMem
     with memory_interface.get_session() as session:  # type: ignore[arg-type]
         updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
         assert updated_entry.prompt_metadata == {"updated": "updated"}
+
+
+def test_refresh_token_if_needed_raises_when_expiry_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj._auth_token_expiry = None
+    with pytest.raises(RuntimeError, match="Auth token expiry not initialized"):
+        obj._refresh_token_if_needed()
+
+
+def test_provide_token_raises_when_auth_token_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj._auth_token = None
+    obj._auth_token_expiry = 9999999999.0
+    obj.engine = MagicMock()
+
+    captured_fn = None
+
+    def fake_listens_for(*args, **kwargs):
+        def decorator(fn):
+            nonlocal captured_fn
+            captured_fn = fn
+            return fn
+
+        return decorator
+
+    with patch("pyrit.memory.azure_sql_memory.event.listens_for", side_effect=fake_listens_for):
+        obj._enable_azure_authorization()
+
+    assert captured_fn is not None
+    with pytest.raises(RuntimeError, match="Azure auth token is not initialized"):
+        captured_fn(None, None, ["some_connection_string"], {})
+
+
+def test_create_tables_if_not_exist_raises_when_engine_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj._create_tables_if_not_exist()
+
+
+def test_reset_database_raises_when_engine_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj.reset_database()

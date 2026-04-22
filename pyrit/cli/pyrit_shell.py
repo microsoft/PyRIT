@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    import types
+
     from pyrit.cli import frontend_core
     from pyrit.models.scenario_result import ScenarioResult
 
@@ -119,7 +121,7 @@ class PyRITShell(cmd.Cmd):
                 new_item="PyRITShell(database=..., log_level=..., ...)",
                 removed_in="0.14.0",
             )
-            self._deprecated_context = context
+            self._deprecated_context: frontend_core.FrontendCore | None = context
         else:
             self._deprecated_context = None
 
@@ -127,8 +129,9 @@ class PyRITShell(cmd.Cmd):
         self._scenario_history: list[tuple[str, ScenarioResult]] = []
 
         # Set by the background thread after importing frontend_core.
-        self.context: Optional[frontend_core.FrontendCore] = None
-        self.default_log_level: Optional[int] = None
+        self._fc: types.ModuleType | None = None
+        self.context: frontend_core.FrontendCore | None = None
+        self.default_log_level: int | None = None
 
         # Initialize PyRIT in background thread for faster startup.
         self._init_thread = threading.Thread(target=self._background_init, daemon=True)
@@ -159,12 +162,19 @@ class PyRITShell(cmd.Cmd):
             raise self._init_error
 
     def _ensure_initialized(self) -> None:
-        """Wait for initialization to complete if not already done."""
+        """
+        Wait for initialization to complete if not already done.
+
+        Raises:
+            RuntimeError: If frontend core initialization failed or is not complete.
+        """
         if not self._init_complete.is_set():
             print("Waiting for PyRIT initialization to complete...")
             sys.stdout.flush()
             self._init_complete.wait()
         self._raise_init_error()
+        if self._fc is None or self.context is None:
+            raise RuntimeError("Frontend core not initialized")
 
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
@@ -188,22 +198,36 @@ class PyRITShell(cmd.Cmd):
         super().cmdloop(intro=self.intro)
 
     def do_list_scenarios(self, arg: str) -> None:
-        """List all available scenarios."""
+        """
+        List all available scenarios.
+
+        Raises:
+            RuntimeError: If initialization has not completed.
+        """
         if arg.strip():
             print(f"Error: list-scenarios does not accept arguments, got: {arg.strip()}")
             return
         self._ensure_initialized()
+        if self._fc is None or self.context is None:
+            raise RuntimeError("Frontend core not initialized")
         try:
             asyncio.run(self._fc.print_scenarios_list_async(context=self.context))
         except Exception as e:
             print(f"Error listing scenarios: {e}")
 
     def do_list_initializers(self, arg: str) -> None:
-        """List all available initializers."""
+        """
+        List all available initializers.
+
+        Raises:
+            RuntimeError: If initialization has not completed.
+        """
         if arg.strip():
             print(f"Error: list-initializers does not accept arguments, got: {arg.strip()}")
             return
         self._ensure_initialized()
+        if self._fc is None or self.context is None:
+            raise RuntimeError("Frontend core not initialized")
         try:
             asyncio.run(self._fc.print_initializers_list_async(context=self.context))
         except Exception as e:
@@ -225,8 +249,13 @@ class PyRITShell(cmd.Cmd):
         Examples:
             list-targets --initializers target
             list-targets --initializers target:tags=default,scorer
+
+        Raises:
+            RuntimeError: If initialization has not completed.
         """
         self._ensure_initialized()
+        if self._fc is None or self.context is None:
+            raise RuntimeError("Frontend core not initialized")
         try:
             list_targets_context = self.context
             if arg.strip():
@@ -289,8 +318,13 @@ class PyRITShell(cmd.Cmd):
             --target is required for every run.
             Initializers can be specified per-run or configured in .pyrit_conf.
             Database and env-files are configured via the config file.
+
+        Raises:
+            RuntimeError: If initialization has not completed.
         """
         self._ensure_initialized()
+        if self._fc is None or self.context is None:
+            raise RuntimeError("Frontend core not initialized")
 
         if not line.strip():
             print("Error: Specify a scenario name")

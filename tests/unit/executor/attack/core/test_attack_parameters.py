@@ -307,3 +307,15 @@ class TestExcluding:
                 seed_group=seed_group,
                 next_message=_make_message("user", "Should fail"),
             )
+
+
+@pytest.mark.asyncio
+async def test_from_seed_group_async_raises_when_objective_is_none():
+    """Test that from_seed_group_async raises ValueError when seed_group.objective is None."""
+    seed_group = MagicMock(spec=SeedAttackGroup)
+    seed_group.validate = MagicMock()
+    seed_group.objective = None
+    seed_group.simulated_conversation = None
+
+    with pytest.raises(ValueError, match="seed_group.objective is not initialized"):
+        await AttackParameters.from_seed_group_async(seed_group=seed_group)

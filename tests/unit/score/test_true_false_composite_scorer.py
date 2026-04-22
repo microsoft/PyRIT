@@ -184,3 +184,17 @@ def test_composite_scorer_empty_scorers_list():
     """Test that TrueFalseCompositeScorer raises an exception when given an empty list of scorers."""
     with pytest.raises(ValueError, match="At least one scorer must be provided"):
         TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[])
+
+
+@pytest.mark.asyncio
+async def test_composite_scorer_raises_when_message_piece_id_is_none(true_scorer, patch_central_database):
+    """Test that _score_async raises ValueError when message piece has no ID."""
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
+
+    # Create a message with a piece whose id is None
+    piece = MessagePiece(role="user", original_value="test content")
+    piece.id = None
+    message = piece.to_message()
+
+    with pytest.raises(RuntimeError, match="Message piece must have an ID"):
+        await scorer.score_async(message)

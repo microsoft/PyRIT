@@ -156,3 +156,16 @@ class TestServeMediaErrors:
             response = client.get("/api/media", params={"path": "/some/file.png"})
 
             assert response.status_code == 500
+
+    def test_returns_500_when_results_path_is_none(self, client: TestClient) -> None:
+        """Returns 500 when memory.results_path is None."""
+        mock_mem = MagicMock()
+        mock_mem.results_path = None
+        with patch("pyrit.backend.routes.media.CentralMemory") as mock_cm:
+            mock_cm.get_memory_instance.return_value = mock_mem
+
+            response = client.get("/api/media", params={"path": "/some/file.png"})
+
+            assert response.status_code == 500
+            detail = response.json()["detail"].lower()
+            assert "results_path" in detail or "results path" in detail

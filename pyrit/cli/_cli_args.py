@@ -482,29 +482,29 @@ def _parse_shell_arguments(*, parts: list[str], arg_specs: list[_ArgSpec]) -> di
     i = 0
     while i < len(parts):
         token = parts[i]
-        spec = flag_to_spec.get(token)
+        matched_spec: _ArgSpec | None = flag_to_spec.get(token)
 
-        if spec is None:
+        if matched_spec is None:
             valid = sorted(flag_to_spec.keys())
             raise ValueError(f"Unknown argument: {token}. Valid arguments: {', '.join(valid)}")
 
         i += 1
 
-        if spec.multi_value:
+        if matched_spec.multi_value:
             values: list[Any] = []
             # Collect values until the next flag (whether valid or invalid)
             while i < len(parts) and not (parts[i].startswith("--") or parts[i] in flag_to_spec):
-                item = spec.parser(parts[i]) if spec.parser else parts[i]
+                item = matched_spec.parser(parts[i]) if matched_spec.parser else parts[i]
                 values.append(item)
                 i += 1
             if len(values) == 0:
-                raise ValueError(f"{spec.flags[0]} requires at least one value")
-            result[spec.result_key] = values
+                raise ValueError(f"{matched_spec.flags[0]} requires at least one value")
+            result[matched_spec.result_key] = values
         else:
             if i >= len(parts):
-                raise ValueError(f"{spec.flags[0]} requires a value")
+                raise ValueError(f"{matched_spec.flags[0]} requires a value")
             raw = parts[i]
-            result[spec.result_key] = spec.parser(raw) if spec.parser else raw
+            result[matched_spec.result_key] = matched_spec.parser(raw) if matched_spec.parser else raw
             i += 1
 
     return result

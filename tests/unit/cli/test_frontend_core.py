@@ -114,6 +114,24 @@ class TestFrontendCore:
         assert context._initialized is True
         assert registry is not None
 
+    def test_scenario_registry_raises_when_none_after_init(self):
+        """Test scenario_registry raises ValueError when registry is None despite _initialized=True."""
+        context = frontend_core.FrontendCore()
+        context._initialized = True
+        context._scenario_registry = None
+
+        with pytest.raises(ValueError, match="self._scenario_registry is not initialized"):
+            _ = context.scenario_registry
+
+    def test_initializer_registry_raises_when_none_after_init(self):
+        """Test initializer_registry raises ValueError when registry is None despite _initialized=True."""
+        context = frontend_core.FrontendCore()
+        context._initialized = True
+        context._initializer_registry = None
+
+        with pytest.raises(ValueError, match="self._initializer_registry is not initialized"):
+            _ = context.initializer_registry
+
 
 class TestValidationFunctions:
     """Tests for validation functions."""

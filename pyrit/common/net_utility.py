@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any, Literal, Optional, overload
+from typing import Any, Literal, Optional, cast, overload
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -10,18 +10,18 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 @overload
 def get_httpx_client(
-    use_async: Literal[True], debug: bool = False, **httpx_client_kwargs: Optional[Any]
+    use_async: Literal[True], debug: bool = False, **httpx_client_kwargs: Any
 ) -> httpx.AsyncClient: ...
 
 
 @overload
 def get_httpx_client(
-    use_async: Literal[False] = False, debug: bool = False, **httpx_client_kwargs: Optional[Any]
+    use_async: Literal[False] = False, debug: bool = False, **httpx_client_kwargs: Any
 ) -> httpx.Client: ...
 
 
 def get_httpx_client(
-    use_async: bool = False, debug: bool = False, **httpx_client_kwargs: Optional[Any]
+    use_async: bool = False, debug: bool = False, **httpx_client_kwargs: Any
 ) -> httpx.Client | httpx.AsyncClient:
     """
     Get the httpx client for making requests.
@@ -32,10 +32,10 @@ def get_httpx_client(
     client_class = httpx.AsyncClient if use_async else httpx.Client
     proxy = "http://localhost:8080" if debug else None
 
-    proxy = httpx_client_kwargs.pop("proxy", proxy)
-    verify_certs = httpx_client_kwargs.pop("verify", not debug)
+    proxy = cast("str | None", httpx_client_kwargs.pop("proxy", proxy))
+    verify_certs = cast("bool", httpx_client_kwargs.pop("verify", not debug))
     # fun notes; httpx default is 5 seconds, httpclient is 100, urllib in indefinite
-    timeout = httpx_client_kwargs.pop("timeout", 60.0)
+    timeout = cast("float", httpx_client_kwargs.pop("timeout", 60.0))
 
     return client_class(proxy=proxy, verify=verify_certs, timeout=timeout, **httpx_client_kwargs)
 
@@ -92,7 +92,7 @@ async def make_request_and_raise_if_error_async(
     request_body: Optional[dict[str, object]] = None,
     files: Optional[dict[str, tuple[str, bytes, str]]] = None,
     headers: Optional[dict[str, str]] = None,
-    **httpx_client_kwargs: Optional[Any],
+    **httpx_client_kwargs: Any,
 ) -> httpx.Response:
     """
     Make a request and raise an exception if it fails.
