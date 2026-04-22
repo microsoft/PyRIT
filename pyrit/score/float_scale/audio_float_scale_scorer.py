@@ -34,8 +34,8 @@ class AudioFloatScaleScorer(FloatScaleScorer):
             text_capable_scorer: A FloatScaleScorer capable of processing text.
                 This scorer will be used to evaluate the transcribed audio content.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
-            use_entra_auth: Whether to use Entra ID authentication for Azure Speech.
-                Defaults to True if None.
+            use_entra_auth: **Deprecated.** Will be removed in v0.15.0.
+                Authentication is now auto-detected by the underlying converter.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
