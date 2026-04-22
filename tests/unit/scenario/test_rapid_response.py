@@ -714,7 +714,7 @@ class TestRegistrationAndFactoryFromSpec:
     def test_register_from_specs_custom_list(self, mock_adversarial_target):
         """register_from_specs accepts a custom list of AttackTechniqueSpecs."""
         custom_specs = [
-            AttackTechniqueSpec(name="custom_attack", attack_class=PromptSendingAttack, tags=["custom"]),
+            AttackTechniqueSpec(name="custom_attack", attack_class=PromptSendingAttack, strategy_tags=["custom"]),
         ]
         registry = AttackTechniqueRegistry.get_registry_singleton()
         registry.register_from_specs(custom_specs)
@@ -795,7 +795,7 @@ class TestBuildScenarioTechniques:
         custom_spec = AttackTechniqueSpec(
             name="tap",
             attack_class=TreeOfAttacksWithPruningAttack,
-            tags=["core", "multi_turn"],
+            strategy_tags=["core", "multi_turn"],
             adversarial_chat_key="custom_adversarial",
         )
         try:
@@ -814,7 +814,7 @@ class TestBuildScenarioTechniques:
         custom_spec = AttackTechniqueSpec(
             name="tap",
             attack_class=TreeOfAttacksWithPruningAttack,
-            tags=["core", "multi_turn"],
+            strategy_tags=["core", "multi_turn"],
             adversarial_chat_key="nonexistent_key",
         )
         try:
@@ -838,10 +838,10 @@ class TestAttackTechniqueSpec:
     """Tests for the AttackTechniqueSpec dataclass."""
 
     def test_simple_spec(self):
-        spec = AttackTechniqueSpec(name="test", attack_class=PromptSendingAttack, tags=["single_turn"])
+        spec = AttackTechniqueSpec(name="test", attack_class=PromptSendingAttack, strategy_tags=["single_turn"])
         assert spec.name == "test"
         assert spec.attack_class is PromptSendingAttack
-        assert spec.tags == ["single_turn"]
+        assert spec.strategy_tags == ["single_turn"]
         assert spec.adversarial_chat is None
         assert spec.extra_kwargs == {}
 
@@ -849,7 +849,7 @@ class TestAttackTechniqueSpec:
         spec = AttackTechniqueSpec(
             name="complex",
             attack_class=RolePlayAttack,
-            tags=["single_turn"],
+            strategy_tags=["single_turn"],
             adversarial_chat=mock_adversarial_target,
             extra_kwargs={"role_play_definition_path": "/custom/path.yaml"},
         )
@@ -862,7 +862,7 @@ class TestAttackTechniqueSpec:
         spec = AttackTechniqueSpec(
             name="simple",
             attack_class=PromptSendingAttack,
-            tags=[],
+            strategy_tags=[],
             adversarial_chat=mock_adversarial_target,
         )
         factory = AttackTechniqueRegistry.build_factory_from_spec(spec)
@@ -873,7 +873,7 @@ class TestAttackTechniqueSpec:
         spec = AttackTechniqueSpec(
             name="bad",
             attack_class=RolePlayAttack,
-            tags=[],
+            strategy_tags=[],
             extra_kwargs={"attack_adversarial_config": "oops"},
         )
         with pytest.raises(ValueError, match="attack_adversarial_config"):
@@ -894,14 +894,14 @@ class TestAttackTechniqueSpec:
         """Adversarial config is injected based on attack class signature."""
         # RolePlayAttack accepts attack_adversarial_config → injected
         rp_spec = AttackTechniqueSpec(
-            name="rp", attack_class=RolePlayAttack, tags=[], adversarial_chat=mock_adversarial_target
+            name="rp", attack_class=RolePlayAttack, strategy_tags=[], adversarial_chat=mock_adversarial_target
         )
         rp_factory = AttackTechniqueRegistry.build_factory_from_spec(rp_spec)
         assert "attack_adversarial_config" in rp_factory._attack_kwargs
 
         # PromptSendingAttack does NOT accept it → not injected even with adversarial_chat set
         ps_spec = AttackTechniqueSpec(
-            name="ps", attack_class=PromptSendingAttack, tags=[], adversarial_chat=mock_adversarial_target
+            name="ps", attack_class=PromptSendingAttack, strategy_tags=[], adversarial_chat=mock_adversarial_target
         )
         ps_factory = AttackTechniqueRegistry.build_factory_from_spec(ps_spec)
         assert "attack_adversarial_config" not in (ps_factory._attack_kwargs or {})
@@ -912,7 +912,7 @@ class TestAttackTechniqueSpec:
             AttackTechniqueSpec(
                 name="tap",
                 attack_class=TreeOfAttacksWithPruningAttack,
-                tags=["core", "multi_turn"],
+                strategy_tags=["core", "multi_turn"],
                 adversarial_chat=mock_adversarial_target,
                 adversarial_chat_key="some_key",
             )

@@ -119,7 +119,7 @@ class MyStrategy(ScenarioStrategy):
 
 
 class MyScenario(Scenario):
-    """Quick-check scenario for testing model behaviour across harm categories."""
+    """Quick-check scenario for testing model behavior across harm categories."""
 
     VERSION: int = 1
 

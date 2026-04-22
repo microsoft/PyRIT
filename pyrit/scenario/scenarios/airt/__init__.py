@@ -22,7 +22,7 @@ def __getattr__(name: str) -> Any:
         Any: The resolved strategy class.
 
     Raises:
-        AttributeError: If the attribute name is not recognised.
+        AttributeError: If the attribute name is not recognized.
     """
     if name == "RapidResponseStrategy":
         return RapidResponse.get_strategy_class()

@@ -47,23 +47,23 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="prompt_sending",
         attack_class=PromptSendingAttack,
-        tags=["core", "single_turn", "default"],
+        strategy_tags=["core", "single_turn", "default"],
     ),
     AttackTechniqueSpec(
         name="role_play",
         attack_class=RolePlayAttack,
-        tags=["core", "single_turn"],
+        strategy_tags=["core", "single_turn"],
         extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
     ),
     AttackTechniqueSpec(
         name="many_shot",
         attack_class=ManyShotJailbreakAttack,
-        tags=["core", "multi_turn", "default"],
+        strategy_tags=["core", "multi_turn", "default"],
     ),
     AttackTechniqueSpec(
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
-        tags=["core", "multi_turn"],
+        strategy_tags=["core", "multi_turn"],
         accepts_scorer_override=False,
     ),
 ]

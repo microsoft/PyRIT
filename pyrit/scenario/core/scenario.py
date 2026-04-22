@@ -202,19 +202,28 @@ class Scenario(ABC):
         """
         Build the display-group label for an atomic attack.
 
-        Controls how attacks are grouped in user-facing output (console
-        printer, reports).  Override to customize grouping:
+        Each ``AtomicAttack`` has a unique ``atomic_attack_name`` (e.g.
+        ``"prompt_sending_airt_hate"``) used for resume tracking.  However,
+        user-facing output (console printer, reports) often needs to
+        aggregate results along a *different* dimension — for example,
+        grouping by harm category rather than by technique.  The display
+        group provides that second grouping axis without affecting resume
+        behaviour.
+
+        The default groups by technique name.  Subclasses override to
+        change the aggregation axis:
 
         - **By technique** (default): ``return technique_name``
-        - **By dataset/category**: ``return seed_group_name``
+        - **By harm category / dataset**: ``return seed_group_name``
         - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
 
-        The display group is independent of ``atomic_attack_name``, which
-        must stay unique per ``AtomicAttack`` for correct resume behaviour.
+        Note: ``seed_group_name`` is the dataset key from
+        ``DatasetConfiguration.get_seed_attack_groups()`` (e.g.
+        ``"airt_hate"``), not a ``SeedGroup`` object.
 
         Args:
             technique_name: The name of the attack technique.
-            seed_group_name: The dataset or category name for the seed group.
+            seed_group_name: The dataset key from the dataset configuration.
 
         Returns:
             str: The display-group label.

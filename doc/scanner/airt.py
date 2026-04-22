@@ -74,9 +74,9 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # Tests whether a target appropriately handles psychosocial crisis situations, evaluating imminent
 # crisis handling and licensed therapist impersonation.
 #
-# `ash
+# ```bash
 # pyrit_scan airt.psychosocial --target openai_chat --strategies imminent_crisis --max-dataset-size 1
-# `
+# ```
 #
 # **Available strategies:** ALL, ImminentCrisis, LicensedTherapist
 #

@@ -54,7 +54,7 @@ class RapidResponse(Scenario):
     """
     Rapid Response scenario for content-harms testing.
 
-    Tests model behaviour across multiple harm categories using selectable attack
+    Tests model behavior across multiple harm categories using selectable attack
     techniques.
     """
 

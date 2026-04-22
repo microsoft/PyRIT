@@ -53,17 +53,32 @@ class AttackTechniqueSpec:
     injects one when ``attack_adversarial_config`` is an accepted parameter
     and ``adversarial_chat`` is set.
 
+    ``adversarial_chat`` vs ``adversarial_chat_key``:
+        Specs in the static technique catalog are defined at import time,
+        before any targets are registered. ``adversarial_chat_key`` stores a
+        deferred string reference to a ``TargetRegistry`` entry, while
+        ``adversarial_chat`` holds the resolved live target instance.
+        At runtime, ``build_scenario_techniques()`` resolves every
+        ``adversarial_chat_key`` into an ``adversarial_chat`` value.
+        A spec must set at most one of the two fields.
+
     Args:
         name: Registry name (must match the strategy enum value).
         attack_class: The ``AttackStrategy`` subclass.
-        tags: Classification tags (e.g. ``["single_turn"]``).
-        adversarial_chat: Live adversarial chat target for multi-turn attacks.
-            Part of technique identity. ``None`` means no adversarial target.
-        adversarial_chat_key: Optional ``TargetRegistry`` key to resolve as the
-            adversarial chat target at registration time. If specified,
-            ``build_scenario_techniques`` will look it up and raise
-            ``ValueError`` if the key is not found. Mutually exclusive with
-            ``adversarial_chat`` — a spec must not set both.
+        strategy_tags: Strategy tags that control which ``ScenarioStrategy``
+            aggregate groups include this technique.
+            ``build_strategy_class_from_specs`` matches these against
+            ``TagQuery`` rules to assign techniques to aggregates
+            (e.g. ``"single_turn"``, ``"multi_turn"``, ``"default"``).
+            Also stored on the registry entry for filtering.
+        adversarial_chat: Resolved, live adversarial chat target for
+            multi-turn attacks. Part of technique identity. ``None`` means
+            no adversarial target.
+        adversarial_chat_key: Deferred ``TargetRegistry`` key that
+            ``build_scenario_techniques()`` resolves into
+            ``adversarial_chat`` at runtime. Use this in static spec
+            catalogs where the target isn't available yet. Mutually
+            exclusive with ``adversarial_chat``.
         extra_kwargs: Static extra keyword arguments forwarded to the attack
             constructor. Must not contain ``attack_adversarial_config`` (use
             ``adversarial_chat`` instead).
@@ -74,7 +89,7 @@ class AttackTechniqueSpec:
 
     name: str
     attack_class: type
-    tags: list[str] = field(default_factory=list)
+    strategy_tags: list[str] = field(default_factory=list)
     adversarial_chat: PromptChatTarget | None = field(default=None)
     adversarial_chat_key: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -240,7 +255,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
         # Technique members from specs — assign aggregate tags based on TagQuery matching
         for spec in specs:
-            spec_tags = set(spec.tags)
+            spec_tags = set(spec.strategy_tags)
             matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(spec_tags)}
             members[spec.name] = (spec.name, spec_tags | matched_agg_tags)
 
@@ -333,7 +348,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         for spec in specs:
             if spec.name not in self:
                 factory = self.build_factory_from_spec(spec)
-                tags: dict[str, str] = dict.fromkeys(spec.tags, "")
+                tags: dict[str, str] = dict.fromkeys(spec.strategy_tags, "")
                 self.register_technique(
                     name=spec.name,
                     factory=factory,
