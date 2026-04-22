@@ -184,7 +184,7 @@ class Scam(Scenario):
         scam_materials = SelfAskTrueFalseScorer(
             chat_target=OpenAIChatTarget(
                 endpoint=endpoint,
-                api_key=get_azure_openai_auth(endpoint),
+                api_key=get_azure_openai_auth(endpoint or ""),
                 model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 temperature=0.9,
             ),
@@ -195,7 +195,7 @@ class Scam(Scenario):
             scorer=SelfAskRefusalScorer(
                 chat_target=OpenAIChatTarget(
                     endpoint=endpoint,
-                    api_key=get_azure_openai_auth(endpoint),
+                    api_key=get_azure_openai_auth(endpoint or ""),
                     model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
                 )
             )
@@ -213,7 +213,7 @@ class Scam(Scenario):
         endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
@@ -287,7 +287,7 @@ class Scam(Scenario):
         return AtomicAttack(
             atomic_attack_name=f"scam_{strategy}",
             attack_technique=AttackTechnique(attack=attack_strategy),
-            seed_groups=self._seed_groups,
+            seed_groups=self._seed_groups or [],
             memory_labels=self._memory_labels,
         )
 

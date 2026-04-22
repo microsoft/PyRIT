@@ -247,3 +247,45 @@ class TestAIRTInitializerGetInfo:
         assert "description" in info
         assert isinstance(info["description"], str)
         assert len(info["description"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_initialize_async_raises_when_converter_endpoint_is_none():
+    """Test that initialize_async raises ValueError when converter_endpoint env var is None."""
+    init = AIRTInitializer()
+    with (
+        patch.object(init, "_validate_operation_fields"),
+        patch.dict(
+            "os.environ",
+            {
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2": "https://test.openai.azure.com",
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2": "gpt-4",
+            },
+            clear=False,
+        ),
+        patch.dict("os.environ", {"AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": ""}, clear=False),
+    ):
+        # Remove the key to force None
+        os.environ.pop("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT", None)
+        with pytest.raises(ValueError, match="converter_endpoint is not initialized"):
+            await init.initialize_async()
+
+
+@pytest.mark.asyncio
+async def test_initialize_async_raises_when_scorer_endpoint_is_none():
+    """Test that initialize_async raises ValueError when scorer_endpoint env var is None."""
+    init = AIRTInitializer()
+    with (
+        patch.object(init, "_validate_operation_fields"),
+        patch.dict(
+            "os.environ",
+            {
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com",
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+            },
+            clear=False,
+        ),
+    ):
+        os.environ.pop("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2", None)
+        with pytest.raises(ValueError, match="scorer_endpoint is not initialized"):
+            await init.initialize_async()

@@ -251,3 +251,16 @@ def test_self_ask_true_false_with_path_and_question(patch_central_database):
             true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value,
             true_false_question=custom_question,
         )
+
+
+def test_self_ask_true_false_raises_when_yaml_loads_none(patch_central_database):
+    """Test that ValueError is raised when YAML file loads as None."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    with patch("pyrit.score.true_false.self_ask_true_false_scorer.yaml.safe_load", return_value=None):
+        with pytest.raises(ValueError, match="Failed to load true_false_question YAML"):
+            SelfAskTrueFalseScorer(
+                chat_target=chat_target,
+                true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value,
+            )

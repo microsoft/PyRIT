@@ -324,9 +324,14 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
         # Return existing path if image already exists
-        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
+        results_path = (serializer._memory.results_path if serializer._memory is not None else None) or ""
+        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:
-            if await serializer._memory.results_storage_io.path_exists(serializer.value):
+            if (
+                serializer._memory is not None
+                and serializer._memory.results_storage_io is not None
+                and await serializer._memory.results_storage_io.path_exists(serializer.value)
+            ):
                 return serializer.value
         except Exception as e:
             logger.warning(f"[VisualLeakBench] Failed to check if image {example_id} exists in cache: {e}")

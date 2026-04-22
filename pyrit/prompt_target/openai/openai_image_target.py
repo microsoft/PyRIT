@@ -207,7 +207,7 @@ class OpenAIImageTarget(OpenAITarget):
 
         # Use unified error handler for consistent error handling
         return await self._handle_openai_request(
-            api_call=lambda: self._async_client.images.generate(**image_generation_args),
+            api_call=lambda: self._client.images.generate(**image_generation_args),
             request=message,
         )
 
@@ -257,7 +257,7 @@ class OpenAIImageTarget(OpenAITarget):
             image_edit_args["style"] = self.style
 
         return await self._handle_openai_request(
-            api_call=lambda: self._async_client.images.edit(**image_edit_args),
+            api_call=lambda: self._client.images.edit(**image_edit_args),
             request=message,
         )
 

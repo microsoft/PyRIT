@@ -125,8 +125,8 @@ class Jailbreak(Scenario):
         scenario_result_id: Optional[str] = None,
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
-        jailbreak_names: list[str] = None,
-        jailbreak_paths: list[str] = None,
+        jailbreak_names: list[str] | None = None,
+        jailbreak_paths: list[str] | None = None,
     ) -> None:
         """
         Initialize the jailbreak scenario.
@@ -216,7 +216,7 @@ class Jailbreak(Scenario):
         endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
@@ -332,7 +332,7 @@ class Jailbreak(Scenario):
         return AtomicAttack(
             atomic_attack_name=f"jailbreak_{template_stem}",
             attack_technique=AttackTechnique(attack=attack),
-            seed_groups=self._seed_groups,
+            seed_groups=self._seed_groups or [],
         )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:

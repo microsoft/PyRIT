@@ -400,7 +400,7 @@ class ScoreEntry(Base):
         self.score_type = entry.score_type
         self.score_category = entry.score_category
         self.score_rationale = entry.score_rationale
-        self.score_metadata = entry.score_metadata
+        self.score_metadata = entry.score_metadata  # type: ignore[assignment]
         # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
@@ -441,7 +441,7 @@ class ScoreEntry(Base):
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
-            scorer_class_identifier=scorer_identifier,
+            scorer_class_identifier=scorer_identifier,  # type: ignore[arg-type]
             message_piece_id=self.prompt_request_response_id,
             timestamp=_ensure_utc(self.timestamp),
             objective=self.objective,
@@ -593,7 +593,7 @@ class SeedEntry(Base):
         self.source = entry.source
         self.date_added = entry.date_added
         self.added_by = entry.added_by
-        self.prompt_metadata = entry.metadata
+        self.prompt_metadata = entry.metadata  # type: ignore[assignment]
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
 
@@ -601,11 +601,11 @@ class SeedEntry(Base):
         if isinstance(entry, SeedPrompt):
             self.parameters = list(entry.parameters) if entry.parameters else None
             self.sequence = entry.sequence
-            self.role = entry.role
+            self.role = entry.role  # type: ignore[assignment]
         else:
             self.parameters = None
             self.sequence = None
-            self.role = None
+            self.role = None  # type: ignore[assignment]
 
     def get_seed(self) -> Seed:
         """
@@ -673,7 +673,7 @@ class SeedEntry(Base):
             metadata=self.prompt_metadata,
             parameters=self.parameters,
             prompt_group_id=self.prompt_group_id,
-            sequence=self.sequence,
+            sequence=self.sequence or 0,
             role=self.role,
         )
 
@@ -1037,7 +1037,7 @@ class ScenarioResultEntry(Base):
             scenario_identifier=scenario_identifier,
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
-            objective_scorer_identifier=scorer_identifier,
+            objective_scorer_identifier=scorer_identifier,  # type: ignore[arg-type]
             scenario_run_state=self.scenario_run_state,
             labels=self.labels,
             number_tries=self.number_tries,

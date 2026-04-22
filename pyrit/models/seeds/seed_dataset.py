@@ -182,14 +182,14 @@ class SeedDataset(YamlLoadable):
                 }
 
                 if effective_type == "simulated_conversation":
-                    self.seeds.append(
-                        SeedSimulatedConversation(
-                            **base_params,
-                            num_turns=p.get("num_turns", 3),
-                            adversarial_chat_system_prompt_path=p.get("adversarial_chat_system_prompt_path"),
-                            simulated_target_system_prompt_path=p.get("simulated_target_system_prompt_path"),
-                        )
-                    )
+                    _adv_path = p.get("adversarial_chat_system_prompt_path")
+                    _sim_path = p.get("simulated_target_system_prompt_path")
+                    _sc_kwargs: dict[str, Any] = {**base_params, "num_turns": p.get("num_turns", 3)}
+                    if _adv_path is not None:
+                        _sc_kwargs["adversarial_chat_system_prompt_path"] = str(_adv_path)
+                    if _sim_path is not None:
+                        _sc_kwargs["simulated_target_system_prompt_path"] = str(_sim_path)
+                    self.seeds.append(SeedSimulatedConversation(**_sc_kwargs))
                 elif effective_type == "objective":
                     # SeedObjective inherits data_type="text" from base Seed property
                     base_params["value"] = p["value"]

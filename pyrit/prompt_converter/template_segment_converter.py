@@ -51,18 +51,18 @@ class TemplateSegmentConverter(PromptConverter):
             )
         )
 
-        self._number_parameters = len(self.prompt_template.parameters)
+        self._number_parameters = len(self.prompt_template.parameters or [])
 
         if self._number_parameters < 2:
             raise ValueError(
-                f"Template must have at least two parameters, but found {len(self.prompt_template.parameters)}. "
+                f"Template must have at least two parameters, but found {len(self.prompt_template.parameters or [])}. "
                 f"Template parameters: {self.prompt_template.parameters}"
             )
 
         # Validate all parameters exist in the template value by attempting to render with empty values
         try:
             # Create a dict with empty values for all parameters
-            empty_values = dict.fromkeys(self.prompt_template.parameters, "")
+            empty_values = dict.fromkeys(self.prompt_template.parameters or [], "")
             # This will raise ValueError if any parameter is missing
             self.prompt_template.render_template_value(**empty_values)
         except ValueError as e:
@@ -107,7 +107,7 @@ class TemplateSegmentConverter(PromptConverter):
 
         segments = self._split_prompt_into_segments(prompt)
         filled_template = self.prompt_template.render_template_value(
-            **dict(zip(self.prompt_template.parameters, segments, strict=False))
+            **dict(zip(self.prompt_template.parameters or [], segments, strict=False))
         )
         return ConverterResult(output_text=filled_template, output_type="text")
 

@@ -106,3 +106,36 @@ async def test_add_image_video_converter_convert_async(video_converter_sample_vi
     os.remove(video_converter_sample_video)
     os.remove(video_converter_sample_image)
     os.remove("output_video.mp4")
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+@pytest.mark.asyncio
+async def test_add_image_to_video_raises_when_decode_returns_none(video_converter_sample_video):
+    """Guard at line 146: cv2.imdecode returns None raises ValueError."""
+    from unittest.mock import AsyncMock, patch
+
+    converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path="output_video.mp4")
+
+    # Mock the data serializer to return invalid image bytes (not a valid image)
+    mock_image_serializer = AsyncMock()
+    mock_image_serializer.read_data = AsyncMock(return_value=b"not_valid_image_data")
+    mock_image_serializer._is_azure_storage_url = lambda x: False
+
+    mock_video_serializer = AsyncMock()
+    with open(video_converter_sample_video, "rb") as f:
+        video_bytes = f.read()
+    mock_video_serializer.read_data = AsyncMock(return_value=video_bytes)
+    mock_video_serializer._is_azure_storage_url = lambda x: False
+
+    def factory_side_effect(*, category, data_type, value):
+        if data_type == "image_path":
+            return mock_image_serializer
+        return mock_video_serializer
+
+    with patch(
+        "pyrit.prompt_converter.add_image_to_video_converter.data_serializer_factory",
+        side_effect=factory_side_effect,
+    ):
+        with pytest.raises(ValueError, match="Failed to decode overlay image"):
+            await converter._add_image_to_video(image_path="fake_image.png", output_path="output_video_test.mp4")
+    os.remove(video_converter_sample_video)

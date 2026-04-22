@@ -142,8 +142,10 @@ class AddImageVideoConverter(PromptConverter):
 
             input_image_bytes = await input_image_data.read_data()
             image_np_arr = np.frombuffer(input_image_bytes, np.uint8)
-            overlay = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
-            overlay = cv2.resize(overlay, self._img_resize_size)
+            decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
+            if decoded is None:
+                raise ValueError("Failed to decode overlay image")
+            overlay = cv2.resize(decoded, self._img_resize_size)
 
             # Get overlay image dimensions
             image_height, image_width, _ = overlay.shape
