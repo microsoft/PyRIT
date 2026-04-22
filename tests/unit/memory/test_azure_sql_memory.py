@@ -354,6 +354,38 @@ def test_get_condition_json_property_match_bind_params(
     assert list(mv_params.values())[0] == expected_value
 
 
+def test_get_attack_result_label_condition_with_string_value(memory_interface: AzureSQLMemory):
+    """String values produce a single-placeholder IN clause with the stringified value."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
+    params = condition.compile().params
+    assert params.get("label_operator_0") == "roakey"
+
+
+def test_get_attack_result_label_condition_with_sequence_value(memory_interface: AzureSQLMemory):
+    """Sequence values produce one placeholder per element."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operation": ["op_a", "op_b", "op_c"]})
+    params = condition.compile().params
+    assert params.get("label_operation_0") == "op_a"
+    assert params.get("label_operation_1") == "op_b"
+    assert params.get("label_operation_2") == "op_c"
+
+
+def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface: AzureSQLMemory):
+    """Empty sequence values are skipped (no filter applied for that key)."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey", "operation": []})
+    params = condition.compile().params
+    # operator gets a bind param; operation (empty) does not.
+    assert params.get("label_operator_0") == "roakey"
+    assert not any(k.startswith("label_operation_") for k in params)
+
+
+def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: AzureSQLMemory):
+    """An empty labels dict produces a condition with no label filters bound."""
+    condition = memory_interface._get_attack_result_label_condition(labels={})
+    params = condition.compile().params
+    assert not any(k.startswith("label_") for k in params)
+
+
 @pytest.mark.parametrize(
     "case_sensitive, partial_match, expected_sql_fragment",
     [

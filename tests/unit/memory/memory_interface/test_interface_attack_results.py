@@ -807,6 +807,37 @@ def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterface):
     assert conversation_ids == {"conv_1", "conv_3"}
 
 
+def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlite_instance: MemoryInterface):
+    """An empty sequence for a label key is skipped (no filter applied for that key).
+
+    Includes an attack whose prompt has ``labels=None`` and another with non-matching
+    labels (no ``operator`` key at all) to guard against a regression where the filter
+    silently adds an "EXISTS(... labels IS NOT NULL)" constraint when all values for a
+    key are empty.
+    """
+    mp1 = create_message_piece("conv_1", 1, labels={"operator": "roakey"})
+    mp2 = create_message_piece("conv_2", 2, labels={"operator": "alice"})
+    mp3 = create_message_piece("conv_3", 3, labels={"phase": "initial"})
+    mp4 = create_message_piece("conv_4", 4, labels=None)
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[mp1, mp2, mp3, mp4])
+
+    ar1 = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS)
+    ar2 = create_attack_result("conv_2", 2, AttackOutcome.SUCCESS)
+    ar3 = create_attack_result("conv_3", 3, AttackOutcome.SUCCESS)
+    ar4 = create_attack_result("conv_4", 4, AttackOutcome.SUCCESS)
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4])
+
+    # Empty sequence for "operator" → filter is ignored entirely, all attacks match
+    # (including conv_3 which has no "operator" key and conv_4 which has no labels).
+    results = sqlite_instance.get_attack_results(labels={"operator": []})
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2", "conv_3", "conv_4"}
+
+    # Mixed: one key with empty-sequence (ignored) + one real filter should behave
+    # exactly like the real filter alone.
+    mixed = sqlite_instance.get_attack_results(labels={"operator": [], "phase": "initial"})
+    assert {r.conversation_id for r in mixed} == {"conv_3"}
+
+
 def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):
     """Test filtering attack results by multiple labels (AND logic)."""
 

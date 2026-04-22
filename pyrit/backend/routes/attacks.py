@@ -78,8 +78,8 @@ async def list_attacks(
         None,
         description="Filter by converter type names (repeatable). "
         "Combined per converter_types_match. "
-        "Omit to return all attacks regardless of converters. "
-        "To filter for attacks with no converters, use has_converters=false.",
+        "Omit (or pass an empty value) to apply no converter filter. "
+        "To restrict to attacks with no converters, use has_converters=false.",
     ),
     converter_types_match: Literal["any", "all"] = Query(
         "all",

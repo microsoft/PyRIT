@@ -111,9 +111,10 @@ class AttackService:
             attack_types: Filter by attack type names (repeatable, OR-matched, case-sensitive).
                 None or empty list applies no filter.
             converter_types: Filter by converter class names (case-insensitive).
-                ``None`` or empty list applies no filter. Combination semantics for
-                multiple entries are controlled by ``converter_types_match``. For the
-                "only attacks with no converters" case, use ``has_converters=False``.
+                ``None`` or an empty list applies no filter at this layer. Combination
+                semantics for multiple entries are controlled by ``converter_types_match``.
+                To restrict results to attacks with no converters, pass
+                ``has_converters=False`` instead.
             converter_types_match: How to combine multiple entries in ``converter_types``.
                 ``"all"`` (default) matches attacks that used every listed converter.
                 ``"any"`` matches attacks that used at least one of the listed converters.
@@ -134,20 +135,28 @@ class AttackService:
             AttackListResponse with filtered and paginated attack summaries.
         """
         # Phase 1: Query + lightweight filtering (no pieces needed)
+        # Coerce an empty converter_types list to None so it behaves as "no filter" at
+        # this layer — the "attacks with no converters" case is expressed through
+        # has_converters=False, which keeps the three layers (route/service/memory)
+        # consistent.
+        effective_converter_types = converter_types if converter_types else None
+
         # For converter_types, push AND-logic down to the DB for "all" mode and for
-        # the degenerate cases (None, [], single entry). For "any" mode with 2+
+        # the degenerate cases (None, single entry). For "any" mode with 2+
         # entries, skip the DB filter and apply OR-matching in Python below.
-        push_converter_filter = converter_types is None or len(converter_types) <= 1 or converter_types_match == "all"
+        push_converter_filter = (
+            effective_converter_types is None or len(effective_converter_types) == 1 or converter_types_match == "all"
+        )
         attack_results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
             attack_classes=attack_types if attack_types else None,
-            converter_classes=converter_types if push_converter_filter else None,
+            converter_classes=effective_converter_types if push_converter_filter else None,
             has_converters=has_converters,
         )
 
         if not push_converter_filter:
-            requested = {c.lower() for c in converter_types or []}
+            requested = {c.lower() for c in effective_converter_types or []}
             attack_results = [ar for ar in attack_results if _converter_classes_on_attack(ar) & requested]
 
         filtered: list[AttackResult] = []

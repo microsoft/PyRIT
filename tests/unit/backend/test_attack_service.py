@@ -22,6 +22,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.services.attack_service import (
     AttackService,
+    _converter_classes_on_attack,
     get_attack_service,
 )
 from pyrit.identifiers import ComponentIdentifier
@@ -244,15 +245,20 @@ class TestListAttacks:
         assert call_kwargs["attack_classes"] is None
 
     @pytest.mark.asyncio
-    async def test_list_attacks_filters_by_no_converters(self, attack_service, mock_memory) -> None:
-        """Test that converter_types=[] is forwarded to memory for DB-level filtering."""
+    async def test_list_attacks_coerces_empty_converter_types_to_no_filter(self, attack_service, mock_memory) -> None:
+        """converter_types=[] at the service boundary means 'no converter filter'.
+
+        The 'attacks with no converters' intent is expressed via has_converters=False;
+        an empty list is coerced to None so route/service/memory stay consistent.
+        """
         mock_memory.get_attack_results.return_value = []
         mock_memory.get_message_pieces.return_value = []
 
         await attack_service.list_attacks_async(converter_types=[])
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["converter_classes"] == []
+        assert call_kwargs["converter_classes"] is None
+        assert call_kwargs["has_converters"] is None
 
     @pytest.mark.asyncio
     async def test_list_attacks_forwards_has_converters_true(self, attack_service, mock_memory) -> None:
@@ -2369,6 +2375,16 @@ class TestAttackServiceAdditionalCoverage:
         )
 
         assert dup_piece._role == "simulated_assistant"
+
+    def test_converter_classes_on_attack_returns_empty_when_no_strategy_identifier(self):
+        """_converter_classes_on_attack returns an empty set when the attack has no strategy identifier."""
+        ar = AttackResult(
+            conversation_id="conv-1",
+            objective="obj",
+            atomic_attack_identifier=None,
+            outcome=AttackOutcome.UNDETERMINED,
+        )
+        assert _converter_classes_on_attack(ar) == set()
 
 
 class TestAddMessageGuards:

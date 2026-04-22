@@ -1569,9 +1569,12 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
-        if has_converters is not None:
-            # Reuse the array-empty match (array_to_match=[]) as the "no converters" condition;
-            # invert it for "has at least one converter".
+        # Skip when has_converters=True and converter_classes is already non-empty:
+        # the "ALL listed converters" constraint strictly implies "at least one
+        # converter", so adding this predicate is redundant work.
+        if has_converters is not None and not (has_converters is True and converter_classes):
+            # Reuse the array-empty match (array_to_match=[]) as the "no converters"
+            # condition; invert it for "has at least one converter".
             empty_condition = self._get_condition_json_array_match(
                 json_column=AttackResultEntry.atomic_attack_identifier,
                 property_path="$.children.attack_technique.children.attack.children.request_converters",
@@ -1592,8 +1595,15 @@ class MemoryInterface(abc.ABC):
             )
 
         if labels:
-            # Use database-specific JSON query method
-            conditions.append(self._get_attack_result_label_condition(labels=labels))
+            # Strip keys whose value is an empty sequence — an empty sequence means
+            # "no OR-candidates", and per the docstring applies no filter for that
+            # key. Without this, the per-backend helpers would still emit a base
+            # EXISTS(... labels IS NOT NULL) predicate that is strictly more
+            # restrictive than "no filter".
+            effective_labels = {k: v for k, v in labels.items() if not (isinstance(v, (list, tuple)) and len(v) == 0)}
+            if effective_labels:
+                # Use database-specific JSON query method
+                conditions.append(self._get_attack_result_label_condition(labels=effective_labels))
 
         if identifier_filters:
             conditions.extend(
