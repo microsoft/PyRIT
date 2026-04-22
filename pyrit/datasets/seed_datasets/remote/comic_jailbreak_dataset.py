@@ -346,9 +346,11 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         filename = f"comic_jailbreak_{template_name}.png"
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
-        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
+        results_path = serializer._memory.results_path
+        storage_io = serializer._memory.results_storage_io
+        serializer.value = str((results_path or "") + serializer.data_sub_directory + f"/{filename}")
         try:
-            if await serializer._memory.results_storage_io.path_exists(serializer.value):
+            if storage_io and await storage_io.path_exists(serializer.value):
                 return serializer.value
         except Exception as e:
             logger.warning(f"[ComicJailbreak] Failed to check cache for template {template_name}: {e}")
