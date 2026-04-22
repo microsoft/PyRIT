@@ -12,8 +12,11 @@ from pyrit.prompt_converter import (
 
 
 @pytest.mark.asyncio
-async def test_azure_speech_text_to_audio_converter_entra_auth():
+async def test_azure_speech_text_to_audio_converter_entra_auth(monkeypatch):
     """Test Azure Speech text-to-audio converter with Entra authentication."""
+    # Ensure key auth is not used — this test validates the Entra auto-detection path
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+
     region = os.getenv("AZURE_SPEECH_REGION")
     resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
 
@@ -36,9 +39,12 @@ async def test_azure_speech_text_to_audio_converter_entra_auth():
 
 
 @pytest.mark.asyncio
-async def test_azure_speech_audio_to_text_converter_entra_auth():
+async def test_azure_speech_audio_to_text_converter_entra_auth(monkeypatch):
     """Test Azure Speech audio-to-text converter with Entra authentication."""
     import tempfile
+
+    # Ensure key auth is not used — this test validates the Entra auto-detection path
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
 
     region = os.getenv("AZURE_SPEECH_REGION")
     resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")

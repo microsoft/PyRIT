@@ -181,6 +181,8 @@ class TestAzureSpeechAudioToTextConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     async def test_get_speech_config_async_with_sync_token_provider(self, mock_get_required_value, MockSpeechConfig):  # noqa: N803
+        from pyrit.auth.azure_auth import get_speech_config_async
+
         def my_provider():
             return "my_token"
 
@@ -189,7 +191,12 @@ class TestAzureSpeechAudioToTextConverter:
             azure_speech_key=my_provider,
             azure_speech_resource_id="test_resource_id",
         )
-        await converter._get_speech_config_async()
+        await get_speech_config_async(
+            token_provider=converter._token_provider,
+            resource_id=converter._azure_speech_resource_id,
+            key=converter._azure_speech_key,
+            region=converter._azure_speech_region,
+        )
         MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="test_region")
 
     @pytest.mark.asyncio
@@ -199,6 +206,8 @@ class TestAzureSpeechAudioToTextConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     async def test_get_speech_config_async_with_async_token_provider(self, mock_get_required_value, MockSpeechConfig):  # noqa: N803
+        from pyrit.auth.azure_auth import get_speech_config_async
+
         async def my_async_provider():
             return "my_async_token"
 
@@ -207,7 +216,12 @@ class TestAzureSpeechAudioToTextConverter:
             azure_speech_key=my_async_provider,
             azure_speech_resource_id="test_resource_id",
         )
-        await converter._get_speech_config_async()
+        await get_speech_config_async(
+            token_provider=converter._token_provider,
+            resource_id=converter._azure_speech_resource_id,
+            key=converter._azure_speech_key,
+            region=converter._azure_speech_region,
+        )
         MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_async_token", region="test_region")
 
     @patch("pyrit.common.default_values.get_non_required_value", return_value="")

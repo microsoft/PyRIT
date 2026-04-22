@@ -106,7 +106,7 @@ class AudioTranscriptHelper:  # noqa: B024
         self,
         *,
         text_capable_scorer: Scorer,
-        use_entra_auth: bool | None = None,
+        use_entra_auth: Optional[bool] = None,
     ) -> None:
         """
         Initialize the base audio scorer.
@@ -114,7 +114,7 @@ class AudioTranscriptHelper:  # noqa: B024
         Args:
             text_capable_scorer (Scorer): A scorer capable of processing text that will be used to score
                 the transcribed audio content.
-            use_entra_auth (bool | None): **Deprecated.** Will be removed in v0.15.0.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
                 Authentication is now auto-detected by the underlying converter.
 
         Raises:
