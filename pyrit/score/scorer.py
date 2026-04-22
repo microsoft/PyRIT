@@ -268,7 +268,7 @@ class Scorer(Identifiable, abc.ABC):
         file_mapping: Optional[ScorerEvalDatasetFiles] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: RegistryUpdateBehavior = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
     ) -> Optional[ScorerMetrics]:
         """
@@ -355,7 +355,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None
+        request.message_pieces[0].id = None  # type: ignore[assignment]
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -379,7 +379,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None
+        request.message_pieces[0].id = None  # type: ignore[assignment]
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(

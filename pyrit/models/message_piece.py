@@ -311,7 +311,7 @@ class MessagePiece:
 
         This is needed when we're scoring prompts or other things that have not been sent by PyRIT
         """
-        self.id = None
+        self.id = None  # type: ignore[assignment]
 
     def to_dict(self) -> dict[str, object]:
         """

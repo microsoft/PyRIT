@@ -144,3 +144,51 @@ def test_init_rejects_raw_string_matching_enum_value_for_categories():
     """Test that raw strings matching enum values are rejected."""
     with pytest.raises(ValueError, match="Expected SemanticCategory"):
         _HarmBenchMultimodalDataset(categories=["illegal"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_save_image_raises_when_memory_not_configured():
+    """Test that _fetch_and_save_image_async raises RuntimeError when serializer memory is not configured."""
+    from unittest.mock import MagicMock
+
+    mock_serializer = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.results_path = None
+    mock_memory.results_storage_io = None
+    mock_serializer._memory = mock_memory
+
+    with patch(
+        "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset.data_serializer_factory",
+        return_value=mock_serializer,
+    ):
+        loader = _HarmBenchMultimodalDataset()
+        with pytest.raises(RuntimeError, match="Serializer memory is not properly configured"):
+            await loader._fetch_and_save_image_async(behavior_id="test_id", image_url="https://example.com/img.png")
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_save_image_returns_cached_path():
+    """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from unittest.mock import MagicMock
+
+    mock_serializer = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.results_path = "/results"
+    mock_storage_io = AsyncMock()
+    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_memory.results_storage_io = mock_storage_io
+    mock_serializer._memory = mock_memory
+    mock_serializer.data_sub_directory = "/images"
+
+    with patch(
+        "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset.data_serializer_factory",
+        return_value=mock_serializer,
+    ):
+        loader = _HarmBenchMultimodalDataset()
+        result = await loader._fetch_and_save_image_async(
+            behavior_id="test_id", image_url="https://example.com/img.png"
+        )
+
+    expected_path = "/results/images/harmbench_test_id.png"
+    assert result == expected_path
+    assert mock_serializer.value == expected_path

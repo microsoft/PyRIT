@@ -1015,13 +1015,19 @@ class FuzzerGenerator(
 
         Returns:
             List of normalizer requests.
+
+        Raises:
+            ValueError: If a seed group contains no message.
         """
         requests: list[NormalizerRequest] = []
 
         for prompt in prompts:
             seed_group = SeedGroup(seeds=[SeedPrompt(value=prompt, data_type="text")])
+            _msg = seed_group.next_message
+            if _msg is None:
+                raise ValueError("No message in seed group")
             request = NormalizerRequest(
-                message=seed_group.next_message,
+                message=_msg,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
             )

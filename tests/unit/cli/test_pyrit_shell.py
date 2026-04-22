@@ -690,6 +690,49 @@ class TestPyRITShell:
         assert "Unknown command" in captured.out
 
 
+class TestNullGuards:
+    """Tests for null-guard checks that raise RuntimeError when _fc or context is None."""
+
+    @pytest.fixture()
+    def uninitialized_shell(self):
+        """Create a shell where _ensure_initialized passes but _fc and context are None."""
+        with patch.object(pyrit_shell.PyRITShell, "_background_init"):
+            s = pyrit_shell.PyRITShell()
+        s._init_complete.set()
+        s._fc = None
+        s.context = None
+        return s
+
+    def test_ensure_initialized_raises_when_fc_is_none(self, uninitialized_shell):
+        """Test _ensure_initialized raises RuntimeError when _fc is None."""
+        with pytest.raises(RuntimeError, match="Frontend core not initialized"):
+            uninitialized_shell._ensure_initialized()
+
+    def test_do_list_scenarios_raises_when_fc_is_none(self, uninitialized_shell):
+        """Test do_list_scenarios raises RuntimeError when _fc is None after _ensure_initialized."""
+        with patch.object(uninitialized_shell, "_ensure_initialized"):
+            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
+                uninitialized_shell.do_list_scenarios("")
+
+    def test_do_list_initializers_raises_when_fc_is_none(self, uninitialized_shell):
+        """Test do_list_initializers raises RuntimeError when _fc is None after _ensure_initialized."""
+        with patch.object(uninitialized_shell, "_ensure_initialized"):
+            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
+                uninitialized_shell.do_list_initializers("")
+
+    def test_do_list_targets_raises_when_fc_is_none(self, uninitialized_shell):
+        """Test do_list_targets raises RuntimeError when _fc is None after _ensure_initialized."""
+        with patch.object(uninitialized_shell, "_ensure_initialized"):
+            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
+                uninitialized_shell.do_list_targets("")
+
+    def test_do_run_raises_when_fc_is_none(self, uninitialized_shell):
+        """Test do_run raises RuntimeError when _fc is None after _ensure_initialized."""
+        with patch.object(uninitialized_shell, "_ensure_initialized"):
+            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
+                uninitialized_shell.do_run("some_scenario --target t")
+
+
 class TestMain:
     """Tests for main function."""
 

@@ -1046,6 +1046,17 @@ class TestSimulatedAssistantRole:
         assert piece.is_simulated is True
 
 
+def test_set_piece_not_in_database_sets_id_to_none():
+    entry = MessagePiece(
+        role="user",
+        original_value="Hello",
+        converted_value="Hello",
+    )
+    assert entry.id is not None
+    entry.set_piece_not_in_database()
+    assert entry.id is None
+
+
 class TestMessagePieceDeprecationWarnings:
     """Tests for deprecation warnings on parameters scheduled for removal."""
 

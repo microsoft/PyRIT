@@ -295,3 +295,13 @@ async def test_evaluate_async_sets_file_mapping_for_single_category(patch_centra
 
         # Parent evaluate_async should be called
         mock_eval.assert_called_once()
+
+
+def test_init_raises_runtime_error_when_api_key_not_string():
+    """Test that __init__ raises RuntimeError when resolved api_key is neither callable nor string."""
+    with patch(
+        "pyrit.score.float_scale.azure_content_filter_scorer.ensure_async_token_provider",
+        return_value=12345,
+    ):
+        with pytest.raises(RuntimeError, match="Expected string API key"):
+            AzureContentFilterScorer(api_key="foo", endpoint="https://example.com")
