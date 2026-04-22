@@ -77,11 +77,41 @@ def test_seed_prompt_initialization(seed_prompt_fixture):
 @pytest.mark.parametrize(
     ("suffix", "expected_data_type"),
     [
-        (".PNG", "image_path"),
+        # Video — uppercase
+        (".MP4", "video_path"),
+        (".AVI", "video_path"),
+        (".MOV", "video_path"),
+        (".MKV", "video_path"),
+        (".OGV", "video_path"),
+        (".FLV", "video_path"),
+        (".WMV", "video_path"),
+        (".WEBM", "video_path"),
+        # Audio — uppercase
+        (".FLAC", "audio_path"),
+        (".MP3", "audio_path"),
+        (".MPEG", "audio_path"),
+        (".MPGA", "audio_path"),
+        (".M4A", "audio_path"),
+        (".OGG", "audio_path"),
         (".WAV", "audio_path"),
+        # Image — uppercase
+        (".JPG", "image_path"),
+        (".JPEG", "image_path"),
+        (".PNG", "image_path"),
+        (".GIF", "image_path"),
+        (".BMP", "image_path"),
+        (".TIFF", "image_path"),
+        (".TIF", "image_path"),
+        # Mixed case
+        (".Mp4", "video_path"),
+        (".Wav", "audio_path"),
+        (".Png", "image_path"),
+        (".jPeG", "image_path"),
+        (".FlaC", "audio_path"),
+        (".wEbM", "video_path"),
     ],
 )
-def test_seed_prompt_infers_file_type_from_uppercase_extension(suffix, expected_data_type):
+def test_seed_prompt_infers_file_type_from_case_insensitive_extension(suffix, expected_data_type):
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
         file_path = temp_file.name
 
