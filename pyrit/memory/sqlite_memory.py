@@ -620,10 +620,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         )
         return targeted_harm_categories_subquery  # noqa: RET504
 
-    def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         SQLite implementation for filtering AttackResults by labels.
         Uses json_extract() function specific to SQLite.
+
+        Keys are AND-combined. For each key, a string value is an equality match;
+        a sequence value is an OR-within-key match (any listed value matches).
+        Empty sequences are no-ops (no constraint on that key).
 
         Returns:
             Any: A SQLAlchemy subquery for filtering by labels.
@@ -632,16 +636,21 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         from pyrit.memory.memory_models import AttackResultEntry, PromptMemoryEntry
 
-        labels_subquery = exists().where(
+        per_key_conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            col = func.json_extract(PromptMemoryEntry.labels, f"$.{key}")
+            per_key_conditions.append(col.in_(values))
+
+        return exists().where(
             and_(
                 PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
                 PromptMemoryEntry.labels.isnot(None),
-                and_(
-                    *[func.json_extract(PromptMemoryEntry.labels, f"$.{key}") == value for key, value in labels.items()]
-                ),
+                and_(*per_key_conditions),
             )
         )
-        return labels_subquery  # noqa: RET504
 
     def get_unique_attack_class_names(self) -> list[str]:
         """

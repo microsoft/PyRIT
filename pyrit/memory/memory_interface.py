@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
-from sqlalchemy import MetaData, and_
+from sqlalchemy import MetaData, and_, not_, or_
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -417,13 +417,18 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         Return a database-specific condition for filtering AttackResults by labels
         in the associated PromptMemoryEntry records.
 
+        Semantics: entries are AND-combined across label names; within a single
+        entry, a string value is an equality match and a sequence value is an
+        OR match over the listed values. An empty sequence is a no-op for that
+        label. See ``get_attack_results`` for examples.
+
         Args:
-            labels: Dictionary of labels that must ALL be present.
+            labels: Label-name-to-value(s) map.
 
         Returns:
             Database-specific SQLAlchemy condition.
@@ -1453,10 +1458,11 @@ class MemoryInterface(abc.ABC):
         objective: Optional[str] = None,
         objective_sha256: Optional[Sequence[str]] = None,
         outcome: Optional[str] = None,
-        attack_class: Optional[str] = None,
+        attack_classes: Optional[Sequence[str]] = None,
         converter_classes: Optional[Sequence[str]] = None,
+        has_converters: Optional[bool] = None,
         targeted_harm_categories: Optional[Sequence[str]] = None,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str | Sequence[str]]] = None,
         identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
     ) -> Sequence[AttackResult]:
         """
@@ -1470,11 +1476,17 @@ class MemoryInterface(abc.ABC):
                 Defaults to None.
             outcome (Optional[str], optional): The outcome to filter by (success, failure, undetermined).
                 Defaults to None.
-            attack_class (Optional[str], optional): Filter by exact attack class_name in attack_identifier.
-                Defaults to None.
+            attack_classes (Optional[Sequence[str]], optional): Filter by exact attack class_name in
+                attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
+                case-sensitive). An empty sequence applies no filter. Defaults to None.
             converter_classes (Optional[Sequence[str]], optional): Filter by converter class names.
                 Returns only attacks that used ALL specified converters (AND logic, case-insensitive).
+                An empty sequence applies no filter. To filter by presence/absence of any converter,
+                use the ``has_converters`` parameter instead.
                 Defaults to None.
+            has_converters (Optional[bool], optional): Filter by converter presence.
+                ``True`` returns only attacks that used at least one converter. ``False`` returns
+                only attacks that used no converters. ``None`` applies no filter. Defaults to None.
             targeted_harm_categories (Optional[Sequence[str]], optional):
                 A list of targeted harm categories to filter results by.
                 These targeted harm categories are associated with the prompts themselves,
@@ -1482,9 +1494,14 @@ class MemoryInterface(abc.ABC):
                 not necessarily one(s) that were found in the response.
                 By providing a list, this means ALL categories in the list must be present.
                 Defaults to None.
-            labels (Optional[dict[str, str]], optional): A dictionary of memory labels to filter results by.
-                These labels are associated with the prompts themselves, used for custom tagging and tracking.
-                Defaults to None.
+            labels (Optional[dict[str, str | Sequence[str]]], optional): Filter results
+                by attack labels. Entries are AND-combined across label names; within a
+                single entry, a string value is an equality match and a sequence value is
+                an OR match over the listed values. An empty sequence applies no filter
+                for that label. Example: ``{"operator": "roakey", "operation":
+                ["roakey_op_a", "roakey_op_b"]}`` matches attacks where ``operator ==
+                "roakey"`` AND (``operation == "roakey_op_a"`` OR ``operation ==
+                "roakey_op_b"``). Defaults to None.
             identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
                 A sequence of IdentifierFilter objects that allows filtering by various attack identifier
                 JSON properties. Defaults to None.
@@ -1509,20 +1526,25 @@ class MemoryInterface(abc.ABC):
         if outcome:
             conditions.append(AttackResultEntry.outcome == outcome)
 
-        if attack_class:
-            # Use database-specific JSON query method
+        if attack_classes:
+            # Use database-specific JSON query method; OR-match across the provided class names.
             conditions.append(
-                self._get_condition_json_property_match(
-                    json_column=AttackResultEntry.atomic_attack_identifier,
-                    property_path="$.children.attack_technique.children.attack.class_name",
-                    value=attack_class,
-                    case_sensitive=True,
+                or_(
+                    *[
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.children.attack_technique.children.attack.class_name",
+                            value=ac,
+                            case_sensitive=True,
+                        )
+                        for ac in attack_classes
+                    ]
                 )
             )
 
-        if converter_classes is not None:
-            # converter_classes=[] means "only attacks with no converters"
-            # converter_classes=["A","B"] means "must have all listed converters"
+        if converter_classes:
+            # Non-empty sequence filters by converter class names (ALL must be present).
+            # Empty sequence or None applies no filter.
             conditions.append(
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
@@ -1531,6 +1553,17 @@ class MemoryInterface(abc.ABC):
                     array_to_match=converter_classes,
                 )
             )
+
+        if has_converters is not None:
+            # Reuse the array-empty match (array_to_match=[]) as the "no converters" condition;
+            # invert it for "has at least one converter".
+            empty_condition = self._get_condition_json_array_match(
+                json_column=AttackResultEntry.atomic_attack_identifier,
+                property_path="$.children.attack_technique.children.attack.children.request_converters",
+                array_element_path="$.class_name",
+                array_to_match=[],
+            )
+            conditions.append(not_(empty_condition) if has_converters else empty_condition)
 
         if targeted_harm_categories:
             warnings.warn(

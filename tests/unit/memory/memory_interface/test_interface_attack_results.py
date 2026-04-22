@@ -839,6 +839,50 @@ def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface)
     assert conversation_ids == {"conv_1", "conv_2"}
 
 
+def test_get_attack_results_by_labels_or_within_key(sqlite_instance: MemoryInterface):
+    """Test that a sequence value for a label key matches any of the values (OR-within-key)."""
+
+    message_pieces = [
+        create_message_piece("conv_1", 1, labels={"operator": "alice"}),
+        create_message_piece("conv_2", 2, labels={"operator": "bob"}),
+        create_message_piece("conv_3", 3, labels={"operator": "charlie"}),
+    ]
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            create_attack_result("conv_1", 1),
+            create_attack_result("conv_2", 2),
+            create_attack_result("conv_3", 3),
+        ]
+    )
+
+    results = sqlite_instance.get_attack_results(labels={"operator": ["alice", "bob"]})
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
+def test_get_attack_results_by_labels_or_within_key_and_across_keys(sqlite_instance: MemoryInterface):
+    """Test that OR-within-key composes with AND-across-keys."""
+
+    message_pieces = [
+        # matches: operator in {alice, bob} AND operation == red
+        create_message_piece("conv_1", 1, labels={"operator": "alice", "operation": "red"}),
+        create_message_piece("conv_2", 2, labels={"operator": "bob", "operation": "red"}),
+        # fails operator constraint
+        create_message_piece("conv_3", 3, labels={"operator": "charlie", "operation": "red"}),
+        # fails operation constraint
+        create_message_piece("conv_4", 4, labels={"operator": "alice", "operation": "blue"}),
+    ]
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[create_attack_result(f"conv_{i}", i) for i in range(1, 5)]
+    )
+
+    results = sqlite_instance.get_attack_results(labels={"operator": ["alice", "bob"], "operation": ["red"]})
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
 def test_get_attack_results_by_harm_category_and_labels(sqlite_instance: MemoryInterface):
     """Test filtering attack results by both harm categories and labels."""
 
@@ -1155,45 +1199,66 @@ def _make_attack_result_with_identifier(
     )
 
 
-def test_get_attack_results_by_attack_class(sqlite_instance: MemoryInterface):
-    """Test filtering attack results by attack_class matches class_name in JSON."""
+def test_get_attack_results_by_attack_classes(sqlite_instance: MemoryInterface):
+    """Test filtering attack results by attack_classes matches class_name in JSON."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack")
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
 
-    results = sqlite_instance.get_attack_results(attack_class="CrescendoAttack")
+    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"])
     assert len(results) == 2
     assert {r.conversation_id for r in results} == {"conv_1", "conv_3"}
 
 
-def test_get_attack_results_by_attack_class_no_match(sqlite_instance: MemoryInterface):
-    """Test that attack_class filter returns empty when nothing matches."""
+def test_get_attack_results_by_attack_classes_no_match(sqlite_instance: MemoryInterface):
+    """Test that attack_classes filter returns empty when nothing matches."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
 
-    results = sqlite_instance.get_attack_results(attack_class="NonExistentAttack")
+    results = sqlite_instance.get_attack_results(attack_classes=["NonExistentAttack"])
     assert len(results) == 0
 
 
-def test_get_attack_results_by_attack_class_case_sensitive(sqlite_instance: MemoryInterface):
-    """Test that attack_class filter is case-sensitive (exact match)."""
+def test_get_attack_results_by_attack_classes_case_sensitive(sqlite_instance: MemoryInterface):
+    """Test that attack_classes filter is case-sensitive (exact match)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
 
-    results = sqlite_instance.get_attack_results(attack_class="crescendoattack")
+    results = sqlite_instance.get_attack_results(attack_classes=["crescendoattack"])
     assert len(results) == 0
 
 
-def test_get_attack_results_by_attack_class_no_identifier(sqlite_instance: MemoryInterface):
-    """Test that attacks with no attack_identifier (empty JSON) are excluded by attack_class filter."""
+def test_get_attack_results_by_attack_classes_no_identifier(sqlite_instance: MemoryInterface):
+    """Test that attacks with no attack_identifier (empty JSON) are excluded by attack_classes filter."""
     ar1 = create_attack_result("conv_1", 1)  # No attack_identifier → stored as {}
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
 
-    results = sqlite_instance.get_attack_results(attack_class="CrescendoAttack")
+    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"])
     assert len(results) == 1
     assert results[0].conversation_id == "conv_2"
+
+
+def test_get_attack_results_by_attack_classes_multi(sqlite_instance: MemoryInterface):
+    """Test that multiple attack_classes use OR logic — matches any of the listed class names."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    ar3 = _make_attack_result_with_identifier("conv_3", "TreeOfAttacksAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+
+    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack", "ManualAttack"])
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
+def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instance: MemoryInterface):
+    """Test that attack_classes=[] behaves like None (no filter applied)."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results = sqlite_instance.get_attack_results(attack_classes=[])
+    assert len(results) == 2
 
 
 def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: MemoryInterface):
@@ -1207,8 +1272,8 @@ def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: 
     assert len(results) == 3
 
 
-def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite_instance: MemoryInterface):
-    """Test that converter_classes=[] returns only attacks with no converters."""
+def test_get_attack_results_converter_classes_empty_returns_all(sqlite_instance: MemoryInterface):
+    """Test that converter_classes=[] behaves like None (no filter applied)."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")  # converter_ids=None
     ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])  # converter_ids=[]
@@ -1218,12 +1283,7 @@ def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite
     )
 
     results = sqlite_instance.get_attack_results(converter_classes=[])
-    conv_ids = {r.conversation_id for r in results}
-    # Should include attacks with no converters (None key, empty array, or empty identifier)
-    assert "conv_1" not in conv_ids, "Should not include attacks that have converters"
-    assert "conv_2" in conv_ids, "Should include attacks where converter key is absent (None)"
-    assert "conv_3" in conv_ids, "Should include attacks with empty converter list"
-    assert "conv_4" in conv_ids, "Should include attacks with empty attack_identifier"
+    assert len(results) == 4
 
 
 def test_get_attack_results_converter_classes_single_match(sqlite_instance: MemoryInterface):
@@ -1271,29 +1331,79 @@ def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryIn
     assert len(results) == 0
 
 
-def test_get_attack_results_attack_class_and_converter_classes_combined(sqlite_instance: MemoryInterface):
-    """Test combining attack_type and converter_types filters."""
+def test_get_attack_results_attack_classes_and_converter_classes_combined(sqlite_instance: MemoryInterface):
+    """Test combining attack_classes and converter_classes filters."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack", ["Base64Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack", ["ROT13Converter"])
     ar4 = _make_attack_result_with_identifier("conv_4", "CrescendoAttack")  # No converters
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4])
 
-    results = sqlite_instance.get_attack_results(attack_class="CrescendoAttack", converter_classes=["Base64Converter"])
+    results = sqlite_instance.get_attack_results(
+        attack_classes=["CrescendoAttack"], converter_classes=["Base64Converter"]
+    )
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_attack_class_with_no_converters(sqlite_instance: MemoryInterface):
-    """Test combining attack_type with converter_types=[] (no converters)."""
+def test_get_attack_results_attack_classes_converter_classes_empty_no_filter(sqlite_instance: MemoryInterface):
+    """Combining attack_classes with converter_classes=[] applies no converter filter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
-    ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # No converters
+    ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # Different class
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
 
-    results = sqlite_instance.get_attack_results(attack_class="CrescendoAttack", converter_classes=[])
-    assert len(results) == 1
-    assert results[0].conversation_id == "conv_2"
+    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"], converter_classes=[])
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
+def test_get_attack_results_has_converters_true(sqlite_instance: MemoryInterface):
+    """has_converters=True returns only attacks with at least one converter."""
+    ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")  # converter_ids=None
+    ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])  # converter_ids=[]
+    ar_no_identifier = create_attack_result("conv_4", 4)  # No identifier → stored as {}
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+    )
+
+    results = sqlite_instance.get_attack_results(has_converters=True)
+    assert {r.conversation_id for r in results} == {"conv_1"}
+
+
+def test_get_attack_results_has_converters_false(sqlite_instance: MemoryInterface):
+    """has_converters=False returns only attacks with zero converters."""
+    ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")
+    ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])
+    ar_no_identifier = create_attack_result("conv_4", 4)
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+    )
+
+    results = sqlite_instance.get_attack_results(has_converters=False)
+    assert {r.conversation_id for r in results} == {"conv_2", "conv_3", "conv_4"}
+
+
+def test_get_attack_results_has_converters_none_returns_all(sqlite_instance: MemoryInterface):
+    """has_converters=None applies no filter."""
+    ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar_no_conv = _make_attack_result_with_identifier("conv_2", "Attack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar_with_conv, ar_no_conv])
+
+    results = sqlite_instance.get_attack_results(has_converters=None)
+    assert len(results) == 2
+
+
+def test_get_attack_results_has_converters_false_combined_with_attack_classes(sqlite_instance: MemoryInterface):
+    """has_converters=False composes (AND) with attack_classes."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
+    ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
+    ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # No converters, different class
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+
+    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"], has_converters=False)
+    assert {r.conversation_id for r in results} == {"conv_2"}
 
 
 # ============================================================================

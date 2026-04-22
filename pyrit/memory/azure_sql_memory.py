@@ -7,14 +7,14 @@ import struct
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union, cast
 
 from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
-from sqlalchemy.sql.expression import TextClause
+from sqlalchemy.sql.expression import ColumnElement, TextClause
 
 from pyrit.auth.azure_auth import AzureAuth
 from pyrit.common import default_values
@@ -454,35 +454,40 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
         )
 
-    def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
-        Get the SQL Azure implementation for filtering AttackResults by labels.
+        Azure SQL implementation for filtering AttackResults by labels.
 
-        Uses JSON_VALUE() function specific to SQL Azure with parameterized queries.
-
-        Args:
-            labels (dict[str, str]): Dictionary of label key-value pairs to filter by.
+        Uses JSON_VALUE() with parameterized IN clauses. See
+        ``MemoryInterface._get_attack_result_label_condition`` for semantics.
 
         Returns:
             Any: SQLAlchemy exists subquery condition with bound parameters.
         """
-        # Build JSON conditions for all labels with parameterized queries
-        label_conditions = []
-        bindparams_dict = {}
-        for key, value in labels.items():
-            param_name = f"label_{key}"
-            label_conditions.append(f"JSON_VALUE(labels, '$.{key}') = :{param_name}")
-            bindparams_dict[param_name] = str(value)
+        label_conditions: list[str] = []
+        bindparams_dict: dict[str, str] = {}
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            placeholders = []
+            for idx, v in enumerate(values):
+                param_name = f"label_{key}_{idx}"
+                placeholders.append(f":{param_name}")
+                bindparams_dict[param_name] = str(v)
+            label_conditions.append(f"JSON_VALUE(labels, '$.{key}') IN ({', '.join(placeholders)})")
 
-        combined_conditions = " AND ".join(label_conditions)
-
-        return exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                PromptMemoryEntry.labels.isnot(None),
-                text(f"ISJSON(labels) = 1 AND {combined_conditions}").bindparams(**bindparams_dict),
+        base = [
+            PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
+            PromptMemoryEntry.labels.isnot(None),
+        ]
+        if label_conditions:
+            combined = " AND ".join(label_conditions)
+            base.append(
+                cast("ColumnElement[bool]", text(f"ISJSON(labels) = 1 AND {combined}").bindparams(**bindparams_dict))
             )
-        )
+
+        return exists().where(and_(*base))
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
