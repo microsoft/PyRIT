@@ -3,7 +3,9 @@ import {
   Tooltip,
   Dropdown,
   Option,
+  OptionGroup,
   Combobox,
+  Switch,
 } from '@fluentui/react-components'
 import {
   FilterRegular,
@@ -12,6 +14,8 @@ import {
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
+
+const NO_CONVERTERS_SENTINEL = '__no_converters__'
 
 interface HistoryFiltersBarProps {
   filters: HistoryFilters
@@ -35,11 +39,13 @@ export default function HistoryFiltersBar({
   const styles = useAttackHistoryStyles()
 
   const {
-    attackClass: attackClassFilter,
+    attackClasses: attackClassFilters,
     outcome: outcomeFilter,
     converter: converterFilter,
-    operator: operatorFilter,
-    operation: operationFilter,
+    converterMatchMode,
+    hasConverters,
+    operator: operatorFilters,
+    operation: operationFilters,
     otherLabels: otherLabelFilters,
     labelSearchText,
   } = filters
@@ -49,8 +55,35 @@ export default function HistoryFiltersBar({
   }
 
   const hasActiveFilters =
-    attackClassFilter || outcomeFilter || converterFilter ||
-    operatorFilter || operationFilter || otherLabelFilters.length > 0
+    attackClassFilters.length > 0 ||
+    outcomeFilter ||
+    converterFilter.length > 0 ||
+    hasConverters !== undefined ||
+    operatorFilters.length > 0 ||
+    operationFilters.length > 0 ||
+    otherLabelFilters.length > 0
+
+  // Converter Combobox selectedOptions includes the sentinel when hasConverters=false.
+  const converterSelectedOptions = hasConverters === false
+    ? [NO_CONVERTERS_SENTINEL]
+    : converterFilter
+
+  const handleConverterSelect = (selected: string[]) => {
+    const hasSentinel = selected.includes(NO_CONVERTERS_SENTINEL)
+    const realConverters = selected.filter((s) => s !== NO_CONVERTERS_SENTINEL)
+    const sentinelWasActive = hasConverters === false
+    const sentinelJustAdded = hasSentinel && !sentinelWasActive
+
+    if (sentinelJustAdded || (hasSentinel && realConverters.length === 0)) {
+      // User just toggled the sentinel on (or it's alone) → clear real converters
+      onFiltersChange({ ...filters, converter: [], hasConverters: false })
+    } else {
+      // Any real converter toggled (sentinel was active or not) → drop sentinel
+      onFiltersChange({ ...filters, converter: realConverters, hasConverters: undefined })
+    }
+  }
+
+  const showMatchModeToggle = converterFilter.length >= 2 && hasConverters !== false
 
   return (
     <div className={styles.filters}>
@@ -68,19 +101,18 @@ export default function HistoryFiltersBar({
           </Button>
         </Tooltip>
       )}
-      <Dropdown
+      <Combobox
         className={styles.filterDropdown}
         placeholder="All attack types"
-        value={attackClassFilter || undefined}
-        selectedOptions={attackClassFilter ? [attackClassFilter] : []}
-        onOptionSelect={(_e, data) => setFilter('attackClass', data.optionValue ?? '')}
+        multiselect
+        selectedOptions={attackClassFilters}
+        onOptionSelect={(_e, data) => setFilter('attackClasses', data.selectedOptions)}
         data-testid="attack-class-filter"
       >
-        <Option value="">All attack types</Option>
-        {attackClassOptions.map(cls => (
+        {attackClassOptions.map((cls) => (
           <Option key={cls} value={cls}>{cls}</Option>
         ))}
-      </Dropdown>
+      </Combobox>
       <Dropdown
         className={styles.filterDropdown}
         placeholder="All outcomes"
@@ -94,45 +126,66 @@ export default function HistoryFiltersBar({
         <Option value="failure">Failure</Option>
         <Option value="undetermined">Undetermined</Option>
       </Dropdown>
-      <Dropdown
+      <Combobox
         className={styles.filterDropdown}
         placeholder="All converters"
-        value={converterFilter || undefined}
-        selectedOptions={converterFilter ? [converterFilter] : []}
-        onOptionSelect={(_e, data) => setFilter('converter', data.optionValue ?? '')}
+        multiselect
+        selectedOptions={converterSelectedOptions}
+        onOptionSelect={(_e, data) => handleConverterSelect(data.selectedOptions)}
         data-testid="converter-filter"
       >
-        <Option value="">All converters</Option>
-        {converterOptions.map(c => (
-          <Option key={c} value={c}>{c}</Option>
-        ))}
-      </Dropdown>
-      <Dropdown
+        <OptionGroup label="Special">
+          <Option value={NO_CONVERTERS_SENTINEL} text="(No converters)">(No converters)</Option>
+        </OptionGroup>
+        <OptionGroup label="Converters">
+          {converterOptions.map((c) => (
+            <Option key={c} value={c}>{c}</Option>
+          ))}
+        </OptionGroup>
+      </Combobox>
+      {showMatchModeToggle && (
+        <Tooltip
+          content={
+            converterMatchMode === 'all'
+              ? 'Attack must use ALL selected converters'
+              : 'Attack must use ANY of the selected converters'
+          }
+          relationship="label"
+        >
+          <Switch
+            label={converterMatchMode === 'all' ? 'Match all' : 'Match any'}
+            checked={converterMatchMode === 'all'}
+            onChange={(_e, data) =>
+              setFilter('converterMatchMode', data.checked ? 'all' : 'any')
+            }
+            data-testid="converter-match-mode-toggle"
+          />
+        </Tooltip>
+      )}
+      <Combobox
         className={styles.filterDropdown}
         placeholder="All operators"
-        value={operatorFilter || undefined}
-        selectedOptions={operatorFilter ? [operatorFilter] : []}
-        onOptionSelect={(_e, data) => setFilter('operator', data.optionValue ?? '')}
+        multiselect
+        selectedOptions={operatorFilters}
+        onOptionSelect={(_e, data) => setFilter('operator', data.selectedOptions)}
         data-testid="operator-filter"
       >
-        <Option value="">All operators</Option>
-        {operatorOptions.map(o => (
+        {operatorOptions.map((o) => (
           <Option key={o} value={o}>{o}</Option>
         ))}
-      </Dropdown>
-      <Dropdown
+      </Combobox>
+      <Combobox
         className={styles.filterDropdown}
         placeholder="All operations"
-        value={operationFilter || undefined}
-        selectedOptions={operationFilter ? [operationFilter] : []}
-        onOptionSelect={(_e, data) => setFilter('operation', data.optionValue ?? '')}
+        multiselect
+        selectedOptions={operationFilters}
+        onOptionSelect={(_e, data) => setFilter('operation', data.selectedOptions)}
         data-testid="operation-filter"
       >
-        <Option value="">All operations</Option>
-        {operationOptions.map(o => (
+        {operationOptions.map((o) => (
           <Option key={o} value={o}>{o}</Option>
         ))}
-      </Dropdown>
+      </Combobox>
       <Combobox
         className={styles.filterDropdown}
         placeholder="Filter labels..."

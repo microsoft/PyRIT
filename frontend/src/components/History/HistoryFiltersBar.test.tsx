@@ -65,7 +65,7 @@ describe('HistoryFiltersBar', () => {
 
   it('should call onFiltersChange with defaults when reset is clicked', () => {
     const onFiltersChange = jest.fn()
-    const activeFilters = { ...DEFAULT_HISTORY_FILTERS, outcome: 'success', operator: 'alice' }
+    const activeFilters = { ...DEFAULT_HISTORY_FILTERS, outcome: 'success', operator: ['alice'] }
 
     render(
       <TestWrapper>
@@ -98,7 +98,7 @@ describe('HistoryFiltersBar', () => {
     fireEvent.click(option)
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ attackClass: 'CrescendoAttack' })
+      expect.objectContaining({ attackClasses: ['CrescendoAttack'] })
     )
   })
 
@@ -143,7 +143,7 @@ describe('HistoryFiltersBar', () => {
     fireEvent.click(option)
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: 'ROT13Converter' })
+      expect.objectContaining({ converter: ['ROT13Converter'] })
     )
   })
 
@@ -168,7 +168,7 @@ describe('HistoryFiltersBar', () => {
     fireEvent.click(option)
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ operator: 'bob' })
+      expect.objectContaining({ operator: ['bob'] })
     )
   })
 
@@ -193,7 +193,7 @@ describe('HistoryFiltersBar', () => {
     fireEvent.click(option)
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: 'op_beta' })
+      expect.objectContaining({ operation: ['op_beta'] })
     )
   })
 
@@ -255,5 +255,117 @@ describe('HistoryFiltersBar', () => {
     )
 
     expect(screen.getByTestId('reset-filters-btn')).toBeInTheDocument()
+  })
+
+  it('should set hasConverters=false and clear converter list when "(No converters)" sentinel is selected', async () => {
+    const onFiltersChange = jest.fn()
+    const props = {
+      ...defaultProps,
+      onFiltersChange,
+      converterOptions: ['Base64Converter', 'ROT13Converter'],
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('converter-filter'))
+    const option = await screen.findByText('(No converters)')
+    fireEvent.click(option)
+
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ converter: [], hasConverters: false })
+    )
+  })
+
+  it('should replace sentinel with real converter when user picks a converter while sentinel is active', async () => {
+    const onFiltersChange = jest.fn()
+    const props = {
+      ...defaultProps,
+      onFiltersChange,
+      converterOptions: ['Base64Converter', 'ROT13Converter'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, hasConverters: false as boolean | undefined },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('converter-filter'))
+    const option = await screen.findByText('ROT13Converter')
+    fireEvent.click(option)
+
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ converter: ['ROT13Converter'], hasConverters: undefined })
+    )
+  })
+
+  it('should replace real converters with sentinel when user picks sentinel while real converters are active', async () => {
+    const onFiltersChange = jest.fn()
+    const props = {
+      ...defaultProps,
+      onFiltersChange,
+      converterOptions: ['Base64Converter', 'ROT13Converter'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter'] },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('converter-filter'))
+    const option = await screen.findByText('(No converters)')
+    fireEvent.click(option)
+
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ converter: [], hasConverters: false })
+    )
+  })
+
+  it('should not render the match-mode toggle when fewer than two converters are selected', () => {
+    const props = {
+      ...defaultProps,
+      converterOptions: ['Base64Converter', 'ROT13Converter'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter'] },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByTestId('converter-match-mode-toggle')).not.toBeInTheDocument()
+  })
+
+  it('should render the match-mode toggle and emit "all" when flipped with two converters selected', () => {
+    const onFiltersChange = jest.fn()
+    const props = {
+      ...defaultProps,
+      onFiltersChange,
+      converterOptions: ['Base64Converter', 'ROT13Converter'],
+      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter', 'ROT13Converter'] },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    const toggle = screen.getByTestId('converter-match-mode-toggle')
+    expect(toggle).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ converterMatchMode: 'all' })
+    )
   })
 })

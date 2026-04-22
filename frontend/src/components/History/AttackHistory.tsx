@@ -47,16 +47,18 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
     setError(null)
     try {
       const labelParams: string[] = []
-      if (filters.operator) { labelParams.push(`operator:${filters.operator}`) }
-      if (filters.operation) { labelParams.push(`operation:${filters.operation}`) }
+      for (const op of filters.operator) { labelParams.push(`operator:${op}`) }
+      for (const op of filters.operation) { labelParams.push(`operation:${op}`) }
       labelParams.push(...filters.otherLabels)
 
       const response = await attacksApi.listAttacks({
         limit: PAGE_SIZE,
         ...(pageCursor && { cursor: pageCursor }),
-        ...(filters.attackClass && { attack_type: filters.attackClass }),
+        ...(filters.attackClasses.length > 0 && { attack_types: filters.attackClasses }),
         ...(filters.outcome && { outcome: filters.outcome }),
-        ...(filters.converter && { converter_types: [filters.converter] }),
+        ...(filters.converter.length > 0 && { converter_types: filters.converter }),
+        ...(filters.converter.length >= 2 && { converter_types_match: filters.converterMatchMode }),
+        ...(filters.hasConverters !== undefined && { has_converters: filters.hasConverters }),
         ...(labelParams.length > 0 && { label: labelParams }),
       })
       setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
@@ -68,7 +70,16 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
     } finally {
       setLoading(false)
     }
-  }, [filters.attackClass, filters.outcome, filters.converter, filters.operator, filters.operation, filters.otherLabels])
+  }, [
+    filters.attackClasses,
+    filters.outcome,
+    filters.converter,
+    filters.converterMatchMode,
+    filters.hasConverters,
+    filters.operator,
+    filters.operation,
+    filters.otherLabels,
+  ])
 
   // Load filter options on mount
   useEffect(() => {
@@ -132,8 +143,9 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   }
 
   const hasActiveFilters =
-    filters.attackClass || filters.outcome || filters.converter ||
-    filters.operator || filters.operation || filters.otherLabels.length > 0
+    filters.attackClasses.length > 0 || filters.outcome || filters.converter.length > 0 ||
+    filters.hasConverters !== undefined ||
+    filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
 
   return (
     <div className={styles.root}>
