@@ -12,16 +12,17 @@ from pyrit.prompt_converter import (
 
 
 @pytest.mark.asyncio
-async def test_azure_speech_text_to_audio_converter_entra_auth():
+async def test_azure_speech_text_to_audio_converter_entra_auth(monkeypatch):
     """Test Azure Speech text-to-audio converter with Entra authentication."""
+    # Ensure key auth is not used — this test validates the Entra auto-detection path
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+
     region = os.getenv("AZURE_SPEECH_REGION")
     resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
 
     # The Azure Speech resource should have Entra authentication enabled in the current context.
     # e.g. Cognitive Services Speech Contributor role
-    converter = AzureSpeechTextToAudioConverter(
-        azure_speech_region=region, azure_speech_resource_id=resource_id, use_entra_auth=True
-    )
+    converter = AzureSpeechTextToAudioConverter(azure_speech_region=region, azure_speech_resource_id=resource_id)
 
     # Test conversion with simple text
     test_text = "Hello, this is a test."
@@ -38,16 +39,17 @@ async def test_azure_speech_text_to_audio_converter_entra_auth():
 
 
 @pytest.mark.asyncio
-async def test_azure_speech_audio_to_text_converter_entra_auth():
+async def test_azure_speech_audio_to_text_converter_entra_auth(monkeypatch):
     """Test Azure Speech audio-to-text converter with Entra authentication."""
     import tempfile
+
+    # Ensure key auth is not used — this test validates the Entra auto-detection path
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
 
     region = os.getenv("AZURE_SPEECH_REGION")
     resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
 
-    converter = AzureSpeechAudioToTextConverter(
-        azure_speech_region=region, azure_speech_resource_id=resource_id, use_entra_auth=True
-    )
+    converter = AzureSpeechAudioToTextConverter(azure_speech_region=region, azure_speech_resource_id=resource_id)
 
     # Create a temporary audio file
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
