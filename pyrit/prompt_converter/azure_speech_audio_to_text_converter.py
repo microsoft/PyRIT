@@ -117,6 +117,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
                 )
 
         self._recognition_language = recognition_language
+        # Create a flag to indicate when recognition is finished
         self.done = False
 
     def _build_identifier(self) -> ComponentIdentifier:

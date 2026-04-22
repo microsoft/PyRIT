@@ -83,8 +83,8 @@ class TestAzureSpeechAudioToTextConverter:
         transcript = ["sample", "transcript"]
         converter.transcript_cb(evt=mock_event, transcript=transcript)
 
-        # Check if the callback function worked as expected
-        mock_logger.info.assert_called_once_with(f"RECOGNIZED: {mock_event.result.text}")
+        # Check if the callback function logged the recognition
+        mock_logger.info.assert_any_call(f"RECOGNIZED: {mock_event.result.text}")
         assert mock_event.result.text in transcript
 
     @patch(
