@@ -9,6 +9,7 @@ This is the attack-centric API design.
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -38,21 +39,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attacks", tags=["attacks"])
 
 
-def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str]]:
+def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str | Sequence[str]]]:
     """
-    Parse label query params in 'key:value' format to a dict.
+    Parse 'key:value' label query params into a dict grouping values by key.
+
+    Repeating the same key produces OR-within-key semantics downstream
+    (e.g. ?label=operator:alice&label=operator:bob matches either operator).
+    Different keys are combined with AND.
 
     Returns:
-        Dict mapping label keys to values, or None if no valid labels.
+        Dict mapping each label key to a list of values, or None if no valid labels.
     """
     if not label_params:
         return None
-    labels = {}
+    labels: dict[str, list[str]] = {}
     for param in label_params:
         if ":" in param:
             key, value = param.split(":", 1)
-            labels[key.strip()] = value.strip()
-    return labels if labels else None
+            labels.setdefault(key.strip(), []).append(value.strip())
+    if not labels:
+        return None
+    # Widen value type to match the service signature (dict values are invariant).
+    widened: dict[str, str | Sequence[str]] = dict(labels)
+    return widened
 
 
 @router.get(
@@ -60,12 +69,27 @@ def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str]]
     response_model=AttackListResponse,
 )
 async def list_attacks(
-    attack_type: Optional[str] = Query(None, description="Filter by exact attack type name"),
+    attack_types: Optional[list[str]] = Query(
+        None,
+        description="Filter by attack type names (repeatable). OR-matched, case-sensitive. "
+        "Omit to return all attacks regardless of type.",
+    ),
     converter_types: Optional[list[str]] = Query(
         None,
-        description="Filter by converter type names (repeatable, AND logic). "
+        description="Filter by converter type names (repeatable). "
+        "Combined per converter_types_match. "
         "Omit to return all attacks regardless of converters. "
-        "Pass with no values to match only no-converter attacks.",
+        "To filter for attacks with no converters, use has_converters=false.",
+    ),
+    converter_types_match: Literal["any", "all"] = Query(
+        "all",
+        description="How to combine multiple converter_types: 'any' (attack has at least one) "
+        "or 'all' (attack has every one). Defaults to 'all'.",
+    ),
+    has_converters: Optional[bool] = Query(
+        None,
+        description="Filter by converter presence. true = attacks with at least one converter; "
+        "false = attacks with no converters. Omit for no filter.",
     ),
     outcome: Optional[Literal["undetermined", "success", "failure"]] = Query(None, description="Filter by outcome"),
     label: Optional[list[str]] = Query(None, description="Filter by labels (format: key:value, repeatable)"),
@@ -89,12 +113,15 @@ async def list_attacks(
     """
     service = get_attack_service()
     labels = _parse_labels(label)
-    # Normalize converter_types: strip empty strings so ?converter_types= means "no converters"
+    # Strip empty strings from ?converter_types= parameters; an all-empty list
+    # collapses to [] which means "no filter" at the memory layer.
     if converter_types is not None:
         converter_types = [c for c in converter_types if c]
     return await service.list_attacks_async(
-        attack_type=attack_type,
+        attack_types=attack_types,
         converter_types=converter_types,
+        converter_types_match=converter_types_match,
+        has_converters=has_converters,
         outcome=outcome,
         labels=labels,
         min_turns=min_turns,
