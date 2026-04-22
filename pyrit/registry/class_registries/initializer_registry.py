@@ -66,16 +66,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
     The directory structure is used for organization but not exposed to users.
     """
 
-    @classmethod
-    def get_registry_singleton(cls) -> InitializerRegistry:
-        """
-        Get the singleton instance of the InitializerRegistry.
-
-        Returns:
-            The singleton InitializerRegistry instance.
-        """
-        return super().get_registry_singleton()  # type: ignore[return-value]
-
     def __init__(self, *, discovery_path: Optional[Path] = None, lazy_discovery: bool = False) -> None:
         """
         Initialize the initializer registry.
@@ -86,13 +76,17 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 To discover only scenarios, pass pyrit/setup/initializers/scenarios.
             lazy_discovery: If True, discovery is deferred until first access.
                 Defaults to False for backwards compatibility.
+
+        Raises:
+            ValueError: If the discovery path could not be resolved.
         """
         self._discovery_path = discovery_path
         if self._discovery_path is None:
             self._discovery_path = Path(PYRIT_PATH) / "setup" / "initializers"
 
         # At this point _discovery_path is guaranteed to be a Path
-        assert self._discovery_path is not None
+        if self._discovery_path is None:
+            raise ValueError("self._discovery_path is not initialized")
 
         super().__init__(lazy_discovery=lazy_discovery)
 

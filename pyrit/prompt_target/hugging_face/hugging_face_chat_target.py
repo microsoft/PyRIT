@@ -42,9 +42,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
     )
 
     # Class-level cache for model and tokenizer
-    _cached_model = None
-    _cached_tokenizer = None
-    _cached_model_id = None
+    _cached_model: Any = None
+    _cached_tokenizer: Any = None
+    _cached_model_id: str | None = None
 
     # Class-level flag to enable or disable cache
     _cache_enabled = True
@@ -186,9 +186,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             **kwargs: Additional keyword arguments to pass to the model loader.
         """
         logger.info(f"Loading model and tokenizer from path: {path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call, unused-ignore]
-            path, trust_remote_code=self.trust_remote_code
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=self.trust_remote_code)
         self.model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=self.trust_remote_code, **kwargs)
 
     def is_model_id_valid(self) -> bool:
@@ -200,7 +198,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         """
         try:
             # Attempt to load the configuration of the model
-            PretrainedConfig.from_pretrained(self.model_id)
+            PretrainedConfig.from_pretrained(self.model_id or "")
             return True
         except Exception as e:
             logger.error(f"Invalid HuggingFace model ID {self.model_id}: {e}")
@@ -248,27 +246,27 @@ class HuggingFaceChatTarget(PromptChatTarget):
                     ".cache",
                     "huggingface",
                     "hub",
-                    f"models--{self.model_id.replace('/', '--')}",
+                    f"models--{(self.model_id or '').replace('/', '--')}",
                 )
 
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id, None, self.huggingface_token, Path(cache_dir))
+                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
                     await download_specific_files(
-                        self.model_id, self.necessary_files, self.huggingface_token, Path(cache_dir)
+                        self.model_id or "", self.necessary_files, self.huggingface_token, Path(cache_dir)
                     )
 
                 # Load the tokenizer and model from the specified directory
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call, unused-ignore]
-                    self.model_id, cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_id or "", cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
                 )
                 self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id,
+                    self.model_id or "",
                     cache_dir=cache_dir,
                     trust_remote_code=self.trust_remote_code,
                     **optional_model_kwargs,
@@ -295,9 +293,14 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send a normalized prompt asynchronously to the HuggingFace model.
+
+        Args:
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response object with generated text pieces.
@@ -309,7 +312,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         # Load the model and tokenizer using the encapsulated method
         await self.load_model_and_tokenizer_task
 
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
         prompt_template = request.converted_value
 
@@ -363,7 +366,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             response = construct_response_from_request(
                 request=request,
                 response_text_pieces=[assistant_response],
-                prompt_metadata={"model_id": model_identifier},
+                prompt_metadata={"model_id": model_identifier or ""},
             )
             return [response]
 

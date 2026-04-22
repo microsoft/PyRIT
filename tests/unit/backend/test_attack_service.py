@@ -122,6 +122,7 @@ def make_mock_piece(
     piece.id = "piece-id"
     piece.conversation_id = conversation_id
     piece.role = role
+    piece.api_role = "assistant" if role in ("assistant", "simulated_assistant") else role
     piece.get_role_for_storage.return_value = role
     piece.sequence = sequence
     piece.original_value = original_value
@@ -2231,6 +2232,19 @@ class TestAttackServiceAdditionalCoverage:
 
         assert new_id == "branch-empty"
         mock_memory.add_message_pieces_to_memory.assert_not_called()
+
+    def test_duplicate_conversation_remaps_assistant_to_simulated(self, attack_service, mock_memory):
+        """Should remap assistant pieces to simulated_assistant when flag is set."""
+        source = make_mock_piece(conversation_id="attack-1", role="assistant", sequence=0)
+        mock_memory.get_conversation.return_value = [source]
+        dup_piece = make_mock_piece(conversation_id="branch-1", role="assistant", sequence=0)
+        mock_memory.duplicate_messages.return_value = ("branch-1", [dup_piece])
+
+        attack_service._duplicate_conversation_up_to(
+            source_conversation_id="attack-1", cutoff_index=0, remap_assistant_to_simulated=True
+        )
+
+        assert dup_piece._role == "simulated_assistant"
 
 
 class TestAddMessageGuards:

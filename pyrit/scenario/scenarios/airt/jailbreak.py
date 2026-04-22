@@ -25,7 +25,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import (
     TrueFalseScorer,
 )
@@ -125,7 +125,7 @@ class Jailbreak(Scenario):
         scenario_result_id: Optional[str] = None,
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
-        jailbreak_names: list[str] = None,
+        jailbreak_names: list[str] | None = None,
     ) -> None:
         """
         Initialize the jailbreak scenario.
@@ -201,7 +201,7 @@ class Jailbreak(Scenario):
         endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )
@@ -298,7 +298,7 @@ class Jailbreak(Scenario):
         return AtomicAttack(
             atomic_attack_name=f"jailbreak_{template_name}",
             attack_technique=AttackTechnique(attack=attack),
-            seed_groups=self._seed_groups,
+            seed_groups=self._seed_groups or [],
         )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
@@ -315,9 +315,7 @@ class Jailbreak(Scenario):
         # Retrieve seed prompts based on selected strategies
         self._seed_groups = self._resolve_seed_groups()
 
-        strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            composites=self._scenario_composites, strategy_type=JailbreakStrategy
-        )
+        strategies = {s.value for s in self._scenario_strategies}
 
         for strategy in strategies:
             for template_name in self._jailbreaks:

@@ -361,3 +361,31 @@ class TestVisualLeakBenchDataset:
         """Test _get_query_prompt returns PII prompt for PII Leakage category."""
         loader = _VisualLeakBenchDataset()
         assert loader._get_query_prompt("PII Leakage") == _VisualLeakBenchDataset.PII_LEAKAGE_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_save_image_returns_cached_path():
+    """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_serializer = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.results_path = "/results"
+    mock_storage_io = AsyncMock()
+    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_memory.results_storage_io = mock_storage_io
+    mock_serializer._memory = mock_memory
+    mock_serializer.data_sub_directory = "/images"
+
+    with patch(
+        "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset.data_serializer_factory",
+        return_value=mock_serializer,
+    ):
+        loader = _VisualLeakBenchDataset()
+        result = await loader._fetch_and_save_image_async(
+            image_url="https://example.com/img.png", example_id="test_001"
+        )
+
+    expected_path = "/results/images/visual_leak_bench_test_001.png"
+    assert result == expected_path
+    assert mock_serializer.value == expected_path

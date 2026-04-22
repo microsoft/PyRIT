@@ -182,7 +182,12 @@ class ComponentIdentifier:
 
         Returns:
             str: First 8 hex characters of the SHA256 hash.
+
+        Raises:
+            RuntimeError: If the hash was not set by __post_init__.
         """
+        if self.hash is None:
+            raise RuntimeError("hash should be set by __post_init__")
         return self.hash[:8]
 
     @property

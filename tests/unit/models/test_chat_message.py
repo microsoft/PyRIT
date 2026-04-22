@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from pyrit.models.chat_message import (
     ChatMessage,
-    ChatMessageListDictContent,
     ChatMessagesDataset,
     ToolCall,
 )
@@ -103,12 +102,6 @@ def test_chat_message_from_json_roundtrip_with_tool_calls():
 def test_chat_message_accepts_all_valid_roles(role):
     msg = ChatMessage(role=role, content="test")
     assert msg.role == role
-
-
-def test_chat_message_list_dict_content_deprecated(capsys):
-    msg = ChatMessageListDictContent(role="user", content="hello")
-    assert msg.role == "user"
-    assert msg.content == "hello"
 
 
 def test_chat_messages_dataset_init():

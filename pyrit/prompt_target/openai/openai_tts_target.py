@@ -113,17 +113,19 @@ class OpenAITTSTarget(OpenAITarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the OpenAI TTS target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the audio response from the prompt target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
         logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
@@ -142,10 +144,10 @@ class OpenAITTSTarget(OpenAITarget):
 
         # Use unified error handler for consistent error handling
         response = await self._handle_openai_request(
-            api_call=lambda: self._async_client.audio.speech.create(
-                model=body_parameters["model"],  # type: ignore[arg-type]
-                voice=body_parameters["voice"],  # type: ignore[arg-type]
-                input=body_parameters["input"],  # type: ignore[arg-type]
+            api_call=lambda: self._client.audio.speech.create(
+                model=str(body_parameters["model"]),
+                voice=str(body_parameters["voice"]),
+                input=str(body_parameters["input"]),
                 response_format=body_parameters.get("response_format"),  # type: ignore[arg-type]
                 speed=body_parameters.get("speed"),  # type: ignore[arg-type]
             ),

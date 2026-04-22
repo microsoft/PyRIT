@@ -42,17 +42,19 @@ class TextTarget(PromptTarget):
         super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities)
         self._text_stream = text_stream
 
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously write a message to the text stream.
 
         Args:
-            message (Message): The message object to write to the stream.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: An empty list (no response expected).
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         self._text_stream.write(f"{str(message)}\n")
         self._text_stream.flush()
@@ -84,7 +86,7 @@ class TextTarget(PromptTarget):
                     original_value=row["value"],
                     original_value_data_type=row.get("data_type", None),  # type: ignore[arg-type]
                     conversation_id=row.get("conversation_id", None),
-                    sequence=int(sequence_str) if sequence_str else None,
+                    sequence=int(sequence_str) if sequence_str else 0,
                     labels=labels,
                     response_error=row.get("response_error", None),  # type: ignore[arg-type]
                     prompt_target_identifier=self.get_identifier(),
@@ -95,7 +97,7 @@ class TextTarget(PromptTarget):
         self._memory.add_message_pieces_to_memory(message_pieces=message_pieces)
         return message_pieces
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
     async def cleanup_target(self) -> None:

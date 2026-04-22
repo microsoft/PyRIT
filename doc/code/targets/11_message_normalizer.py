@@ -41,7 +41,7 @@ messages = [system_message, user_message, assistant_message, followup_message]
 
 print("Sample messages created:")
 for msg in messages:
-    print(f"  {msg.role}: {msg.get_piece().converted_value[:50]}...")
+    print(f"  {msg.api_role}: {msg.get_piece().converted_value[:50]}...")
 
 # %% [markdown]
 # ## ChatMessageNormalizer
@@ -215,7 +215,7 @@ class SimpleMarkdownNormalizer(MessageStringNormalizer):
         lines = []
         for msg in messages:
             piece = msg.get_piece()
-            role = piece.role.capitalize()
+            role = piece.api_role.capitalize()
             content = piece.converted_value
             lines.append(f"**{role}**: {content}")
         return "\n\n".join(lines)

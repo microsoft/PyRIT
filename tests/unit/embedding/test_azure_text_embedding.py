@@ -95,10 +95,9 @@ def test_callable_api_key_is_passed_to_client(mock_async_openai):
     # Create instance with token provider
     embedding = OpenAITextEmbedding(api_key=mock_token_provider)
 
-    # Verify async client was created with the callable
+    # Verify async client was created with a callable (ensure_async_token_provider wraps sync→async)
     async_call_args = mock_async_openai.call_args
     assert callable(async_call_args.kwargs["api_key"])
-    assert async_call_args.kwargs["api_key"]() == "mock-token"
     assert async_call_args.kwargs["base_url"] == "https://mock.azure.com/"
 
     assert embedding._async_client == mock_async_client

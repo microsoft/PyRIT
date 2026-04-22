@@ -23,7 +23,7 @@ from pyrit.prompt_converter import (
     SuffixAppendConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
-from pyrit.registry.instance_registries import ConverterRegistry
+from pyrit.registry.object_registries import ConverterRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -424,6 +424,8 @@ def _try_instantiate_converter(converter_name: str):
 
     # Converter-specific overrides for params with validation
     overrides: dict = {
+        "AddImageTextConverter": {"img_to_add": "test_image.png"},
+        "AddTextImageConverter": {"text_to_add": "test text"},
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
@@ -505,6 +507,11 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = 0.5
         else:
             kwargs[pname] = "test_value"
+
+    # Apply converter-specific overrides (may override defaults or add params with
+    # default values that fail validation, e.g. img_to_add="" in AddImageTextConverter)
+    if converter_name in overrides:
+        kwargs.update(overrides[converter_name])
 
     try:
         instance = converter_cls(**kwargs)

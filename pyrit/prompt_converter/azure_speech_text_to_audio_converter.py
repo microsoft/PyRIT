@@ -181,4 +181,4 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))
             raise
-        return ConverterResult(output_text=audio_serializer_file, output_type="audio_path")
+        return ConverterResult(output_text=audio_serializer_file or "", output_type="audio_path")

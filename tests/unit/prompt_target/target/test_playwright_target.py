@@ -129,7 +129,7 @@ class TestPlaywrightTarget:
             match=r"This target supports only the following data types.*If your target does support this, set the"
             r" custom_configuration parameter accordingly",
         ):
-            target._validate_request(message=request)
+            target._validate_request(normalized_conversation=[request])
 
     def test_validate_request_valid_text(self, mock_interaction_func, mock_page, text_message_piece):
         """Test validation with valid text request."""
@@ -137,7 +137,7 @@ class TestPlaywrightTarget:
         request = Message(message_pieces=[text_message_piece])
 
         # Should not raise any exception
-        target._validate_request(message=request)
+        target._validate_request(normalized_conversation=[request])
 
     def test_validate_request_valid_image(self, mock_interaction_func, mock_page, image_message_piece):
         """Test validation with valid image request."""
@@ -145,7 +145,7 @@ class TestPlaywrightTarget:
         request = Message(message_pieces=[image_message_piece])
 
         # Should not raise any exception
-        target._validate_request(message=request)
+        target._validate_request(normalized_conversation=[request])
 
     def test_validate_request_mixed_valid_types(
         self, mock_interaction_func, mock_page, text_message_piece, image_message_piece
@@ -155,7 +155,7 @@ class TestPlaywrightTarget:
         request = Message(message_pieces=[text_message_piece, image_message_piece])
 
         # Should not raise any exception
-        target._validate_request(message=request)
+        target._validate_request(normalized_conversation=[request])
 
     @pytest.mark.asyncio
     async def test_send_prompt_async_single_text(self, mock_interaction_func, mock_page, text_message_piece):
@@ -345,7 +345,7 @@ class TestPlaywrightTargetEdgeCases:
             match=r"This target supports only the following data types.*If your target does support this, set the"
             r" custom_configuration parameter accordingly",
         ):
-            target._validate_request(message=request)
+            target._validate_request(normalized_conversation=[request])
 
     @pytest.mark.asyncio
     async def test_interaction_function_with_complex_response(self, mock_page):

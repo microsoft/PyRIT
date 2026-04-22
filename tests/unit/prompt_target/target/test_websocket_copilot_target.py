@@ -743,19 +743,19 @@ class TestValidateRequest:
         message = Message(message_pieces=[message_piece])
 
         if should_pass:
-            target._validate_request(message=message)
+            target._validate_request(normalized_conversation=[message])
         else:
             with pytest.raises(
                 ValueError,
                 match=f"This target supports only the following data types: image_path, text. Received: {data_type}.",
             ):
-                target._validate_request(message=message)
+                target._validate_request(normalized_conversation=[message])
 
     def test_validate_request_with_multiple_text_pieces(self, mock_authenticator, make_message_piece):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         message_pieces = [make_message_piece(f"test{i}", conversation_id="123") for i in range(3)]
         message = Message(message_pieces=message_pieces)
-        target._validate_request(message=message)  # should not raise
+        target._validate_request(normalized_conversation=[message])  # should not raise
 
     def test_validate_request_with_mixed_valid_content(self, mock_authenticator, make_message_piece):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
@@ -764,7 +764,7 @@ class TestValidateRequest:
             make_message_piece("/path/to/image.png", data_type="image_path", conversation_id="123"),
         ]
         message = Message(message_pieces=message_pieces)
-        target._validate_request(message=message)  # should not raise
+        target._validate_request(normalized_conversation=[message])  # should not raise
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -14,7 +14,6 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "converters").resolve()
 
 skipped_files = [
     "2_audio_converters.ipynb",  # requires Azure Speech API key
-    "7_human_converter.ipynb",  # requires human input
 ]
 
 

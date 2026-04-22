@@ -25,7 +25,7 @@ def get_available_files(model_id: str, token: str) -> list[str]:
     api = HfApi()
     try:
         model_info = api.model_info(model_id, token=token)
-        available_files = [file.rfilename for file in model_info.siblings]
+        available_files = [file.rfilename for file in (model_info.siblings or [])]
 
         # Perform simple validation: raise a ValueError if no files are available
         if not len(available_files):

@@ -56,7 +56,7 @@ except ImportError:
         """Dummy termcolor fallback for colored printing if termcolor is not installed."""
 
         @staticmethod
-        def cprint(text: str, color: str = None, attrs: list = None) -> None:  # type: ignore[type-arg]
+        def cprint(text: str, color: str | None = None, attrs: list[Any] | None = None) -> None:
             """Print text without color."""
             print(text)
 
@@ -249,12 +249,14 @@ class FrontendCore:
 
         Raises:
             RuntimeError: If initialize_async() has not been called.
+            ValueError: If the scenario registry is not initialized.
         """
         if not self._initialized:
             raise RuntimeError(
                 "FrontendCore not initialized. Call 'await context.initialize_async()' before accessing registries."
             )
-        assert self._scenario_registry is not None
+        if self._scenario_registry is None:
+            raise ValueError("self._scenario_registry is not initialized")
         return self._scenario_registry
 
     @property
@@ -264,12 +266,14 @@ class FrontendCore:
 
         Raises:
             RuntimeError: If initialize_async() has not been called.
+            ValueError: If the initializer registry is not initialized.
         """
         if not self._initialized:
             raise RuntimeError(
                 "FrontendCore not initialized. Call 'await context.initialize_async()' before accessing registries."
             )
-        assert self._initializer_registry is not None
+        if self._initializer_registry is None:
+            raise ValueError("self._initializer_registry is not initialized")
         return self._initializer_registry
 
 

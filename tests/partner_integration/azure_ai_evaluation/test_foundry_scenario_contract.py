@@ -4,7 +4,7 @@
 """Contract tests for Foundry scenario APIs used by azure-ai-evaluation.
 
 The azure-ai-evaluation red team module uses the scenario framework for attack execution:
-- FoundryExecutionManager creates FoundryScenario instances per risk category
+- FoundryExecutionManager creates RedTeamAgent instances per risk category
 - StrategyMapper maps AttackStrategy enum → FoundryStrategy
 - DatasetConfigurationBuilder produces DatasetConfiguration from RAI objectives
 - ScenarioOrchestrator processes ScenarioResult and AttackResult
@@ -13,7 +13,7 @@ The azure-ai-evaluation red team module uses the scenario framework for attack e
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.scenario import ScenarioStrategy
-from pyrit.scenario.foundry import FoundryStrategy
+from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
 
 
 class TestRedTeamStrategyContract:
@@ -25,13 +25,11 @@ class TestRedTeamStrategyContract:
 
 
 class TestRedTeamScenarioContract:
-    """Validate FoundryScenario importability."""
+    """Validate RedTeamAgent importability."""
 
-    def test_foundry_scenario_importable(self):
-        """ScenarioOrchestrator creates FoundryScenario instances."""
-        from pyrit.scenario.foundry import FoundryScenario  # noqa: F811
-
-        assert FoundryScenario is not None
+    def test_red_team_agent_importable(self):
+        """ScenarioOrchestrator creates RedTeamAgent instances."""
+        assert RedTeamAgent is not None
 
 
 class TestDatasetConfigurationContract:

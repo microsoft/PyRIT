@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from pyrit.message_normalizer import (
     GenericSystemSquashNormalizer,
@@ -63,7 +65,7 @@ class ConversationNormalizationPipeline:
         *,
         capabilities: TargetCapabilities,
         policy: CapabilityHandlingPolicy,
-        normalizer_overrides: dict[CapabilityName, MessageListNormalizer[Message]] | None = None,
+        normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Any]] | None = None,
     ) -> "ConversationNormalizationPipeline":
         """
         Resolve capabilities and policy into a concrete pipeline of normalizers.
@@ -80,7 +82,7 @@ class ConversationNormalizationPipeline:
         Args:
             capabilities (TargetCapabilities): The target's declared capabilities.
             policy (CapabilityHandlingPolicy): How to handle each missing capability.
-            normalizer_overrides (dict[CapabilityName, MessageListNormalizer[Message]] | None):
+            normalizer_overrides (Mapping[CapabilityName, MessageListNormalizer[Any]] | None):
                 Optional overrides for specific capability normalizers.
                 Falls back to the defaults from ``_NORMALIZER_REGISTRY``.
 
@@ -103,7 +105,6 @@ class ConversationNormalizationPipeline:
             # workflow is implemented.
             if behavior == UnsupportedCapabilityBehavior.ADAPT:
                 normalizer = overrides.get(capability, default_normalizer)
-
                 normalizers.append(normalizer)
 
         return cls(normalizers=tuple(normalizers))

@@ -245,7 +245,7 @@ async def test_realtime_target_multi_objective(sqlite_instance, endpoint, api_ke
     second_prompt_to_send = "What is the size of that city?"
 
     attack = PromptSendingAttack(objective_target=target)
-    results = await AttackExecutor().execute_multi_objective_attack_async(
+    results = await AttackExecutor().execute_attack_async(
         attack=attack,
         objectives=[prompt_to_send, second_prompt_to_send],
     )
@@ -517,9 +517,9 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     attack = PromptSendingAttack(objective_target=target)
     executor = AttackExecutor()
 
-    # Send two prompts using execute_multi_objective_attack_async
+    # Send two prompts using execute_attack_async
     objectives = ["A cat walking on a beach", "A dog running in a park"]
-    results = await executor.execute_multi_objective_attack_async(attack=attack, objectives=objectives)
+    results = await executor.execute_attack_async(attack=attack, objectives=objectives)
 
     # Verify we got 2 results
     assert len(results) == 2, f"Expected 2 results, got {len(results)}"

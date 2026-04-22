@@ -174,6 +174,19 @@ class TestExecuteAttackAsync:
             )
 
     @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides(self):
+        """Test that explicit empty field_overrides still validate length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Obj1", "Obj2"],
+                field_overrides=[],
+            )
+
+    @pytest.mark.asyncio
     async def test_concurrency_control(self):
         """Test that concurrency is properly limited."""
         attack = create_mock_attack()
@@ -321,6 +334,21 @@ class TestExecuteAttackFromSeedGroupsAsync:
         finally:
             # Restore the original to prevent test pollution in parallel test runs
             attack.params_type.from_seed_group_async = original_from_seed_group_async
+
+    @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
+        """Test that explicit empty field_overrides still validate seed group length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+        sg1 = create_seed_group("Objective 1")
+        sg2 = create_seed_group("Objective 2")
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[sg1, sg2],
+                field_overrides=[],
+            )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -509,61 +537,6 @@ class TestAttackExecutorResult:
         )
 
         assert executor_result.input_indices == [2]
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestDeprecatedMethods:
-    """Tests for deprecated methods that should emit warnings."""
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_objective_attack_async_emits_warning(self):
-        """Test that deprecated method emits warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-
-        import warnings
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            await executor.execute_multi_objective_attack_async(
-                attack=attack,
-                objectives=["Test"],
-            )
-
-        # Check that a deprecation warning was logged (via logger.warning)
-        # The method uses logger.warning, not warnings.warn
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_single_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
-        )
-
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        from pyrit.executor.attack import MultiTurnAttackContext
-
-        attack = create_mock_attack(context_type=MultiTurnAttackContext)
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_multi_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
-        )
-
-        assert len(result) == 1
 
 
 @pytest.mark.usefixtures("patch_central_database")

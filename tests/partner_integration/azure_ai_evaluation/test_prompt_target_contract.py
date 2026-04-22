@@ -23,10 +23,10 @@ from pyrit.prompt_target import PromptTarget
 class _MinimalTarget(PromptTarget):
     """Minimal concrete PromptTarget for contract testing."""
 
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         return []
 
-    def _validate_request(self, *, message) -> None:
+    def _validate_request(self, *, normalized_conversation) -> None:
         pass
 
 

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Registry module for PyRIT class and instance registries."""
+"""Registry module for PyRIT class and object registries."""
 
 from pyrit.registry.base import RegistryProtocol
 from pyrit.registry.class_registries import (
@@ -17,16 +17,22 @@ from pyrit.registry.discovery import (
     discover_in_package,
     discover_subclasses_in_loaded_modules,
 )
-from pyrit.registry.instance_registries import (
+from pyrit.registry.object_registries import (
+    AttackTechniqueRegistry,
     BaseInstanceRegistry,
+    ConverterRegistry,
     RegistryEntry,
+    RetrievableInstanceRegistry,
     ScorerRegistry,
     TargetRegistry,
 )
 
 __all__ = [
+    "AttackTechniqueRegistry",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
+    "ConverterRegistry",
+    "RetrievableInstanceRegistry",
     "ClassEntry",
     "discover_in_directory",
     "discover_in_package",

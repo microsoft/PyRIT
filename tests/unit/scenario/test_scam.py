@@ -117,33 +117,12 @@ def mock_adversarial_target() -> PromptChatTarget:
     return mock
 
 
-@pytest.fixture
-def sample_objectives() -> list[str]:
-    return ["scam prompt 1", "scam prompt 2"]
-
-
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestScamInitialization:
     """Tests for Scam initialization."""
-
-    def test_init_with_custom_objectives(
-        self,
-        *,
-        mock_objective_scorer: TrueFalseCompositeScorer,
-        sample_objectives: list[str],
-    ) -> None:
-        scenario = Scam(
-            objectives=sample_objectives,
-            objective_scorer=mock_objective_scorer,
-        )
-
-        # objectives are stored as _deprecated_objectives; _seed_groups is resolved lazily
-        assert scenario._deprecated_objectives == sample_objectives
-        assert scenario.name == "Scam"
-        assert scenario.VERSION == 1
 
     def test_init_with_default_objectives(
         self,
@@ -154,8 +133,6 @@ class TestScamInitialization:
         with patch.object(Scam, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
-            # seed_groups are resolved lazily; _deprecated_objectives should be None
-            assert scenario._deprecated_objectives is None
             assert scenario.name == "Scam"
             assert scenario.VERSION == 1
 

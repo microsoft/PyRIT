@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -20,7 +20,6 @@
 # Converters can transform prompts in various ways:
 # - **Text-to-Text**: Encoding, obfuscation, translation, and semantic transformations
 # - **Multimodal**: Converting between text, images, audio, video, and files
-# - **Interactive**: Human-in-the-loop review and modification
 #
 # ## Converter Modality Reference Table
 #
@@ -63,7 +62,6 @@ print(df)
 # - **[Video Converters](4_video_converters.ipynb)**: Image-to-Video
 # - **[File Converters](5_file_converters.ipynb)**: Text-to-File (PDF, URL)
 # - **[Selectively Converting](6_selectively_converting.ipynb)**: Advanced techniques for converting portions of prompts
-# - **[Human-in-the-Loop Converter](7_human_converter.ipynb)**: Interactive prompt review and modification
 
 # %% [markdown]
 # ## Simple Converter Example
@@ -72,7 +70,6 @@ print(df)
 # Converters can be used to perform these types of transformations. Here is a simple program that uses Rot13Converter converter, RandomCapitalLettersConverter, and AsciiArtConverter.
 
 # %%
-
 from pyrit.prompt_converter import (
     AsciiArtConverter,
     BinaryConverter,

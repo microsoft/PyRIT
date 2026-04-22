@@ -74,6 +74,54 @@ def test_seed_prompt_initialization(seed_prompt_fixture):
     assert seed_prompt_fixture.parameters == ["param1"]
 
 
+@pytest.mark.parametrize(
+    ("suffix", "expected_data_type"),
+    [
+        # Video — uppercase
+        (".MP4", "video_path"),
+        (".AVI", "video_path"),
+        (".MOV", "video_path"),
+        (".MKV", "video_path"),
+        (".OGV", "video_path"),
+        (".FLV", "video_path"),
+        (".WMV", "video_path"),
+        (".WEBM", "video_path"),
+        # Audio — uppercase
+        (".FLAC", "audio_path"),
+        (".MP3", "audio_path"),
+        (".MPEG", "audio_path"),
+        (".MPGA", "audio_path"),
+        (".M4A", "audio_path"),
+        (".OGG", "audio_path"),
+        (".WAV", "audio_path"),
+        # Image — uppercase
+        (".JPG", "image_path"),
+        (".JPEG", "image_path"),
+        (".PNG", "image_path"),
+        (".GIF", "image_path"),
+        (".BMP", "image_path"),
+        (".TIFF", "image_path"),
+        (".TIF", "image_path"),
+        # Mixed case
+        (".Mp4", "video_path"),
+        (".Wav", "audio_path"),
+        (".Png", "image_path"),
+        (".jPeG", "image_path"),
+        (".FlaC", "audio_path"),
+        (".wEbM", "video_path"),
+    ],
+)
+def test_seed_prompt_infers_file_type_from_case_insensitive_extension(suffix, expected_data_type):
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+        file_path = temp_file.name
+
+    try:
+        seed_prompt = SeedPrompt(value=file_path)
+        assert seed_prompt.data_type == expected_data_type
+    finally:
+        os.remove(file_path)
+
+
 def test_seed_prompt_render_template_success(seed_prompt_fixture):
     seed_prompt_fixture.value = "Test prompt with param1={{ param1 }}"
     result = seed_prompt_fixture.render_template_value(param1="value1")
@@ -267,7 +315,7 @@ def test_prompt_dataset_from_yaml_defaults():
     prompts = SeedDataset.from_yaml_file(
         pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt" / "illegal.prompt"
     )
-    # Note: This file has is_objective: True at the top level, so all seeds are SeedObjective
+    # Note: This file uses seed_type: objective at the top level, so all seeds are SeedObjective
     assert len(prompts.seeds) == 5
     assert len([s for s in prompts.seeds if isinstance(s, SeedObjective)]) == 5
 
@@ -793,26 +841,6 @@ def test_seed_group_dict_with_seed_type_objective():
 
     # Prompts list should be empty
     assert len(group.prompts) == 0
-
-
-def test_seed_group_dict_with_is_objective_true_backward_compat():
-    """Test backward compatibility: is_objective=True still works (deprecated)."""
-    import warnings
-
-    prompt_dict = {
-        "value": "Test objective from dict",
-        "is_objective": True,
-    }
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        group = SeedGroup(seeds=[prompt_dict])
-        # Verify deprecation warning was raised
-        assert any("is_objective" in str(warning.message) for warning in w)
-
-    # Should still work
-    assert group.objective is not None
-    assert group.objective.value == "Test objective from dict"
 
 
 def test_seed_group_dict_with_seed_type_prompt():

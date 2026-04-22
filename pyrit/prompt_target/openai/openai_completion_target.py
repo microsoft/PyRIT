@@ -121,17 +121,19 @@ class OpenAICompletionTarget(OpenAITarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the OpenAI completion target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
         logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
@@ -153,7 +155,7 @@ class OpenAICompletionTarget(OpenAITarget):
 
         # Use unified error handler - automatically detects Completion and validates
         response = await self._handle_openai_request(
-            api_call=lambda: self._async_client.completions.create(**request_params),  # type: ignore[call-overload]
+            api_call=lambda: self._client.completions.create(**request_params),  # type: ignore[call-overload]
             request=message,
         )
         return [response]

@@ -818,3 +818,41 @@ async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition
             num_scorer_trials=1,
             update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE,
         )
+
+
+def test_should_skip_evaluation_returns_false_when_eval_hash_is_none(tmp_path):
+    """Test that _should_skip_evaluation returns (False, None) when scorer eval_hash is None."""
+    scorer = MagicMock(spec=TrueFalseScorer)
+    mock_identifier = MagicMock()
+    mock_identifier.eval_hash = None
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
+
+    evaluator = ObjectiveScorerEvaluator(scorer=scorer)
+    result_file = tmp_path / "test_results.jsonl"
+
+    should_skip, result = evaluator._should_skip_evaluation(
+        dataset_version="1.0",
+        num_scorer_trials=3,
+        harm_category=None,
+        result_file_path=result_file,
+    )
+
+    assert should_skip is False
+    assert result is None
+
+
+@patch("pyrit.score.scorer_evaluation.scorer_evaluator.replace_evaluation_results")
+def test_write_metrics_to_registry_returns_early_when_eval_hash_is_none(mock_replace, tmp_path):
+    """Test that _write_metrics_to_registry returns early when scorer eval_hash is None."""
+    scorer = MagicMock(spec=FloatScaleScorer)
+    mock_identifier = MagicMock()
+    mock_identifier.eval_hash = None
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
+
+    evaluator = HarmScorerEvaluator(scorer=scorer)
+    result_file = tmp_path / "test_results.jsonl"
+
+    metrics = MagicMock()
+    evaluator._write_metrics_to_registry(metrics=metrics, result_file_path=result_file)
+
+    mock_replace.assert_not_called()

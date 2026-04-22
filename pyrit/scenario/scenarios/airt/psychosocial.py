@@ -11,7 +11,6 @@ import yaml
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -109,15 +108,6 @@ class PsychosocialStrategy(ScenarioStrategy):
         if self.value == "all":
             return "psychosocial"
         return str(self.value)
-
-
-# Register deprecated member names that existed prior to 0.12.0
-PsychosocialStrategy.__deprecated_members__ = {  # type: ignore[attr-defined]
-    "SINGLE_TURN": ("ALL", "0.13.0"),
-    "MULTI_TURN": ("ALL", "0.13.0"),
-    "imminent_crisis": ("ImminentCrisis", "0.13.0"),
-    "licensed_therapist": ("LicensedTherapist", "0.13.0"),
-}
 
 
 class Psychosocial(Scenario):
@@ -302,7 +292,7 @@ class Psychosocial(Scenario):
 
         if harm_category_filter:
             seed_groups = self._filter_by_harm_category(
-                seed_groups=seed_groups,
+                seed_groups=seed_groups or [],
                 harm_category=harm_category_filter,
             )
             logger.info(
@@ -325,12 +315,11 @@ class Psychosocial(Scenario):
         Returns:
             Optional[str]: The harm category to filter by, or None if no filter is set.
         """
-        for composite in self._scenario_composites:
-            for strategy in composite.strategies:
-                if isinstance(strategy, PsychosocialStrategy):
-                    harm_filter = strategy.harm_category_filter
-                    if harm_filter:
-                        return harm_filter
+        for strategy in self._scenario_strategies:
+            if isinstance(strategy, PsychosocialStrategy):
+                harm_filter = strategy.harm_category_filter
+                if harm_filter:
+                    return harm_filter
         return None
 
     def _filter_by_harm_category(
@@ -368,7 +357,7 @@ class Psychosocial(Scenario):
         endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=0.7,
         )
@@ -408,7 +397,7 @@ class Psychosocial(Scenario):
         endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
         azure_openai_chat_target = OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint),
+            api_key=get_azure_openai_auth(endpoint or ""),
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
         )
 
@@ -475,7 +464,7 @@ class Psychosocial(Scenario):
             AtomicAttack(
                 atomic_attack_name="psychosocial_single_turn",
                 attack_technique=AttackTechnique(attack=prompt_sending),
-                seed_groups=seed_groups,
+                seed_groups=seed_groups or [],
                 memory_labels=self._memory_labels,
             )
         )
@@ -489,7 +478,7 @@ class Psychosocial(Scenario):
             AtomicAttack(
                 atomic_attack_name="psychosocial_role_play",
                 attack_technique=AttackTechnique(attack=role_play),
-                seed_groups=seed_groups,
+                seed_groups=seed_groups or [],
                 memory_labels=self._memory_labels,
             )
         )
@@ -526,24 +515,6 @@ class Psychosocial(Scenario):
         return AtomicAttack(
             atomic_attack_name="psychosocial_crescendo_turn",
             attack_technique=AttackTechnique(attack=crescendo),
-            seed_groups=seed_groups,
+            seed_groups=seed_groups or [],
             memory_labels=self._memory_labels,
         )
-
-
-class PsychosocialScenario(Psychosocial):
-    """
-    Deprecated alias for Psychosocial.
-
-    This class is deprecated and will be removed in version 0.13.0.
-    Use `Psychosocial` instead.
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        """Initialize PsychosocialScenario with deprecation warning."""
-        print_deprecation_message(
-            old_item="PsychosocialScenario",
-            new_item="Psychosocial",
-            removed_in="0.13.0",
-        )
-        super().__init__(**kwargs)

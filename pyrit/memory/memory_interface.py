@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
-from sqlalchemy import MetaData, and_, or_
+from sqlalchemy import MetaData, and_
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -70,10 +70,10 @@ class MemoryInterface(abc.ABC):
     such as files, databases, or cloud storage services.
     """
 
-    memory_embedding: MemoryEmbedding = None
-    results_storage_io: StorageIO = None
-    results_path: str = None
-    engine: Engine = None
+    memory_embedding: MemoryEmbedding | None = None
+    results_storage_io: StorageIO | None = None
+    results_path: str | None = None
+    engine: Engine | None = None
 
     @staticmethod
     def _uid() -> str:
@@ -981,7 +981,6 @@ class MemoryInterface(abc.ABC):
         groups: Optional[Sequence[str]] = None,
         source: Optional[str] = None,
         seed_type: Optional[SeedType] = None,
-        is_objective: Optional[bool] = None,  # Deprecated in 0.13.0: Use seed_type instead
         parameters: Optional[Sequence[str]] = None,
         metadata: Optional[dict[str, Union[str, int]]] = None,
         prompt_group_ids: Optional[Sequence[uuid.UUID]] = None,
@@ -1010,7 +1009,6 @@ class MemoryInterface(abc.ABC):
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
-            is_objective (bool): Deprecated in 0.13.0. Use seed_type="objective" instead.
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
                 prompt templates instead of prompts.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
@@ -1018,25 +1016,7 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Sequence[SeedPrompt]: A list of prompts matching the criteria.
-
-        Raises:
-            ValueError: If both 'seed_type' and deprecated 'is_objective' parameters are specified.
         """
-        # Handle deprecated is_objective parameter
-        if is_objective is not None:
-            if seed_type is not None:
-                raise ValueError(
-                    "Cannot specify both 'seed_type' and 'is_objective'. "
-                    "is_objective is deprecated since 0.13.0. Use seed_type='objective' instead."
-                )
-            warnings.warn(
-                "is_objective parameter is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # Convert is_objective to seed_type
-            seed_type = "objective" if is_objective else "prompt"
-
         conditions = []
 
         # Apply filters for non-list fields
@@ -1058,10 +1038,9 @@ class MemoryInterface(abc.ABC):
         if source:
             conditions.append(SeedEntry.source == source)
 
-        # Handle seed_type filtering with backward compatibility for is_objective
+        # Handle seed_type filtering
         if seed_type == "objective":
-            # Match either seed_type="objective" OR legacy is_objective=True
-            conditions.append(or_(SeedEntry.seed_type == "objective", SeedEntry.is_objective == True))  # noqa: E712
+            conditions.append(SeedEntry.seed_type == "objective")
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
 
@@ -1121,7 +1100,7 @@ class MemoryInterface(abc.ABC):
             audio_bytes = await serializer.read_data()
             await serializer.save_data(data=audio_bytes)
             serialized_prompt_value = str(serializer.value)
-        return serialized_prompt_value
+        return serialized_prompt_value or ""
 
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: Optional[str] = None) -> None:
         """
@@ -1158,8 +1137,9 @@ class MemoryInterface(abc.ABC):
 
             await prompt.set_sha256_value_async()
 
-            existing = self.get_seeds(value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name)
-            if not existing:
+            if prompt.value_sha256 and not self.get_seeds(
+                value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
+            ):
                 entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
@@ -1250,7 +1230,6 @@ class MemoryInterface(abc.ABC):
         groups: Optional[Sequence[str]] = None,
         source: Optional[str] = None,
         seed_type: Optional[SeedType] = None,
-        is_objective: Optional[bool] = None,  # Deprecated in 0.13.0: Use seed_type instead
         parameters: Optional[Sequence[str]] = None,
         metadata: Optional[dict[str, Union[str, int]]] = None,
         prompt_group_ids: Optional[Sequence[uuid.UUID]] = None,
@@ -1276,7 +1255,6 @@ class MemoryInterface(abc.ABC):
             source (Optional[str], Optional): The source from which the seed prompts originated.
             seed_type (Optional[SeedType], Optional): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
-            is_objective (bool): Deprecated in 0.13.0. Use seed_type="objective" instead.
             parameters (Optional[Sequence[str]], Optional): List of parameters to filter by.
             metadata (Optional[dict[str, Union[str, int]]], Optional): A free-form dictionary for tagging
                 prompts with custom metadata.
@@ -1298,7 +1276,6 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
-            is_objective=is_objective,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -1556,6 +1533,11 @@ class MemoryInterface(abc.ABC):
             )
 
         if targeted_harm_categories:
+            warnings.warn(
+                "The 'targeted_harm_categories' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             # Use database-specific JSON query method
             conditions.append(
                 self._get_attack_result_harm_category_condition(targeted_harm_categories=targeted_harm_categories)
@@ -1894,8 +1876,15 @@ class MemoryInterface(abc.ABC):
             raise
 
     def print_schema(self) -> None:
-        """Print the schema of all tables in the database."""
+        """
+        Print the schema of all tables in the database.
+
+        Raises:
+            RuntimeError: If the engine is not initialized.
+        """
         metadata = MetaData()
+        if self.engine is None:
+            raise RuntimeError("Engine is not initialized")
         metadata.reflect(bind=self.engine)
 
         for table_name in metadata.tables:
