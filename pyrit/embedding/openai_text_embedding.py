@@ -8,6 +8,7 @@ from typing import Any, Optional
 import tenacity
 from openai import AsyncOpenAI
 
+from pyrit.auth import ensure_async_token_provider
 from pyrit.common import default_values
 from pyrit.models import (
     EmbeddingData,
@@ -60,10 +61,10 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
             )
 
-        # Create async client - type: ignore needed because get_required_value returns str
-        # but api_key parameter accepts str | Callable[[], str | Awaitable[str]]
+        # Wrap sync token providers for async compatibility; AsyncOpenAI accepts str or async callable
+        resolved_api_key = ensure_async_token_provider(api_key)
         self._async_client = AsyncOpenAI(
-            api_key=api_key,  # type: ignore[arg-type]
+            api_key=resolved_api_key,
             base_url=endpoint,
         )
 

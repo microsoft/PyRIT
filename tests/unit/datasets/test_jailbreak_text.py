@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.datasets import TextJailBreak
 from pyrit.models import SeedPrompt
 
@@ -80,6 +80,13 @@ def test_get_file_name_subdirectory():
     result = jailbreak.get_jailbreak("Tell me a joke")
     assert "Tell me a joke" in result
     assert "{{ prompt }}" not in result
+
+
+def test_get_jailbreak_templates_includes_subdirectory_templates():
+    """Subdirectory templates must appear in the listing, not just top-level ones."""
+    templates = TextJailBreak.get_jailbreak_templates()
+    top_level_count = len(list(JAILBREAK_TEMPLATES_PATH.glob("*.yaml")))
+    assert len(templates) > top_level_count, "Subdirectory templates should be included in the listing"
 
 
 def test_all_templates_render_without_syntax_errors(jailbreak_dir):

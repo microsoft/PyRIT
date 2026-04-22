@@ -40,7 +40,9 @@
 #
 # ## How to Run Scenarios
 #
-# Scenarios should take almost no effort to run with default values. [pyrit_scan](../front_end/1_pyrit_scan.ipynb) and [pyrit_shell](../front_end/2_pyrit_shell.md) both use scenarios to execute.
+# Scenarios should take almost no effort to run with default values. The [PyRIT Scanner](../../scanner/0_scanner.md) provides two CLIs for running scenarios: [pyrit_scan](../../scanner/1_pyrit_scan.ipynb) for automated execution and [pyrit_shell](../../scanner/2_pyrit_shell.md) for interactive exploration.
+#
+# For programmatic configuration — customizing datasets, strategies, scorers, and baseline mode — see [Scenario Parameters](./1_scenario_parameters.ipynb).
 #
 # ## How It Works
 #
@@ -60,7 +62,7 @@
 # 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available strategies for your scenario.
 #    - Each enum member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
-#    - Optionally implement `supports_composition()` and `validate_composition()` for strategy composition rules
+#    - Optionally override `_prepare_strategies()` for custom composition logic (see `FoundryComposite`)
 #
 # 2. **Scenario Class**: Extend `Scenario` and implement these abstract methods:
 #    - `get_strategy_class()`: Return your strategy enum class
@@ -94,7 +96,6 @@ from pyrit.scenario import (
     Scenario,
     ScenarioStrategy,
 )
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
 
@@ -110,7 +111,7 @@ class MyStrategy(ScenarioStrategy):
 class MyScenario(Scenario):
     version: int = 1
 
-    # A strategy defintion helps callers define how to run your scenario (e.g. from the front_end)
+    # A strategy definition helps callers define how to run your scenario (e.g. from the scanner CLI)
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         return MyStrategy
@@ -148,19 +149,14 @@ class MyScenario(Scenario):
         Build atomic attacks based on selected strategies.
 
         This method is called by initialize_async() after strategies are prepared.
-        Use self._scenario_composites to access the selected strategies.
+        Use self._scenario_strategies to access the resolved strategy list.
         """
         atomic_attacks = []
 
         # objective_target is guaranteed to be non-None by parent class validation
         assert self._objective_target is not None
 
-        # Extract individual strategy values from the composites
-        selected_strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=MyStrategy
-        )
-
-        for strategy in selected_strategies:
+        for strategy in self._scenario_strategies:
             # self._dataset_config is set by the parent class
             seed_groups = self._dataset_config.get_all_seed_groups()
 
@@ -171,7 +167,7 @@ class MyScenario(Scenario):
             )
             atomic_attacks.append(
                 AtomicAttack(
-                    atomic_attack_name=strategy,
+                    atomic_attack_name=strategy.value,
                     attack=attack,
                     seed_groups=seed_groups,  # type: ignore[arg-type]
                     memory_labels=self._memory_labels,
@@ -179,8 +175,6 @@ class MyScenario(Scenario):
             )
         return atomic_attacks
 
-
-scenario = MyScenario()
 
 # %% [markdown]
 #
@@ -190,6 +184,18 @@ scenario = MyScenario()
 from pyrit.cli.frontend_core import FrontendCore, print_scenarios_list_async
 
 await print_scenarios_list_async(context=FrontendCore())  # type: ignore
+
+# %% [markdown]
+#
+# ## Baseline Execution
+#
+# Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
+# each objective directly to the target without any converters or multi-turn techniques. This is
+# controlled by the `include_default_baseline` parameter (default: `True` for most scenarios).
+#
+# To run *only* the baseline (no attack strategies), create a `RedTeamAgent` with
+# `include_baseline=True` (the default) and pass `scenario_strategies=None`. See
+# [Scenario Parameters](./1_scenario_parameters.ipynb) for a working example.
 
 # %% [markdown]
 #

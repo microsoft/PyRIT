@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
@@ -1131,13 +1132,13 @@ def _make_attack_result_with_identifier(
     converter_class_names: Optional[list[str]] = None,
 ) -> AttackResult:
     """Helper to create an AttackResult with a ComponentIdentifier containing converters."""
-    params = {}
+    children: dict = {}
     if converter_class_names is not None:
-        params["request_converter_identifiers"] = [
+        children["request_converters"] = [
             ComponentIdentifier(
                 class_name=name,
-                class_module="pyrit.converters",
-            ).to_dict()
+                class_module="pyrit.prompt_converter",
+            )
             for name in converter_class_names
         ]
 
@@ -1148,7 +1149,7 @@ def _make_attack_result_with_identifier(
             attack_identifier=ComponentIdentifier(
                 class_name=class_name,
                 class_module="pyrit.attacks",
-                params=params,
+                children=children,
             ),
         ),
     )
@@ -1352,3 +1353,81 @@ def test_get_unique_converter_class_names_skips_no_converters(sqlite_instance: M
 
     result = sqlite_instance.get_unique_converter_class_names()
     assert result == ["Base64Converter"]
+
+
+def test_get_attack_results_by_attack_identifier_filter_hash(sqlite_instance: MemoryInterface):
+    """Test filtering attack results by AttackIdentifierFilter with hash."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    # Filter by hash of ar1's attack identifier
+    results = sqlite_instance.get_attack_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.ATTACK,
+                property_path="$.hash",
+                value=ar1.atomic_attack_identifier.hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].conversation_id == "conv_1"
+
+
+def test_get_attack_results_by_attack_identifier_filter_class_name(sqlite_instance: MemoryInterface):
+    """Test filtering attack results by AttackIdentifierFilter with class_name."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+
+    # Filter by partial attack class name
+    results = sqlite_instance.get_attack_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.ATTACK,
+                property_path="$.children.attack_technique.children.attack.class_name",
+                value="Crescendo",
+                partial_match=True,
+            )
+        ],
+    )
+    assert len(results) == 2
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_3"}
+
+
+def test_get_attack_results_by_attack_identifier_filter_no_match(sqlite_instance: MemoryInterface):
+    """Test that AttackIdentifierFilter returns empty when nothing matches."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+
+    results = sqlite_instance.get_attack_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.ATTACK,
+                property_path="$.hash",
+                value="nonexistent_hash",
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 0
+
+
+def test_get_attack_results_targeted_harm_categories_emits_deprecation_warning(sqlite_instance: MemoryInterface):
+    """Test that passing targeted_harm_categories emits a DeprecationWarning."""
+    import warnings
+
+    message_piece = create_message_piece("conv_1", 1, targeted_harm_categories=["violence"])
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
+
+    attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS)
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        sqlite_instance.get_attack_results(targeted_harm_categories=["violence"])
+    deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+    assert any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)

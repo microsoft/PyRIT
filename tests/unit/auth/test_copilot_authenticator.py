@@ -890,3 +890,96 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             assert token is None
             mock_context.close.assert_called_once()
             mock_browser.close.assert_called_once()
+
+
+class TestAuthenticateWithPlaywrightGuards:
+    """Test null guards in _run_playwright_browser_automation."""
+
+    @pytest.mark.asyncio
+    async def test_authenticate_returns_none_when_username_is_none(self, mock_persistent_cache):
+        """Test that _run_playwright_browser_automation returns None when username is None."""
+        with (
+            patch.dict(
+                os.environ,
+                {"COPILOT_USERNAME": "test@example.com", "COPILOT_PASSWORD": "test_password"},
+            ),
+            patch(
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+                return_value=mock_persistent_cache,
+            ),
+        ):
+            authenticator = CopilotAuthenticator()
+            authenticator._username = None
+
+            mock_page = AsyncMock()
+            mock_page.wait_for_selector = AsyncMock()
+            mock_page.goto = AsyncMock()
+            mock_page.click = AsyncMock()
+            mock_page.on = MagicMock()
+
+            mock_browser = AsyncMock()
+            mock_context = AsyncMock()
+            mock_context.new_page = AsyncMock(return_value=mock_page)
+            mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+            mock_playwright = AsyncMock()
+            mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
+
+            mock_async_playwright = AsyncMock()
+            mock_async_playwright.__aenter__ = AsyncMock(return_value=mock_playwright)
+            mock_async_playwright.__aexit__ = AsyncMock(return_value=False)
+
+            mock_pw_module = MagicMock()
+            mock_pw_module.async_playwright = MagicMock(return_value=mock_async_playwright)
+
+            with patch.dict(
+                "sys.modules",
+                {"playwright": MagicMock(), "playwright.async_api": mock_pw_module},
+            ):
+                result = await authenticator._run_playwright_browser_automation()
+                assert result is None
+
+    @pytest.mark.asyncio
+    async def test_authenticate_returns_none_when_password_is_none(self, mock_persistent_cache):
+        """Test that _run_playwright_browser_automation returns None when password is None."""
+        with (
+            patch.dict(
+                os.environ,
+                {"COPILOT_USERNAME": "test@example.com", "COPILOT_PASSWORD": "test_password"},
+            ),
+            patch(
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+                return_value=mock_persistent_cache,
+            ),
+        ):
+            authenticator = CopilotAuthenticator()
+            authenticator._password = None
+
+            mock_page = AsyncMock()
+            mock_page.wait_for_selector = AsyncMock()
+            mock_page.goto = AsyncMock()
+            mock_page.click = AsyncMock()
+            mock_page.fill = AsyncMock()
+            mock_page.on = MagicMock()
+
+            mock_browser = AsyncMock()
+            mock_context = AsyncMock()
+            mock_context.new_page = AsyncMock(return_value=mock_page)
+            mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+            mock_playwright = AsyncMock()
+            mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
+
+            mock_async_playwright = AsyncMock()
+            mock_async_playwright.__aenter__ = AsyncMock(return_value=mock_playwright)
+            mock_async_playwright.__aexit__ = AsyncMock(return_value=False)
+
+            mock_pw_module = MagicMock()
+            mock_pw_module.async_playwright = MagicMock(return_value=mock_async_playwright)
+
+            with patch.dict(
+                "sys.modules",
+                {"playwright": MagicMock(), "playwright.async_api": mock_pw_module},
+            ):
+                result = await authenticator._run_playwright_browser_automation()
+                assert result is None

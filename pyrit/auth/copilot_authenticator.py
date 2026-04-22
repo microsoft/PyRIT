@@ -353,6 +353,9 @@ class CopilotAuthenticator(Authenticator):
 
         Returns:
             Optional[str]: The bearer token if successfully retrieved, None otherwise.
+
+        Raises:
+            ValueError: If the username is not set.
         """
         from playwright.async_api import async_playwright
 
@@ -415,11 +418,15 @@ class CopilotAuthenticator(Authenticator):
 
                 logger.info("Waiting for email input...")
                 await page.wait_for_selector("#i0116", timeout=self._elements_timeout)
+                if self._username is None:
+                    raise ValueError("Username is not set")
                 await page.fill("#i0116", self._username)
                 await page.click("#idSIButton9")
 
                 logger.info("Waiting for password input...")
                 await page.wait_for_selector("#i0118", timeout=self._elements_timeout)
+                if self._password is None:
+                    raise ValueError("Password is not set")
                 await page.fill("#i0118", self._password)
                 await page.click("#idSIButton9")
 
@@ -450,7 +457,7 @@ class CopilotAuthenticator(Authenticator):
                 else:
                     logger.error(f"Failed to retrieve bearer token within {self._token_capture_timeout} seconds.")
 
-                return bearer_token  # type: ignore[no-any-return]
+                return bearer_token
             except Exception as e:
                 logger.error("Failed to retrieve access token using Playwright.")
 

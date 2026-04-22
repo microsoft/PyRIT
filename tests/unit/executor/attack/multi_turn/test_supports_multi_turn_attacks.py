@@ -26,7 +26,7 @@ def _make_strategy(*, supports_multi_turn: bool):
     from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import MultiTurnAttackStrategy
 
     target = MagicMock()
-    target.supports_multi_turn = supports_multi_turn
+    target.capabilities.supports_multi_turn = supports_multi_turn
     target.get_identifier.return_value = MagicMock()
 
     with patch.multiple(
@@ -375,7 +375,7 @@ class TestTAPNodeDuplicateSystemMessages:
         from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
 
         target = MagicMock()
-        target.supports_multi_turn = supports_multi_turn
+        target.capabilities.supports_multi_turn = supports_multi_turn
         target.get_identifier.return_value = MagicMock()
 
         adversarial_chat = MagicMock()
@@ -685,7 +685,7 @@ class TestValueErrorGuards:
 
     def _make_single_turn_target(self):
         target = MagicMock()
-        target.supports_multi_turn = False
+        target.capabilities.supports_multi_turn = False
         target.get_identifier.return_value = MagicMock()
         return target
 
@@ -763,7 +763,7 @@ class TestTAPBranchingPreservesSystemPrompts:
         from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
 
         target = MagicMock()
-        target.supports_multi_turn = supports_multi_turn
+        target.capabilities.supports_multi_turn = supports_multi_turn
         target.get_identifier.return_value = MagicMock()
 
         adversarial_chat = MagicMock()

@@ -40,3 +40,9 @@ def sample_delineated_prompt_as_str() -> str:
 
 def test_prompt_shield_scorer_parsing(promptshield_scorer: PromptShieldScorer, sample_response_json_str: str):
     assert any(promptshield_scorer._parse_response_to_boolean_list(sample_response_json_str))
+
+
+def test_prompt_shield_scorer_parsing_without_documents_analysis(promptshield_scorer: PromptShieldScorer):
+    response_json_str = '{"userPromptAnalysis":{"attackDetected":false}}'
+    result = promptshield_scorer._parse_response_to_boolean_list(response_json_str)
+    assert result == [False, False]

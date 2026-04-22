@@ -18,7 +18,6 @@
 #
 # Note that this attack is more likely to succeed if the adversarial LLM provided does not have content moderation or other safety mechanisms. Even then, success may depend on the model and may not be guaranteed every time.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 

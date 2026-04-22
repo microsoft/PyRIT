@@ -22,7 +22,6 @@ from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskG
 from pyrit.score.float_scale.self_ask_likert_scorer import LikertScaleEvalFiles, LikertScalePaths, SelfAskLikertScorer
 from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer
 from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
-from pyrit.score.human.human_in_the_loop_gradio import HumanInTheLoopScorerGradio
 from pyrit.score.printer import ConsoleScorerPrinter, ScorerPrinter
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
@@ -45,6 +44,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics import (
     ScorerMetricsWithIdentity,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+    find_objective_metrics_by_eval_hash,
     get_all_harm_metrics,
     get_all_objective_metrics,
 )
@@ -91,7 +91,6 @@ __all__ = [
     "HarmHumanLabeledEntry",
     "HarmScorerEvaluator",
     "HarmScorerMetrics",
-    "HumanInTheLoopScorerGradio",
     "HumanLabeledDataset",
     "HumanLabeledEntry",
     "InsecureCodeScorer",
@@ -114,6 +113,7 @@ __all__ = [
     "ScorerMetricsWithIdentity",
     "get_all_harm_metrics",
     "get_all_objective_metrics",
+    "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
     "SelfAskCategoryScorer",
     "SelfAskGeneralFloatScaleScorer",

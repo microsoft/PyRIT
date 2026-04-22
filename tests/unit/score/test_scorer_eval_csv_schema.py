@@ -48,6 +48,16 @@ ALL_CSV_FILES = (
 )
 
 
+def _skip_comment_lines(f) -> None:
+    """Advance the file cursor past all leading ``#`` comment lines."""
+    while True:
+        pos = f.tell()
+        line = f.readline()
+        if not line.startswith("#"):
+            f.seek(pos)
+            return
+
+
 def _read_csv_as_dataframe(csv_file: Path) -> pd.DataFrame:
     """
     Read a CSV file into a DataFrame, skipping the comment/version line.
@@ -104,11 +114,7 @@ class TestObjectiveScorerEvalCSVSchema:
         - data_type: The type of data (e.g., "text")
         """
         with open(csv_file, encoding="utf-8") as f:
-            # Skip version line if present
-            first_line = f.readline()
-            if not first_line.startswith("# dataset_version="):
-                # Reset to beginning if no version line
-                f.seek(0)
+            _skip_comment_lines(f)
 
             reader = csv.DictReader(f)
             columns = set(reader.fieldnames or [])
@@ -137,10 +143,7 @@ class TestObjectiveScorerEvalCSVSchema:
         This ensures no typos or legacy column names remain.
         """
         with open(csv_file, encoding="utf-8") as f:
-            # Skip version line if present
-            first_line = f.readline()
-            if not first_line.startswith("# dataset_version="):
-                f.seek(0)
+            _skip_comment_lines(f)
 
             reader = csv.DictReader(f)
             columns = set(reader.fieldnames or [])
@@ -239,10 +242,7 @@ class TestHarmScorerEvalCSVSchema:
         for multi-annotator datasets.
         """
         with open(csv_file, encoding="utf-8") as f:
-            # Skip version line if present
-            first_line = f.readline()
-            if not first_line.startswith("# dataset_version="):
-                f.seek(0)
+            _skip_comment_lines(f)
 
             reader = csv.DictReader(f)
             columns = set(reader.fieldnames or [])
@@ -280,10 +280,7 @@ class TestHarmScorerEvalCSVSchema:
         STANDARD_HUMAN_LABEL_COL (e.g., human_score, human_score_1, human_score_2).
         """
         with open(csv_file, encoding="utf-8") as f:
-            # Skip version line if present
-            first_line = f.readline()
-            if not first_line.startswith("# dataset_version="):
-                f.seek(0)
+            _skip_comment_lines(f)
 
             reader = csv.DictReader(f)
             columns = set(reader.fieldnames or [])
@@ -513,10 +510,7 @@ class TestRefusalScorerEvalCSVSchema:
         - data_type: The type of data (e.g., "text")
         """
         with open(csv_file, encoding="utf-8") as f:
-            # Skip version line if present
-            first_line = f.readline()
-            if not first_line.startswith("# dataset_version="):
-                f.seek(0)
+            _skip_comment_lines(f)
 
             reader = csv.DictReader(f)
             columns = set(reader.fieldnames or [])
@@ -545,10 +539,7 @@ class TestRefusalScorerEvalCSVSchema:
         This ensures no typos or legacy column names remain.
         """
         with open(csv_file, encoding="utf-8") as f:
-            # Skip version line if present
-            first_line = f.readline()
-            if not first_line.startswith("# dataset_version="):
-                f.seek(0)
+            _skip_comment_lines(f)
 
             reader = csv.DictReader(f)
             columns = set(reader.fieldnames or [])

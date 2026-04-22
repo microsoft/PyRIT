@@ -58,6 +58,6 @@ await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # ty
 # %% [markdown]
 #
 # You can then use this cell anywhere you would use a `PromptTarget` object.
-# For example, you can create a red teaming attack and use this instead of the `AzureOpenAI` target and do the [Gandalf or Crucible Demos](./6_custom_targets.ipynb) but use this AML model.
+# For example, you can create a red teaming attack and use this instead of the `AzureOpenAI` target and do the [Gandalf Demo](./6_custom_targets.ipynb) but use this AML model.
 #
 # This is also shown in the [Red Teaming Attack](../executor/attack/2_red_teaming_attack.ipynb) documentation.

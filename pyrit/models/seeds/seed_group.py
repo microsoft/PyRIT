@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-import warnings
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -49,6 +48,7 @@ class SeedGroup(YamlLoadable):
         self,
         *,
         seeds: Sequence[Union[Seed, dict[str, Any]]],
+        is_jinja_template: bool = False,
     ):
         """
         Initialize a SeedGroup.
@@ -58,7 +58,8 @@ class SeedGroup(YamlLoadable):
                 - SeedObjective (or dict with seed_type="objective")
                 - SeedSimulatedConversation (or dict with seed_type="simulated_conversation")
                 - SeedPrompt for prompts (or dict with seed_type="prompt" or no seed_type)
-                Note: is_objective and is_simulated_conversation are deprecated since 0.13.0.
+            is_jinja_template: When True, seed values are treated as Jinja2 templates.
+                Set automatically by from_yaml_file for trusted sources.
 
         Raises:
             ValueError: If seeds is empty.
@@ -74,25 +75,14 @@ class SeedGroup(YamlLoadable):
             if isinstance(seed, Seed):
                 self.seeds.append(seed)
             elif isinstance(seed, dict):
-                # Support new seed_type field with backward compatibility for deprecated fields
+                seed["is_jinja_template"] = is_jinja_template
                 seed_type = seed.pop("seed_type", None)
-                is_objective = seed.pop("is_objective", False)
-
-                if is_objective:
-                    warnings.warn(
-                        "is_objective is deprecated since 0.13.0. Use seed_type='objective' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                    # Only error if seed_type is explicitly set to a conflicting value
-                    if seed_type is not None and seed_type != "objective":
-                        raise ValueError("Conflicting seed_type and is_objective values.")
 
                 if seed_type == "simulated_conversation":
                     # SeedSimulatedConversation doesn't use data_type (always text)
                     seed.pop("data_type", None)
                     self.seeds.append(SeedSimulatedConversation.from_dict(seed))
-                elif seed_type == "objective" or (seed_type is None and is_objective):
+                elif seed_type == "objective":
                     # SeedObjective doesn't use data_type (always text)
                     seed.pop("data_type", None)
                     self.seeds.append(SeedObjective(**seed))

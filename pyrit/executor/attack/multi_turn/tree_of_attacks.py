@@ -166,7 +166,7 @@ class TAPAttackResult(AttackResult):
     @property
     def tree_visualization(self) -> Optional[Tree]:
         """Get the tree visualization from metadata."""
-        return cast("Optional[Tree]", self.metadata.get("tree_visualization", None))
+        return self.metadata.get("tree_visualization", None)
 
     @tree_visualization.setter
     def tree_visualization(self, value: Tree) -> None:
@@ -780,7 +780,7 @@ class _TreeOfAttacksNode:
         # For single-turn targets, duplicate only the system messages (e.g., system prompt
         # from prepended conversation) so the target retains its configuration without
         # carrying over attack turn history that would cause validation errors.
-        if self._objective_target.supports_multi_turn:
+        if self._objective_target.capabilities.supports_multi_turn:
             duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
                 conversation_id=self.objective_target_conversation_id
             )
@@ -1354,7 +1354,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         else:
             # Convert AttackScoringConfig to TAPAttackScoringConfig
             objective_scorer = attack_scoring_config.objective_scorer
-            if objective_scorer is not None and not isinstance(objective_scorer, FloatScaleThresholdScorer):
+            if objective_scorer is None:
+                raise ValueError("objective_scorer is required")
+            if not isinstance(objective_scorer, FloatScaleThresholdScorer):
                 raise ValueError(
                     "TAP attack requires a FloatScaleThresholdScorer for objective_scorer. "
                     "Please wrap your scorer in FloatScaleThresholdScorer with an appropriate threshold."

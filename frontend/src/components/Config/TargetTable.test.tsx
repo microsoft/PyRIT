@@ -43,7 +43,7 @@ describe('TargetTable', () => {
     jest.clearAllMocks()
   })
 
-  it('should render table with target rows', () => {
+  it('should render a flat table with all targets visible', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
@@ -51,28 +51,24 @@ describe('TargetTable', () => {
     )
 
     expect(screen.getByRole('table')).toBeInTheDocument()
-    expect(screen.getByText('OpenAIChatTarget')).toBeInTheDocument()
-    expect(screen.getByText('AzureImageTarget')).toBeInTheDocument()
-    expect(screen.getByText('TextTarget')).toBeInTheDocument()
+    expect(screen.getByText('gpt-4')).toBeInTheDocument()
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+    expect(screen.getAllByText('OpenAIChatTarget').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('AzureImageTarget').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('TextTarget').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('should display target type, endpoint, and model name columns', () => {
+  it('should display Type, Model, Endpoint and Parameters columns', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    // Header cells
     expect(screen.getByText('Type')).toBeInTheDocument()
     expect(screen.getByText('Model')).toBeInTheDocument()
     expect(screen.getByText('Endpoint')).toBeInTheDocument()
-
-    // Data cells
-    expect(screen.getByText('gpt-4')).toBeInTheDocument()
-    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
-    expect(screen.getByText('https://api.openai.com')).toBeInTheDocument()
-    expect(screen.getByText('https://azure.openai.com')).toBeInTheDocument()
+    expect(screen.getByText('Parameters')).toBeInTheDocument()
   })
 
   it('should show "Set Active" button for non-active targets', () => {
@@ -93,10 +89,32 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByText('Active')).toBeInTheDocument()
-    // The other two should still have "Set Active"
+    // Active badge appears in both the indicator and the table row
+    expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(2)
     const setActiveButtons = screen.getAllByText('Set Active')
     expect(setActiveButtons).toHaveLength(2)
+  })
+
+  it('should show active target indicator above the table', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
+      </TestWrapper>
+    )
+
+    // Active indicator shows type and model above the table
+    const badges = screen.getAllByText('Active')
+    expect(badges.length).toBeGreaterThanOrEqual(2) // one above table + one in row
+  })
+
+  it('should not show active target indicator when no target is active', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
   })
 
   it('should call onSetActiveTarget when "Set Active" is clicked', () => {
@@ -133,19 +151,8 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    // TextTarget has null model_name and endpoint; should render "—"
     const dashes = screen.getAllByText('—')
     expect(dashes.length).toBeGreaterThanOrEqual(2)
-  })
-
-  it('should display Parameters column header', () => {
-    render(
-      <TestWrapper>
-        <TargetTable {...defaultProps} />
-      </TestWrapper>
-    )
-
-    expect(screen.getByText('Parameters')).toBeInTheDocument()
   })
 
   it('should display target_specific_params when present', () => {
@@ -170,5 +177,72 @@ describe('TargetTable', () => {
 
     expect(screen.getByText(/reasoning_effort: high/)).toBeInTheDocument()
     expect(screen.getByText(/max_output_tokens: 4096/)).toBeInTheDocument()
+  })
+
+  it('should show tooltip for model with different underlying model', () => {
+    const targetWithUnderlying: TargetInstance[] = [
+      {
+        target_registry_name: 'azure_deployment',
+        target_type: 'OpenAIChatTarget',
+        endpoint: 'https://azure.openai.com',
+        model_name: 'my-gpt4o-deployment',
+        underlying_model_name: 'gpt-4o',
+      },
+    ]
+
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targetWithUnderlying} activeTarget={null} />
+      </TestWrapper>
+    )
+
+    const modelText = screen.getByText('my-gpt4o-deployment')
+    expect(modelText).toHaveStyle({ textDecoration: 'underline dotted' })
+  })
+
+  it('should filter targets by type when filter is selected', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    // All targets visible initially
+    expect(screen.getByText('gpt-4')).toBeInTheDocument()
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+
+    // Filter to OpenAIChatTarget
+    const select = screen.getByRole('combobox')
+    fireEvent.change(select, { target: { value: 'OpenAIChatTarget' } })
+
+    expect(screen.getByText('gpt-4')).toBeInTheDocument()
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+  })
+
+  it('should show all targets when filter is cleared', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    const select = screen.getByRole('combobox')
+
+    // Filter then clear
+    fireEvent.change(select, { target: { value: 'OpenAIChatTarget' } })
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+
+    fireEvent.change(select, { target: { value: '' } })
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+  })
+
+  it('should not show filter when only one target type exists', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[sampleTargets[0]]} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByText('Filter by type:')).not.toBeInTheDocument()
   })
 })

@@ -7,9 +7,12 @@ import io
 import logging
 import tempfile
 from abc import ABC
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import fields
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, TextIO, cast
+from urllib.parse import urlparse
 
 import requests
 from datasets import DownloadMode, disable_progress_bars, load_dataset
@@ -19,8 +22,10 @@ from pyrit.common.json_helper import read_json, read_jsonl, write_json, write_js
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
 
 logger = logging.getLogger(__name__)
+
 
 # Define the type for the file handlers
 FileHandlerRead = Callable[[TextIO], list[dict[str, str]]]
@@ -47,6 +52,51 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     - fetch_dataset(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
     """
+
+    @staticmethod
+    def _validate_enums(
+        values: Sequence[Enum],
+        enum_cls: type[Enum],
+        label: str,
+    ) -> None:
+        """
+        Validate that all values are instances of the expected enum class.
+
+        Args:
+            values: List of values to validate.
+            enum_cls: The enum class that all values must be instances of.
+            label: Human-readable label for error messages (e.g. "category").
+
+        Raises:
+            ValueError: If any value is not an instance of the expected enum class.
+        """
+        for v in values:
+            if not isinstance(v, enum_cls):
+                valid = ", ".join(f"{enum_cls.__name__}.{m.name}" for m in enum_cls)
+                raise ValueError(f"Expected {enum_cls.__name__}, got {type(v).__name__}: {v!r}. Valid values: {valid}")
+
+    @staticmethod
+    def _validate_enum(
+        value: Enum,
+        enum_cls: type[Enum],
+        label: str,
+    ) -> None:
+        """
+        Validate that a single value is an instance of the expected enum class.
+
+        Args:
+            value: The value to validate.
+            enum_cls: The enum class that the value must be an instance of.
+            label: Human-readable label for error messages (e.g. "severity").
+
+        Raises:
+            ValueError: If the value is not an instance of the expected enum class.
+        """
+        if not isinstance(value, enum_cls):
+            valid = ", ".join(f"{enum_cls.__name__}.{m.name}" for m in enum_cls)
+            raise ValueError(
+                f"Expected {enum_cls.__name__}, got {type(value).__name__}: {value!r}. Valid values: {valid}"
+            )
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """
@@ -75,6 +125,24 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         if file_type not in FILE_TYPE_HANDLERS:
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
+
+    def _get_file_type(self, *, source: str) -> str:
+        """
+        Infer the source file type from a URL or local path.
+
+        Query strings and fragments are ignored for URLs, and the result is
+        normalized to lowercase so `.JSON` and `.json` are treated identically.
+
+        Args:
+            source (str): The URL or local file path to extract the file type from.
+
+        Returns:
+            str: The lowercase file extension without the leading dot.
+        """
+        parsed = urlparse(source)
+        source_path = parsed.path if parsed.scheme else source
+        suffix = Path(source_path).suffix
+        return suffix.lstrip(".").lower()
 
     def _read_cache(self, *, cache_file: Path, file_type: str) -> list[dict[str, str]]:
         """
@@ -188,7 +256,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             ...     source_type='public_url'
             ... )
         """
-        file_type = source.split(".")[-1]
+        file_type = self._get_file_type(source=source)
         if file_type not in FILE_TYPE_HANDLERS:
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
@@ -285,3 +353,33 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         except Exception as e:
             logger.error(f"Failed to load HuggingFace dataset {dataset_name}: {e}")
             raise
+
+    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+        """
+        Extract metadata from class attributes, wrap in sets, and format into SeedDatasetMetadata.
+
+        Class attributes may be singular values (str, enum), lists, or sets.
+        All are normalized into sets for the unified SeedDatasetMetadata schema.
+
+        Returns:
+            Optional[SeedDatasetMetadata]: Parsed metadata if available, otherwise None.
+        """
+        valid_fields = [f.name for f in fields(SeedDatasetMetadata)]
+
+        provider_class = type(self)
+        raw = {}
+        for key in valid_fields:
+            value = getattr(provider_class, key, None)
+            if value is None:
+                continue
+            raw[key] = value
+
+        if not raw:
+            return None
+
+        coerced = SeedDatasetMetadata._coerce_metadata_values(raw_metadata=raw)
+        # Validation must happen after coercion because raw values are strings/lists,
+        # not sets. _validate_singular_fields checks set cardinality (len > 1).
+        result = SeedDatasetMetadata(**coerced)
+        SeedDatasetMetadata._validate_singular_fields(metadata=result)
+        return result

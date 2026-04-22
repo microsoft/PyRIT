@@ -1,8 +1,13 @@
 import axios from 'axios'
+import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { toApiError } from './errors'
+import { getApiScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
+  ConverterCatalogResponse,
+  ConverterInstance,
+  ConverterListResponse,
   CreateTargetRequest,
   CreateAttackRequest,
   CreateAttackResponse,
@@ -44,18 +49,72 @@ function generateRequestId(): string {
   })
 }
 
-apiClient.interceptors.request.use((config) => {
+// ---------------------------------------------------------------------------
+// MSAL token acquisition for API calls
+// ---------------------------------------------------------------------------
+
+let _msalInstance: PublicClientApplication | null = null
+let _clientId: string = ''
+
+export function setMsalInstance(instance: PublicClientApplication): void {
+  _msalInstance = instance
+}
+
+export function setClientId(clientId: string): void {
+  _clientId = clientId
+}
+
+async function getAccessToken(forceRefresh = false): Promise<string | null> {
+  if (!_msalInstance) return null
+
+  const account = _msalInstance.getActiveAccount()
+  if (!account) return null
+
+  try {
+    const response = await _msalInstance.acquireTokenSilent({
+      scopes: getApiScopes(_clientId),
+      account,
+      forceRefresh,
+    })
+    return response.accessToken
+  } catch (error) {
+    if (error instanceof InteractionRequiredAuthError) {
+      await _msalInstance.acquireTokenRedirect({
+        scopes: getApiScopes(_clientId),
+      })
+    }
+    return null
+  }
+}
+
+apiClient.interceptors.request.use(async (config) => {
   config.headers.set('X-Request-ID', generateRequestId())
+
+  const token = await getAccessToken()
+  if (token) {
+    config.headers.set('Authorization', `Bearer ${token}`)
+  }
+
   return config
 })
 
 // ---------------------------------------------------------------------------
-// Response interceptor: log errors with request context
+// Response interceptor: retry once on 401 with forced token refresh
 // ---------------------------------------------------------------------------
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalRequest = error?.config
+    if (error?.response?.status === 401 && originalRequest && !originalRequest._retried) {
+      originalRequest._retried = true
+      const freshToken = await getAccessToken(true)
+      if (freshToken) {
+        originalRequest.headers.set('Authorization', `Bearer ${freshToken}`)
+        return apiClient(originalRequest)
+      }
+    }
+
     const apiError = toApiError(error)
     const method = error?.config?.method?.toUpperCase() ?? '?'
     const url = error?.config?.url ?? '?'
@@ -101,6 +160,33 @@ export const targetsApi = {
 
   createTarget: async (request: CreateTargetRequest): Promise<TargetInstance> => {
     const response = await apiClient.post('/targets', request)
+    return response.data
+  },
+}
+
+export const convertersApi = {
+  listConverterCatalog: async (): Promise<ConverterCatalogResponse> => {
+    const response = await apiClient.get('/converters/catalog')
+    return response.data
+  },
+
+  listConverters: async (): Promise<ConverterListResponse> => {
+    const response = await apiClient.get('/converters')
+    return response.data
+  },
+
+  getConverter: async (converterId: string): Promise<ConverterInstance> => {
+    const response = await apiClient.get(`/converters/${encodeURIComponent(converterId)}`)
+    return response.data
+  },
+
+  createConverter: async (request: { type: string; params?: Record<string, unknown> }): Promise<{ converter_id: string; converter_type: string }> => {
+    const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+
+  previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string }> => {
+    const response = await apiClient.post('/converters/preview', request)
     return response.data
   },
 }
@@ -155,7 +241,7 @@ export const attacksApi = {
     conversationId: string
   ): Promise<ChangeMainConversationResponse> => {
     const response = await apiClient.post(
-      `/attacks/${encodeURIComponent(attackResultId)}/change-main-conversation`,
+      `/attacks/${encodeURIComponent(attackResultId)}/update-main-conversation`,
       { conversation_id: conversationId }
     )
     return response.data

@@ -17,8 +17,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
-from jinja2 import Environment, StrictUndefined, Template, Undefined
+import yaml
+from jinja2 import StrictUndefined, Undefined
+from jinja2.sandbox import SandboxedEnvironment
 
+from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 
 if TYPE_CHECKING:
@@ -130,6 +133,11 @@ class Seed(YamlLoadable):
     # Whether this seed represents a general attack technique (not tied to a specific objective)
     is_general_technique: bool = False
 
+    # When True, value contains Jinja2 template syntax that should be rendered as-is.
+    # When False (default), value is treated as literal text and auto-escaped with {% raw %} tags
+    # to prevent template injection. Trusted sources (YAML files) set this to True automatically.
+    is_jinja_template: bool = False
+
     @property
     def data_type(self) -> PromptDataType:
         """
@@ -157,8 +165,9 @@ class Seed(YamlLoadable):
         template_identifier = self.name or "<unnamed template>"
 
         try:
-            jinja_template = Template(self.value, undefined=StrictUndefined)
-            return jinja_template.render(**kwargs)
+            env = SandboxedEnvironment(undefined=StrictUndefined)
+            is_jinja_template = env.from_string(self.value)
+            return is_jinja_template.render(**kwargs)
         except Exception as e:
             raise ValueError(
                 f"Error rendering template '{template_identifier}': {str(e)}. "
@@ -194,12 +203,12 @@ class Seed(YamlLoadable):
                 return self.value
 
         # Create a Jinja template with PartialUndefined placeholders
-        env = Environment(undefined=PartialUndefined)
-        jinja_template = env.from_string(self.value)
+        env = SandboxedEnvironment(undefined=PartialUndefined)
+        is_jinja_template = env.from_string(self.value)
 
         try:
             # Render the template with the provided kwargs
-            return jinja_template.render(**kwargs)
+            return is_jinja_template.render(**kwargs)
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
@@ -220,6 +229,46 @@ class Seed(YamlLoadable):
         )
 
         self.value_sha256 = await original_serializer.get_sha256()
+
+    @staticmethod
+    def escape_for_jinja(value: str) -> str:
+        """
+        Wrap a string in Jinja2 {% raw %}...{% endraw %} tags to prevent template evaluation.
+
+        Use this for any untrusted or externally-fetched text that will be stored as a
+        Seed value, to ensure it is treated as literal text by the Jinja2 renderer.
+
+        Args:
+            value: The raw string to escape.
+
+        Returns:
+            str: The string wrapped in {% raw %}...{% endraw %} tags.
+        """
+        return f"{{% raw %}}{value}{{% endraw %}}"
+
+    @classmethod
+    def from_yaml_file(cls: type[T], file: Union[str, Path]) -> T:
+        """
+        Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
+
+        Args:
+            file: The input file path.
+
+        Returns:
+            A new Seed of the specific subclass type.
+
+        Raises:
+            ValueError: If the YAML file is invalid.
+        """
+        file = verify_and_resolve_path(file)
+
+        try:
+            yaml_data = yaml.safe_load(file.read_text("utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
+
+        yaml_data["is_jinja_template"] = True
+        return cls(**yaml_data)
 
     @classmethod
     @abc.abstractmethod

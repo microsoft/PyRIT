@@ -182,15 +182,18 @@ class AzureBlobStorageIO(StorageIO):
 
         self._container_url: str = container_url
         self._sas_token = sas_token
-        self._client_async: AsyncContainerClient = None
+        self._client_async: AsyncContainerClient | None = None
 
-    async def _create_container_client_async(self) -> None:
+    async def _create_container_client_async(self) -> AsyncContainerClient:
         """
         Create an asynchronous ContainerClient for Azure Storage.
 
         If a SAS token is provided via the
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
         for authentication. Otherwise, a delegation SAS token will be created using Entra ID authentication.
+
+        Returns:
+            AsyncContainerClient: The initialized container client.
         """
         sas_token = self._sas_token
         if not self._sas_token:
@@ -201,6 +204,7 @@ class AzureBlobStorageIO(StorageIO):
             container_url=self._container_url,
             credential=sas_token,
         )
+        return self._client_async
 
     async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
         """
@@ -211,11 +215,15 @@ class AzureBlobStorageIO(StorageIO):
             data (bytes): Byte representation of content to upload to container.
             content_type (str): Content type to upload.
 
+        Raises:
+            RuntimeError: If the Azure container client is not initialized.
         """
         content_settings = ContentSettings(content_type=f"{content_type}")  # type: ignore[no-untyped-call, unused-ignore]
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         try:
+            if self._client_async is None:
+                raise RuntimeError("Azure container client not initialized")
             await self._client_async.upload_blob(
                 name=file_name,
                 data=data,
@@ -255,6 +263,32 @@ class AzureBlobStorageIO(StorageIO):
             return container_name, blob_name
         raise ValueError("Invalid blob URL")
 
+    def _resolve_blob_name(self, path: Union[Path, str]) -> str:
+        """
+        Resolve a blob name from either a full blob URL or a relative blob path.
+
+        When a full URL is provided the blob name is extracted from it. The container
+        name embedded in the URL is intentionally discarded — operations always run
+        against the container configured in the constructor.
+
+        Backslashes are normalized to forward slashes so that ``Path`` objects
+        created on Windows still produce valid blob names.
+
+        Args:
+            path (Union[Path, str]): Blob URL or relative blob path.
+
+        Returns:
+            str: The resolved blob name.
+
+        """
+        path_str = str(path).replace("\\", "/")
+        try:
+            # parse_blob_url validates scheme + netloc internally
+            _, blob_name = self.parse_blob_url(path_str)
+            return blob_name
+        except ValueError:
+            return path_str
+
     async def read_file(self, path: Union[Path, str]) -> bytes:
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
@@ -271,10 +305,6 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bytes: The content of the file (blob) as bytes.
 
-        Raises:
-            Exception: If there is an error in reading the blob file, an exception will be logged
-                    and re-raised.
-
         Example:
             file_content =
             await read_file("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")
@@ -283,16 +313,16 @@ class AzureBlobStorageIO(StorageIO):
 
         """
         if not self._client_async:
-            await self._create_container_client_async()
+            self._client_async = await self._create_container_client_async()
 
-        _, blob_name = self.parse_blob_url(str(path))
+        blob_name = self._resolve_blob_name(path)
 
         try:
             blob_client = self._client_async.get_blob_client(blob=blob_name)
 
             # Download the blob
             blob_stream = await blob_client.download_blob()
-            return await blob_stream.readall()
+            return bytes(await blob_stream.readall())
 
         except Exception as exc:
             logger.exception(f"Failed to read file at {blob_name}: {exc}")
@@ -305,14 +335,16 @@ class AzureBlobStorageIO(StorageIO):
         """
         Write data to Azure Blob Storage at the specified path.
 
-        Args:
-            path (str): The full Azure Blob Storage URL
-            data (bytes): The data to write.
+        If the provided ``path`` is a full URL, the blob name is extracted from it.
+        If a relative path is provided, it is used as the blob name directly.
 
+        Args:
+            path (Union[Path, str]): Full blob URL or relative blob path.
+            data (bytes): The data to write.
         """
         if not self._client_async:
-            await self._create_container_client_async()
-        _, blob_name = self.parse_blob_url(str(path))
+            self._client_async = await self._create_container_client_async()
+        blob_name = self._resolve_blob_name(path)
         try:
             await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
         except Exception as exc:
@@ -331,12 +363,11 @@ class AzureBlobStorageIO(StorageIO):
 
         Returns:
             bool: True when the path exists.
-
         """
         if not self._client_async:
-            await self._create_container_client_async()
+            self._client_async = await self._create_container_client_async()
         try:
-            _, blob_name = self.parse_blob_url(str(path))
+            blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)
             await blob_client.get_blob_properties()
             return True
@@ -355,15 +386,14 @@ class AzureBlobStorageIO(StorageIO):
 
         Returns:
             bool: True when the blob exists and has non-zero content size.
-
         """
         if not self._client_async:
-            await self._create_container_client_async()
+            self._client_async = await self._create_container_client_async()
         try:
-            _, blob_name = self.parse_blob_url(str(path))
+            blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)
             blob_properties = await blob_client.get_blob_properties()
-            return blob_properties.size > 0
+            return bool(blob_properties.size > 0)
         except ResourceNotFoundError:
             return False
         finally:

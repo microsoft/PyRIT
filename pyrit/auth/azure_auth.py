@@ -296,7 +296,7 @@ def get_access_token_from_interactive_login(scope: str) -> str:
     """
     try:
         token_provider = get_bearer_token_provider(InteractiveBrowserCredential(), scope)
-        return token_provider()
+        return str(token_provider())
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}': {e}")
         raise

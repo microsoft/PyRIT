@@ -190,6 +190,14 @@ silent: true
         finally:
             pathlib.Path(yaml_path).unlink()
 
+    def test_from_empty_yaml_file_raises_value_error(self, tmp_path):
+        """Test that an empty YAML file raises a clear ValueError."""
+        yaml_path = tmp_path / "empty.yaml"
+        yaml_path.write_text("", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="is empty"):
+            ConfigurationLoader.from_yaml_file(yaml_path)
+
     def test_get_default_config_path(self):
         """Test get_default_config_path returns expected path."""
         default_path = ConfigurationLoader.get_default_config_path()
@@ -502,5 +510,24 @@ initializers:
 
             assert config.memory_db_type == "in_memory"
             assert config._initializer_configs[0].name == "cli_init"
+        finally:
+            config_path.unlink()
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_preserves_silent_from_config_file(self, mock_default_path):
+        """Test that load_with_overrides preserves the silent flag from config files."""
+        mock_default_path.exists.return_value = False
+
+        yaml_content = """
+memory_db_type: sqlite
+silent: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            config_path = pathlib.Path(f.name)
+
+        try:
+            config = ConfigurationLoader.load_with_overrides(config_file=config_path)
+            assert config.silent is True
         finally:
             config_path.unlink()

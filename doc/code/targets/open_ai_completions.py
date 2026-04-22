@@ -12,7 +12,6 @@
 # %% [markdown]
 # # OpenAI Completions - optional
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT and have the applicable secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # Once you are configured, then you will be able to get completions for your text.
 

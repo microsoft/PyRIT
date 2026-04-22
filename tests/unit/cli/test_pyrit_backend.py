@@ -16,7 +16,7 @@ class TestParseArgs:
         """Should parse backend defaults correctly."""
         args = pyrit_backend.parse_args(args=[])
 
-        assert args.host == "0.0.0.0"
+        assert args.host == "localhost"
         assert args.port == 8000
         assert args.config_file is None
 

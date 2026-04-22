@@ -538,3 +538,23 @@ class TestAnecdoctorGeneratorEdgeCases:
         result = generator._format_few_shot_examples(evaluation_data=evaluation_data)
         for data in evaluation_data:
             assert data in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_extract_knowledge_graph_raises_when_processing_model_is_none():
+    """Test that _extract_knowledge_graph_async raises ValueError when processing model is None."""
+    mock_target = MagicMock(spec=PromptChatTarget)
+    mock_target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test_module")
+    generator = AnecdoctorGenerator(objective_target=mock_target)
+    # Ensure processing model is explicitly None
+    assert generator._processing_model is None
+
+    context = AnecdoctorContext(
+        evaluation_data=["sample data"],
+        language="english",
+        content_type="viral tweet",
+    )
+
+    with pytest.raises(ValueError, match="self._processing_model is not initialized"):
+        await generator._extract_knowledge_graph_async(context=context)

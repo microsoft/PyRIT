@@ -178,7 +178,6 @@ class TestRedTeamingAttackInitialization:
             RTASystemPromptPaths.IMAGE_GENERATION.value,
             RTASystemPromptPaths.NAIVE_CRESCENDO.value,
             RTASystemPromptPaths.VIOLENT_DURIAN.value,
-            RTASystemPromptPaths.CRUCIBLE.value,
         ],
     )
     def test_init_with_different_system_prompts(

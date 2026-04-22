@@ -35,7 +35,7 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None
+    data_type: Optional[PromptDataType] = None  # type: ignore[assignment]
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: Optional[ChatMessageRole] = None
@@ -55,7 +55,12 @@ class SeedPrompt(Seed):
             ValueError: If file-based data type cannot be inferred from extension.
 
         """
-        self.value = self.render_template_value_silent(**PATHS_DICT)
+        # Only trusted templates (is_jinja_template=True, e.g. from YAML files) are rendered
+        # through Jinja. Untrusted text (e.g. from remote datasets) must NOT be rendered — a
+        # crafted payload containing "{% endraw %}" can escape the raw wrapper and execute
+        # arbitrary Jinja expressions. See seed_objective.py for the same pattern.
+        if self.is_jinja_template:
+            self.value = self.render_template_value_silent(**PATHS_DICT)
 
         if not self.data_type:
             # If data_type is not provided, infer it from the value
@@ -93,13 +98,15 @@ class SeedPrompt(Seed):
             if TinyTag.is_supported(self.value):
                 try:
                     tag = TinyTag.get(self.value)
+                    bitrate = int(round(tag.bitrate)) if tag.bitrate is not None else 0
+                    duration = int(round(tag.duration)) if tag.duration is not None else 0
                     self.metadata.update(
                         {
-                            "bitrate": int(round(tag.bitrate)),
-                            "samplerate": tag.samplerate,
-                            "bitdepth": tag.bitdepth,
-                            "filesize": tag.filesize,
-                            "duration": int(round(tag.duration)),
+                            "bitrate": bitrate,
+                            "samplerate": tag.samplerate if tag.samplerate is not None else 0,
+                            "bitdepth": tag.bitdepth if tag.bitdepth is not None else 0,
+                            "filesize": tag.filesize if tag.filesize is not None else 0,
+                            "duration": duration,
                         }
                     )
                 except Exception as ex:
@@ -167,7 +174,7 @@ class SeedPrompt(Seed):
         current_sequence = starting_sequence
 
         for message in messages:
-            role: ChatMessageRole = "assistant" if message.api_role == "assistant" else "user"
+            role: ChatMessageRole = message.api_role
 
             for piece in message.message_pieces:
                 seed_prompt = SeedPrompt(

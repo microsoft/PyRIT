@@ -4,22 +4,22 @@
 import base64
 import hashlib
 import logging
-import string
-import textwrap
+import warnings
 from io import BytesIO
 from typing import cast
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
+from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult
 
 logger = logging.getLogger(__name__)
 
 
-class AddTextImageConverter(PromptConverter):
+class AddTextImageConverter(_BaseImageTextConverter):
     """
     Adds a string to an image and wraps the text into multiple lines if necessary.
 
@@ -32,7 +32,8 @@ class AddTextImageConverter(PromptConverter):
 
     def __init__(
         self,
-        text_to_add: str,
+        *args: str,
+        text_to_add: str = "",
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
@@ -43,16 +44,33 @@ class AddTextImageConverter(PromptConverter):
         Initialize the converter with the text and text properties.
 
         Args:
-            text_to_add (str): Text to add to an image. Defaults to empty string.
+            *args: Deprecated positional argument for text_to_add. Use text_to_add=... instead.
+                Will be removed in version 0.15.0.
+            text_to_add (str): Text to add to an image.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
-            font_size (float): Size of font to use. Defaults to 15.
+            font_size (int): Size of font to use. Defaults to 15.
             x_pos (int): X coordinate to place text in (0 is left most). Defaults to 10.
             y_pos (int): Y coordinate to place text in (0 is upper most). Defaults to 10.
 
         Raises:
+            TypeError: If more than one positional argument is passed, or if text_to_add
+                is passed as both positional and keyword argument.
             ValueError: If ``text_to_add`` is empty, or if ``font_name`` does not end with ".ttf".
         """
+        if args:
+            if len(args) > 1:
+                raise TypeError(f"AddTextImageConverter takes at most 1 positional argument, got {len(args)}")
+            if text_to_add:
+                raise TypeError("Cannot pass text_to_add as both positional and keyword argument")
+            warnings.warn(
+                "Passing 'text_to_add' as a positional argument is deprecated. "
+                "Use text_to_add=... as a keyword argument. "
+                "It will be keyword-only starting in version 0.15.0.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            text_to_add = args[0]
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
         if not font_name.endswith(".ttf"):
@@ -89,19 +107,13 @@ class AddTextImageConverter(PromptConverter):
         Load the font for a given font name and font size.
 
         Returns:
-            ImageFont.FreeTypeFont or ImageFont.ImageFont: The loaded font object. If the specified font
-            cannot be loaded, the default font is returned.
-
-        Raises:
-            OSError: If the font resource cannot be loaded, a warning is logged and the default font is used instead.
+            FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
-        # Try to load the specified font
         try:
-            font = ImageFont.truetype(self._font_name, self._font_size)
+            return ImageFont.truetype(self._font_name, self._font_size)
         except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using default font.")
-            font = cast("FreeTypeFont", ImageFont.load_default())
-        return font
+            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
+            return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:
         """
@@ -113,30 +125,16 @@ class AddTextImageConverter(PromptConverter):
         Returns:
             Image.Image: The image with added text.
         """
-        draw = ImageDraw.Draw(image)
+        margin = self._DEFAULT_MARGIN
+        bounding_box = (self._x_pos, self._y_pos, image.width - margin, image.height - margin)
 
-        # Calculate the maximum width in pixels with margin into account
-        margin = 5
-        max_width_pixels = image.size[0] - margin
-
-        # Estimate the maximum chars that can fit on a line
-        alphabet_letters = string.ascii_letters  # This gives 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        bbox = draw.textbbox((0, 0), alphabet_letters, font=self._font)
-        avg_char_width = (bbox[2] - bbox[0]) / len(alphabet_letters)
-        max_chars_per_line = int(max_width_pixels // avg_char_width)
-
-        # Wrap the text
-        wrapped_text = textwrap.fill(self._text_to_add, width=max_chars_per_line)
-
-        # Add wrapped text to image
-        y_offset = float(self._y_pos)
-        for line in wrapped_text.split("\n"):
-            draw.text((self._x_pos, y_offset), line, font=self._font, fill=self._color)
-            bbox = draw.textbbox((self._x_pos, y_offset), line, font=self._font)
-            line_height = bbox[3] - bbox[1]
-            y_offset += line_height
-
-        return image
+        return self._render_text_on_image(
+            image=image,
+            text=self._text_to_add,
+            font=self._font,
+            color=self._color,
+            bounding_box=bounding_box,
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
@@ -165,7 +163,7 @@ class AddTextImageConverter(PromptConverter):
         updated_img = self._add_text_to_image(image=original_img)
 
         image_bytes = BytesIO()
-        mime_type = img_serializer.get_mime_type(prompt)
+        mime_type = img_serializer.get_mime_type(prompt) or "image/png"
         image_type = mime_type.split("/")[-1]
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue()).decode("utf-8")

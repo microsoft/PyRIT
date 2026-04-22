@@ -122,6 +122,7 @@ def make_mock_piece(
     piece.id = "piece-id"
     piece.conversation_id = conversation_id
     piece.role = role
+    piece.api_role = "assistant" if role in ("assistant", "simulated_assistant") else role
     piece.get_role_for_storage.return_value = role
     piece.sequence = sequence
     piece.original_value = original_value
@@ -1596,6 +1597,35 @@ class TestPersistBase64Pieces:
 
         assert request.pieces[0].original_value == "thinking step"
 
+    @pytest.mark.asyncio
+    async def test_long_base64_audio_does_not_crash(self, attack_service) -> None:
+        """Base64 audio data longer than OS path limits should be saved, not crash with OSError."""
+        # Simulate a base64-encoded WAV file (>4096 chars, exceeds Linux filename limit of 255)
+        long_b64 = "UklGRiQ" + "A" * 5000  # fake WAV header + padding
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="audio_path",
+                    original_value=long_b64,
+                    mime_type="audio/wav",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as mock_factory:
+            mock_serializer = AsyncMock()
+            mock_serializer.value = "/tmp/saved_audio.wav"
+            mock_factory.return_value = mock_serializer
+
+            await AttackService._persist_base64_pieces_async(request)
+
+            mock_factory.assert_called_once()
+            mock_serializer.save_b64_image.assert_called_once_with(data=long_b64)
+            assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
+
 
 # ============================================================================
 # Related Conversations Tests
@@ -2202,6 +2232,19 @@ class TestAttackServiceAdditionalCoverage:
 
         assert new_id == "branch-empty"
         mock_memory.add_message_pieces_to_memory.assert_not_called()
+
+    def test_duplicate_conversation_remaps_assistant_to_simulated(self, attack_service, mock_memory):
+        """Should remap assistant pieces to simulated_assistant when flag is set."""
+        source = make_mock_piece(conversation_id="attack-1", role="assistant", sequence=0)
+        mock_memory.get_conversation.return_value = [source]
+        dup_piece = make_mock_piece(conversation_id="branch-1", role="assistant", sequence=0)
+        mock_memory.duplicate_messages.return_value = ("branch-1", [dup_piece])
+
+        attack_service._duplicate_conversation_up_to(
+            source_conversation_id="attack-1", cutoff_index=0, remap_assistant_to_simulated=True
+        )
+
+        assert dup_piece._role == "simulated_assistant"
 
 
 class TestAddMessageGuards:

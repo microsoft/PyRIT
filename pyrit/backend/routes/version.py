@@ -67,7 +67,7 @@ async def get_version_async(request: Request) -> VersionResponse:
         memory = CentralMemory.get_memory_instance()
         db_type = type(memory).__name__
         db_name = None
-        if memory.engine.url.database:
+        if memory.engine is not None and memory.engine.url.database:
             db_name = memory.engine.url.database.split("?")[0]
         database_info = f"{db_type} ({db_name})" if db_name else f"{db_type} (None)"
     except Exception as e:

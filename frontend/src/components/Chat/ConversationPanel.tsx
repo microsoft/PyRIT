@@ -30,8 +30,8 @@ interface ConversationPanelProps {
   onNewConversation: () => void
   onChangeMainConversation: (conversationId: string) => void
   onClose: () => void
-  /** When true, disable mutating actions (new conversation, promote to main) */
-  locked?: boolean
+  /** When set, disables mutating actions (new conversation, promote to main) and explains why. */
+  lockedReason?: string
   /** Increment to trigger a conversation list refresh (e.g. after sending a message) */
   refreshKey?: number
 }
@@ -43,7 +43,7 @@ export default function ConversationPanel({
   onNewConversation,
   onChangeMainConversation,
   onClose,
-  locked,
+  lockedReason,
   refreshKey,
 }: ConversationPanelProps) {
   const styles = useConversationPanelStyles()
@@ -107,13 +107,13 @@ export default function ConversationPanel({
           )}
         </div>
         <div style={{ display: 'flex', gap: tokens.spacingHorizontalXXS }}>
-          <Tooltip content={locked ? 'Cannot modify — attack is locked' : 'New Conversation'} relationship="label">
+          <Tooltip content={lockedReason ?? 'New Conversation'} relationship="label">
             <Button
               appearance="subtle"
               size="small"
               icon={<AddRegular />}
               onClick={onNewConversation}
-              disabled={!attackResultId || locked}
+              disabled={!attackResultId || !!lockedReason}
               data-testid="new-conversation-btn"
             />
           </Tooltip>
@@ -184,14 +184,14 @@ export default function ConversationPanel({
                   <Tooltip
                     content={conv.conversation_id === mainConversationId
                       ? 'This is the main conversation.'
-                      : 'Promote to main conversation.'}
+                      : lockedReason ?? 'Promote to main conversation.'}
                     relationship="description"
                   >
                     <Button
                       appearance="subtle"
                       size="small"
                       icon={conv.conversation_id === mainConversationId ? <StarFilled /> : <StarRegular />}
-                      disabled={conv.conversation_id === mainConversationId || locked}
+                      disabled={conv.conversation_id === mainConversationId || !!lockedReason}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (conv.conversation_id !== mainConversationId) {
