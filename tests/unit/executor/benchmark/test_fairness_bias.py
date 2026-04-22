@@ -24,7 +24,7 @@ def is_spacy_installed():
         import spacy  # noqa: F401
 
         return True
-    except ImportError:
+    except Exception:
         return False
 
 
