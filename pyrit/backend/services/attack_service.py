@@ -558,7 +558,7 @@ class AttackService:
         ar = results[0]
         main_conversation_id = ar.conversation_id
 
-        self._validate_target_match(attack_identifier=ar.attack_identifier, request=request)
+        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
         self._validate_operator_match(conversation_id=main_conversation_id, request=request)
 
         msg_conversation_id = request.target_conversation_id
@@ -719,7 +719,7 @@ class AttackService:
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
             new_converter_ids = [c.get_identifier() for c in converter_objs]
-            aid = ar.attack_identifier
+            aid = ar.get_attack_strategy_identifier()
             if aid:
                 existing_converters: list[ComponentIdentifier] = list(aid.get_child_list("request_converters"))
                 existing_hashes = {c.hash for c in existing_converters}
@@ -733,8 +733,6 @@ class AttackService:
                     params=dict(aid.params),
                     children=new_children,
                 )
-                update_fields["attack_identifier"] = new_aid.to_dict()
-                # Also update atomic_attack_identifier so get_attack_strategy_identifier() sees the change
                 if ar.atomic_attack_identifier:
                     atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
                     atomic_children = dict(atomic.children)
