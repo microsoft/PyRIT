@@ -5,6 +5,8 @@
 import uuid
 from typing import TYPE_CHECKING, Optional
 
+import pytest
+
 from pyrit.common.utils import to_sha256
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
@@ -1272,8 +1274,8 @@ def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: 
     assert len(results) == 3
 
 
-def test_get_attack_results_converter_classes_empty_returns_all(sqlite_instance: MemoryInterface):
-    """Test that converter_classes=[] behaves like None (no filter applied)."""
+def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite_instance: MemoryInterface):
+    """Test that converter_classes=[] returns only attacks with no converters (back-compat)."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")  # converter_ids=None
     ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])  # converter_ids=[]
@@ -1283,7 +1285,8 @@ def test_get_attack_results_converter_classes_empty_returns_all(sqlite_instance:
     )
 
     results = sqlite_instance.get_attack_results(converter_classes=[])
-    assert len(results) == 4
+    conv_ids = {r.conversation_id for r in results}
+    assert conv_ids == {"conv_2", "conv_3", "conv_4"}
 
 
 def test_get_attack_results_converter_classes_single_match(sqlite_instance: MemoryInterface):
@@ -1346,15 +1349,33 @@ def test_get_attack_results_attack_classes_and_converter_classes_combined(sqlite
     assert results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_attack_classes_converter_classes_empty_no_filter(sqlite_instance: MemoryInterface):
-    """Combining attack_classes with converter_classes=[] applies no converter filter."""
+def test_get_attack_results_attack_classes_converter_classes_empty_matches_no_converters(
+    sqlite_instance: MemoryInterface,
+):
+    """Combining attack_classes with converter_classes=[] restricts to the class with no converters."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
     ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # Different class
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
 
     results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"], converter_classes=[])
-    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+    assert {r.conversation_id for r in results} == {"conv_2"}
+
+
+def test_get_attack_results_attack_class_backcompat_singular(sqlite_instance: MemoryInterface):
+    """Deprecated singular attack_class=... still works and is equivalent to attack_classes=[...]."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results = sqlite_instance.get_attack_results(attack_class="CrescendoAttack")
+    assert {r.conversation_id for r in results} == {"conv_1"}
+
+
+def test_get_attack_results_attack_class_and_attack_classes_both_raises(sqlite_instance: MemoryInterface):
+    """Passing both attack_class and attack_classes is rejected."""
+    with pytest.raises(ValueError, match="attack_class"):
+        sqlite_instance.get_attack_results(attack_class="A", attack_classes=["B"])
 
 
 def test_get_attack_results_has_converters_true(sqlite_instance: MemoryInterface):

@@ -1458,6 +1458,7 @@ class MemoryInterface(abc.ABC):
         objective: Optional[str] = None,
         objective_sha256: Optional[Sequence[str]] = None,
         outcome: Optional[str] = None,
+        attack_class: Optional[str] = None,
         attack_classes: Optional[Sequence[str]] = None,
         converter_classes: Optional[Sequence[str]] = None,
         has_converters: Optional[bool] = None,
@@ -1476,14 +1477,17 @@ class MemoryInterface(abc.ABC):
                 Defaults to None.
             outcome (Optional[str], optional): The outcome to filter by (success, failure, undetermined).
                 Defaults to None.
+            attack_class (Optional[str], optional): Deprecated. Filter by a single exact attack
+                class_name in attack_identifier. Equivalent to passing ``attack_classes=[attack_class]``.
+                Cannot be combined with ``attack_classes``. Defaults to None.
             attack_classes (Optional[Sequence[str]], optional): Filter by exact attack class_name in
                 attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
                 case-sensitive). An empty sequence applies no filter. Defaults to None.
             converter_classes (Optional[Sequence[str]], optional): Filter by converter class names.
                 Returns only attacks that used ALL specified converters (AND logic, case-insensitive).
-                An empty sequence applies no filter. To filter by presence/absence of any converter,
-                use the ``has_converters`` parameter instead.
-                Defaults to None.
+                An empty sequence filters to attacks that used no converters; ``None`` applies no
+                filter. To filter by presence/absence of any converter explicitly, use the
+                ``has_converters`` parameter instead. Defaults to None.
             has_converters (Optional[bool], optional): Filter by converter presence.
                 ``True`` returns only attacks that used at least one converter. ``False`` returns
                 only attacks that used no converters. ``None`` applies no filter. Defaults to None.
@@ -1508,8 +1512,18 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
+
+        Raises:
+            ValueError: If both ``attack_class`` (deprecated) and ``attack_classes`` are provided.
         """
         conditions: list[ColumnElement[bool]] = []
+
+        if attack_class is not None and attack_classes is not None:
+            raise ValueError(
+                "Pass either `attack_class` (deprecated, singular) or `attack_classes` (plural), not both."
+            )
+        if attack_class is not None and attack_classes is None:
+            attack_classes = [attack_class]
 
         if attack_result_ids is not None:
             if len(attack_result_ids) == 0:
@@ -1542,9 +1556,10 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
-        if converter_classes:
-            # Non-empty sequence filters by converter class names (ALL must be present).
-            # Empty sequence or None applies no filter.
+        if converter_classes is not None:
+            # Non-empty sequence: filter to attacks that used ALL listed converters.
+            # Empty sequence: filter to attacks that used NO converters.
+            # None: no filter.
             conditions.append(
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.atomic_attack_identifier,
