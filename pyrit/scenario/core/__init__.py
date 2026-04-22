@@ -3,8 +3,6 @@
 
 """Core scenario classes for running attack configurations."""
 
-# AttackTechniqueSpec lives in the registry module but is re-exported here for convenience
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueSpec
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -27,7 +25,6 @@ __all__ = [
     "Scenario",
     "ScenarioCompositeStrategy",
     "ScenarioStrategy",
-    "AttackTechniqueSpec",
     "get_default_adversarial_target",
     "register_scenario_techniques",
 ]

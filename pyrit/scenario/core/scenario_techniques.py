@@ -40,8 +40,8 @@ logger = logging.getLogger(__name__)
 # Static technique catalog
 # ---------------------------------------------------------------------------
 # Used for strategy enum construction (import-time safe — no live targets).
-# adversarial_chat is always None here; resolved at registration time by
-# build_scenario_techniques().
+# Live dependencies (e.g. adversarial chat targets) are resolved later by
+# build_scenario_techniques() at registration time.
 
 SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(

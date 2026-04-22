@@ -42,7 +42,7 @@ class TestTagQueryLeafMatching:
         assert q.matches({"z"}) is False
 
     def test_exclude_rejects_matching_tags(self) -> None:
-        q = TagQuery(exclude=frozenset({"deprecated"}))
+        q = TagQuery(exclude_tags=frozenset({"deprecated"}))
         assert q.matches({"core", "stable"}) is True
         assert q.matches({"core", "deprecated"}) is False
 
@@ -50,7 +50,7 @@ class TestTagQueryLeafMatching:
         q = TagQuery(
             include_all=frozenset({"core"}),
             include_any=frozenset({"single_turn", "multi_turn"}),
-            exclude=frozenset({"deprecated"}),
+            exclude_tags=frozenset({"deprecated"}),
         )
         assert q.matches({"core", "single_turn"}) is True
         assert q.matches({"core", "multi_turn", "extra"}) is True
@@ -78,17 +78,12 @@ class TestTagQueryOperators:
         assert q.matches({"c"}) is True
         assert q.matches({"a"}) is False
 
-    def test_invert_negates(self) -> None:
-        q = ~TagQuery(include_all=frozenset({"deprecated"}))
-        assert q.matches({"core"}) is True
-        assert q.matches({"deprecated"}) is False
-
     def test_complex_nesting(self) -> None:
         # (A OR B) AND (C OR D) AND NOT deprecated
         q = (
             TagQuery(include_any=frozenset({"a", "b"}))
             & TagQuery(include_any=frozenset({"c", "d"}))
-            & ~TagQuery(include_any=frozenset({"deprecated"}))
+            & TagQuery.none_of("deprecated")
         )
         assert q.matches({"a", "c"}) is True
         assert q.matches({"b", "d"}) is True
@@ -149,14 +144,6 @@ class TestTagQueryValidation:
         with pytest.raises(ValueError, match="Invalid TagQuery op"):
             TagQuery(_op="xor", _children=(TagQuery(), TagQuery()))
 
-    def test_not_requires_exactly_one_child(self) -> None:
-        with pytest.raises(ValueError, match="'not' TagQuery must have exactly 1 child"):
-            TagQuery(_op="not", _children=(TagQuery(), TagQuery()))
-
-    def test_not_rejects_zero_children(self) -> None:
-        with pytest.raises(ValueError, match="'not' TagQuery must have exactly 1 child"):
-            TagQuery(_op="not", _children=())
-
     def test_and_requires_at_least_two_children(self) -> None:
         with pytest.raises(ValueError, match="'and' TagQuery must have at least 2 children"):
             TagQuery(_op="and", _children=(TagQuery(),))
@@ -173,7 +160,6 @@ class TestTagQueryValidation:
         # Should not raise
         TagQuery(_op="and", _children=(TagQuery(), TagQuery()))
         TagQuery(_op="or", _children=(TagQuery(), TagQuery()))
-        TagQuery(_op="not", _children=(TagQuery(),))
 
 
 class TestTagQueryFilterWithSetTags:
@@ -192,6 +178,35 @@ class TestTagQueryFilterWithSetTags:
         q = TagQuery(include_all=frozenset({"core"}))
         result = q.filter(items)
         assert [i.name for i in result] == ["a"]
+
+
+class TestTagQueryClassmethods:
+    def test_all_creates_include_all(self) -> None:
+        q = TagQuery.all("a", "b")
+        assert q.matches({"a", "b", "c"}) is True
+        assert q.matches({"a"}) is False
+
+    def test_any_of_creates_include_any(self) -> None:
+        q = TagQuery.any_of("x", "y")
+        assert q.matches({"x"}) is True
+        assert q.matches({"z"}) is False
+
+    def test_none_of_creates_exclude(self) -> None:
+        q = TagQuery.none_of("deprecated")
+        assert q.matches({"core"}) is True
+        assert q.matches({"deprecated"}) is False
+
+
+class TestTagQuerySetAcceptance:
+    def test_constructor_accepts_plain_sets(self) -> None:
+        q = TagQuery(include_all={"a", "b"})
+        assert q.matches({"a", "b"}) is True
+        assert isinstance(q.include_all, frozenset)
+
+    def test_constructor_accepts_plain_set_for_exclude(self) -> None:
+        q = TagQuery(exclude_tags={"deprecated"})
+        assert q.matches({"deprecated"}) is False
+        assert isinstance(q.exclude_tags, frozenset)
 
 
 class TestTagQueryEdgeCases:
