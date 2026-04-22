@@ -627,7 +627,7 @@ class Scenario(ABC):
         factories = self._get_attack_technique_factories()
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
 
-        scoring_config = AttackScoringConfig(objective_scorer=cast(TrueFalseScorer, self._objective_scorer))
+        scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
         registry = AttackTechniqueRegistry.get_registry_singleton()
 
         atomic_attacks: list[AtomicAttack] = []
@@ -654,7 +654,7 @@ class Scenario(ABC):
                         attack_technique=attack_technique,
                         seed_groups=list(seed_groups),
                         adversarial_chat=factory.adversarial_chat,
-                        objective_scorer=cast(TrueFalseScorer, self._objective_scorer),
+                        objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                         memory_labels=self._memory_labels,
                         display_group=display_group,
                     )

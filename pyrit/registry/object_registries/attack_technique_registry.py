@@ -39,52 +39,50 @@ class AttackTechniqueSpec:
     """
     Declarative definition of an attack technique.
 
-    Each spec describes one registrable technique. The registry converts
-    specs into ``AttackTechniqueFactory`` instances and registers them.
+    The registry converts specs into ``AttackTechniqueFactory`` instances.
+    A minimal spec only needs ``name`` and ``attack_class``::
 
-    The ``adversarial_chat`` field is part of technique identity: two specs
-    with the same name but different adversarial targets are different
-    techniques with different expected success rates. For the standard catalog,
-    build runtime specs with a resolved target via
-    ``build_scenario_techniques(adversarial_chat)``.
+        AttackTechniqueSpec(name="prompt_sending", attack_class=PromptSendingAttack)
 
-    Whether a technique receives an ``AttackAdversarialConfig`` is determined
-    automatically: the registry inspects the attack class constructor and
-    injects one when ``attack_adversarial_config`` is an accepted parameter
-    and ``adversarial_chat`` is set.
+    Use ``extra_kwargs`` for constructor arguments specific to a particular
+    attack class (as opposed to common arguments like ``objective_target``
+    and ``attack_scoring_config``, which the factory injects automatically)::
 
-    ``adversarial_chat`` vs ``adversarial_chat_key``:
-        Specs in the static technique catalog are defined at import time,
-        before any targets are registered. ``adversarial_chat_key`` stores a
-        deferred string reference to a ``TargetRegistry`` entry, while
-        ``adversarial_chat`` holds the resolved live target instance.
-        At runtime, ``build_scenario_techniques()`` resolves every
-        ``adversarial_chat_key`` into an ``adversarial_chat`` value.
-        A spec must set at most one of the two fields.
+        AttackTechniqueSpec(
+            name="role_play",
+            attack_class=RolePlayAttack,
+            strategy_tags=["core", "single_turn"],
+            extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
+        )
+
+    Attacks that need an adversarial chat target should set
+    ``adversarial_chat`` (resolved target) or ``adversarial_chat_key``
+    (deferred ``TargetRegistry`` key resolved at runtime by
+    ``build_scenario_techniques()``). These are mutually exclusive.
+    The registry automatically injects an ``AttackAdversarialConfig`` when
+    the attack class accepts one and ``adversarial_chat`` is set.
 
     Args:
         name: Registry name (must match the strategy enum value).
-        attack_class: The ``AttackStrategy`` subclass.
-        strategy_tags: Strategy tags that control which ``ScenarioStrategy``
-            aggregate groups include this technique.
-            ``build_strategy_class_from_specs`` matches these against
-            ``TagQuery`` rules to assign techniques to aggregates
-            (e.g. ``"single_turn"``, ``"multi_turn"``, ``"default"``).
-            Also stored on the registry entry for filtering.
-        adversarial_chat: Resolved, live adversarial chat target for
-            multi-turn attacks. Part of technique identity. ``None`` means
-            no adversarial target.
-        adversarial_chat_key: Deferred ``TargetRegistry`` key that
-            ``build_scenario_techniques()`` resolves into
-            ``adversarial_chat`` at runtime. Use this in static spec
-            catalogs where the target isn't available yet. Mutually
-            exclusive with ``adversarial_chat``.
-        extra_kwargs: Static extra keyword arguments forwarded to the attack
-            constructor. Must not contain ``attack_adversarial_config`` (use
-            ``adversarial_chat`` instead).
+        attack_class: The ``AttackStrategy`` subclass (e.g.
+            ``PromptSendingAttack``, ``TreeOfAttacksWithPruningAttack``).
+        strategy_tags: Tags controlling which ``ScenarioStrategy`` aggregates
+            include this technique (e.g. ``"single_turn"``, ``"multi_turn"``).
+        adversarial_chat: Live adversarial chat target for multi-turn attacks.
+            Part of technique identity. Mutually exclusive with
+            ``adversarial_chat_key``.
+        adversarial_chat_key: Deferred ``TargetRegistry`` key resolved into
+            ``adversarial_chat`` at runtime. Use in static spec catalogs
+            where the target isn't available yet.
+        extra_kwargs: Attack-class-specific keyword arguments forwarded to
+            the constructor, e.g. ``{"tree_width": 5}`` for
+            ``TreeOfAttacksWithPruningAttack``. Must not contain
+            ``attack_adversarial_config`` (use ``adversarial_chat``) or
+            factory-injected args (``objective_target``,
+            ``attack_scoring_config``).
         accepts_scorer_override: Whether the technique accepts a scenario-level
-            scorer override. Set to False for techniques (e.g. TAP) that manage
-            their own scoring internally. Defaults to True.
+            scorer override. Set to ``False`` for techniques (e.g. TAP) that
+            manage their own scoring. Defaults to ``True``.
     """
 
     name: str
@@ -94,6 +92,11 @@ class AttackTechniqueSpec:
     adversarial_chat_key: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     accepts_scorer_override: bool = True
+
+    @property
+    def tags(self) -> list[str]:
+        """Return strategy_tags as the Taggable interface."""
+        return self.strategy_tags
 
     def __post_init__(self) -> None:
         """

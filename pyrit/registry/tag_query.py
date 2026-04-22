@@ -28,9 +28,11 @@ items expose a ``tags`` attribute (``list[str]`` or ``set[str]``).
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @runtime_checkable
@@ -121,17 +123,32 @@ class TagQuery:
 
     @classmethod
     def all(cls, *tags: str) -> TagQuery:
-        """Leaf query: every tag must be present."""
+        """
+        Leaf query: every tag must be present.
+
+        Returns:
+            A TagQuery that matches when all given tags are present.
+        """
         return cls(include_all=frozenset(tags))
 
     @classmethod
     def any_of(cls, *tags: str) -> TagQuery:
-        """Leaf query: at least one tag must be present."""
+        """
+        Leaf query: at least one tag must be present.
+
+        Returns:
+            A TagQuery that matches when at least one given tag is present.
+        """
         return cls(include_any=frozenset(tags))
 
     @classmethod
     def none_of(cls, *tags: str) -> TagQuery:
-        """Leaf query: none of the given tags may be present."""
+        """
+        Leaf query: none of the given tags may be present.
+
+        Returns:
+            A TagQuery that matches when none of the given tags are present.
+        """
         return cls(exclude_tags=frozenset(tags))
 
     # ------------------------------------------------------------------

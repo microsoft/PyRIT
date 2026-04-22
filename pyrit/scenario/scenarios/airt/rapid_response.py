@@ -13,7 +13,7 @@ to test.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -59,7 +59,7 @@ class RapidResponse(Scenario):
     """
 
     VERSION: int = 2
-    _strategy_class: type[ScenarioStrategy] | None = None
+    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -69,9 +69,9 @@ class RapidResponse(Scenario):
         Returns:
             type[ScenarioStrategy]: The RapidResponseStrategy enum class.
         """
-        if cls._strategy_class is None:
-            cls._strategy_class = _build_rapid_response_strategy()
-        return cls._strategy_class
+        if cls._cached_strategy_class is None:
+            cls._cached_strategy_class = _build_rapid_response_strategy()
+        return cls._cached_strategy_class
 
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
