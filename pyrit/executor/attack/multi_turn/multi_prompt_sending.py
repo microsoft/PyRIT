@@ -30,6 +30,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import Scorer
 
 if TYPE_CHECKING:
@@ -124,6 +125,15 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
     and multiple scorer types for comprehensive evaluation.
     """
 
+    # Sending a sequence of distinct prompts depends on the target maintaining
+    # conversation state between them. History-squash adaptation would collapse
+    # them into one message and silently break the attack's sequencing
+    # semantics. Declare MULTI_TURN as ``native_required`` so adaptation is
+    # rejected at construction time.
+    TARGET_REQUIREMENTS = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN}),
+    )
+
     @apply_defaults
     def __init__(
         self,
@@ -152,14 +162,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             context_type=MultiTurnAttackContext,
             params_type=MultiPromptSendingAttackParameters,
         )
-
-        # Sending a sequence of prompts requires a real multi-turn target;
-        # history-squash adaptation would collapse them into one message.
-        if not objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
-            raise ValueError(
-                "MultiPromptSendingAttack requires a target that natively supports "
-                f"'{CapabilityName.MULTI_TURN.value}'."
-            )
 
         # Initialize the converter configuration
         attack_converter_config = attack_converter_config or AttackConverterConfig()

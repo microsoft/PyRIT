@@ -45,6 +45,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     Scorer,
@@ -113,6 +114,15 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
+    # Crescendo fundamentally relies on multi-turn conversation history to
+    # gradually escalate prompts; history-squash adaptation would collapse the
+    # conversation into a single prompt and silently break the attack's
+    # semantics. Declare MULTI_TURN as ``native_required`` so adaptation is
+    # rejected at construction time.
+    TARGET_REQUIREMENTS = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN}),
+    )
+
     # Default system prompt template path for Crescendo attack
     DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH: Path = (
         Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "crescendo_variant_1.yaml"
@@ -154,13 +164,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         # Initialize base class
         super().__init__(objective_target=objective_target, logger=logger, context_type=CrescendoAttackContext)
-
-        # Crescendo fundamentally relies on multi-turn conversation history to
-        # gradually escalate prompts; history-squash adaptation would defeat it.
-        if not objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
-            raise ValueError(
-                f"CrescendoAttack requires a target that natively supports '{CapabilityName.MULTI_TURN.value}'."
-            )
 
         self._memory = CentralMemory.get_memory_instance()
 

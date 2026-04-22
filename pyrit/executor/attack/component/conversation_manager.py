@@ -288,7 +288,7 @@ class ConversationManager:
         3. Updates context.executed_turns for multi-turn attacks
         4. Sets context.next_message if there's an unanswered user message
 
-        For PromptChatTarget:
+        For chat-capable PromptTarget:
             - Adds prepended messages to memory with simulated_assistant role
             - All messages get new UUIDs
 
@@ -311,7 +311,7 @@ class ConversationManager:
 
         Raises:
             ValueError: If conversation_id is empty, or if prepended_conversation
-                requires a PromptChatTarget but target is not one.
+                requires a chat-capable PromptTarget but target is not one.
         """
         if not conversation_id:
             raise ValueError("conversation_id cannot be empty")
@@ -374,8 +374,8 @@ class ConversationManager:
 
         if config.non_chat_target_behavior == "raise":
             raise ValueError(
-                "prepended_conversation requires the objective target to be a PromptChatTarget. "
-                "Non-chat objective targets do not support conversation history. "
+                "prepended_conversation requires the objective target to be a chat-capable "
+                "PromptTarget.Non-chat objective targets do not support conversation history. "
                 "Use PrependedConversationConfig with non_chat_target_behavior='normalize_first_turn' "
                 "to normalize the conversation into the first message instead."
             )

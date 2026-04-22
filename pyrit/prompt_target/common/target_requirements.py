@@ -22,26 +22,40 @@ class TargetRequirements:
     :class:`CapabilityName` enum; this class is simply a typed wrapper
     around the set of capabilities a consumer needs.
 
-    Requirements are satisfied either by native support on the target or
-    by an ``ADAPT`` entry in the target's
-    :class:`CapabilityHandlingPolicy`. Consumers that cannot tolerate
-    adaptation should perform their own ``capabilities.includes(...)``
-    check instead of declaring a requirement here.
+    Two tiers of requirement are supported:
+
+    * ``required`` \u2014 satisfied either by native support on the target or
+      by an ``ADAPT`` entry in the target's
+      :class:`CapabilityHandlingPolicy`. Use this when the consumer only
+      needs the behavior to appear on the wire.
+    * ``native_required`` \u2014 must be natively supported. Adaptation is
+      rejected. Use this when adaptation would silently change the
+      consumer's semantics (e.g. an attack that depends on the target
+      remembering prior turns, where history-squash normalization would
+      collapse the conversation into a single prompt).
     """
 
     required: frozenset[CapabilityName] = field(default_factory=frozenset)
+    native_required: frozenset[CapabilityName] = field(default_factory=frozenset)
 
     def validate(self, *, target: PromptTarget) -> None:
         """
-        Validate that ``target`` can satisfy every required capability.
+        Validate that ``target`` can satisfy every declared requirement.
 
         Args:
             target (PromptTarget): The target to validate against.
 
         Raises:
-            ValueError: If any required capability is not supported natively
-                and has no ``ADAPT`` entry in the target's policy.
+            ValueError: If any ``native_required`` capability is not natively
+                supported, or if any ``required`` capability is not supported
+                natively and has no ``ADAPT`` entry in the target's policy.
         """
+        for capability in self.native_required:
+            if not target.configuration.includes(capability=capability):
+                raise ValueError(
+                    f"Target must natively support '{capability.value}'; "
+                    "adaptation is not acceptable for this consumer."
+                )
         for capability in self.required:
             target.configuration.ensure_can_handle(capability=capability)
 

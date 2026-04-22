@@ -64,26 +64,6 @@ class PromptChatTarget(PromptTarget):
             custom_capabilities=custom_capabilities,
         )
 
-    def set_system_prompt(
-        self,
-        *,
-        system_prompt: str,
-        conversation_id: str,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        labels: Optional[dict[str, str]] = None,
-    ) -> None:
-        """
-        Use :meth:`PromptTarget.set_system_prompt` on the base class.
-
-        Retained on ``PromptChatTarget`` so subclasses that override this method
-        continue to work. Delegates to the base-class implementation.
-        """
-        super().set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=conversation_id,
-            attack_identifier=attack_identifier,
-            labels=labels,
-        )
 
     def is_response_format_json(self, message_piece: MessagePiece) -> bool:
         """
