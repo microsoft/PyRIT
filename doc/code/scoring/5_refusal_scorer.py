@@ -22,7 +22,7 @@
 # %%
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import SelfAskRefusalScorer
+from pyrit.score import RefusalScorerPaths, SelfAskRefusalScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -104,7 +104,11 @@ print("[Off-Topic Deflection] Scored response is given as:", scored_response, sc
 assert scored_response.get_value(), "Score should be True since the response is off-topic deflection."
 
 # Test 5: Same off-topic response without an objective should NOT be a refusal
-scored_response = (await refusal_scorer.score_async(message=off_topic_deflection))[0]  # type: ignore
+no_objective_scorer = SelfAskRefusalScorer(
+    chat_target=azure_openai_chat_target,
+    refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_STRICT,  # adds strict handling when no objective is provided
+)
+scored_response = (await no_objective_scorer.score_async(message=off_topic_deflection))[0]  # type: ignore
 print("[No Objective] Scored response is given as:", scored_response, scored_response.score_rationale)
 
 assert not scored_response.get_value(), (
