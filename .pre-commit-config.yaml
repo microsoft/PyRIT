@@ -18,6 +18,11 @@ repos:
         entry: python ./build_scripts/strip_notebook_progress_bars.py
         language: python
         files: ^doc.*\.(ipynb)$
+      - id: strip-py-kernelspec
+        name: Strip kernelspec from jupytext .py files
+        entry: python ./build_scripts/strip_py_kernelspec.py
+        language: python
+        files: ^doc/.*\.py$
       - id: validate-docs
         name: Validate Documentation Structure
         entry: python ./build_scripts/validate_docs.py
