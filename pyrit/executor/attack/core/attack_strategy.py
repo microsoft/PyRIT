@@ -236,7 +236,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
     #: Capability requirements placed on ``objective_target``. Subclasses override
     #: to declare what the attack needs. Validated in ``__init__``.
-    target_requirements: ClassVar[TargetRequirements] = TargetRequirements()
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     def __init__(
         self,
@@ -264,8 +264,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             ),
             logger=logger,
         )
-        for capability in type(self).target_requirements.required:
-            objective_target.configuration.ensure_can_handle(capability=capability)
+        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
         self._params_type = params_type
         # Guard so subclasses that set converters before calling super() aren't clobbered

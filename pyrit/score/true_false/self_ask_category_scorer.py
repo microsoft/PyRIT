@@ -37,7 +37,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
-    target_requirements = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
@@ -59,7 +59,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         """
         super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
-        self._validate_target_requirements(target=chat_target)
+        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
 
         content_classifier_path = verify_and_resolve_path(content_classifier_path)

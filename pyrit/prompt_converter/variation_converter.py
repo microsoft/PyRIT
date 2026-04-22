@@ -35,7 +35,7 @@ class VariationConverter(PromptConverter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
-    target_requirements = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     @apply_defaults
     def __init__(
@@ -56,7 +56,7 @@ class VariationConverter(PromptConverter):
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
         """
-        self._validate_target_requirements(target=converter_target)
+        type(self).TARGET_REQUIREMENTS.validate(target=converter_target)
         self.converter_target = converter_target
 
         # set to default strategy if not provided

@@ -63,8 +63,8 @@ class Scorer(Identifiable, abc.ABC):
 
     #: Capability requirements placed on the scorer's chat target (if any).
     #: Subclasses that use a chat target should override this and call
-    #: ``self._validate_target_requirements(target=chat_target)`` in ``__init__``.
-    target_requirements: ClassVar[TargetRequirements] = TargetRequirements()
+    #: ``type(self).TARGET_REQUIREMENTS.validate(target=chat_target)`` in ``__init__``.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     _identifier: Optional[ComponentIdentifier] = None
 
@@ -76,20 +76,6 @@ class Scorer(Identifiable, abc.ABC):
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
         """
         self._validator = validator
-
-    def _validate_target_requirements(self, *, target: PromptTarget) -> None:
-        """
-        Validate ``target`` against this scorer's declared
-        :attr:`target_requirements`.
-
-        Args:
-            target (PromptTarget): The target to validate.
-
-        Raises:
-            ValueError: If any required capability cannot be satisfied.
-        """
-        for capability in type(self).target_requirements.required:
-            target.configuration.ensure_can_handle(capability=capability)
 
     def get_identifier(self) -> ComponentIdentifier:
         """

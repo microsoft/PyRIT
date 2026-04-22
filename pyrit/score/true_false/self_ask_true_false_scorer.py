@@ -93,7 +93,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text", "image_path"],
     )
-    target_requirements = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
@@ -123,7 +123,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
 
-        self._validate_target_requirements(target=chat_target)
+        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
 
         if true_false_question_path and true_false_question:

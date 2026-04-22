@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,20 @@ class TargetRequirements:
     """
 
     required: frozenset[CapabilityName] = field(default_factory=frozenset)
+
+    def validate(self, *, target: PromptTarget) -> None:
+        """
+        Validate that ``target`` can satisfy every required capability.
+
+        Args:
+            target (PromptTarget): The target to validate against.
+
+        Raises:
+            ValueError: If any required capability is not supported natively
+                and has no ``ADAPT`` entry in the target's policy.
+        """
+        for capability in self.required:
+            target.configuration.ensure_can_handle(capability=capability)
 
 
 # Shared requirement used by scorers and converters that set a system prompt
