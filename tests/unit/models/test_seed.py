@@ -74,6 +74,54 @@ def test_seed_prompt_initialization(seed_prompt_fixture):
     assert seed_prompt_fixture.parameters == ["param1"]
 
 
+@pytest.mark.parametrize(
+    ("suffix", "expected_data_type"),
+    [
+        # Video — uppercase
+        (".MP4", "video_path"),
+        (".AVI", "video_path"),
+        (".MOV", "video_path"),
+        (".MKV", "video_path"),
+        (".OGV", "video_path"),
+        (".FLV", "video_path"),
+        (".WMV", "video_path"),
+        (".WEBM", "video_path"),
+        # Audio — uppercase
+        (".FLAC", "audio_path"),
+        (".MP3", "audio_path"),
+        (".MPEG", "audio_path"),
+        (".MPGA", "audio_path"),
+        (".M4A", "audio_path"),
+        (".OGG", "audio_path"),
+        (".WAV", "audio_path"),
+        # Image — uppercase
+        (".JPG", "image_path"),
+        (".JPEG", "image_path"),
+        (".PNG", "image_path"),
+        (".GIF", "image_path"),
+        (".BMP", "image_path"),
+        (".TIFF", "image_path"),
+        (".TIF", "image_path"),
+        # Mixed case
+        (".Mp4", "video_path"),
+        (".Wav", "audio_path"),
+        (".Png", "image_path"),
+        (".jPeG", "image_path"),
+        (".FlaC", "audio_path"),
+        (".wEbM", "video_path"),
+    ],
+)
+def test_seed_prompt_infers_file_type_from_case_insensitive_extension(suffix, expected_data_type):
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+        file_path = temp_file.name
+
+    try:
+        seed_prompt = SeedPrompt(value=file_path)
+        assert seed_prompt.data_type == expected_data_type
+    finally:
+        os.remove(file_path)
+
+
 def test_seed_prompt_render_template_success(seed_prompt_fixture):
     seed_prompt_fixture.value = "Test prompt with param1={{ param1 }}"
     result = seed_prompt_fixture.render_template_value(param1="value1")

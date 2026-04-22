@@ -117,14 +117,17 @@ async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, seed_group):
+async def test_send_prompt_async_no_response_raises_empty_response(mock_memory_instance, seed_group):
     prompt_target = AsyncMock()
     prompt_target.send_prompt_async = AsyncMock(return_value=None)
 
     normalizer = PromptNormalizer()
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
-    await normalizer.send_prompt_async(message=message, target=prompt_target)
+    with pytest.raises(EmptyResponseException):
+        await normalizer.send_prompt_async(message=message, target=prompt_target)
+
+    # Request should still be added to memory before the exception
     assert mock_memory_instance.add_message_to_memory.call_count == 1
 
     request = mock_memory_instance.add_message_to_memory.call_args[1]["request"]
@@ -556,3 +559,34 @@ class TestPromptNormalizerConverterContext:
         assert captured is not None
         assert captured.component_identifier is not None
         assert "ContextCapturingConverter" in str(captured.component_identifier)
+
+
+def test_memory_property_raises_when_memory_none():
+    """Guard at line 45: _memory is None raises RuntimeError."""
+    normalizer = PromptNormalizer.__new__(PromptNormalizer)
+    normalizer._memory = None
+    with pytest.raises(RuntimeError, match="Memory is not initialized"):
+        _ = normalizer.memory
+
+
+@pytest.mark.asyncio
+async def test_add_prepended_conversation_to_memory(mock_memory_instance):
+    normalizer = PromptNormalizer()
+    conv_id = "test-conv-id"
+    attack_id = get_mock_attack_identifier()
+
+    piece = MessagePiece(role="user", original_value="prepended text", conversation_id="old-id")
+    message = Message(message_pieces=[piece])
+
+    result = await normalizer.add_prepended_conversation_to_memory(
+        conversation_id=conv_id,
+        should_convert=False,
+        attack_identifier=attack_id,
+        prepended_conversation=[message],
+    )
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].message_pieces[0].conversation_id == conv_id
+    assert result[0].message_pieces[0].attack_identifier == attack_id
+    mock_memory_instance.add_message_to_memory.assert_called_once()

@@ -110,6 +110,9 @@ class AIRTInitializer(PyRITInitializer):
         2. Composite harm and objective scorers
         3. Adversarial target configurations
         4. Default values for all attack types
+
+        Raises:
+            ValueError: If required environment variables are not set.
         """
         # Ensure operator, operation, and email are populated from GLOBAL_MEMORY_LABELS.
         self._validate_operation_fields()
@@ -121,8 +124,10 @@ class AIRTInitializer(PyRITInitializer):
         scorer_model_name = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2")
 
         # Type assertions - safe because validate() already checked these
-        assert converter_endpoint is not None
-        assert scorer_endpoint is not None
+        if converter_endpoint is None:
+            raise ValueError("converter_endpoint is not initialized")
+        if scorer_endpoint is None:
+            raise ValueError("scorer_endpoint is not initialized")
         # model name can be empty in certain cases (e.g., custom model deployments that don't need model name)
 
         # Check for API keys first, fall back to Entra auth if not set
@@ -137,7 +142,7 @@ class AIRTInitializer(PyRITInitializer):
 
         # 1. Setup converter target
         self._setup_converter_target(
-            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name
+            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name or ""
         )
 
         # 2. Setup scorers
@@ -145,12 +150,12 @@ class AIRTInitializer(PyRITInitializer):
             endpoint=scorer_endpoint,
             api_key=scorer_api_key,
             content_safety_api_key=content_safety_api_key,
-            model_name=scorer_model_name,
+            model_name=scorer_model_name or "",
         )
 
         # 3. Setup adversarial targets
         self._setup_adversarial_targets(
-            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name
+            endpoint=converter_endpoint, api_key=converter_api_key, model_name=converter_model_name or ""
         )
 
     def _setup_converter_target(self, *, endpoint: str, api_key: str, model_name: str) -> None:

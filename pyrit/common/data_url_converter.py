@@ -23,7 +23,7 @@ async def convert_local_image_to_data_url(image_path: str) -> str:
         str: A string containing the MIME type and the base64-encoded data of the image, formatted as a data URL.
     """
     ext = DataTypeSerializer.get_extension(image_path)
-    if ext.lower() not in AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS:
+    if ext is None or ext.lower() not in AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS:
         raise ValueError(
             f"Unsupported image format: {ext}. Supported formats are: {AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS}"
         )

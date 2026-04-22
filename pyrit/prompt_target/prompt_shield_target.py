@@ -88,10 +88,15 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
             custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
                 ``custom_configuration`` instead. Will be removed in v0.14.0.
+
+        Raises:
+            ValueError: If the endpoint value is not provided.
         """
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
         )
+        if endpoint_value is None:
+            raise ValueError("Endpoint value is required")
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint_value,
@@ -99,12 +104,15 @@ class PromptShieldTarget(PromptTarget):
             custom_capabilities=custom_capabilities,
         )
 
-        self._api_version = api_version
+        self._api_version = api_version or "2024-09-01"
 
         # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(
+        _api_key_value = default_values.get_required_value(
             env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
         )
+        if _api_key_value is None:
+            raise ValueError("API key is required")
+        self._api_key = _api_key_value
 
         self._force_entry_field: PromptShieldEntryField = field
 

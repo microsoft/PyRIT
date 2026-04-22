@@ -1166,3 +1166,23 @@ class TestVideoTargetRemixValidation:
 
         with pytest.raises(ValueError, match="video_path piece is missing.*video_id"):
             OpenAIVideoTarget._validate_video_remix_pieces(message=message)
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_async_raises_when_no_text_piece(patch_central_database):
+    """Guard at line 210: text_piece is None raises ValueError."""
+    target = OpenAIVideoTarget(
+        endpoint="https://api.openai.com/v1",
+        api_key="test",
+        model_name="sora-2",
+    )
+    msg = MessagePiece(
+        role="user",
+        original_value="/path/image.png",
+        converted_value="/path/image.png",
+        converted_value_data_type="image_path",
+    )
+    message = Message([msg])
+    with patch.object(target, "_validate_request"):
+        with pytest.raises(ValueError, match="No text piece found in message"):
+            await target.send_prompt_async(message=message)

@@ -28,7 +28,7 @@ class DenylistConverter(LLMGenericTextConverter):
         *,
         converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         system_prompt_template: Optional[SeedPrompt] = None,
-        denylist: list[str] = None,
+        denylist: list[str] | None = None,
     ):
         """
         Initialize the converter with a target, an optional system prompt template, and a denylist.

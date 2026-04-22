@@ -118,6 +118,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
         Raises:
             ValueError: If no endpoint is provided.
+            RuntimeError: If the API key is not a string when validation is performed.
         """
         if harm_categories:
             self._harm_categories = harm_categories
@@ -151,6 +152,8 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
             else:
                 # String API key
+                if not isinstance(self._api_key, str):
+                    raise RuntimeError("Expected string API key")
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._api_key))
         else:
             raise ValueError("Please provide the Azure Content Safety endpoint")
@@ -180,7 +183,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior" = None,
+        update_registry_behavior: "RegistryUpdateBehavior | None" = None,
         max_concurrency: int = 10,
     ) -> Optional["ScorerMetrics"]:
         """

@@ -86,7 +86,7 @@ class TextTarget(PromptTarget):
                     original_value=row["value"],
                     original_value_data_type=row.get("data_type", None),  # type: ignore[arg-type]
                     conversation_id=row.get("conversation_id", None),
-                    sequence=int(sequence_str) if sequence_str else None,
+                    sequence=int(sequence_str) if sequence_str else 0,
                     labels=labels,
                     response_error=row.get("response_error", None),  # type: ignore[arg-type]
                     prompt_target_identifier=self.get_identifier(),

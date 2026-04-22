@@ -554,7 +554,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
             # Use unified error handling - automatically detects Response and validates
             result = await self._handle_openai_request(
-                api_call=lambda body=body: self._async_client.responses.create(**body),
+                api_call=lambda body=body: self._client.responses.create(**body),
                 request=message,
             )
 
