@@ -403,6 +403,36 @@ describe('HistoryFiltersBar', () => {
     expect(input.value).toBe('alice')
   })
 
+  it('should filter multi-select Combobox options by typed search text and reset search on selection', async () => {
+    const onFiltersChange = jest.fn()
+    const props = {
+      ...defaultProps,
+      onFiltersChange,
+      operatorOptions: ['alice', 'bob', 'carol'],
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    const operatorInput = screen.getByTestId('operator-filter') as HTMLInputElement
+    // Open and type a search; only matching options should remain visible.
+    fireEvent.click(operatorInput)
+    fireEvent.change(operatorInput, { target: { value: 'car' } })
+
+    expect(operatorInput.value).toBe('car')
+    expect(screen.queryByText('alice')).not.toBeInTheDocument()
+    expect(screen.queryByText('bob')).not.toBeInTheDocument()
+    const match = await screen.findByText('carol')
+    fireEvent.click(match)
+
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ operator: ['carol'] })
+    )
+  })
+
   it('should keep the outcome Dropdown display label after a sibling filter changes', () => {
     const props = {
       ...defaultProps,

@@ -4,6 +4,7 @@
 import abc
 import atexit
 import logging
+import re
 import uuid
 import warnings
 import weakref
@@ -59,6 +60,13 @@ logger = logging.getLogger(__name__)
 
 
 Model = TypeVar("Model")
+
+# Label keys are interpolated into backend-specific JSON path expressions
+# (e.g. ``$.key``) in the per-backend label-filter helpers. We restrict keys
+# to a conservative allowlist so a crafted key cannot break out of the JSON
+# path literal and inject SQL. Values are always passed as bound parameters
+# and do not need this restriction.
+_LABEL_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
 class MemoryInterface(abc.ABC):
@@ -1601,6 +1609,15 @@ class MemoryInterface(abc.ABC):
             # EXISTS(... labels IS NOT NULL) predicate that is strictly more
             # restrictive than "no filter".
             effective_labels = {k: v for k, v in labels.items() if not (isinstance(v, (list, tuple)) and len(v) == 0)}
+            # Validate label keys against an allowlist: backend helpers
+            # interpolate keys into JSON path expressions (e.g. ``$.key``),
+            # so a key with quotes or SQL punctuation could otherwise break
+            # out and inject SQL.
+            invalid_keys = [k for k in effective_labels if not _LABEL_KEY_PATTERN.match(k)]
+            if invalid_keys:
+                raise ValueError(
+                    f"Invalid label key(s) {invalid_keys!r}: keys must match {_LABEL_KEY_PATTERN.pattern}."
+                )
             if effective_labels:
                 # Use database-specific JSON query method
                 conditions.append(self._get_attack_result_label_condition(labels=effective_labels))

@@ -113,10 +113,13 @@ async def list_attacks(
     """
     service = get_attack_service()
     labels = _parse_labels(label)
-    # Strip empty strings from ?converter_types= parameters; an all-empty list
-    # collapses to [] which means "no filter" at the memory layer.
+    # Strip empty strings from the list-valued query params. The service layer
+    # coerces an all-empty ``converter_types`` list to None ("no filter"); the
+    # "attacks with no converters" case is expressed through ``has_converters``.
     if converter_types is not None:
         converter_types = [c for c in converter_types if c]
+    if attack_types is not None:
+        attack_types = [a for a in attack_types if a]
     return await service.list_attacks_async(
         attack_types=attack_types,
         converter_types=converter_types,

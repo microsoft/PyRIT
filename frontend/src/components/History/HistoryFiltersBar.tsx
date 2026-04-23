@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Button,
   Tooltip,
@@ -23,11 +24,66 @@ const OUTCOME_LABELS: Record<string, string> = {
 }
 
 // Fluent's multiselect Combobox doesn't auto-populate its input from selectedOptions;
-// we have to drive the displayed text via `value` ourselves.
+// we have to drive the displayed text via `value` ourselves. This format is only
+// shown when the popover is closed — while it's open we show the user's typed
+// search text so typing-to-search actually works.
 function formatMultiSelectValue(selected: string[]): string {
   if (selected.length === 0) return ''
   if (selected.length === 1) return selected[0]
   return `${selected[0]} (+${selected.length - 1})`
+}
+
+interface SearchableMultiComboboxProps {
+  placeholder: string
+  selectedOptions: string[]
+  options: string[]
+  onSelect: (selected: string[]) => void
+  testid: string
+  className?: string
+}
+
+function SearchableMultiCombobox({
+  placeholder,
+  selectedOptions,
+  options,
+  onSelect,
+  testid,
+  className,
+}: SearchableMultiComboboxProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+
+  const filtered = search
+    ? options.filter((o) => o.toLowerCase().includes(search.toLowerCase()))
+    : options
+
+  return (
+    <Combobox
+      className={className}
+      placeholder={placeholder}
+      multiselect
+      freeform
+      open={open}
+      onOpenChange={(_e, data) => {
+        setOpen(data.open)
+        // Clear search text both when opening (start fresh) and when closing
+        // (so the formatted value is shown again).
+        setSearch('')
+      }}
+      selectedOptions={selectedOptions}
+      value={open ? search : formatMultiSelectValue(selectedOptions)}
+      onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
+      onOptionSelect={(_e, data) => {
+        onSelect(data.selectedOptions)
+        setSearch('')
+      }}
+      data-testid={testid}
+    >
+      {filtered.map((o) => (
+        <Option key={o} value={o}>{o}</Option>
+      ))}
+    </Combobox>
+  )
 }
 
 interface HistoryFiltersBarProps {
@@ -98,6 +154,14 @@ export default function HistoryFiltersBar({
 
   const showMatchModeToggle = converterFilter.length >= 2 && hasConverters !== false
 
+  // Searchable state for the converter Combobox (custom because of the
+  // "(No converters)" sentinel OptionGroup).
+  const [converterOpen, setConverterOpen] = useState(false)
+  const [converterSearch, setConverterSearch] = useState('')
+  const converterMatchesSearch = (c: string) =>
+    !converterSearch || c.toLowerCase().includes(converterSearch.toLowerCase())
+  const filteredConverterOptions = converterOptions.filter(converterMatchesSearch)
+
   return (
     <div className={styles.filters}>
       <FilterRegular />
@@ -114,19 +178,14 @@ export default function HistoryFiltersBar({
           </Button>
         </Tooltip>
       )}
-      <Combobox
+      <SearchableMultiCombobox
         className={styles.filterDropdown}
         placeholder="All attack types"
-        multiselect
         selectedOptions={attackClassFilters}
-        value={formatMultiSelectValue(attackClassFilters)}
-        onOptionSelect={(_e, data) => setFilter('attackClasses', data.selectedOptions)}
-        data-testid="attack-class-filter"
-      >
-        {attackClassOptions.map((cls) => (
-          <Option key={cls} value={cls}>{cls}</Option>
-        ))}
-      </Combobox>
+        options={attackClassOptions}
+        onSelect={(selected) => setFilter('attackClasses', selected)}
+        testid="attack-class-filter"
+      />
       <Combobox
         className={styles.filterDropdown}
         placeholder="All outcomes"
@@ -146,20 +205,32 @@ export default function HistoryFiltersBar({
         className={styles.filterDropdown}
         placeholder="All converters"
         multiselect
+        freeform
+        open={converterOpen}
+        onOpenChange={(_e, data) => {
+          setConverterOpen(data.open)
+          setConverterSearch('')
+        }}
         selectedOptions={converterSelectedOptions}
         value={
-          hasConverters === false
-            ? '(No converters)'
-            : formatMultiSelectValue(converterFilter)
+          converterOpen
+            ? converterSearch
+            : hasConverters === false
+              ? '(No converters)'
+              : formatMultiSelectValue(converterFilter)
         }
-        onOptionSelect={(_e, data) => handleConverterSelect(data.selectedOptions)}
+        onChange={(e) => setConverterSearch((e.target as HTMLInputElement).value)}
+        onOptionSelect={(_e, data) => {
+          handleConverterSelect(data.selectedOptions)
+          setConverterSearch('')
+        }}
         data-testid="converter-filter"
       >
         <OptionGroup label="Special">
           <Option value={NO_CONVERTERS_SENTINEL} text="(No converters)">(No converters)</Option>
         </OptionGroup>
         <OptionGroup label="Converters">
-          {converterOptions.map((c) => (
+          {filteredConverterOptions.map((c) => (
             <Option key={c} value={c}>{c}</Option>
           ))}
         </OptionGroup>
@@ -183,32 +254,22 @@ export default function HistoryFiltersBar({
           />
         </Tooltip>
       )}
-      <Combobox
+      <SearchableMultiCombobox
         className={styles.filterDropdown}
         placeholder="All operators"
-        multiselect
         selectedOptions={operatorFilters}
-        value={formatMultiSelectValue(operatorFilters)}
-        onOptionSelect={(_e, data) => setFilter('operator', data.selectedOptions)}
-        data-testid="operator-filter"
-      >
-        {operatorOptions.map((o) => (
-          <Option key={o} value={o}>{o}</Option>
-        ))}
-      </Combobox>
-      <Combobox
+        options={operatorOptions}
+        onSelect={(selected) => setFilter('operator', selected)}
+        testid="operator-filter"
+      />
+      <SearchableMultiCombobox
         className={styles.filterDropdown}
         placeholder="All operations"
-        multiselect
         selectedOptions={operationFilters}
-        value={formatMultiSelectValue(operationFilters)}
-        onOptionSelect={(_e, data) => setFilter('operation', data.selectedOptions)}
-        data-testid="operation-filter"
-      >
-        {operationOptions.map((o) => (
-          <Option key={o} value={o}>{o}</Option>
-        ))}
-      </Combobox>
+        options={operationOptions}
+        onSelect={(selected) => setFilter('operation', selected)}
+        testid="operation-filter"
+      />
       <Combobox
         className={styles.filterDropdown}
         placeholder="Filter labels..."

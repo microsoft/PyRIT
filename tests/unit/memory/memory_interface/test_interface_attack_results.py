@@ -838,6 +838,24 @@ def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlite_inst
     assert {r.conversation_id for r in mixed} == {"conv_3"}
 
 
+@pytest.mark.parametrize(
+    "bad_key",
+    [
+        "foo')=1 OR 1=1 --",  # SQL break-out attempt
+        "key with spaces",
+        'key"quoted',
+        "",
+    ],
+)
+def test_get_attack_results_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, bad_key: str):
+    """Label keys are interpolated into JSON path expressions by the per-backend
+    helpers, so keys outside the ``[A-Za-z0-9_.-]+`` allowlist must be rejected
+    before reaching the SQL layer (defense against JSON-path / SQL injection).
+    """
+    with pytest.raises(ValueError, match="Invalid label key"):
+        sqlite_instance.get_attack_results(labels={bad_key: "value"})
+
+
 def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):
     """Test filtering attack results by multiple labels (AND logic)."""
 
