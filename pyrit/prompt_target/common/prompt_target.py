@@ -9,7 +9,7 @@ from typing import Any, Union, final
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,7 @@ class PromptTarget(Identifiable):
         custom_configuration_message = (
             "If your target does support this, set the custom_configuration parameter accordingly."
         )
-        if not self.capabilities.supports_multi_message_pieces and n_pieces != 1:
+        if not self.configuration.includes(capability=CapabilityName.MULTI_MESSAGE_PIECES) and n_pieces != 1:
             raise ValueError(
                 f"This target only supports a single message piece. Received: {n_pieces} pieces. "
                 f"{custom_configuration_message}"
@@ -194,7 +194,7 @@ class PromptTarget(Identifiable):
                     f"{custom_configuration_message}"
                 )
 
-        if not self.capabilities.supports_multi_turn and len(normalized_conversation) > 1:
+        if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
 
     async def _get_normalized_conversation_async(self, *, message: Message) -> list[Message]:

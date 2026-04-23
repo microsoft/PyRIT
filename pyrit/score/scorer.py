@@ -523,7 +523,7 @@ class Scorer(Identifiable, abc.ABC):
         description fields.
 
         Args:
-            prompt_target (PromptChatTarget): The target LLM to send the message to.
+            prompt_target (PromptTarget): The target LLM to send the message to.
             system_prompt (str): The system-level prompt that guides the behavior of the target LLM.
             message_value (str): The actual value or content to be scored by the LLM (e.g., text, image path,
                 audio path).

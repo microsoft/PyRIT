@@ -3,11 +3,10 @@
 
 from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
@@ -64,7 +63,6 @@ class PromptChatTarget(PromptTarget):
             custom_capabilities=custom_capabilities,
         )
 
-
     def is_response_format_json(self, message_piece: MessagePiece) -> bool:
         """
         Check if the response format is JSON and ensure the target supports it.
@@ -98,7 +96,7 @@ class PromptChatTarget(PromptTarget):
         """
         config = _JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
 
-        if config.enabled and not self.capabilities.supports_json_output:
+        if config.enabled and not self.configuration.includes(capability=CapabilityName.JSON_OUTPUT):
             target_name = self.get_identifier().class_name
             raise ValueError(f"This target {target_name} does not support JSON response format.")
 

@@ -34,7 +34,7 @@ class InsecureCodeScorer(FloatScaleScorer):
         Initialize the Insecure Code Scorer.
 
         Args:
-            chat_target (PromptChatTarget): The target to use for scoring code security.
+            chat_target (PromptTarget): The target to use for scoring code security.
             system_prompt_path (Optional[Union[str, Path]]): Path to the YAML file containing the system prompt.
                 Defaults to the default insecure code scoring prompt if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.

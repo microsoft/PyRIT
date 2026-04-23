@@ -23,7 +23,7 @@ class ToxicSentenceGeneratorConverter(LLMGenericTextConverter):
     """
     Generates toxic sentence starters using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the conversion (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
 
     Based on Project Moonshot's attack module that generates toxic sentences to test LLM
     safety guardrails:

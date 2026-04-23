@@ -79,7 +79,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         Initialize the SelfAskRefusalScorer.
 
         Args:
-            chat_target (PromptChatTarget): The endpoint that will be used to score the prompt.
+            chat_target (PromptTarget): The endpoint that will be used to score the prompt.
             refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
                 to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
                 Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.

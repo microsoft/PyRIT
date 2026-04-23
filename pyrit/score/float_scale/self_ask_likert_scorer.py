@@ -188,7 +188,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
         Initialize the SelfAskLikertScorer.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to use for scoring.
+            chat_target (PromptTarget): The chat target to use for scoring.
             likert_scale (Optional[LikertScalePaths]): The Likert scale configuration to use for scoring.
             custom_likert_path (Optional[Path]): Path to a custom YAML file containing the Likert scale definition.
                 This allows users to use their own Likert scales without modifying the code, as long as

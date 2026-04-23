@@ -27,6 +27,7 @@ def _make_strategy(*, supports_multi_turn: bool):
 
     target = MagicMock()
     target.capabilities.supports_multi_turn = supports_multi_turn
+    target.configuration.includes.return_value = supports_multi_turn
     target.get_identifier.return_value = MagicMock()
 
     with patch.multiple(
@@ -376,6 +377,7 @@ class TestTAPNodeDuplicateSystemMessages:
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
+        target.configuration.includes.return_value = supports_multi_turn
         target.get_identifier.return_value = MagicMock()
 
         adversarial_chat = MagicMock()
@@ -752,6 +754,7 @@ class TestTAPBranchingPreservesSystemPrompts:
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
+        target.configuration.includes.return_value = supports_multi_turn
         target.get_identifier.return_value = MagicMock()
 
         adversarial_chat = MagicMock()

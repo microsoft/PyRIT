@@ -20,7 +20,7 @@ class NoiseConverter(LLMGenericTextConverter):
     """
     Injects noise errors into a conversation using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the conversion (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
     """
 
     @apply_defaults

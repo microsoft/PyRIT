@@ -22,7 +22,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
     """
     Translates each individual word in a prompt to a random language using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the translation (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the translation (like Azure OpenAI).
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)

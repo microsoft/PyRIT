@@ -51,7 +51,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         Initialize a new instance of the SelfAskCategoryScorer class.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to interact with.
+            chat_target (PromptTarget): The chat target to interact with.
             content_classifier_path (Union[str, Path]): The path to the classifier YAML file.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.

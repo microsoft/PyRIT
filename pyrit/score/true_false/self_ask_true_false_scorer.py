@@ -109,7 +109,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         Initialize the SelfAskTrueFalseScorer.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to interact with.
+            chat_target (PromptTarget): The chat target to interact with.
             true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
             true_false_question (Optional[TrueFalseQuestion]): The true/false question object.
             true_false_system_prompt_path (Optional[Union[str, Path]]): The path to the system prompt file.
