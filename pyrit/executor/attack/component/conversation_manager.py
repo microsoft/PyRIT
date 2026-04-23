@@ -252,13 +252,13 @@ class ConversationManager:
 
         Args:
             target: The target to set the system prompt on. Must handle the
-                ``SYSTEM_PROMPT`` capability (natively or via an ``ADAPT`` policy).
+                SYSTEM_PROMPT capability (natively or via an ADAPT policy).
             conversation_id: Unique identifier for the conversation.
             system_prompt: The system prompt text.
             labels: Optional labels to associate with the system prompt.
 
         Raises:
-            ValueError: If ``target`` cannot handle the ``SYSTEM_PROMPT`` capability.
+            ValueError: If target cannot handle the SYSTEM_PROMPT capability.
         """
         target.configuration.ensure_can_handle(capability=CapabilityName.SYSTEM_PROMPT)
         target.set_system_prompt(
@@ -326,7 +326,7 @@ class ConversationManager:
             logger.debug(f"No prepended conversation for context initialization: {conversation_id}")
             return state
 
-        # Targets that don't natively support multi-turn history cannot consume a
+        # Targets that don't natively support editable history cannot consume a
         # prepended multi-message conversation as-is — route them to the
         # single-string fallback path. Type identity (PromptChatTarget) is a
         # legacy signal for this; capability-based routing is the durable form.

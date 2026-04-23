@@ -26,6 +26,7 @@ class PromptChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
+            supports_editable_history=True,
         )
     )
 

@@ -120,7 +120,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     # semantics. Declare EDITABLE_HISTORY as ``native_required`` so adaptation is
     # rejected at construction time.
     TARGET_REQUIREMENTS = TargetRequirements(
-        required=frozenset({CapabilityName.EDITABLE_HISTORY}),
+        native_required=frozenset({CapabilityName.EDITABLE_HISTORY}),
     )
 
     # Default system prompt template path for Crescendo attack
@@ -160,7 +160,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 application by role, message normalization, and non-chat target behavior.
 
         Raises:
-            ValueError: If ``objective_target`` does not natively support editable history.
+            ValueError: If objective_target does not natively support editable history.
         """
         # Initialize base class
         super().__init__(objective_target=objective_target, logger=logger, context_type=CrescendoAttackContext)

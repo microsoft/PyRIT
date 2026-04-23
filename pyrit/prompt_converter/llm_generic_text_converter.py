@@ -43,8 +43,8 @@ class LLMGenericTextConverter(PromptConverter):
 
         Args:
             converter_target (PromptTarget): The endpoint that converts the prompt. Must satisfy
-                ``CHAT_CONSUMER_REQUIREMENTS`` (system-prompt + multi-turn capabilities, possibly via
-                normalization-pipeline adaptation). Can be omitted if a default has been configured
+                ``CHAT_CONSUMER_REQUIREMENTS`` (multi-turn + editable history capabilities, possibly
+                via normalization-pipeline adaptation). Can be omitted if a default has been configured
                 via PyRIT initialization.
             system_prompt_template (SeedPrompt, Optional): The prompt template to set as the system prompt.
             user_prompt_template_with_objective (SeedPrompt, Optional): The prompt template to set as the user prompt.

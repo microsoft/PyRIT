@@ -62,20 +62,25 @@ class Scorer(Identifiable, abc.ABC):
     evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
 
     #: Capability requirements placed on the scorer's chat target (if any).
-    #: Subclasses that use a chat target should override this and call
-    #: ``type(self).TARGET_REQUIREMENTS.validate(target=chat_target)`` in ``__init__``.
+    #: Subclasses that use a chat target should override this and pass the
+    #: target to ``super().__init__(chat_target=...)`` so the base class can
+    #: validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     _identifier: Optional[ComponentIdentifier] = None
 
-    def __init__(self, *, validator: ScorerPromptValidator):
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None):
         """
         Initialize the Scorer.
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
+            chat_target (Optional[PromptTarget]): Chat target used by the scorer, if any. When
+                provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         self._validator = validator
+        if chat_target is not None:
+            type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     def get_identifier(self) -> ComponentIdentifier:
         """

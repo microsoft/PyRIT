@@ -109,8 +109,9 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         Initialize the SelfAskTrueFalseScorer.
 
         Args:
-            chat_target (PromptTarget): The chat target to interact with.
-            true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
+            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).            true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
             true_false_question (Optional[TrueFalseQuestion]): The true/false question object.
             true_false_system_prompt_path (Optional[Union[str, Path]]): The path to the system prompt file.
             validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
@@ -121,9 +122,12 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             ValueError: If both true_false_question_path and true_false_question are provided.
             ValueError: If required keys are missing in true_false_question.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
 
-        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
 
         if true_false_question_path and true_false_question:

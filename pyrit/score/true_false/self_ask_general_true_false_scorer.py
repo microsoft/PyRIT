@@ -58,7 +58,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): The chat target used to score. Must satisfy
-                ``CHAT_CONSUMER_REQUIREMENTS`` (system-prompt + multi-turn capabilities,
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, task (alias of objective), prompt, and message_piece.
@@ -77,8 +77,11 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         Raises:
             ValueError: If system_prompt_format_string is not provided or empty.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
-        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
         self._prompt_target = chat_target
         if not system_prompt_format_string:
             raise ValueError("system_prompt_format_string must be provided and non-empty.")

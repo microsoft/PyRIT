@@ -39,9 +39,8 @@ class InsecureCodeScorer(FloatScaleScorer):
                 Defaults to the default insecure code scoring prompt if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
-        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
 
         if not system_prompt_path:

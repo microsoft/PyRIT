@@ -24,14 +24,16 @@ class FloatScaleScorer(Scorer):
     is scored independently, returning one score per piece.
     """
 
-    def __init__(self, *, validator: ScorerPromptValidator) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
         """
         Initialize the FloatScaleScorer.
 
         Args:
             validator: A validator object used to validate scores.
+            chat_target: Optional chat target used by the scorer, forwarded to the base class
+                for validation against ``TARGET_REQUIREMENTS``.
         """
-        super().__init__(validator=validator)
+        super().__init__(validator=validator, chat_target=chat_target)
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """

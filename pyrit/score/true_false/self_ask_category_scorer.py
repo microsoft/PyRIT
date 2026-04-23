@@ -51,15 +51,20 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         Initialize a new instance of the SelfAskCategoryScorer class.
 
         Args:
-            chat_target (PromptTarget): The chat target to interact with.
+            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             content_classifier_path (Union[str, Path]): The path to the classifier YAML file.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
             validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
         """
-        super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(
+            score_aggregator=score_aggregator,
+            validator=validator or self._DEFAULT_VALIDATOR,
+            chat_target=chat_target,
+        )
 
-        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
 
         content_classifier_path = verify_and_resolve_path(content_classifier_path)

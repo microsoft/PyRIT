@@ -79,8 +79,9 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         Initialize the SelfAskRefusalScorer.
 
         Args:
-            chat_target (PromptTarget): The endpoint that will be used to score the prompt.
-            refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
+            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).            refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
                 to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
                 Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.
             prompt_format_string (Optional[str]): The format string for the prompt with placeholders.
@@ -101,9 +102,12 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             result_file="refusal_scorer/refusal_metrics.jsonl",
         )
 
-        super().__init__(score_aggregator=score_aggregator, validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(
+            score_aggregator=score_aggregator,
+            validator=validator or self._DEFAULT_VALIDATOR,
+            chat_target=chat_target,
+        )
 
-        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
 
         # Resolve the system prompt path

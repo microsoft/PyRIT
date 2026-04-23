@@ -202,9 +202,8 @@ class SelfAskLikertScorer(FloatScaleScorer):
             ValueError: If both `likert_scale` and `custom_likert_path` are provided, if neither is provided,
                 or if the provided Likert scale or system prompt YAML file is improperly formatted.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
-        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
         self._likert_scale = likert_scale
 
