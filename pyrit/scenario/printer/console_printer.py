@@ -79,13 +79,13 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
 
     async def print_summary_async(self, result: ScenarioResult) -> None:
         """
-        Print a summary of the scenario result with per-strategy breakdown.
+        Print a summary of the scenario result with per-group breakdown.
 
         Displays:
         - Scenario identification (name, version, PyRIT version)
         - Target and scorer information
         - Overall statistics
-        - Per-strategy success rates and result counts
+        - Per-group success rates and result counts
 
         Args:
             result (ScenarioResult): The scenario result to summarize
@@ -146,8 +146,8 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
         objectives = result.get_objectives()
         self._print_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN)
 
-        # Per-strategy breakdown
-        self._print_section_header("Per-Strategy Breakdown")
+        # Per-group breakdown
+        self._print_section_header("Per-Group Breakdown")
         display_groups = result.get_display_groups()
 
         for group_name, group_results in display_groups.items():
@@ -159,7 +159,7 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
                 group_rate = int((successful / total_group) * 100)
 
             print()
-            self._print_colored(f"{self._indent}🔸 Strategy: {group_name}", Style.BRIGHT)
+            self._print_colored(f"{self._indent}🔸 Group: {group_name}", Style.BRIGHT)
             self._print_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW)
             self._print_colored(f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate))
 
