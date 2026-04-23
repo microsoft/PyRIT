@@ -54,7 +54,7 @@ class LLMGenericTextConverter(PromptConverter):
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
         """
-        type(self).TARGET_REQUIREMENTS.validate(target=converter_target)
+        super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
         self._prompt_kwargs = kwargs

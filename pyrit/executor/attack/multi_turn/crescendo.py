@@ -114,13 +114,14 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
-    # Crescendo fundamentally relies on editable conversation history to
+    # Crescendo fundamentally relies on multi-turn conversation history to
     # gradually escalate prompts; history-squash adaptation would collapse the
     # conversation into a single prompt and silently break the attack's
-    # semantics. Declare EDITABLE_HISTORY as ``native_required`` so adaptation is
+    # semantics. Declare MULTI_TURN as native_required so adaptation is
     # rejected at construction time.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.EDITABLE_HISTORY}),
+        required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
+        native_required=frozenset({CapabilityName.MULTI_TURN}),
     )
 
     # Default system prompt template path for Crescendo attack

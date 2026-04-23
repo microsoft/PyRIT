@@ -718,7 +718,7 @@ class TestValueErrorGuards:
 
         target = self._make_single_turn_target()
 
-        with pytest.raises(ValueError, match="supports_editable_history"):
+        with pytest.raises(ValueError, match="supports_multi_turn"):
             CrescendoAttack(
                 objective_target=target,
                 attack_adversarial_config=self._make_adversarial_config(),

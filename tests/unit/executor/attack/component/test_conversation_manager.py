@@ -1065,7 +1065,7 @@ class TestPrependedConversationConfigSettings:
         config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         with pytest.raises(
-            ValueError, match="prepended_conversation requires the objective target to be a PromptChatTarget"
+            ValueError, match="prepended_conversation requires the objective target to be a chat-capable"
         ):
             await manager.initialize_context_async(
                 context=context,

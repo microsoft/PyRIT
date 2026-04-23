@@ -111,7 +111,8 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         Args:
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
-                possibly via normalization-pipeline adaptation).            true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
+                possibly via normalization-pipeline adaptation).
+            true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
             true_false_question (Optional[TrueFalseQuestion]): The true/false question object.
             true_false_system_prompt_path (Optional[Union[str, Path]]): The path to the system prompt file.
             validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.

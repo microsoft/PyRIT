@@ -61,8 +61,8 @@ class TargetRequirements:
 
 
 # Shared requirement used by scorers and converters that set a system prompt
-# and drive a short multi-turn conversation. Adaptation is acceptable: the
-# consumer only needs the behavior on the wire, not native support.
+# and drive a short multi-turn conversation. Adaptation is acceptable, native
+# support is not required.
 CHAT_CONSUMER_REQUIREMENTS = TargetRequirements(
     required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
 )

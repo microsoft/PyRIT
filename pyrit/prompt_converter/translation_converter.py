@@ -63,7 +63,7 @@ class TranslationConverter(PromptConverter):
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If the language is not provided.
         """
-        type(self).TARGET_REQUIREMENTS.validate(target=converter_target)
+        super().__init__(converter_target=converter_target)
         self.converter_target = converter_target
 
         # Retry strategy for the conversion
