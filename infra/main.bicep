@@ -477,10 +477,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             // CORS origin for the SPA. The ACA-generated FQDN is deterministic
             // (<appName>.<envDefaultDomain>), so we compute it from upstream
-            // resources rather than self-referencing containerApp (which would
-            // create a deploy-time cycle). Set as an env var here so it stays
-            // in sync with the ingress on every deploy — no out-of-band
-            // `az containerapp update` needed.
+            // resources rather than self-referencing containerApp.
             {
               name: 'PYRIT_CORS_ORIGINS'
               value: 'https://${appName}.${acaEnvironment.properties.defaultDomain}'
