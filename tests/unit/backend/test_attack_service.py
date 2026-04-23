@@ -14,6 +14,8 @@ import pytest
 
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
+    AttackSummary,
+    ConversationMessagesResponse,
     CreateAttackRequest,
     MessagePieceRequest,
     PrependedMessageRequest,
@@ -2213,8 +2215,6 @@ class TestAttackServiceAdditionalCoverage:
     @pytest.mark.asyncio
     async def test_converter_merge_with_flat_atomic_identifier(self, attack_service, mock_memory):
         """Should merge converters via fallback path when atomic_attack_identifier has no attack_technique child."""
-        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
-
         new_converter = ComponentIdentifier(
             class_name="NewConverter",
             class_module="pyrit.prompt_converter",

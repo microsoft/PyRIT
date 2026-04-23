@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     ConversationMessageWithSimilarity,
@@ -391,8 +392,6 @@ class TestAttackResultEntry:
 
     def test_get_attack_result_prefers_atomic_over_stale_attack_identifier(self):
         """When atomic_attack_identifier and attack_identifier disagree, atomic wins."""
-        from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-
         correct_attack_id = ComponentIdentifier(class_name="CorrectAttack", class_module="pyrit.backend")
         atomic_id = build_atomic_attack_identifier(attack_identifier=correct_attack_id)
         ar = _make_attack_result(atomic_attack_identifier=atomic_id)
