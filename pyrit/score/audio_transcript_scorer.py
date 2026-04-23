@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import uuid
+import warnings
 from typing import Optional
 
 import av
@@ -113,15 +114,21 @@ class AudioTranscriptHelper:  # noqa: B024
         Args:
             text_capable_scorer (Scorer): A scorer capable of processing text that will be used to score
                 the transcribed audio content.
-            use_entra_auth (bool, Optional): Whether to use Entra ID authentication for Azure Speech.
-                Defaults to True if None.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
+                Authentication is now auto-detected by the underlying converter.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
         """
+        if use_entra_auth is not None:
+            warnings.warn(
+                "'use_entra_auth' is deprecated and will be removed in v0.15.0. "
+                "Authentication is now auto-detected by the underlying AzureSpeechAudioToTextConverter.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._validate_text_scorer(text_capable_scorer)
         self.text_scorer = text_capable_scorer
-        self._use_entra_auth = use_entra_auth if use_entra_auth is not None else True
 
     @staticmethod
     def _validate_text_scorer(scorer: Scorer) -> None:
@@ -223,7 +230,7 @@ class AudioTranscriptHelper:  # noqa: B024
         logger.info(f"Audio transcription: WAV file size = {file_size} bytes")
 
         try:
-            converter = AzureSpeechAudioToTextConverter(use_entra_auth=self._use_entra_auth)
+            converter = AzureSpeechAudioToTextConverter()
             logger.info("Audio transcription: Starting Azure Speech transcription...")
             result = await converter.convert_async(prompt=wav_path, input_type="audio_path")
             logger.info(f"Audio transcription: Result = '{result.output_text}'")

@@ -348,9 +348,9 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
         results_path = serializer._memory.results_path or str(DB_DATA_PATH)
-        serializer.value = results_path + serializer.data_sub_directory + f"/{filename}"
+        storage_io = serializer._memory.results_storage_io
+        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:
-            storage_io = serializer._memory.results_storage_io
             if storage_io and await storage_io.path_exists(serializer.value):
                 return serializer.value
         except Exception as e:

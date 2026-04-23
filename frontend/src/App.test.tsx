@@ -7,9 +7,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import App from "./App";
 import { attacksApi } from "./services/api";
 
+const mockGetActiveAccount = jest.fn();
+
 // Mock MSAL — App uses useMsal() to wire the instance into the API client
 jest.mock("@azure/msal-react", () => ({
-  useMsal: () => ({ instance: { getActiveAccount: () => null, getAllAccounts: () => [] } }),
+  useMsal: () => ({ instance: { getActiveAccount: mockGetActiveAccount, getAllAccounts: () => [] } }),
 }));
 
 jest.mock("./services/api", () => ({
@@ -86,17 +88,21 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId,
     onConversationCreated,
     onSelectConversation,
+    labels,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
     conversationId: string | null;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
+    labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="chat-window">
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="labels-operator">{labels.operator ?? ""}</span>
+        <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
           New Attack
         </button>
@@ -183,6 +189,11 @@ jest.mock("./components/History/AttackHistory", () => {
 });
 
 describe("App", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetActiveAccount.mockReturnValue(null);
+  });
+
   it("renders with FluentProvider and MainLayout", () => {
     render(<App />);
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
@@ -336,6 +347,41 @@ describe("App", () => {
     // The version API is called on mount and labels get merged
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("labels-operator")).toHaveTextContent("default_user");
+      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
+    });
+  });
+
+  it("sets operator label from active account alias when backend has no operator", async () => {
+    mockGetActiveAccount.mockReturnValue({ username: "Test.User@contoso.com" });
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { custom: "value" },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("labels-operator")).toHaveTextContent("test.user");
+      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
+    });
+  });
+
+  it("prefers active account alias over backend operator when both are provided", async () => {
+    mockGetActiveAccount.mockReturnValue({ username: "override_user@contoso.com" });
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { operator: "backend_user", custom: "value" },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("labels-operator")).toHaveTextContent("override_user");
+      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
     });
   });
 

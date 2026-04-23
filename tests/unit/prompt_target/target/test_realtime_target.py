@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -64,7 +64,6 @@ async def test_send_prompt_async(target):
     target.send_text_async.assert_called_once_with(
         text="Hello",
         conversation_id="test_conversation_id",
-        conversation=ANY,
     )
     assert response[0].get_value() == "hello"
     assert response[0].get_value(1) == "output.wav"
@@ -219,23 +218,29 @@ async def test_receive_events_empty_output(target: RealtimeTarget):
 
 @pytest.mark.asyncio
 async def test_receive_events_response_done_no_transcript_validation(target):
-    """Test that response.done no longer validates transcript structure (collected from deltas instead)."""
+    """Test that response.done completes normally even with no audio or transcript,
+    as long as it belongs to the current turn (preceded by other events)."""
     mock_connection = AsyncMock()
     conversation_id = "test_response_done"
     target._existing_conversation[conversation_id] = mock_connection
 
-    # Mock response.done event - no longer extracts or validates transcript
+    # A lifecycle event that precedes response.done, confirming it belongs to this turn
+    mock_lifecycle_event = MagicMock()
+    mock_lifecycle_event.type = "response.created"
+
+    # Mock response.done event with no audio
     mock_event = MagicMock()
     mock_event.type = "response.done"
     mock_event.response.status = "success"
 
-    # Mock connection to yield test event
-    mock_connection.__aiter__.return_value = [mock_event]
+    # Lifecycle event arrives first, then response.done
+    mock_connection.__aiter__.return_value = [mock_lifecycle_event, mock_event]
 
-    # Should complete successfully without raising - transcripts come from delta events
+    # Should complete successfully — response.done is not stale because it was preceded by another event
     result = await target.receive_events(conversation_id)
     assert result is not None
-    assert len(result.transcripts) == 0  # No deltas, so no transcripts
+    assert len(result.transcripts) == 0
+    assert result.audio_bytes == b""
 
 
 @pytest.mark.asyncio
@@ -346,3 +351,97 @@ async def test_receive_events_with_audio_and_transcript(target):
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts[0] == "Hello, "
     assert result.transcripts[1] == "this is a test transcript."
+
+
+@pytest.mark.asyncio
+async def test_multi_turn_reuses_connection(target):
+    """Test that multiple turns in the same conversation reuse the same connection.
+
+    This ensures that the server-side conversation context is preserved.
+    """
+    mock_connection = AsyncMock()
+    target.connect = AsyncMock(return_value=mock_connection)
+    target.send_config = AsyncMock()
+    result = RealtimeTargetResult(audio_bytes=b"audio", transcripts=["response"])
+    target.send_text_async = AsyncMock(return_value=("output.wav", result))
+
+    conversation_id = "multi_turn_convo"
+
+    # Send first turn
+    message_piece_1 = MessagePiece(
+        original_value="Turn 1",
+        original_value_data_type="text",
+        converted_value="Turn 1",
+        converted_value_data_type="text",
+        role="user",
+        conversation_id=conversation_id,
+    )
+    await target.send_prompt_async(message=Message(message_pieces=[message_piece_1]))
+
+    # Send second turn in the same conversation
+    message_piece_2 = MessagePiece(
+        original_value="Turn 2",
+        original_value_data_type="text",
+        converted_value="Turn 2",
+        converted_value_data_type="text",
+        role="user",
+        conversation_id=conversation_id,
+    )
+    await target.send_prompt_async(message=Message(message_pieces=[message_piece_2]))
+
+    # Connection should only be created once for the conversation
+    target.connect.assert_called_once_with(conversation_id=conversation_id)
+    target.send_config.assert_called_once()
+
+    # Both turns should use the same connection
+    assert target._existing_conversation[conversation_id] == mock_connection
+
+    # send_text_async should have been called twice (once per turn)
+    assert target.send_text_async.call_count == 2
+
+    await target.cleanup_target()
+
+
+@pytest.mark.asyncio
+async def test_receive_events_skips_stale_response_done(target):
+    """Test that a stale response.done (with no audio) from a prior turn's soft-finish
+    is skipped, and the current turn's events are processed normally."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_stale_response_done"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    # Stale response.done left over from previous turn's soft-finish — no audio for current turn yet
+    stale_done_event = MagicMock()
+    stale_done_event.type = "response.done"
+    stale_done_event.response.status = "success"
+
+    # Current turn's actual events
+    audio_delta_event = MagicMock()
+    audio_delta_event.type = "response.audio.delta"
+    audio_delta_event.delta = "ZHVtbXlhdWRpbw=="  # base64 for "dummyaudio"
+
+    transcript_delta_event = MagicMock()
+    transcript_delta_event.type = "response.audio_transcript.delta"
+    transcript_delta_event.delta = "hello"
+
+    audio_done_event = MagicMock()
+    audio_done_event.type = "response.audio.done"
+
+    real_done_event = MagicMock()
+    real_done_event.type = "response.done"
+    real_done_event.response.status = "success"
+
+    # Stale event comes first, then the real turn's events
+    mock_connection.__aiter__.return_value = [
+        stale_done_event,
+        audio_delta_event,
+        transcript_delta_event,
+        audio_done_event,
+        real_done_event,
+    ]
+
+    result = await target.receive_events(conversation_id)
+
+    # Should have processed through to the real response.done with actual audio
+    assert result.audio_bytes == b"dummyaudio"
+    assert result.transcripts == ["hello"]
