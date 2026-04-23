@@ -330,7 +330,7 @@ class ConversationManager:
         # prepended multi-message conversation as-is — route them to the
         # single-string fallback path. Type identity (PromptChatTarget) is a
         # legacy signal for this; capability-based routing is the durable form.
-        is_chat_target = target.configuration.includes(capability=CapabilityName.MULTI_TURN)
+        is_chat_target = target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY)
         if not is_chat_target:
             return await self._handle_non_chat_target_async(
                 context=context,
@@ -375,7 +375,7 @@ class ConversationManager:
         if config.non_chat_target_behavior == "raise":
             raise ValueError(
                 "prepended_conversation requires the objective target to be a chat-capable "
-                "PromptTarget.Non-chat objective targets do not support conversation history. "
+                "PromptTarget. Non-chat objective targets do not support conversation history. "
                 "Use PrependedConversationConfig with non_chat_target_behavior='normalize_first_turn' "
                 "to normalize the conversation into the first message instead."
             )

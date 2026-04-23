@@ -18,7 +18,6 @@ from pyrit.executor.attack.core.attack_strategy import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import ConversationReference, ConversationType
-
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:

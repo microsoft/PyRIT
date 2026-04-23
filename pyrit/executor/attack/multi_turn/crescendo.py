@@ -114,13 +114,13 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
-    # Crescendo fundamentally relies on multi-turn conversation history to
+    # Crescendo fundamentally relies on editable conversation history to
     # gradually escalate prompts; history-squash adaptation would collapse the
     # conversation into a single prompt and silently break the attack's
-    # semantics. Declare MULTI_TURN as ``native_required`` so adaptation is
+    # semantics. Declare EDITABLE_HISTORY as ``native_required`` so adaptation is
     # rejected at construction time.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        required=frozenset({CapabilityName.EDITABLE_HISTORY}),
     )
 
     # Default system prompt template path for Crescendo attack
@@ -145,8 +145,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Initialize the Crescendo attack strategy.
 
         Args:
-            objective_target (PromptTarget): The target system to attack. Must natively
-                support multi-turn conversations.
+            objective_target (PromptTarget): The target system to attack. Must
+                support editable conversation history.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
                 including the adversarial chat target and optional system prompt path.
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters,
@@ -160,7 +160,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 application by role, message normalization, and non-chat target behavior.
 
         Raises:
-            ValueError: If ``objective_target`` does not natively support multi-turn conversations.
+            ValueError: If ``objective_target`` does not natively support editable history.
         """
         # Initialize base class
         super().__init__(objective_target=objective_target, logger=logger, context_type=CrescendoAttackContext)

@@ -64,5 +64,5 @@ class TargetRequirements:
 # and drive a short multi-turn conversation. Adaptation is acceptable: the
 # consumer only needs the behavior on the wire, not native support.
 CHAT_CONSUMER_REQUIREMENTS = TargetRequirements(
-    required=frozenset({CapabilityName.SYSTEM_PROMPT, CapabilityName.MULTI_TURN}),
+    required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
 )
