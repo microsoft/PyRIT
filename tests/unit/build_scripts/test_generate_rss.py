@@ -1,12 +1,32 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import tempfile
+import ast
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-import pytest
 
-from build_scripts.generate_rss import extract_date_from_filename, parse_blog_markdown
+def _load_generate_rss_functions() -> tuple[Callable[[str], str], Callable[[Path], tuple[str, str]]]:
+    """Load generate_rss helpers without executing the script body."""
+    script_path = Path(__file__).resolve().parents[3] / "build_scripts" / "generate_rss.py"
+    source = script_path.read_text(encoding="utf-8")
+    parsed_module = ast.parse(source, filename=str(script_path))
+    target_functions = {"extract_date_from_filename", "parse_blog_markdown"}
+    selected_nodes: list[ast.stmt] = []
+    for node in parsed_module.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            selected_nodes.append(node)
+            continue
+        if isinstance(node, ast.FunctionDef) and node.name in target_functions:
+            selected_nodes.append(node)
+    safe_module = ast.Module(body=selected_nodes, type_ignores=[])
+    namespace: dict[str, Any] = {}
+    exec(compile(safe_module, filename=str(script_path), mode="exec"), namespace)
+    return namespace["extract_date_from_filename"], namespace["parse_blog_markdown"]
+
+
+extract_date_from_filename, parse_blog_markdown = _load_generate_rss_functions()
 
 
 class TestExtractDateFromFilename:
