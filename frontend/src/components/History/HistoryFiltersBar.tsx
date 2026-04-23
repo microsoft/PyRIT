@@ -6,6 +6,7 @@ import {
   OptionGroup,
   Combobox,
   Switch,
+  mergeClasses,
 } from '@fluentui/react-components'
 import {
   FilterRegular,
@@ -244,14 +245,35 @@ export default function HistoryFiltersBar({
           }
           relationship="label"
         >
-          <Switch
-            label={converterMatchMode === 'all' ? 'Match all' : 'Match any'}
-            checked={converterMatchMode === 'all'}
-            onChange={(_e, data) =>
-              setFilter('converterMatchMode', data.checked ? 'all' : 'any')
-            }
-            data-testid="converter-match-mode-toggle"
-          />
+          <span className={styles.matchModeToggle}>
+            <span className={styles.matchModeLabel}>Converters:</span>
+            <span
+              className={mergeClasses(
+                styles.matchModeLabel,
+                converterMatchMode === 'any' && styles.matchModeLabelActive,
+              )}
+              data-testid="converter-match-mode-label-any"
+            >
+              ANY
+            </span>
+            <Switch
+              checked={converterMatchMode === 'all'}
+              onChange={(_e, data) =>
+                setFilter('converterMatchMode', data.checked ? 'all' : 'any')
+              }
+              aria-label={`Match ${converterMatchMode === 'all' ? 'all' : 'any'} selected converters`}
+              data-testid="converter-match-mode-toggle"
+            />
+            <span
+              className={mergeClasses(
+                styles.matchModeLabel,
+                converterMatchMode === 'all' && styles.matchModeLabelActive,
+              )}
+              data-testid="converter-match-mode-label-all"
+            >
+              ALL
+            </span>
+          </span>
         </Tooltip>
       )}
       <SearchableMultiCombobox
