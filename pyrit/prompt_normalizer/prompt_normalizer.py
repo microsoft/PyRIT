@@ -83,13 +83,12 @@ class PromptNormalizer:
             attack_identifier (Optional[ComponentIdentifier], optional): Identifier for the attack. Defaults to
                 None.
 
+        Returns:
+            Message: The response received from the target.
+
         Raises:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
-            EmptyResponseException: If the target returns no valid responses.
-
-        Returns:
-            Message: The response received from the target.
         """
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
@@ -156,7 +155,15 @@ class PromptNormalizer:
                 await self._calc_hash(request=request)
                 self.memory.add_message_to_memory(request=request)
                 return request
-            raise EmptyResponseException(message="Target returned no valid responses")
+            empty_response = construct_response_from_request(
+                request=request.message_pieces[0],
+                response_text_pieces=[""],
+                response_type="text",
+                error="empty",
+            )
+            await self._calc_hash(request=empty_response)
+            self.memory.add_message_to_memory(request=empty_response)
+            return empty_response
 
         # Process all response messages (targets return list[Message])
         # Only apply response converters to the last message (final response)
@@ -210,7 +217,7 @@ class PromptNormalizer:
             "conversation_id",
         ]
 
-        responses = await batch_task_async(
+        return await batch_task_async(
             prompt_target=target,
             batch_size=batch_size,
             items_to_batch=batch_items,
@@ -220,9 +227,6 @@ class PromptNormalizer:
             labels=labels,
             attack_identifier=attack_identifier,
         )
-
-        # Filter out None responses (e.g., from empty responses)
-        return [response for response in responses if response is not None]
 
     async def convert_values(
         self,

@@ -117,21 +117,23 @@ async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_async_no_response_raises_empty_response(mock_memory_instance, seed_group):
-    prompt_target = AsyncMock()
+async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, seed_group):
+    prompt_target = MagicMock()
     prompt_target.send_prompt_async = AsyncMock(return_value=None)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
 
     normalizer = PromptNormalizer()
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
-    with pytest.raises(EmptyResponseException):
-        await normalizer.send_prompt_async(message=message, target=prompt_target)
-
-    # Request should still be added to memory before the exception
-    assert mock_memory_instance.add_message_to_memory.call_count == 1
+    response = await normalizer.send_prompt_async(message=message, target=prompt_target)
+    assert mock_memory_instance.add_message_to_memory.call_count == 2
 
     request = mock_memory_instance.add_message_to_memory.call_args[1]["request"]
     assert_message_piece_hashes_set(request)
+    assert response.message_pieces[0].response_error == "empty"
+    assert response.message_pieces[0].original_value == ""
+    assert response.message_pieces[0].original_value_data_type == "text"
+    assert_message_piece_hashes_set(response)
 
 
 @pytest.mark.asyncio
@@ -187,34 +189,29 @@ async def test_send_prompt_async_request_response_added_to_memory(mock_memory_in
 
 @pytest.mark.asyncio
 async def test_send_prompt_async_exception(mock_memory_instance, seed_group):
-    prompt_target = AsyncMock()
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(side_effect=ValueError("test_exception"))
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
 
     seed_prompt_value = seed_group.prompts[0].value
 
     normalizer = PromptNormalizer()
     message = Message.from_prompt(prompt=seed_prompt_value, role="user")
 
-    with patch("pyrit.models.construct_response_from_request") as mock_construct:
-        mock_construct.return_value = "test"
+    with pytest.raises(Exception, match="Error sending prompt with conversation ID"):
+        await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-        try:
-            await normalizer.send_prompt_async(message=message, target=prompt_target)
-        except ValueError:
-            assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory.call_count == 2
 
-            # Validate that first request is added to memory, then exception is added to memory
-            assert (
-                seed_prompt_value
-                == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"]
-                .message_pieces[0]
-                .original_value
-            )
-            assert (
-                mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"]
-                .message_pieces[0]
-                .original_value
-                == "test_exception"
-            )
+    # Validate that first request is added to memory, then exception is added to memory
+    assert (
+        seed_prompt_value
+        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+    )
+    assert (
+        "test_exception"
+        in mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+    )
 
 
 @pytest.mark.asyncio
@@ -384,6 +381,56 @@ async def test_prompt_normalizer_send_prompt_batch_async_throws(
 
             assert "S_G_V_s_b_G_8_=" in prompt_target.prompt_sent
             assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_prompt_normalizer_send_prompt_batch_async_preserves_empty_response_alignment(
+    mock_memory_instance,
+):
+    prompt_target = MagicMock()
+    prompt_target._max_requests_per_minute = None
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(
+        side_effect=[
+            [MessagePiece(role="assistant", original_value="response 1", conversation_id="conv-1").to_message()],
+            None,
+        ]
+    )
+
+    normalizer = PromptNormalizer()
+    requests = [
+        NormalizerRequest(
+            message=Message.from_prompt(prompt="prompt 1", role="user"),
+            conversation_id="conv-1",
+        ),
+        NormalizerRequest(
+            message=Message.from_prompt(prompt="prompt 2", role="user"),
+            conversation_id="conv-2",
+        ),
+    ]
+
+    results = await normalizer.send_prompt_batch_to_target_async(requests=requests, target=prompt_target, batch_size=2)
+
+    assert len(results) == 2
+    assert results[0].message_pieces[0].original_value == "response 1"
+    assert results[1].message_pieces[0].response_error == "empty"
+    assert results[1].message_pieces[0].original_value == ""
+    assert results[1].message_pieces[0].conversation_id == "conv-2"
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_async_none_in_list_response_returns_empty(mock_memory_instance, seed_group):
+    """Target returning [None] (list containing None) should produce an empty response."""
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(return_value=[None])
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+
+    normalizer = PromptNormalizer()
+    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
+
+    response = await normalizer.send_prompt_async(message=message, target=prompt_target)
+    assert response.message_pieces[0].response_error == "empty"
+    assert response.message_pieces[0].original_value == ""
 
 
 @pytest.mark.asyncio
