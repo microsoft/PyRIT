@@ -31,7 +31,11 @@ from pyrit.executor.attack import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueSpec
+from pyrit.registry import TargetRegistry
+from pyrit.registry.object_registries.attack_technique_registry import (
+    AttackTechniqueRegistry,
+    AttackTechniqueSpec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +93,6 @@ def get_default_adversarial_target() -> PromptChatTarget:
     Raises:
         ValueError: If the registered target does not support multi-turn.
     """
-    from pyrit.registry import TargetRegistry
-
     registry = TargetRegistry.get_registry_singleton()
     if "adversarial_chat" in registry:
         target = registry.get("adversarial_chat")
@@ -132,8 +134,6 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
         ValueError: If a spec declares ``adversarial_chat_key`` but the key
             is not found in ``TargetRegistry``.
     """
-    from pyrit.registry import TargetRegistry
-
     default_adversarial: PromptChatTarget | None = None
 
     result = []
@@ -176,8 +176,6 @@ def register_scenario_techniques() -> None:
     Resolves the default adversarial target, bakes it into the specs that
     require it, then registers the resulting factories.
     """
-    from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-
     specs = build_scenario_techniques()
 
     registry = AttackTechniqueRegistry.get_registry_singleton()

@@ -3,6 +3,7 @@
 
 """Tests for the AttackTechniqueRegistry class."""
 
+import inspect
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,9 +11,10 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 
 class _StubAttack:
@@ -337,3 +339,33 @@ class TestAttackTechniqueRegistryAcceptsScorerOverride:
 
         results = self.registry.get_by_tag(tag="accepts_scorer_override")
         assert results == []
+
+
+class TestScenarioTechniqueSpecsValid:
+    """Validate that every AttackTechniqueSpec in SCENARIO_TECHNIQUES is well-formed."""
+
+    @pytest.mark.parametrize("spec", SCENARIO_TECHNIQUES, ids=lambda s: s.name)
+    def test_spec_extra_kwargs_match_attack_class_constructor(self, spec: AttackTechniqueSpec):
+        """Each spec's extra_kwargs must be valid parameters of its attack_class."""
+        factory = AttackTechniqueRegistry.build_factory_from_spec(spec)
+        assert factory.attack_class is spec.attack_class
+
+    @pytest.mark.parametrize("spec", SCENARIO_TECHNIQUES, ids=lambda s: s.name)
+    def test_spec_attack_class_accepts_objective_target(self, spec: AttackTechniqueSpec):
+        """Every attack class must accept objective_target (required at create time)."""
+        sig = inspect.signature(spec.attack_class.__init__)
+        assert "objective_target" in sig.parameters, (
+            f"{spec.attack_class.__name__} is missing required 'objective_target' parameter"
+        )
+
+    def test_spec_names_are_unique(self):
+        """No two specs should share the same name."""
+        names = [spec.name for spec in SCENARIO_TECHNIQUES]
+        assert len(names) == len(set(names)), f"Duplicate spec names: {[n for n in names if names.count(n) > 1]}"
+
+    @pytest.mark.parametrize("spec", SCENARIO_TECHNIQUES, ids=lambda s: s.name)
+    def test_spec_adversarial_fields_not_both_set(self, spec: AttackTechniqueSpec):
+        """adversarial_chat and adversarial_chat_key must be mutually exclusive."""
+        assert not (spec.adversarial_chat and spec.adversarial_chat_key), (
+            f"Spec '{spec.name}' sets both adversarial_chat and adversarial_chat_key"
+        )
