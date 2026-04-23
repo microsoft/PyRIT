@@ -53,6 +53,7 @@ class AtomicAttack:
         self,
         *,
         atomic_attack_name: str,
+        display_group: str | None = None,
         attack_technique: AttackTechnique | None = None,
         attack: AttackStrategy[Any, Any] | None = None,
         seed_groups: list[SeedAttackGroup],
@@ -65,8 +66,12 @@ class AtomicAttack:
         Initialize an atomic attack with an attack strategy and seed groups.
 
         Args:
-            atomic_attack_name: Used to group an AtomicAttack with related attacks for a
-                strategy.
+            atomic_attack_name: Unique key for this atomic attack.  Used for
+                resume tracking and result persistence — must be unique across
+                all ``AtomicAttack`` instances in a scenario.
+            display_group: Optional label for grouping results in user-facing
+                output (console printer, reports).  When ``None``, falls back
+                to ``atomic_attack_name``.
             attack_technique: An AttackTechnique bundling the attack strategy and optional
                 technique seeds. Preferred over the deprecated ``attack`` parameter.
             attack: Deprecated. The configured attack strategy to execute. Use
@@ -86,6 +91,7 @@ class AtomicAttack:
             ValueError: If neither attack_technique nor attack is provided, or both are provided.
         """
         self.atomic_attack_name = atomic_attack_name
+        self.display_group = display_group or atomic_attack_name
 
         if attack_technique is not None and attack is not None:
             raise ValueError("Provide either attack_technique or attack, not both.")

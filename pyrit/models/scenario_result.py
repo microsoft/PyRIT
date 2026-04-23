@@ -67,6 +67,7 @@ class ScenarioResult:
         completion_time: Optional[datetime] = None,
         number_tries: int = 0,
         id: Optional[uuid.UUID] = None,  # noqa: A002
+        display_group_map: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Initialize a scenario result.
@@ -81,6 +82,9 @@ class ScenarioResult:
             completion_time (Optional[datetime]): Optional completion timestamp.
             number_tries (int): Number of run attempts.
             id (Optional[uuid.UUID]): Optional scenario result ID.
+            display_group_map (Optional[dict[str, str]]): Optional mapping of
+                atomic_attack_name → display group label. Used by the console
+                printer to aggregate results for user-facing output.
 
         """
         from pyrit.identifiers.component_identifier import ComponentIdentifier
@@ -98,6 +102,7 @@ class ScenarioResult:
         self.labels = labels if labels is not None else {}
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
+        self._display_group_map = display_group_map or {}
 
     def get_strategies_used(self) -> list[str]:
         """
@@ -108,6 +113,27 @@ class ScenarioResult:
 
         """
         return list(self.attack_results.keys())
+
+    def get_display_groups(self) -> dict[str, list[AttackResult]]:
+        """
+        Aggregate attack results by display group.
+
+        When a ``display_group_map`` was provided, results from multiple
+        ``atomic_attack_name`` keys that share the same display group are
+        merged into a single list.  When no map was provided, this returns
+        the same structure as ``attack_results`` (identity mapping).
+
+        Returns:
+            dict[str, list[AttackResult]]: Results grouped by display label.
+        """
+        if not self._display_group_map:
+            return dict(self.attack_results)
+
+        grouped: dict[str, list[AttackResult]] = {}
+        for attack_name, results in self.attack_results.items():
+            group = self._display_group_map.get(attack_name, attack_name)
+            grouped.setdefault(group, []).extend(results)
+        return grouped
 
     def get_objectives(self, *, atomic_attack_name: Optional[str] = None) -> list[str]:
         """

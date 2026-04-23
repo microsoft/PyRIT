@@ -85,7 +85,7 @@ class SeedDatasetMetadata:
                         f"Skipping metadata field '{key}' with unexpected type "
                         f"{type(value).__name__} (value: {value!r})"
                     )
-            elif isinstance(value, (list, set)):
+            elif isinstance(value, (list, set, frozenset, tuple)):
                 coerced[key] = {v.strip().lower() if isinstance(v, str) else v for v in value}
             elif isinstance(value, str):
                 coerced[key] = {value.strip().lower()}

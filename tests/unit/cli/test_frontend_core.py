@@ -297,6 +297,19 @@ class TestListFunctions:
             assert "." in name, f"Scenario name '{name}' should be a dotted name (package.module)"
             assert name == name.lower(), f"Scenario name '{name}' should be lowercase"
 
+    def test_discover_builtin_scenarios_excludes_deprecated_aliases(self):
+        """Deprecated alias scenarios like ContentHarms must not appear in the registry."""
+        from pyrit.registry.class_registries.scenario_registry import ScenarioRegistry
+
+        registry = ScenarioRegistry()
+        registry._discover_builtin_scenarios()
+
+        names = set(registry._class_entries.keys())
+        class_names = {entry.registered_class.__name__ for entry in registry._class_entries.values()}
+
+        assert "airt.content_harms" not in names, "Deprecated 'airt.content_harms' should not be registered"
+        assert "ContentHarms" not in class_names, "ContentHarms class should not appear under any registry name"
+
     async def test_list_scenarios(self):
         """Test list_scenarios_async returns scenarios from registry."""
         mock_registry = MagicMock()
