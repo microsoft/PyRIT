@@ -13,6 +13,7 @@ For registries that store classes (Type[T]), see class_registries/.
 
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
+    AttackTechniqueSpec,
 )
 from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
@@ -41,4 +42,5 @@ __all__ = [
     "ConverterRegistry",
     "ScorerRegistry",
     "TargetRegistry",
+    "AttackTechniqueSpec",
 ]

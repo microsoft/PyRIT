@@ -718,3 +718,43 @@ class TestFindDependentsOfTag:
         self.registry.register(_IdentifiableStub(wrapper_id), name="wrapper")
 
         assert self.registry.find_dependents_of_tag(tag="refusal") == []
+
+
+class TestRetrievableInstanceRegistryMetadataField:
+    """Tests for the metadata field on RegistryEntry."""
+
+    def setup_method(self):
+        """Get a fresh registry instance."""
+        ConcreteTestRegistry.reset_instance()
+        self.registry = ConcreteTestRegistry.get_registry_singleton()
+
+    def teardown_method(self):
+        """Reset the singleton after each test."""
+        ConcreteTestRegistry.reset_instance()
+
+    def test_register_with_metadata_stores_it(self):
+        """Test that metadata dict is stored on the entry."""
+        self.registry.register(_item("v1"), name="n1", metadata={"accepts_scorer_override": False, "priority": 5})
+
+        entry = self.registry.get_entry("n1")
+        assert entry is not None
+        assert entry.metadata == {"accepts_scorer_override": False, "priority": 5}
+
+    def test_register_without_metadata_defaults_to_empty_dict(self):
+        """Test that registering without metadata defaults to empty dict."""
+        self.registry.register(_item("v1"), name="n1")
+
+        entry = self.registry.get_entry("n1")
+        assert entry is not None
+        assert entry.metadata == {}
+
+    def test_metadata_does_not_affect_tags(self):
+        """Metadata and tags are independent."""
+        self.registry.register(_item("v1"), name="n1", tags=["fast"], metadata={"key": "value"})
+
+        entry = self.registry.get_entry("n1")
+        assert entry is not None
+        assert entry.tags == {"fast": ""}
+        assert entry.metadata == {"key": "value"}
+        # Metadata keys don't appear in tag queries
+        assert self.registry.get_by_tag(tag="key") == []

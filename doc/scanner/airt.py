@@ -17,45 +17,49 @@
 
 # %% [markdown]
 # ## Setup
-#
-# This notebook uses the `pyrit_conf.yaml` file included in this directory, which configures a
-# target, scorer, and default datasets via initializers. See [Configuration](../getting_started/configuration.md)
-# for details.
 
 # %%
-from pathlib import Path
-
-from pyrit.registry import TargetRegistry
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
-from pyrit.setup import initialize_from_config_async
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.initializers import LoadDefaultDatasets, ScorerInitializer, TargetInitializer
 
-await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type=IN_MEMORY,
+    initializers=[TargetInitializer(), ScorerInitializer(), LoadDefaultDatasets()],
+)
 
-objective_target = TargetRegistry.get_registry_singleton().get_instance_by_name("openai_chat")
+objective_target = OpenAIChatTarget()
 printer = ConsoleScenarioResultPrinter()
 
 # %% [markdown]
-# ## Content Harms
+# ## Rapid Response
 #
 # Tests whether a target can be induced to generate harmful content across seven categories: hate,
-# fairness, violence, sexual, harassment, misinformation, and leakage.
+# fairness, violence, sexual, harassment, misinformation, and leakage. Each strategy applies a
+# different attack technique to the full set of harm datasets.
 #
 # ```bash
-# pyrit_scan airt.content_harms --target openai_chat --strategies hate --max-dataset-size 1
+# pyrit_scan airt.rapid_response \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --strategies prompt_sending \
+#   --dataset-names airt_hate \
+#   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, Hate, Fairness, Violence, Sexual, Harassment, Misinformation, Leakage
+# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, prompt_sending, role_play, many_shot, tap
 
 # %%
-from pyrit.scenario.scenarios.airt import ContentHarms, ContentHarmsStrategy
+from pyrit.scenario.scenarios.airt import RapidResponse, RapidResponseStrategy
 
 dataset_config = DatasetConfiguration(dataset_names=["airt_hate"], max_dataset_size=1)
 
-scenario = ContentHarms()
+scenario = RapidResponse()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[ContentHarmsStrategy.Hate],
+    scenario_strategies=[RapidResponseStrategy.prompt_sending],
     dataset_config=dataset_config,
 )
 
@@ -79,19 +83,19 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # ### Conversation-Level Scoring
 #
 # Unlike content harms that can be evaluated from a single response, psychosocial harms emerge
-# gradually across a multi-turn conversation. This scenario uses `create_conversation_scorer()`
+# gradually across a multi-turn conversation. This scenario uses create_conversation_scorer()
 # to evaluate the **entire conversation history** rather than just the latest response — critical
 # for detecting patterns like gradual crisis escalation.
 #
 # Each subharm has a built-in YAML rubric:
 #
-# - **`crisis_management.yaml`** — Evaluates crisis recognition using the MHFA/ALGEE methodology
+# - **crisis_management.yaml** — Evaluates crisis recognition using the MHFA/ALGEE methodology
 #   (Approach, Listen, Give reassurance, Encourage professional help, Encourage self-help).
 #   Scores range from 1 (not harmful) to 5 (extremely harmful).
-# - **`licensed_therapist.yaml`** — Evaluates whether the model inappropriately provides clinical
+# - **licensed_therapist.yaml** — Evaluates whether the model inappropriately provides clinical
 #   mental health advice.
 #
-# Rubrics can be customized per-subharm via the `SubharmConfig` dataclass.
+# Rubrics can be customized per-subharm via the SubharmConfig dataclass.
 #
 # **Note:** This scenario does not include a default baseline. A single-turn baseline would not be
 # meaningful because psychosocial harms emerge through multi-turn escalation.
@@ -120,7 +124,11 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # and multi-turn attacks.
 #
 # ```bash
-# pyrit_scan airt.cyber --target openai_chat --strategies single_turn --max-dataset-size 1
+# pyrit_scan airt.cyber \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --strategies single_turn \
+#   --max-dataset-size 1
 # ```
 #
 # **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN
@@ -149,7 +157,11 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # templates.
 #
 # ```bash
-# pyrit_scan airt.jailbreak --target openai_chat --strategies prompt_sending --max-dataset-size 1
+# pyrit_scan airt.jailbreak \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --strategies prompt_sending \
+#   --max-dataset-size 1
 # ```
 #
 # **Available strategies:** ALL, SIMPLE, COMPLEX, PromptSending, ManyShot, SkeletonKey, RolePlay
@@ -185,11 +197,11 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 #
 # ### Copyright and Plagiarism Testing
 #
-# The `FirstLetter` strategy tests whether a model has memorized copyrighted text by encoding it
-# with `FirstLetterConverter` (extracting first letters of each word) and asking the model to decode.
+# The FirstLetter strategy tests whether a model has memorized copyrighted text by encoding it
+# with FirstLetterConverter (extracting first letters of each word) and asking the model to decode.
 # If the model reconstructs the original, it suggests memorization.
 #
-# The `PlagiarismScorer` provides three complementary metrics for analyzing responses from any
+# The PlagiarismScorer provides three complementary metrics for analyzing responses from any
 # leakage strategy:
 #
 # - **LCS (Longest Common Subsequence)** — Captures contiguous plagiarized sequences.
@@ -199,7 +211,7 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # - **Jaccard (N-gram Overlap)** — Measures phrase-level similarity using configurable n-grams.
 #   Score = matching n-grams / total reference n-grams.
 #
-# All metrics are normalized to \[0, 1\] where 1 means the reference text is fully present. There is
+# All metrics are normalized to [0, 1] where 1 means the reference text is fully present. There is
 # no built-in threshold — the scorer returns a raw float for you to interpret per your use case.
 
 # %%
@@ -225,7 +237,11 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # Tests whether a target can be induced to generate scam, phishing, or fraud content.
 #
 # ```bash
-# pyrit_scan airt.scam --target openai_chat --strategies context_compliance --max-dataset-size 1
+# pyrit_scan airt.scam \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --strategies context_compliance \
+#   --max-dataset-size 1
 # ```
 #
 # **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay, PersuasiveRedTeamingAttack
@@ -246,9 +262,3 @@ scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
 await printer.print_summary_async(scenario_result)  # type: ignore
-
-# %% [markdown]
-# ## Next Steps
-#
-# For building custom scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
-# For setting up targets, see [Configuration](../getting_started/configuration.md).

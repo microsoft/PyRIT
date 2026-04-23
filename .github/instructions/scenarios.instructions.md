@@ -11,7 +11,7 @@ Scenarios orchestrate multi-attack security testing campaigns. Each scenario gro
 All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
-2. **Implement four abstract methods:**
+2. **Implement three abstract methods:**
 
 ```python
 class MyScenario(Scenario):
@@ -28,10 +28,11 @@ class MyScenario(Scenario):
     @classmethod
     def default_dataset_config(cls) -> DatasetConfiguration:
         return DatasetConfiguration(dataset_names=["my_dataset"])
-
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        ...
 ```
+
+3. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
+   that uses the factory/registry pattern (see "AtomicAttack Construction" below).
+   Only override if your scenario needs custom attack construction logic.
 
 ## Constructor Pattern
 
@@ -82,7 +83,7 @@ DatasetConfiguration(
 class MyDatasetConfiguration(DatasetConfiguration):
     def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
         result = super().get_seed_groups()
-        # Filter by selected strategies via self._scenario_composites
+        # Filter by selected strategies via self._scenario_strategies
         return filtered_result
 ```
 
@@ -94,26 +95,66 @@ Options:
 
 ## Strategy Enum
 
-Strategies should be selectable by an axis. E.g. it could be harm category or and attack type, but likely not both or it gets confusing.
+Strategy members should represent **attack techniques** — the *how* of an attack (e.g., prompt sending, role play, TAP).  Datasets control *what* is tested (e.g., harm categories, compliance topics).  Avoid mixing dataset/category selection into the strategy enum; use `DatasetConfiguration` and `--dataset-names` for that axis.
 
 ```python
 class MyStrategy(ScenarioStrategy):
-    ALL = ("all", {"all"})            # Required aggregate
-    EASY = ("easy", {"easy"})
+    ALL = ("all", {"all"})                  # Required aggregate
+    DEFAULT = ("default", {"default"})      # Recommended default aggregate
+    SINGLE_TURN = ("single_turn", {"single_turn"})  # Category aggregate
 
-    Base64 = ("base64", {"easy", "converter"})
-    Crescendo = ("crescendo", {"difficult", "multi_turn"})
+    PromptSending = ("prompt_sending", {"single_turn", "default"})
+    RolePlay = ("role_play", {"single_turn"})
+    ManyShot = ("many_shot", {"multi_turn", "default"})
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
-        return {"all", "easy", "difficult"}
+        return {"all", "default", "single_turn", "multi_turn"}
 ```
 
 - `ALL` aggregate is always required
 - Each member: `NAME = ("string_value", {tag_set})`
 - Aggregates expand to all strategies matching their tag
 
-## AtomicAttack Construction
+### `_build_display_group()` — Result Grouping
+
+Override `_build_display_group()` on the `Scenario` base class to control how attack results are grouped for display:
+
+```python
+def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
+    # Default: group by technique name (most common)
+    return technique_name
+
+    # Override examples:
+    # Group by dataset/harm category: return seed_group_name
+    # Cross-product: return f"{technique_name}_{seed_group_name}"
+```
+
+Note: `atomic_attack_name` must remain unique per `AtomicAttack` for correct resume behaviour.
+`display_group` controls user-facing aggregation only.
+
+## AtomicAttack Construction — Default Base Class Behaviour
+
+The `Scenario` base class provides a default `_get_atomic_attacks_async()` that uses the
+factory/registry pattern.  Scenarios that register their techniques via `_get_attack_technique_factories()`
+get atomic-attack construction **for free** — no override needed.
+
+The default implementation:
+1. Calls `self._get_attack_technique_factories()` to get name→factory mapping
+2. Iterates over every (technique × dataset) pair from `self._dataset_config`
+3. Calls `factory.create()` with `objective_target` and conditional scorer override
+4. Uses `self._build_display_group()` for user-facing grouping
+5. Builds `AtomicAttack` with unique `atomic_attack_name` = `"{technique}_{dataset}"`
+
+### Customization hooks (no need to override `_get_atomic_attacks_async`):
+- **`_get_attack_technique_factories()`** — override to add/remove/replace factories
+- **`_build_display_group()`** — override to change grouping (default: by technique)
+
+### When to override `_get_atomic_attacks_async`:
+Only override when the scenario **cannot** use the factory/registry pattern — e.g., scenarios
+with custom composite logic, per-strategy converter stacks, or non-standard attack construction.
+
+### Manual AtomicAttack construction (for overrides):
 
 ```python
 AtomicAttack(
@@ -134,7 +175,7 @@ New scenarios must be registered in `pyrit/scenario/__init__.py` as virtual pack
 
 ## Common Review Issues
 
-- Accessing `self._objective_target` or `self._scenario_composites` before `initialize_async()`
+- Accessing `self._objective_target` or `self._scenario_strategies` before `initialize_async()`
 - Forgetting `@apply_defaults` on `__init__`
 - Empty `seed_groups` passed to `AtomicAttack`
 - Missing `VERSION` class constant

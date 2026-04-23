@@ -44,11 +44,14 @@ class RegistryEntry(Generic[T]):
         name: The registry name for this entry.
         instance: The registered object.
         tags: Key-value tags for categorization and filtering.
+        metadata: Arbitrary key-value metadata for capability flags and
+            other per-entry data that should not pollute the tag namespace.
     """
 
     name: str
     instance: T
     tags: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T]):
@@ -127,6 +130,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         *,
         name: str,
         tags: dict[str, str] | list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Register an item.
@@ -136,9 +140,16 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
             name: The registry name for this item.
             tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
                 or a ``list[str]`` (each string becomes a key with value ``""``).
+            metadata: Optional metadata dict for capability flags or other
+                per-entry data that should not appear in tags.
         """
         normalized = self._normalize_tags(tags)
-        self._registry_items[name] = RegistryEntry(name=name, instance=instance, tags=normalized)
+        self._registry_items[name] = RegistryEntry(
+            name=name,
+            instance=instance,
+            tags=normalized,
+            metadata=metadata or {},
+        )
         self._metadata_cache = None
 
     def get_names(self) -> list[str]:

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
+from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -346,9 +347,9 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         filename = f"comic_jailbreak_{template_name}.png"
         serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
 
-        results_path = serializer._memory.results_path
+        results_path = serializer._memory.results_path or str(DB_DATA_PATH)
         storage_io = serializer._memory.results_storage_io
-        serializer.value = str((results_path or "") + serializer.data_sub_directory + f"/{filename}")
+        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
         try:
             if storage_io and await storage_io.path_exists(serializer.value):
                 return serializer.value
