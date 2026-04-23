@@ -37,7 +37,7 @@ def test_construction_from_frozenset():
 
 def test_chat_consumer_requirements_shape():
     assert CHAT_CONSUMER_REQUIREMENTS.required == {
-        CapabilityName.SYSTEM_PROMPT,
+        CapabilityName.EDITABLE_HISTORY,
         CapabilityName.MULTI_TURN,
     }
 
@@ -53,7 +53,7 @@ def test_validate_passes_on_native_support():
         configuration=TargetConfiguration(
             capabilities=TargetCapabilities(
                 supports_multi_turn=True,
-                supports_system_prompt=True,
+                supports_editable_history=True,
             ),
         ),
     )
@@ -62,6 +62,9 @@ def test_validate_passes_on_native_support():
 
 
 def test_validate_passes_when_policy_is_adapt():
+    # Note: EDITABLE_HISTORY is not adaptable, so this test uses a custom
+    # requirement over capabilities that the policy can adapt.
+    reqs = TargetRequirements(required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}))
     target = _make_target(
         configuration=TargetConfiguration(
             capabilities=TargetCapabilities(
@@ -77,10 +80,11 @@ def test_validate_passes_when_policy_is_adapt():
         ),
     )
 
-    CHAT_CONSUMER_REQUIREMENTS.validate(target=target)
+    reqs.validate(target=target)
 
 
 def test_validate_raises_when_capability_neither_native_nor_adapt():
+    reqs = TargetRequirements(required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}))
     target = _make_target(
         configuration=TargetConfiguration(
             capabilities=TargetCapabilities(
@@ -97,7 +101,7 @@ def test_validate_raises_when_capability_neither_native_nor_adapt():
     )
 
     with pytest.raises(ValueError, match=CapabilityName.SYSTEM_PROMPT.value):
-        CHAT_CONSUMER_REQUIREMENTS.validate(target=target)
+        reqs.validate(target=target)
 
 
 def test_validate_empty_required_always_passes():
