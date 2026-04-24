@@ -11,7 +11,6 @@ scorer) become available.
 
 from __future__ import annotations
 
-import copy
 import inspect
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
         AttackScoringConfig,
     )
     from pyrit.models import SeedAttackTechniqueGroup
-    from pyrit.prompt_target import PromptTarget
+    from pyrit.prompt_target import PromptChatTarget, PromptTarget
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -64,7 +63,7 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If ``objective_target`` is included in attack_kwargs.
         """
         self._attack_class = attack_class
-        self._attack_kwargs = copy.deepcopy(attack_kwargs) if attack_kwargs else {}
+        self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._seed_technique = seed_technique
 
         self._validate_kwargs()
@@ -124,42 +123,85 @@ class AttackTechniqueFactory(Identifiable):
         """The optional technique seed group."""
         return self._seed_technique
 
+    @property
+    def adversarial_chat(self) -> PromptChatTarget | None:
+        """The adversarial chat target baked into this factory, or None."""
+        config: AttackAdversarialConfig | None = self._attack_kwargs.get("attack_adversarial_config")
+        return config.target if config else None
+
     def create(
         self,
         *,
         objective_target: PromptTarget,
-        attack_scoring_config: AttackScoringConfig,
-        attack_adversarial_config: AttackAdversarialConfig | None = None,
-        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config_override: AttackScoringConfig | None = None,
+        attack_adversarial_config_override: AttackAdversarialConfig | None = None,
+        attack_converter_config_override: AttackConverterConfig | None = None,
     ) -> AttackTechnique:
         """
-        Create a fresh AttackTechnique bound to the given target and scorer.
+        Create a fresh AttackTechnique bound to the given target.
 
         Each call produces a fully independent attack instance by calling the
-        real constructor. Config objects are deep-copied to prevent shared
-        mutable state between instances.
+        real constructor. Config objects frozen at factory construction time are
+        deep-copied into every new instance.
+
+        The ``*_override`` parameters let a caller **replace** a config that was
+        baked into the factory at construction time.  When ``None`` (the
+        default), the factory's original config is kept as-is — so baked-in
+        converters, adversarial targets, etc. are preserved automatically.
+
+        Override configs are only forwarded when the attack class constructor
+        declares a matching parameter (without the ``_override`` suffix).
+        This allows a single call site to safely pass all available overrides
+        without breaking attacks that don't support them.
+
+        Some attacks (e.g., TAP) create their own scoring config internally
+        when none is provided.  Pass ``None`` (the default) for
+        ``attack_scoring_config_override`` to let those attacks use their
+        built-in defaults.
 
         Args:
-            objective_target: The target to attack.
-            attack_scoring_config: Scoring configuration for the attack.
-            attack_adversarial_config: Optional adversarial configuration.
-                Overrides any adversarial config in the frozen kwargs.
-            attack_converter_config: Optional converter configuration.
-                Overrides any converter config in the frozen kwargs.
+            objective_target: The target to attack (always required at create time).
+            attack_scoring_config_override: When non-None, replaces any scoring
+                config baked into the factory.  Only forwarded if the attack
+                class constructor accepts ``attack_scoring_config``.
+            attack_adversarial_config_override: When non-None, replaces any
+                adversarial config baked into the factory.  Only forwarded if
+                the attack class constructor accepts ``attack_adversarial_config``.
+            attack_converter_config_override: When non-None, replaces any
+                converter config baked into the factory.  Only forwarded if
+                the attack class constructor accepts ``attack_converter_config``.
 
         Returns:
             A fresh AttackTechnique with a newly-constructed attack strategy.
         """
-        kwargs = copy.deepcopy(self._attack_kwargs)
+        kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
-        kwargs["attack_scoring_config"] = attack_scoring_config
-        if attack_adversarial_config is not None:
-            kwargs["attack_adversarial_config"] = attack_adversarial_config
-        if attack_converter_config is not None:
-            kwargs["attack_converter_config"] = attack_converter_config
+
+        # Only forward overrides when the attack class accepts the underlying param
+        accepted_params = self._get_accepted_params()
+        if attack_scoring_config_override is not None and "attack_scoring_config" in accepted_params:
+            kwargs["attack_scoring_config"] = attack_scoring_config_override
+        if attack_adversarial_config_override is not None and "attack_adversarial_config" in accepted_params:
+            kwargs["attack_adversarial_config"] = attack_adversarial_config_override
+        if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
+            kwargs["attack_converter_config"] = attack_converter_config_override
 
         attack = self._attack_class(**kwargs)
         return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
+
+    def _get_accepted_params(self) -> set[str]:
+        """Return the set of keyword parameter names accepted by the attack class constructor."""
+        sig = inspect.signature(self._attack_class.__init__)
+        return {
+            name
+            for name, param in sig.parameters.items()
+            if name != "self"
+            and param.kind
+            in (
+                inspect.Parameter.KEYWORD_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        }
 
     @staticmethod
     def _serialize_value(value: Any) -> Any:

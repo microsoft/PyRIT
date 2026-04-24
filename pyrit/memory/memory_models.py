@@ -949,6 +949,7 @@ class ScenarioResultEntry(Base):
         String, nullable=False, default="CREATED"
     )
     attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
+    display_group_map_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
     labels: Mapped[Optional[dict[str, str]]] = mapped_column(JSON, nullable=True)
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
     completion_time = mapped_column(DateTime, nullable=False)
@@ -996,6 +997,9 @@ class ScenarioResultEntry(Base):
             serialized_attack_results[attack_name] = [result.conversation_id for result in results]
         self.attack_results_json = json.dumps(serialized_attack_results)
 
+        # Serialize display_group_map if present
+        self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
+
         self.timestamp = datetime.now(tz=timezone.utc)
 
     def get_scenario_result(self) -> ScenarioResult:
@@ -1032,6 +1036,11 @@ class ScenarioResultEntry(Base):
         # Convert dict back to ComponentIdentifier for reconstruction
         target_identifier = ComponentIdentifier.from_dict(self.objective_target_identifier)
 
+        # Deserialize display_group_map if stored
+        display_group_map: dict[str, str] | None = None
+        if self.display_group_map_json:
+            display_group_map = json.loads(self.display_group_map_json)
+
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
@@ -1042,6 +1051,7 @@ class ScenarioResultEntry(Base):
             labels=self.labels,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
+            display_group_map=display_group_map,
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:

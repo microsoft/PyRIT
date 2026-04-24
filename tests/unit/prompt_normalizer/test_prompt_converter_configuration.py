@@ -8,9 +8,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConvert
 
 
 def _make_mock_converter(name: str = "MockConverter") -> PromptConverter:
-    mock = MagicMock(spec=PromptConverter)
-    mock.__class__.__name__ = name
-    return mock
+    return MagicMock(spec=PromptConverter, name=name)
 
 
 def test_init_with_converters():

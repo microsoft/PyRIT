@@ -5,6 +5,7 @@ import {
 } from '@fluentui/react-components'
 import { versionApi } from '../../services/api'
 import Navigation, { type ViewName } from '../Sidebar/Navigation'
+import { UserAccountButton } from '../UserAccountButton'
 import { useMainLayoutStyles } from './MainLayout.styles'
 
 interface MainLayoutProps {
@@ -47,6 +48,7 @@ export default function MainLayout({
         </Tooltip>
         <Text className={styles.title}>Co-PyRIT</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
+        <UserAccountButton />
       </div>
       <div className={styles.contentArea}>
         <aside className={styles.sidebar}>

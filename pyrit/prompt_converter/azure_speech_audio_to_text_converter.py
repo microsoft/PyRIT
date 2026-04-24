@@ -3,12 +3,14 @@
 
 import logging
 import time
+import warnings
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk  # noqa: F401
 
-from pyrit.auth.azure_auth import get_speech_config
+from pyrit.auth.azure_auth import get_speech_config, get_speech_config_async
 from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
@@ -20,6 +22,14 @@ logger = logging.getLogger(__name__)
 class AzureSpeechAudioToTextConverter(PromptConverter):
     """
     Transcribes a .wav audio file into text using Azure AI Speech service.
+
+    Authentication is auto-detected from the provided credentials, in priority order:
+
+    1. If ``azure_speech_key`` is a **callable** token provider, it takes highest priority — it is
+       resolved at conversion time and used with Entra ID auth (``azure_speech_resource_id`` required).
+    2. If ``azure_speech_key`` is a **string** (or the ``AZURE_SPEECH_KEY`` env var is set), API key auth is used.
+    3. If **neither** is provided, Entra ID auth is used automatically via ``DefaultAzureCredential``
+       and ``azure_speech_resource_id`` must be set.
 
     https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-to-text
     """
@@ -36,10 +46,11 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
 
     def __init__(
         self,
+        *,
         azure_speech_region: Optional[str] = None,
-        azure_speech_key: Optional[str] = None,
+        azure_speech_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
         azure_speech_resource_id: Optional[str] = None,
-        use_entra_auth: bool = False,
+        use_entra_auth: Optional[bool] = None,
         recognition_language: str = "en-US",
     ) -> None:
         """
@@ -47,41 +58,63 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
 
         Args:
             azure_speech_region (str, Optional): The name of the Azure region.
-            azure_speech_key (str, Optional): The API key for accessing the service (if not using Entra ID auth).
+            azure_speech_key (str | Callable[[], str | Awaitable[str]], Optional): The API key for accessing
+                the service, or a sync/async callable that returns a token string.
+                If a string key is provided (or the ``AZURE_SPEECH_KEY`` env var is set), key auth is used.
+                If a callable token provider is provided, it is resolved at conversion time and used with
+                Entra ID auth (``azure_speech_resource_id`` must also be set).
+                If omitted, Entra ID auth via ``DefaultAzureCredential`` is used automatically.
             azure_speech_resource_id (str, Optional): The resource ID for accessing the service when using
-                Entra ID auth. This can be found by selecting 'Properties' in the 'Resource Management'
-                section of your Azure Speech resource in the Azure portal.
-            use_entra_auth (bool): Whether to use Entra ID authentication. If True, azure_speech_resource_id
-                must be provided. If False, azure_speech_key must be provided. Defaults to False.
+                Entra ID auth. Required when using a callable token provider or when no API key is available.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
+                Authentication is now auto-detected from the provided credentials.
             recognition_language (str): Recognition voice language. Defaults to "en-US".
                 For more on supported languages, see the following link:
                 https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support
 
         Raises:
-            ValueError: If the required environment variables are not set, if azure_speech_key is passed in
-                when use_entra_auth is True, or if azure_speech_resource_id is passed in when use_entra_auth
-                is False.
+            ValueError: If the required environment variables or parameters are not set.
         """
+        if use_entra_auth is not None:
+            warnings.warn(
+                "'use_entra_auth' is deprecated and will be removed in v0.15.0. "
+                "Authentication is now auto-detected: pass a key string for key auth, "
+                "a callable token provider for token auth, or omit for automatic Entra ID auth.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self._azure_speech_region: str = default_values.get_required_value(
             env_var_name=self.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE,
             passed_value=azure_speech_region,
         )
-        if use_entra_auth:
-            if azure_speech_key:
-                raise ValueError("If using Entra ID auth, please do not specify azure_speech_key.")
+
+        self._token_provider: Callable[[], str | Awaitable[str]] | None = None
+        self._azure_speech_key: str | None = None
+        self._azure_speech_resource_id: str | None = None
+
+        if azure_speech_key is not None and callable(azure_speech_key):
+            self._token_provider = azure_speech_key
             self._azure_speech_resource_id = default_values.get_required_value(
                 env_var_name=self.AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE,
                 passed_value=azure_speech_resource_id,
             )
-            self._azure_speech_key = None
         else:
-            if azure_speech_resource_id:
-                raise ValueError("If using key auth, please do not specify azure_speech_resource_id.")
-            self._azure_speech_key = default_values.get_required_value(
+            key_value = default_values.get_non_required_value(
                 env_var_name=self.AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE,
                 passed_value=azure_speech_key,
             )
-            self._azure_speech_resource_id = None
+            if key_value:
+                self._azure_speech_key = key_value
+            else:
+                logger.info(
+                    "No azure_speech_key provided. "
+                    "Entra ID authentication will be attempted via DefaultAzureCredential."
+                )
+                self._azure_speech_resource_id = default_values.get_required_value(
+                    env_var_name=self.AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE,
+                    passed_value=azure_speech_resource_id,
+                )
 
         self._recognition_language = recognition_language
         # Create a flag to indicate when recognition is finished
@@ -126,7 +159,13 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         audio_bytes = await audio_serializer.read_data()
 
         try:
-            transcript = self.recognize_audio(audio_bytes)
+            speech_config = await get_speech_config_async(
+                token_provider=self._token_provider,
+                resource_id=self._azure_speech_resource_id,
+                key=self._azure_speech_key,
+                region=self._azure_speech_region,
+            )
+            transcript = self._recognize_audio(audio_bytes=audio_bytes, speech_config=speech_config)
         except Exception as e:
             logger.error("Failed to convert audio file to text: %s", str(e))
             raise
@@ -136,8 +175,40 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         """
         Recognize audio file and return transcribed text.
 
+        .. deprecated::
+            Use :meth:`convert_async` instead, which resolves token providers correctly.
+            This method does not support callable token providers.
+
         Args:
             audio_bytes (bytes): Audio bytes input.
+
+        Returns:
+            str: Transcribed text.
+
+        Raises:
+            ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
+        """
+        if self._token_provider:
+            warnings.warn(
+                "recognize_audio() does not support callable token providers. "
+                "Use convert_async() instead, which correctly resolves token providers.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        speech_config = get_speech_config(
+            resource_id=self._azure_speech_resource_id,
+            key=self._azure_speech_key,
+            region=self._azure_speech_region,
+        )
+        return self._recognize_audio(audio_bytes=audio_bytes, speech_config=speech_config)
+
+    def _recognize_audio(self, *, audio_bytes: bytes, speech_config: "speechsdk.SpeechConfig") -> str:
+        """
+        Recognize audio from bytes using the given speech config.
+
+        Args:
+            audio_bytes (bytes): Audio bytes input.
+            speech_config (speechsdk.SpeechConfig): Pre-built speech configuration.
 
         Returns:
             str: Transcribed text.
@@ -154,36 +225,25 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             )
             raise e
 
-        speech_config = get_speech_config(
-            resource_id=self._azure_speech_resource_id, key=self._azure_speech_key, region=self._azure_speech_region
-        )
         speech_config.speech_recognition_language = self._recognition_language
 
-        # Create a PullAudioInputStream from the byte stream
         push_stream = speechsdk.audio.PushAudioInputStream()
         audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
 
-        # Instantiate a speech recognizer object
         speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
-        # Create an empty list to store recognized text
         transcribed_text: list[str] = []
-        # Flag is set to False to indicate that recognition is not yet finished
         self.done = False
 
-        # Connect callbacks to the events fired by the speech recognizer
         speech_recognizer.recognized.connect(lambda evt: self.transcript_cb(evt, transcript=transcribed_text))
         speech_recognizer.recognizing.connect(lambda evt: logger.info(f"RECOGNIZING: {evt}"))
         speech_recognizer.recognized.connect(lambda evt: logger.info(f"RECOGNIZED: {evt}"))
         speech_recognizer.session_started.connect(lambda evt: logger.info(f"SESSION STARTED: {evt}"))
         speech_recognizer.session_stopped.connect(lambda evt: logger.info(f"SESSION STOPPED: {evt}"))
-        # Stop continuous recognition when stopped or canceled event is fired
         speech_recognizer.canceled.connect(lambda evt: self.stop_cb(evt, recognizer=speech_recognizer))
         speech_recognizer.session_stopped.connect(lambda evt: self.stop_cb(evt, recognizer=speech_recognizer))
 
-        # Start continuous recognition
         speech_recognizer.start_continuous_recognition_async()
 
-        # Push the entire audio data into the stream
         push_stream.write(audio_bytes)
         push_stream.close()
 

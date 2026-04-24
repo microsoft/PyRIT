@@ -167,6 +167,14 @@ class TestMetadataCoercion:
         result = SeedDatasetMetadata._coerce_metadata_values(raw_metadata={"harm_categories": "violence"})
         assert result["harm_categories"] == {"violence"}
 
+    def test_frozenset_coerced_to_set(self):
+        result = SeedDatasetMetadata._coerce_metadata_values(raw_metadata={"tags": frozenset({"Default", "Safety"})})
+        assert result["tags"] == {"default", "safety"}
+
+    def test_tuple_coerced_to_set(self):
+        result = SeedDatasetMetadata._coerce_metadata_values(raw_metadata={"modalities": ("Image", "Text")})
+        assert result["modalities"] == {"image", "text"}
+
     def test_unknown_type_skipped_with_warning(self, caplog):
         result = SeedDatasetMetadata._coerce_metadata_values(raw_metadata={"tags": 12345})
         assert "tags" not in result
