@@ -29,7 +29,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   const [error, setError] = useState<string | null>(null)
 
   // Filter options
-  const [attackClassOptions, setAttackClassOptions] = useState<string[]>([])
+  const [attackTypeOptions, setAttackTypeOptions] = useState<string[]>([])
   const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<string[]>([])
@@ -51,16 +51,18 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
       for (const op of filters.operation) { labelParams.push(`operation:${op}`) }
       labelParams.push(...filters.otherLabels)
 
-      const response = await attacksApi.listAttacks({
-        limit: PAGE_SIZE,
-        ...(pageCursor && { cursor: pageCursor }),
-        ...(filters.attackClasses.length > 0 && { attack_types: filters.attackClasses }),
-        ...(filters.outcome && { outcome: filters.outcome }),
-        ...(filters.converter.length > 0 && { converter_types: filters.converter }),
-        ...(filters.converter.length >= 2 && { converter_types_match: filters.converterMatchMode }),
-        ...(filters.hasConverters !== undefined && { has_converters: filters.hasConverters }),
-        ...(labelParams.length > 0 && { label: labelParams }),
-      })
+      // Build request params; set each field only when the filter is active.
+      const params: Parameters<typeof attacksApi.listAttacks>[0] = { limit: PAGE_SIZE }
+      if (pageCursor) params.cursor = pageCursor
+      if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
+      if (filters.outcome) params.outcome = filters.outcome
+      if (filters.converter.length > 0) params.converter_types = filters.converter
+      // Match mode is only meaningful with >=2 converters selected.
+      if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
+      if (filters.hasConverters !== undefined) params.has_converters = filters.hasConverters
+      if (labelParams.length > 0) params.label = labelParams
+
+      const response = await attacksApi.listAttacks(params)
       setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
       setIsLastPage(!response.pagination.has_more)
       setCursor(response.pagination.next_cursor ?? undefined)
@@ -71,7 +73,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
       setLoading(false)
     }
   }, [
-    filters.attackClasses,
+    filters.attackTypes,
     filters.outcome,
     filters.converter,
     filters.converterMatchMode,
@@ -84,7 +86,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   // Load filter options on mount
   useEffect(() => {
     attacksApi.getAttackOptions()
-      .then(resp => setAttackClassOptions(resp.attack_types))
+      .then(resp => setAttackTypeOptions(resp.attack_types))
       .catch(() => { /* ignore */ })
     attacksApi.getConverterOptions()
       .then(resp => setConverterOptions(resp.converter_types))
@@ -143,7 +145,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   }
 
   const hasActiveFilters =
-    filters.attackClasses.length > 0 || filters.outcome || filters.converter.length > 0 ||
+    filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
     filters.hasConverters !== undefined ||
     filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
 
@@ -165,7 +167,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
         <HistoryFiltersBar
           filters={filters}
           onFiltersChange={onFiltersChange}
-          attackClassOptions={attackClassOptions}
+          attackTypeOptions={attackTypeOptions}
           converterOptions={converterOptions}
           operatorOptions={operatorOptions}
           operationOptions={operationOptions}

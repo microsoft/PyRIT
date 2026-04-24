@@ -82,8 +82,8 @@ class AttackService:
     async def list_attacks_async(
         self,
         *,
-        attack_types: Optional[list[str]] = None,
-        converter_types: Optional[list[str]] = None,
+        attack_types: Optional[Sequence[str]] = None,
+        converter_types: Optional[Sequence[str]] = None,
         converter_types_match: Literal["any", "all"] = "all",
         has_converters: Optional[bool] = None,
         outcome: Optional[Literal["undetermined", "success", "failure"]] = None,
@@ -99,8 +99,8 @@ class AttackService:
         Queries AttackResult entries from the database.
 
         Args:
-            attack_types: Filter by attack type names (repeatable, OR-matched, case-sensitive).
-                None or empty list applies no filter.
+            attack_types: Filter by attack type names (case-insensitive). May be specified
+                multiple times to OR-match across types. None or empty list applies no filter.
             converter_types: Filter by converter class names (case-insensitive).
                 ``None`` or an empty list applies no filter at this layer. Combination
                 semantics for multiple entries are controlled by ``converter_types_match``.

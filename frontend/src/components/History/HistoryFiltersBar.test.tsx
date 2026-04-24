@@ -15,7 +15,7 @@ describe('HistoryFiltersBar', () => {
   const defaultProps = {
     filters: { ...DEFAULT_HISTORY_FILTERS },
     onFiltersChange: jest.fn(),
-    attackClassOptions: [] as string[],
+    attackTypeOptions: [] as string[],
     converterOptions: [] as string[],
     operatorOptions: [] as string[],
     operationOptions: [] as string[],
@@ -33,7 +33,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('attack-class-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
     expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
@@ -77,12 +77,12 @@ describe('HistoryFiltersBar', () => {
     expect(onFiltersChange).toHaveBeenCalledWith(DEFAULT_HISTORY_FILTERS)
   })
 
-  it('should call onFiltersChange when attack class filter is selected', async () => {
+  it('should call onFiltersChange when attack type filter is selected', async () => {
     const onFiltersChange = jest.fn()
     const props = {
       ...defaultProps,
       onFiltersChange,
-      attackClassOptions: ['CrescendoAttack', 'ManualAttack'],
+      attackTypeOptions: ['CrescendoAttack', 'ManualAttack'],
     }
 
     render(
@@ -91,14 +91,14 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    const dropdown = screen.getByTestId('attack-class-filter')
+    const dropdown = screen.getByTestId('attack-type-filter')
     fireEvent.click(dropdown)
 
     const option = await screen.findByText('CrescendoAttack')
     fireEvent.click(option)
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ attackClasses: ['CrescendoAttack'] })
+      expect.objectContaining({ attackTypes: ['CrescendoAttack'] })
     )
   })
 
@@ -436,7 +436,7 @@ describe('HistoryFiltersBar', () => {
   it('should keep the outcome Dropdown display label after a sibling filter changes', () => {
     const props = {
       ...defaultProps,
-      attackClassOptions: ['PromptSendingAttack'],
+      attackTypeOptions: ['PromptSendingAttack'],
       filters: { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' },
     }
 
@@ -453,7 +453,7 @@ describe('HistoryFiltersBar', () => {
       <TestWrapper>
         <HistoryFiltersBar
           {...props}
-          filters={{ ...props.filters, attackClasses: ['PromptSendingAttack'] }}
+          filters={{ ...props.filters, attackTypes: ['PromptSendingAttack'] }}
         />
       </TestWrapper>
     )

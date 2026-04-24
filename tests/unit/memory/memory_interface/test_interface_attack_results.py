@@ -1271,13 +1271,15 @@ def test_get_attack_results_by_attack_classes_no_match(sqlite_instance: MemoryIn
     assert len(results) == 0
 
 
-def test_get_attack_results_by_attack_classes_case_sensitive(sqlite_instance: MemoryInterface):
-    """Test that attack_classes filter is case-sensitive (exact match)."""
+def test_get_attack_results_by_attack_classes_case_insensitive(sqlite_instance: MemoryInterface):
+    """attack_classes is case-insensitive (mirrors converter_classes; forgives REST/CLI casing)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
 
-    results = sqlite_instance.get_attack_results(attack_classes=["crescendoattack"])
-    assert len(results) == 0
+    # Lowercase, uppercase, and mixed-case all match.
+    assert len(sqlite_instance.get_attack_results(attack_classes=["crescendoattack"])) == 1
+    assert len(sqlite_instance.get_attack_results(attack_classes=["CRESCENDOATTACK"])) == 1
+    assert len(sqlite_instance.get_attack_results(attack_classes=["CresCendoATtack"])) == 1
 
 
 def test_get_attack_results_by_attack_classes_no_identifier(sqlite_instance: MemoryInterface):

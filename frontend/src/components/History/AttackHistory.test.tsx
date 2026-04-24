@@ -83,7 +83,7 @@ describe('AttackHistory', () => {
 
     expect(screen.getByText('Attack History')).toBeInTheDocument()
     expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
-    expect(screen.getByTestId('attack-class-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
     expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
@@ -656,7 +656,7 @@ describe('AttackHistory', () => {
     expect(screen.queryByTestId('reset-filters-btn')).not.toBeInTheDocument()
   })
 
-  it('should call onFiltersChange with attackClass when attack type filter is selected', async () => {
+  it('should call onFiltersChange with attackTypes when attack type filter is selected', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
@@ -684,8 +684,8 @@ describe('AttackHistory', () => {
       expect(mockedAttacksApi.getAttackOptions).toHaveBeenCalled()
     })
 
-    // Open the attack class dropdown and select an option
-    const attackDropdown = screen.getByTestId('attack-class-filter')
+    // Open the attack type dropdown and select an option
+    const attackDropdown = screen.getByTestId('attack-type-filter')
     fireEvent.click(attackDropdown)
 
     await waitFor(() => {
@@ -695,7 +695,7 @@ describe('AttackHistory', () => {
     fireEvent.click(screen.getByText('CrescendoAttack'))
 
     expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ attackClasses: ['CrescendoAttack'] })
+      expect.objectContaining({ attackTypes: ['CrescendoAttack'] })
     )
   })
 
@@ -900,7 +900,7 @@ describe('AttackHistory', () => {
     const onFiltersChange = jest.fn()
     const activeFilters = {
       ...DEFAULT_HISTORY_FILTERS,
-      attackClasses: ['CrescendoAttack'],
+      attackTypes: ['CrescendoAttack'],
       outcome: 'success',
       operator: ['alice'],
     }
@@ -962,7 +962,7 @@ describe('AttackHistory', () => {
     )
   })
 
-  it('should forward multi-select attackClasses as attack_types array to the API', async () => {
+  it('should forward multi-select attackTypes as attack_types array to the API', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
@@ -973,7 +973,7 @@ describe('AttackHistory', () => {
 
     const filters = {
       ...DEFAULT_HISTORY_FILTERS,
-      attackClasses: ['CrescendoAttack', 'RedTeamingAttack'],
+      attackTypes: ['CrescendoAttack', 'RedTeamingAttack'],
     }
 
     render(

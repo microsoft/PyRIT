@@ -90,7 +90,7 @@ function SearchableMultiCombobox({
 interface HistoryFiltersBarProps {
   filters: HistoryFilters
   onFiltersChange: (filters: HistoryFilters) => void
-  attackClassOptions: string[]
+  attackTypeOptions: string[]
   converterOptions: string[]
   operatorOptions: string[]
   operationOptions: string[]
@@ -100,7 +100,7 @@ interface HistoryFiltersBarProps {
 export default function HistoryFiltersBar({
   filters,
   onFiltersChange,
-  attackClassOptions,
+  attackTypeOptions,
   converterOptions,
   operatorOptions,
   operationOptions,
@@ -109,7 +109,7 @@ export default function HistoryFiltersBar({
   const styles = useAttackHistoryStyles()
 
   const {
-    attackClasses: attackClassFilters,
+    attackTypes: attackTypeFilters,
     outcome: outcomeFilter,
     converter: converterFilter,
     converterMatchMode,
@@ -125,7 +125,7 @@ export default function HistoryFiltersBar({
   }
 
   const hasActiveFilters =
-    attackClassFilters.length > 0 ||
+    attackTypeFilters.length > 0 ||
     outcomeFilter ||
     converterFilter.length > 0 ||
     hasConverters !== undefined ||
@@ -182,10 +182,10 @@ export default function HistoryFiltersBar({
       <SearchableMultiCombobox
         className={styles.filterDropdown}
         placeholder="All attack types"
-        selectedOptions={attackClassFilters}
-        options={attackClassOptions}
-        onSelect={(selected) => setFilter('attackClasses', selected)}
-        testid="attack-class-filter"
+        selectedOptions={attackTypeFilters}
+        options={attackTypeOptions}
+        onSelect={(selected) => setFilter('attackTypes', selected)}
+        testid="attack-type-filter"
       />
       <Combobox
         className={styles.filterDropdown}

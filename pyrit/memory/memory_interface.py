@@ -6,7 +6,6 @@ import atexit
 import logging
 import re
 import uuid
-import warnings
 import weakref
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing
@@ -19,6 +18,7 @@ from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory.memory_embedding import (
@@ -1543,6 +1543,11 @@ class MemoryInterface(abc.ABC):
                 "Pass either `attack_class` (deprecated, singular) or `attack_classes` (plural), not both."
             )
         if attack_class is not None and attack_classes is None:
+            print_deprecation_message(
+                old_item="get_attack_results(attack_class=...)",
+                new_item="get_attack_results(attack_classes=...)",
+                removed_in="0.15.0",
+            )
             attack_classes = [attack_class]
 
         if attack_result_ids is not None:
@@ -1561,7 +1566,9 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.outcome == outcome)
 
         if attack_classes:
-            # Use database-specific JSON query method; OR-match across the provided class names.
+            # Case-insensitive to mirror converter_classes; forgives casing drift in
+            # REST/CLI callers. PyRIT class names are PascalCase with no case-variant
+            # collisions so this never changes match results for well-formed inputs.
             conditions.append(
                 or_(
                     *[
@@ -1569,7 +1576,6 @@ class MemoryInterface(abc.ABC):
                             json_column=AttackResultEntry.atomic_attack_identifier,
                             property_path="$.children.attack_technique.children.attack.class_name",
                             value=ac,
-                            case_sensitive=True,
                         )
                         for ac in attack_classes
                     ]
@@ -1606,10 +1612,10 @@ class MemoryInterface(abc.ABC):
             conditions.append(not_(empty_condition) if has_converters else empty_condition)
 
         if targeted_harm_categories:
-            warnings.warn(
-                "The 'targeted_harm_categories' parameter is deprecated and will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="get_attack_results(targeted_harm_categories=...)",
+                new_item="get_attack_results(labels={'harm_category': [...]})",
+                removed_in="0.15.0",
             )
             # Use database-specific JSON query method
             conditions.append(

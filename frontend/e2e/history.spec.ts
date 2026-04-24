@@ -216,9 +216,9 @@ test.describe("Attack History Filters", () => {
     await expect(page.getByTestId("attack-row-atk-alice-a")).toBeVisible();
     await expect(page.getByTestId("attack-row-atk-bob-b")).toBeVisible();
 
-    // Open the attack class combobox. Multiselect Combobox renders items as
+    // Open the attack type combobox. Multiselect Combobox renders items as
     // role="menuitemcheckbox", not role="option".
-    const dropdown = page.getByTestId("attack-class-filter");
+    const dropdown = page.getByTestId("attack-type-filter");
     await dropdown.click();
     await page.getByRole("menuitemcheckbox", { name: "SingleTurnAttack" }).click();
 

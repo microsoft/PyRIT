@@ -71,13 +71,15 @@ def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str |
 async def list_attacks(
     attack_types: Optional[list[str]] = Query(
         None,
-        description="Filter by attack type names (repeatable). OR-matched, case-sensitive. "
+        description="Filter by attack type names. May be specified multiple times to OR-match "
+        "across types (e.g. ?attack_types=A&attack_types=B). Case-insensitive. "
         "Omit to return all attacks regardless of type.",
     ),
     converter_types: Optional[list[str]] = Query(
         None,
-        description="Filter by converter type names (repeatable). "
-        "Combined per converter_types_match. "
+        description="Filter by converter type names. May be specified multiple times; "
+        "combination semantics are controlled by converter_types_match "
+        "(e.g. ?converter_types=A&converter_types=B). "
         "Omit (or pass an empty value) to apply no converter filter. "
         "To restrict to attacks with no converters, use has_converters=false.",
     ),
@@ -92,7 +94,12 @@ async def list_attacks(
         "false = attacks with no converters. Omit for no filter.",
     ),
     outcome: Optional[Literal["undetermined", "success", "failure"]] = Query(None, description="Filter by outcome"),
-    label: Optional[list[str]] = Query(None, description="Filter by labels (format: key:value, repeatable)"),
+    label: Optional[list[str]] = Query(
+        None,
+        description="Filter by labels (format: key:value). May be specified multiple times; "
+        "OR-matched within a key, AND-matched across keys "
+        "(e.g. ?label=op:red&label=op:blue matches op=red OR op=blue).",
+    ),
     min_turns: Optional[int] = Query(None, ge=0, description="Filter by minimum executed turns"),
     max_turns: Optional[int] = Query(None, ge=0, description="Filter by maximum executed turns"),
     limit: int = Query(20, ge=1, le=100, description="Maximum items per page"),

@@ -1,7 +1,7 @@
 export type ConverterMatchMode = 'any' | 'all'
 
 export interface HistoryFilters {
-  attackClasses: string[]
+  attackTypes: string[]
   outcome: string
   converter: string[]
   converterMatchMode: ConverterMatchMode
@@ -13,7 +13,7 @@ export interface HistoryFilters {
 }
 
 export const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
-  attackClasses: [],
+  attackTypes: [],
   outcome: '',
   converter: [],
   converterMatchMode: 'any',
