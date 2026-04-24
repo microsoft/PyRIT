@@ -3,7 +3,6 @@
 
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
@@ -19,7 +18,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
     markdown formatting that should be properly rendered.
     """
 
-    def __init__(self, *, display_inline: bool = True, output_file_path: Path | None = None):
+    def __init__(self, *, display_inline: bool = True):
         """
         Initialize the markdown printer.
 
@@ -27,12 +26,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             display_inline (bool): If True, uses IPython.display to render markdown
                 inline in Jupyter notebooks. If False, prints markdown strings.
                 Defaults to True.
-            output_file_path (Path | None): If set, markdown output is appended to this
-                file instead of being displayed or printed. Defaults to None.
         """
         self._memory = CentralMemory.get_memory_instance()
         self._display_inline = display_inline
-        self._output_file_path = output_file_path
 
     def _render_markdown(self, markdown_lines: list[str]) -> None:
         """
@@ -45,11 +41,6 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             markdown_lines (List[str]): List of markdown strings to render.
         """
         full_markdown = "\n".join(markdown_lines)
-
-        if self._output_file_path:
-            with open(self._output_file_path, "a", encoding="utf-8") as f:
-                f.write(full_markdown + "\n")
-            return
 
         if self._display_inline:
             try:
@@ -360,8 +351,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         Returns:
             List[str]: List of markdown lines for the image.
         """
-        start_path = os.path.dirname(self._output_file_path) if self._output_file_path else "."
-        relative_path = os.path.relpath(path=image_path, start=start_path)
+        relative_path = os.path.relpath(image_path)
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
 

@@ -4,7 +4,7 @@
 import io
 import logging
 
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 from pyrit.common.notebook_utils import is_in_ipython_session
 from pyrit.memory import CentralMemory
@@ -13,13 +13,12 @@ from pyrit.models import AzureBlobStorageIO, DiskStorageIO, MessagePiece
 logger = logging.getLogger(__name__)
 
 
-async def display_image_response(response_piece: MessagePiece, safe_outputs: bool = False) -> None:
+async def display_image_response(response_piece: MessagePiece) -> None:
     """
     Display response images if running in notebook environment.
 
     Args:
         response_piece (MessagePiece): The response piece to display.
-        safe_outputs (bool): Whether to sanitize image outputs before displaying them.
 
     Raises:
         RuntimeError: If storage IO is not initialized.
@@ -49,15 +48,7 @@ async def display_image_response(response_piece: MessagePiece, safe_outputs: boo
                 return
 
         image_stream = io.BytesIO(image_bytes)
-        image: Image.Image = Image.open(image_stream)
-
-        if safe_outputs:
-            new_width = int(image.width * 0.5)
-            new_height = int(image.height * 0.5)
-            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-            image = ImageEnhance.Color(image).enhance(0.0)
-            image = image.rotate(90.0, expand=True, fillcolor=(255, 255, 255))
+        image = Image.open(image_stream)
 
         # Jupyter built-in display function only works in notebooks.
         display(image)  # type: ignore[name-defined] # noqa: F821

@@ -23,9 +23,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
     for consoles that don't support ANSI characters.
     """
 
-    def __init__(
-        self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True, safe_outputs: bool = False
-    ):
+    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True):
         """
         Initialize the console printer.
 
@@ -36,8 +34,6 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
                 Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. When False,
                 all output will be plain text without colors. Defaults to True.
-            safe_outputs (bool): Whether to sanitize image outputs before displaying them.
-                Defaults to False.
 
         Raises:
             ValueError: If width <= 0 or indent_size < 0.
@@ -46,7 +42,6 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
-        self._safe_outputs = safe_outputs
 
     def _print_colored(self, text: str, *colors: str) -> None:
         """
@@ -232,7 +227,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
                     self._print_wrapped_text(piece.converted_value, Fore.YELLOW)
 
                 # Display images if present
-                await display_image_response(response_piece=piece, safe_outputs=self._safe_outputs)
+                await display_image_response(piece)
 
                 # Print scores with better formatting (only if scores are requested)
                 if include_scores:
