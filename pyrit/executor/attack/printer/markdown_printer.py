@@ -360,7 +360,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         Returns:
             List[str]: List of markdown lines for the image.
         """
-        relative_path = os.path.relpath(image_path)
+        start_path = os.path.dirname(self._output_file_path) if self._output_file_path else "."
+        relative_path = os.path.relpath(path=image_path, start=start_path)
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
 
