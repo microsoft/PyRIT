@@ -12,6 +12,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     ManyShotJailbreakAttack,
     PromptSendingAttack,
+    RedTeamingAttack,
     RolePlayAttack,
     TreeOfAttacksWithPruningAttack,
 )
@@ -158,13 +159,13 @@ class TestRapidResponseStrategy:
         assert strat.MULTI_TURN.value == "multi_turn"
 
     def test_total_member_count(self):
-        """4 aggregates + 4 techniques = 8 members."""
-        assert len(list(_strategy_class())) == 8
+        """4 aggregates + 5 techniques = 9 members."""
+        assert len(list(_strategy_class())) == 9
 
     def test_non_aggregate_count(self):
-        """get_all_strategies returns only the 4 technique members."""
+        """get_all_strategies returns only the 5 technique members."""
         non_aggregate = _strategy_class().get_all_strategies()
-        assert len(non_aggregate) == 4
+        assert len(non_aggregate) == 5
 
     def test_aggregate_tags(self):
         tags = _strategy_class().get_aggregate_tags()
@@ -183,17 +184,17 @@ class TestRapidResponseStrategy:
         values = {s.value for s in expanded}
         assert values == {"prompt_sending", "role_play"}
 
-    def test_multi_turn_expands_to_many_shot_and_tap(self):
+    def test_multi_turn_expands_to_many_shot_tap_and_red_teaming(self):
         strat = _strategy_class()
         expanded = strat.normalize_strategies({strat.MULTI_TURN})
         values = {s.value for s in expanded}
-        assert values == {"many_shot", "tap"}
+        assert values == {"many_shot", "tap", "red_teaming"}
 
     def test_all_expands_to_all_techniques(self):
         strat = _strategy_class()
         expanded = strat.normalize_strategies({strat.ALL})
         values = {s.value for s in expanded}
-        assert values == {"prompt_sending", "role_play", "many_shot", "tap"}
+        assert values == {"prompt_sending", "role_play", "many_shot", "tap", "red_teaming"}
 
     def test_strategy_values_are_unique(self):
         strat = _strategy_class()
@@ -356,17 +357,19 @@ class TestRapidResponseAttackGeneration:
         assert technique_classes == {PromptSendingAttack, RolePlayAttack}
 
     @pytest.mark.asyncio
-    async def test_multi_turn_strategy_produces_many_shot_and_tap(self, mock_objective_target, mock_objective_scorer):
+    async def test_multi_turn_strategy_produces_many_shot_tap_and_red_teaming(
+        self, mock_objective_target, mock_objective_scorer
+    ):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class().MULTI_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack}
+        assert technique_classes == {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack, RedTeamingAttack}
 
     @pytest.mark.asyncio
-    async def test_all_strategy_produces_all_four_techniques(self, mock_objective_target, mock_objective_scorer):
+    async def test_all_strategy_produces_all_five_techniques(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
@@ -378,6 +381,7 @@ class TestRapidResponseAttackGeneration:
             RolePlayAttack,
             ManyShotJailbreakAttack,
             TreeOfAttacksWithPruningAttack,
+            RedTeamingAttack,
         }
 
     @pytest.mark.asyncio

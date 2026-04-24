@@ -413,10 +413,10 @@ class TestCyberRegistryIntegration:
         names = {s.name for s in SCENARIO_TECHNIQUES}
         assert "red_teaming" in names
 
-    def test_red_teaming_not_tagged_core(self):
-        """red_teaming should NOT have 'core' tag (so RapidResponse doesn't pick it up)."""
+    def test_red_teaming_tagged_core(self):
+        """red_teaming should have 'core' tag."""
         red_teaming_spec = next(s for s in SCENARIO_TECHNIQUES if s.name == "red_teaming")
-        assert "core" not in red_teaming_spec.strategy_tags
+        assert "core" in red_teaming_spec.strategy_tags
 
     def test_register_idempotent(self):
         """Calling register_scenario_techniques twice doesn't duplicate entries."""

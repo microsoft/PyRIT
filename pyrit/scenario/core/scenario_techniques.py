@@ -74,7 +74,7 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="red_teaming",
         attack_class=RedTeamingAttack,
-        strategy_tags=["multi_turn"],
+        strategy_tags=["core", "multi_turn"],
     ),
 ]
 
