@@ -39,7 +39,7 @@ def markdown_printer(patch_central_database):
 
 @pytest.fixture
 def markdown_printer_to_file(patch_central_database, tmp_path):
-    return MarkdownAttackResultPrinter(output_file_path=Path(tmp_path) / "output.md")
+    return MarkdownAttackResultPrinter(output_file_path=Path(tmp_path) / "output" / "output.md")
 
 
 @pytest.fixture
@@ -154,6 +154,22 @@ def test_format_image_content(markdown_printer):
     formatted = markdown_printer._format_image_content(image_path=image_path)
     assert formatted[0].startswith("![Image]")
     assert "image.png" in formatted[0]
+
+
+def test_format_image_content_relative_to_output_file(markdown_printer, markdown_printer_to_file, tmp_path):
+    """Test that image path is relative to output file dir when outputting to file,
+    and relative to cwd when outputting to console."""
+    image_path = os.path.join(str(tmp_path), "images", "screenshot.png")
+
+    # When outputting to file, path should be relative to the output file's directory
+    formatted_file = markdown_printer_to_file._format_image_content(image_path=image_path)
+    expected_file_rel = "../images/screenshot.png"
+    assert f"![Image]({expected_file_rel})" in formatted_file[0]
+
+    # When outputting to console (no output_file_path), path should be relative to cwd
+    formatted_console = markdown_printer._format_image_content(image_path=image_path)
+    expected_console_rel = os.path.relpath(image_path).replace("\\", "/")
+    assert f"![Image]({expected_console_rel})" in formatted_console[0]
 
 
 def test_format_audio_content(markdown_printer):

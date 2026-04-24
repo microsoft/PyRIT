@@ -126,7 +126,6 @@ class Jailbreak(Scenario):
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
         jailbreak_names: list[str] | None = None,
-        jailbreak_paths: list[str] | None = None,
     ) -> None:
         """
         Initialize the jailbreak scenario.
@@ -135,32 +134,26 @@ class Jailbreak(Scenario):
             objective_scorer (Optional[TrueFalseScorer]): Scorer for detecting successful jailbreaks
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
             include_baseline (bool): Whether to include a baseline atomic attack that sends all
-                objectives without modifications. Defaults to False.
+                objectives without modifications. Defaults to True.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
             num_templates (Optional[int]): Choose num_templates random jailbreaks rather than using all of them.
             num_attempts (Optional[int]): Number of times to try each jailbreak.
-            jailbreak_names (Optional[List[str]]): List of jailbreak names from the template list under datasets
-                to use. Mutually exclusive with jailbreak_paths and num_templates.
-            jailbreak_paths (Optional[List[str]]): List of absolute or relative paths to YAML jailbreak
-                template files to use. Mutually exclusive with jailbreak_names and num_templates.
+            jailbreak_names (Optional[List[str]]): List of jailbreak names from the template list under datasets.
+                to use.
 
         Raises:
-            ValueError: If more than one of jailbreak_names, jailbreak_paths, or num_templates is provided,
-                as the three selection modes are mutually exclusive.
-            ValueError: If the jailbreak_names list contains a name that isn't in the discovered templates.
-            ValueError: If any path in jailbreak_paths does not exist on disk.
+            ValueError: If both jailbreak_names and num_templates are provided, as random selection
+                is incompatible with a predetermined list.
+            ValueError: If the jailbreak_names list contains a jailbreak that isn't in the listed
+                templates.
 
         """
         if jailbreak_names is None:
             jailbreak_names = []
-        if jailbreak_paths is None:
-            jailbreak_paths = []
-
-        provided_sources = [bool(jailbreak_names), bool(jailbreak_paths), bool(num_templates)]
-        if sum(provided_sources) > 1:
+        if jailbreak_names and num_templates:
             raise ValueError(
-                "Please provide only one of `num_templates` (random selection),"
-                " `jailbreak_names` (selection by name), or `jailbreak_paths` (selection by path)."
+                "Please provide only one of `num_templates` (random selection)"
+                " or `jailbreak_names` (specific selection)."
             )
 
         self._objective_scorer: TrueFalseScorer = (
@@ -170,30 +163,22 @@ class Jailbreak(Scenario):
         self._num_templates = num_templates
         self._num_attempts = num_attempts
         self._adversarial_target: Optional[OpenAIChatTarget] = None
-        self._jailbreak_paths = jailbreak_paths
-        self._jailbreaks = jailbreak_names
 
-        if jailbreak_paths:
-            missing = [p for p in jailbreak_paths if not Path(p).exists()]
-            if missing:
-                raise ValueError(f"Jailbreak template paths not found: {missing}")
-        else:
-            # Note that num_templates and jailbreak_names are mutually exclusive.
-            # If self._num_templates is None, then this returns all discoverable jailbreak templates.
-            # If self._num_templates has some value, then all_templates is a subset of all available
-            # templates, but jailbreak_names is guaranteed to be [], so diff = {}.
-            all_templates = TextJailBreak.get_jailbreak_templates(num_templates=self._num_templates)
+        # Note that num_templates and jailbreak_names are mutually exclusive.
+        # If self._num_templates is None, then this returns all discoverable jailbreak templates.
+        # If self._num_templates has some value, then all_templates is a subset of all available
+        # templates, but jailbreak_names is guaranteed to be [], so diff = {}.
+        all_templates = TextJailBreak.get_jailbreak_templates(num_templates=self._num_templates)
 
-            # Example: if jailbreak_names is {'a', 'b', 'c'}, and all_templates is {'b', 'c', 'd'},
-            # then diff = {'a'}, which raises the error as 'a' was not discovered in all_templates.
-            diff = set(jailbreak_names) - set(all_templates)
-            if len(diff) > 0:
-                raise ValueError(f"Error: could not find templates `{diff}`!")
+        # Example: if jailbreak_names is {'a', 'b', 'c'}, and all_templates is {'b', 'c', 'd'},
+        # then diff = {'a'}, which raises the error as 'a' was not discovered in all_templates.
+        diff = set(jailbreak_names) - set(all_templates)
+        if len(diff) > 0:
+            raise ValueError(f"Error: could not find templates `{diff}`!")
 
-            # If jailbreak_names has some value, then `if jailbreak_names` passes, and self._jailbreaks
-            # is set to jailbreak_names. Otherwise we use all_templates.
-            if not jailbreak_names:
-                self._jailbreaks = all_templates
+        # If jailbreak_names has some value, then `if jailbreak_names` passes, and self._jailbreaks
+        # is set to jailbreak_names. Otherwise we use all_templates.
+        self._jailbreaks = jailbreak_names if jailbreak_names else all_templates
 
         super().__init__(
             version=self.VERSION,
@@ -251,30 +236,20 @@ class Jailbreak(Scenario):
         return list(seed_groups)
 
     async def _get_atomic_attack_from_strategy_async(
-        self,
-        *,
-        strategy: str,
-        jailbreak_template_name: Optional[str] = None,
-        jailbreak_template_path: Optional[str] = None,
+        self, *, strategy: str, jailbreak_template_name: str
     ) -> AtomicAttack:
         """
         Create an atomic attack for a specific jailbreak template.
 
-        Exactly one of jailbreak_template_name or jailbreak_template_path must be provided.
-
         Args:
             strategy (str): JailbreakStrategy to use.
-            jailbreak_template_name (Optional[str]): Name of the jailbreak template file (resolved
-                from the predefined templates directory).
-            jailbreak_template_path (Optional[str]): Absolute or relative path to a YAML jailbreak
-                template file.
+            jailbreak_template_name (str): Name of the jailbreak template file.
 
         Returns:
             AtomicAttack: An atomic attack using the specified jailbreak template.
 
         Raises:
             ValueError: If scenario is not properly initialized.
-            ValueError: If neither or both template source arguments are provided.
         """
         # objective_target is guaranteed to be non-None by parent class validation
         if self._objective_target is None:
@@ -282,19 +257,10 @@ class Jailbreak(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        if not jailbreak_template_name and not jailbreak_template_path:
-            raise ValueError("One of jailbreak_template_name or jailbreak_template_path must be provided.")
-
-        if jailbreak_template_name and jailbreak_template_path:
-            raise ValueError("Only one of jailbreak_template_name or jailbreak_template_path can be provided.")
-
-        # Create the jailbreak converter from name or path
-        if jailbreak_template_path:
-            jailbreak_template = TextJailBreak(template_path=jailbreak_template_path)
-        else:
-            jailbreak_template = TextJailBreak(template_file_name=jailbreak_template_name)
-
-        jailbreak_converter = TextJailbreakConverter(jailbreak_template=jailbreak_template)
+        # Create the jailbreak converter
+        jailbreak_converter = TextJailbreakConverter(
+            jailbreak_template=TextJailBreak(template_file_name=jailbreak_template_name)
+        )
 
         # Create converter configuration
         converter_config = AttackConverterConfig(
@@ -326,11 +292,11 @@ class Jailbreak(Scenario):
         if not attack:
             raise ValueError(f"Attack cannot be None!")
 
-        # Extract template stem from whichever source was provided
-        template_stem = Path(jailbreak_template_path or jailbreak_template_name).stem
+        # Extract template name without extension for the atomic attack name
+        template_name = Path(jailbreak_template_name).stem
 
         return AtomicAttack(
-            atomic_attack_name=f"jailbreak_{template_stem}",
+            atomic_attack_name=f"jailbreak_{template_name}",
             attack_technique=AttackTechnique(attack=attack),
             seed_groups=self._seed_groups or [],
         )
@@ -356,12 +322,6 @@ class Jailbreak(Scenario):
                 for _ in range(self._num_attempts):
                     atomic_attack = await self._get_atomic_attack_from_strategy_async(
                         strategy=strategy, jailbreak_template_name=template_name
-                    )
-                    atomic_attacks.append(atomic_attack)
-            for template_path in self._jailbreak_paths:
-                for _ in range(self._num_attempts):
-                    atomic_attack = await self._get_atomic_attack_from_strategy_async(
-                        strategy=strategy, jailbreak_template_path=template_path
                     )
                     atomic_attacks.append(atomic_attack)
 
