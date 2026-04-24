@@ -410,7 +410,7 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: A flattened list of Score objects from all scored prompts.
 
         Raises:
-            ValueError: If objectives is empty or if the number of objectives doesn't match
+            ValueError: If objectives is not None and the number of objectives doesn't match
                 the number of messages.
         """
         if objectives is None:
