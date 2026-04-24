@@ -7,7 +7,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, cast, overload
+from typing import Any, Optional, cast, get_args, overload
 
 from treelib.tree import Tree
 
@@ -49,6 +49,7 @@ from pyrit.models import (
     Score,
     SeedPrompt,
 )
+from pyrit.models.literals import PromptResponseError
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import (
@@ -63,6 +64,38 @@ from pyrit.score.score_utils import normalize_score_to_float
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_ERROR_SCORE_MAP: dict[str, float] = {"blocked": 0.0}
+
+
+def _validate_error_score_map(error_score_map: dict[str, float] | None) -> dict[str, float]:
+    """
+    Validate and return a copy of the error score map.
+
+    Args:
+        error_score_map (dict[str, float] | None): The error score map to validate.
+            None uses the default mapping. An empty dict disables error mapping.
+
+    Returns:
+        dict[str, float]: A validated copy of the error score map.
+
+    Raises:
+        ValueError: If a key is not a valid PromptResponseError or a value is outside [0, 1].
+    """
+    if error_score_map is None:
+        return dict(_DEFAULT_ERROR_SCORE_MAP)
+    valid_errors = get_args(PromptResponseError)
+    for key, value in error_score_map.items():
+        if key not in valid_errors:
+            raise ValueError(
+                f"error_score_map key '{key}' is not a valid PromptResponseError. "
+                f"Valid values: {valid_errors}"
+            )
+        if not (0.0 <= value <= 1.0):
+            raise ValueError(
+                f"error_score_map value for '{key}' must be between 0.0 and 1.0, got {value}"
+            )
+    return dict(error_score_map)
 
 
 class TAPAttackScoringConfig(AttackScoringConfig):
@@ -319,9 +352,7 @@ class _TreeOfAttacksNode:
         self._attack_id = attack_id
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
-        self._error_score_map: dict[str, float] = (
-            dict(error_score_map) if error_score_map is not None else {"blocked": 0.0}
-        )
+        self._error_score_map = _validate_error_score_map(error_score_map)
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -648,30 +679,31 @@ class _TreeOfAttacksNode:
         # This prevents scorer failures when the target returns a blocked/filtered response
         # (e.g., content policy violations from image generation targets).
         if self._error_score_map and response.is_error():
-            response_piece = response.get_piece()
-            error_type = response_piece.response_error
-            if error_type in self._error_score_map:
-                assigned_score = self._error_score_map[error_type]
-                logger.debug(
-                    f"Node {self.node_id}: Response has mapped error '{error_type}', "
-                    f"assigning score {assigned_score}"
-                )
-                self.objective_score = Score(
-                    score_value=str(assigned_score),
-                    score_value_description=(
-                        f"Assigned score {assigned_score} for '{error_type}' response error"
-                    ),
-                    score_type="float_scale",
-                    score_category=["error_handling"],
-                    score_rationale=(
-                        f"Response had '{error_type}' error. Assigned fixed score {assigned_score} "
-                        f"via error_score_map to prevent premature branch pruning."
-                    ),
-                    message_piece_id=str(response_piece.id),
-                    scorer_class_identifier=self._objective_scorer.get_identifier(),
-                    objective=objective,
-                )
-                return
+            for response_piece in response.message_pieces:
+                error_type = response_piece.response_error
+                if error_type in self._error_score_map:
+                    assigned_score = self._error_score_map[error_type]
+                    logger.debug(
+                        f"Node {self.node_id}: Response has mapped error '{error_type}', "
+                        f"assigning score {assigned_score}"
+                    )
+                    self.objective_score = Score(
+                        score_value=str(assigned_score),
+                        score_value_description=(
+                            f"Assigned score {assigned_score} for '{error_type}' response error"
+                        ),
+                        score_type="float_scale",
+                        score_category=["error_handling"],
+                        score_rationale=(
+                            f"Response had '{error_type}' error. Assigned fixed score {assigned_score} "
+                            f"via error_score_map to prevent premature branch pruning."
+                        ),
+                        message_piece_id=str(response_piece.id),
+                        scorer_class_identifier=self._objective_scorer.get_identifier(),
+                        objective=objective,
+                    )
+                    self._memory.add_scores_to_memory(scores=[self.objective_score])
+                    return
 
         # Use the Scorer utility method to handle all scoring
         with execution_context(
@@ -1365,9 +1397,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._on_topic_checking_enabled = on_topic_checking_enabled
         self._desired_response_prefix = desired_response_prefix
         self._batch_size = batch_size
-        self._error_score_map: dict[str, float] = (
-            dict(error_score_map) if error_score_map is not None else {"blocked": 0.0}
-        )
+        self._error_score_map = _validate_error_score_map(error_score_map)
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target

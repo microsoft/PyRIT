@@ -909,6 +909,16 @@ class TestErrorScoreMap:
         attack = attack_builder.with_default_mocks().with_error_score_map({}).build()
         assert attack._error_score_map == {}
 
+    def test_invalid_error_score_map_key_raises(self, attack_builder):
+        """Test that an invalid error type key raises ValueError."""
+        with pytest.raises(ValueError, match="not a valid PromptResponseError"):
+            attack_builder.with_default_mocks().with_error_score_map({"invalid_error": 0.0}).build()
+
+    def test_out_of_range_error_score_map_value_raises(self, attack_builder):
+        """Test that a score value outside [0, 1] raises ValueError."""
+        with pytest.raises(ValueError, match="must be between 0.0 and 1.0"):
+            attack_builder.with_default_mocks().with_error_score_map({"blocked": 1.5}).build()
+
     @pytest.mark.asyncio
     async def test_score_response_assigns_score_for_mapped_error(self, attack_builder):
         """Test that _score_response_async assigns a synthetic score for mapped errors."""
