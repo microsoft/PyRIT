@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import enum
 import json
 import logging
 import uuid
@@ -96,6 +97,13 @@ def _validate_error_score_map(error_score_map: dict[str, float] | None) -> dict[
                 f"error_score_map value for '{key}' must be between 0.0 and 1.0, got {value}"
             )
     return dict(error_score_map)
+
+
+class TAPSystemPromptPaths(enum.Enum):
+    """Enum for predefined TAP attack system prompt paths."""
+
+    TEXT_GENERATION = (EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_system_prompt.yaml").resolve()
+    IMAGE_GENERATION = (EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "image_generation.yaml").resolve()
 
 
 class TAPAttackScoringConfig(AttackScoringConfig):

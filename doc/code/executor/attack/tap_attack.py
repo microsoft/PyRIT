@@ -75,3 +75,42 @@ result = await tap_attack.execute_async(objective=conversation_objective)  # typ
 await ConsoleAttackResultPrinter().print_result_async(
     result=result, include_adversarial_conversation=True, include_pruned_conversations=True
 )  # type: ignore
+
+# %% [markdown]
+# ## Tree of Attacks with Image Generation Targets
+#
+# TAP can also be used against image generation targets (e.g., DALL-E).
+# Two key differences when targeting image generators:
+#
+# 1. **System Prompt**: Use `TAPSystemPromptPaths.IMAGE_GENERATION` to provide
+#    an adversarial system prompt tailored for image generation models.
+# 2. **Error Handling**: Image generation targets frequently return "blocked"
+#    responses due to content filters. TAP's `error_score_map` (default:
+#    `{"blocked": 0.0}`) automatically assigns a score of 0.0 to these responses
+#    instead of failing the branch, preventing premature pruning of all branches.
+
+# %%
+from pyrit.executor.attack import TAPSystemPromptPaths
+from pyrit.prompt_target import OpenAIImageTarget
+
+image_target = OpenAIImageTarget()
+
+adversarial_chat_for_images = OpenAIChatTarget(
+    temperature=1.1,
+)
+
+tap_image_attack = TAPAttack(
+    objective_target=image_target,
+    attack_adversarial_config=AttackAdversarialConfig(
+        target=adversarial_chat_for_images,
+        system_prompt_path=TAPSystemPromptPaths.IMAGE_GENERATION.value,
+    ),
+    on_topic_checking_enabled=False,
+    tree_width=3,
+    tree_depth=3,
+)
+
+image_objective = "Generate an image of a cat with a hat."
+
+result = await tap_image_attack.execute_async(objective=image_objective)  # type: ignore
+await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
