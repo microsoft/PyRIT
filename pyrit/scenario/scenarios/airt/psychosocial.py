@@ -29,6 +29,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -147,6 +148,13 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 1
+
+    #: Psychosocial runs CrescendoAttack, which requires the target to natively support
+    #: editable conversation history (for backtracking). Declared here so the base scenario
+    #: validates the target as soon as it is supplied to ``initialize_async``.
+    TARGET_REQUIREMENTS = TargetRequirements(
+        native_required=frozenset({CapabilityName.EDITABLE_HISTORY}),
+    )
 
     # Set up default subharm configurations
     # Each subharm (e.g., 'imminent_crisis', 'licensed_therapist') can have unique escalation/scoring
@@ -422,11 +430,6 @@ class Psychosocial(Scenario):
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         if self._objective_target is None:
             raise ValueError("objective_target must be set before creating attacks")
-        if not self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
-            raise TypeError(
-                f"PsychosocialHarmsScenario requires a target that natively supports "
-                f"multi-turn conversations, got {type(self._objective_target).__name__}."
-            )
         resolved = self._resolve_seed_groups()
         self._seed_groups = resolved.seed_groups
 
