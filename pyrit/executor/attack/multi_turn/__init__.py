@@ -4,6 +4,7 @@
 """Multi-turn attack strategies module."""
 
 from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack, ChunkedRequestAttackContext
+from pyrit.executor.attack.multi_turn.cot_hijacking import CoTHijackingAttack, CoTHijackingAttackContext
 from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack, CrescendoAttackContext, CrescendoAttackResult
 from pyrit.executor.attack.multi_turn.multi_prompt_sending import (
     MultiPromptSendingAttack,
@@ -30,6 +31,8 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
 __all__ = [
     "ChunkedRequestAttack",
     "ChunkedRequestAttackContext",
+    "CoTHijackingAttack",
+    "CoTHijackingAttackContext",
     "ConversationSession",
     "CrescendoAttack",
     "CrescendoAttackContext",
