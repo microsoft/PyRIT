@@ -155,7 +155,7 @@ class AttackBuilder:
         self.converters: Optional[AttackConverterConfig] = None
         self.successful_threshold: float = 0.8
         self.prompt_normalizer: Optional[PromptNormalizer] = None
-        self.error_score_map: Dict[str, float] = {}
+        self.error_score_map: dict[str, float] | None = None
 
     def with_default_mocks(self) -> "AttackBuilder":
         """Set up default mocks for all required components."""
@@ -185,8 +185,8 @@ class AttackBuilder:
         normalizer.send_prompt_async = AsyncMock(return_value=None)
         self.prompt_normalizer = cast("PromptNormalizer", normalizer)
         return self
-    
-    def with_error_score_map(self, error_score_map: Dict[str, float]):
+
+    def with_error_score_map(self, error_score_map: dict[str, float] | None) -> "AttackBuilder":
         """Set the error score mapping."""
         self.error_score_map = error_score_map
         return self
@@ -220,6 +220,9 @@ class AttackBuilder:
 
         if self.prompt_normalizer:
             kwargs["prompt_normalizer"] = self.prompt_normalizer
+
+        if self.error_score_map is not None:
+            kwargs["error_score_map"] = self.error_score_map
 
         return TreeOfAttacksWithPruningAttack(**kwargs)
 
@@ -804,139 +807,318 @@ class TestPruningLogic:
         assert context.best_conversation_id == "existing_conv_id"
 
     def test_prune_blocked_nodes_with_score_zero(self, attack_builder, node_factory, helpers):
-        """Test that nodes with 'blocked' response are assigned objective_score=0 and only pruned when width exceeded."""
-        # Configure error_score_map using the builder
+        """Test that nodes with 'blocked' score=0 are only pruned when width exceeded."""
         attack = (
             attack_builder.with_default_mocks()
             .with_tree_params(tree_width=3)
-            .with_error_score_map({"blocked": 0.0})  # Set error score map here
+            .with_error_score_map({"blocked": 0.0})
             .build()
         )
 
         context = helpers.create_basic_context()
 
-        # Create nodes: 2 blocked nodes, 2 valid nodes to test pruning
-        nodes = []
-        # Blocked nodes
-        for i in range(2):
-            node = node_factory.create_node(
+        # Create 2 blocked nodes (score 0.0) and 2 valid nodes
+        blocked_nodes = [
+            node_factory.create_node(
                 NodeMockConfig(
                     node_id=f"blocked_node_{i}",
                     completed=True,
                     off_topic=False,
-                    objective_score_value=0.0,  
-                    objective_target_conversation_id=f"conv_blocked_{i}"
+                    objective_score_value=0.0,
+                    objective_target_conversation_id=f"conv_blocked_{i}",
                 )
             )
-            # Mock response with 'blocked' error
-            response = PromptRequestResponse(
-                request_pieces=[
-                    PromptRequestPiece(
-                        role="assistant",
-                        original_value="Blocked response",
-                        converted_value="Blocked response",
-                        conversation_id=node.objective_target_conversation_id,
-                        id=str(uuid.uuid4()),
-                        response_error="blocked"
-                    )
-                ]
-            )
-            node._send_prompt_to_target_async = AsyncMock(return_value=response)
-            nodes.append(node)
-
-        # Valid nodes with scores
+            for i in range(2)
+        ]
         valid_nodes = node_factory.create_nodes_with_scores([0.8, 0.6])
-        nodes.extend(valid_nodes)
+        nodes = blocked_nodes + valid_nodes
 
-        # Add all nodes to context and tree
         context.nodes = nodes
         helpers.add_nodes_to_tree(context, nodes)
 
         # Execute pruning
         attack._prune_nodes_to_maintain_width(context=context)
 
-        # 1. Check that blocked nodes have objective_score=0
-        for node in nodes[:2]:
-            assert node.objective_score is not None
-            assert node.objective_score.get_value() == 0.0
-
-        # 2. Since tree_width=3 and we have 4 completed nodes (2 blocked, 2 valid),
-        #    expect 1 node to be pruned (the lowest-scoring, which should be a blocked node)
+        # 4 completed nodes with tree_width=3 → 1 pruned (lowest score = a blocked node)
         assert len(context.nodes) == 3
-        remaining_scores = [
-            node.objective_score.get_value() for node in context.nodes if node.objective_score is not None
-        ]
-        # Expect [0.8, 0.6, 0.0] (one blocked node remains, one is pruned)
-        assert sorted(remaining_scores, reverse=True) == [0.8, 0.6, 0.0]
+        remaining_scores = sorted(
+            [node.objective_score.get_value() for node in context.nodes if node.objective_score is not None],
+            reverse=True,
+        )
+        assert remaining_scores == [0.8, 0.6, 0.0]
 
-        # 3. Verify pruning annotation in tree visualization
         pruned_nodes = [node for node in nodes if node not in context.nodes]
         assert len(pruned_nodes) == 1
         assert "Pruned (width)" in context.tree_visualization[pruned_nodes[0].node_id].tag
 
     def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
         """Test that blocked nodes are not pruned when completed list is below tree_width."""
-        # Configure error_score_map to assign 0.0 for blocked responses
         basic_attack._error_score_map = {"blocked": 0.0}
-        basic_attack._tree_width = 5  # Set width higher than number of nodes
+        basic_attack._tree_width = 5
 
         context = helpers.create_basic_context()
 
-        # Create 3 nodes: 2 blocked, 1 valid
-        nodes = []
-        # Blocked nodes
-        for i in range(2):
-            node = node_factory.create_node(
+        # 2 blocked nodes (score 0.0) + 1 valid node = 3 total, below width of 5
+        blocked_nodes = [
+            node_factory.create_node(
                 NodeMockConfig(
                     node_id=f"blocked_node_{i}",
                     completed=True,
                     off_topic=False,
                     objective_score_value=0.0,
-                    objective_target_conversation_id=f"conv_blocked_{i}"
+                    objective_target_conversation_id=f"conv_blocked_{i}",
                 )
             )
-            response = PromptRequestResponse(
-                request_pieces=[
-                    PromptRequestPiece(
-                        role="assistant",
-                        original_value="Blocked response",
-                        converted_value="Blocked response",
-                        conversation_id=node.objective_target_conversation_id,
-                        id=str(uuid.uuid4()),
-                        response_error="blocked"
-                    )
-                ]
-            )
-            node._send_prompt_to_target_async = AsyncMock(return_value=response)
-            nodes.append(node)
-
-        # Valid node
+            for i in range(2)
+        ]
         valid_node = node_factory.create_node(
             NodeMockConfig(
-                node_id="valid_node",
-                objective_score_value=0.7,
-                objective_target_conversation_id="conv_valid"
+                node_id="valid_node", objective_score_value=0.7, objective_target_conversation_id="conv_valid"
             )
         )
-        nodes.append(valid_node)
+        nodes = blocked_nodes + [valid_node]
 
-        # Add nodes to context and tree
         context.nodes = nodes
         helpers.add_nodes_to_tree(context, nodes)
 
-        # Execute pruning
         basic_attack._prune_nodes_to_maintain_width(context=context)
 
-        # Verify no pruning occurred (3 nodes < tree_width=5)
+        # No pruning: 3 nodes < tree_width=5
         assert len(context.nodes) == 3
-        for node in context.nodes[1:]:
-            assert node.objective_score is not None
-            assert node.objective_score.get_value() == 0.0
-        assert context.nodes[0].objective_score.get_value() == 0.7
-
-        # Verify no nodes were marked as pruned in visualization
         for node in nodes:
             assert "Pruned" not in context.tree_visualization[node.node_id].tag
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestErrorScoreMap:
+    """Tests for error_score_map functionality in TAP attack."""
+
+    def test_default_error_score_map_maps_blocked(self, attack_builder):
+        """Test that default error_score_map (None) maps 'blocked' to 0.0."""
+        attack = attack_builder.with_default_mocks().build()
+        assert attack._error_score_map == {"blocked": 0.0}
+
+    def test_custom_error_score_map(self, attack_builder):
+        """Test that a custom error_score_map is used as-is."""
+        custom_map = {"blocked": 0.1, "unknown": 0.2}
+        attack = attack_builder.with_default_mocks().with_error_score_map(custom_map).build()
+        assert attack._error_score_map == custom_map
+
+    def test_empty_error_score_map_disables_mapping(self, attack_builder):
+        """Test that passing {} disables error score mapping entirely."""
+        attack = attack_builder.with_default_mocks().with_error_score_map({}).build()
+        assert attack._error_score_map == {}
+
+    @pytest.mark.asyncio
+    async def test_score_response_assigns_score_for_mapped_error(self, attack_builder):
+        """Test that _score_response_async assigns a synthetic score for mapped errors."""
+        builder = attack_builder.with_default_mocks()
+        attack = builder.build()
+
+        # Create a real _TreeOfAttacksNode with error_score_map
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        node = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map={"blocked": 0.0},
+        )
+
+        # Create a Message with a blocked error
+        piece = MessagePiece(
+            role="assistant",
+            original_value="Content blocked",
+            converted_value="Content blocked",
+            conversation_id=node.objective_target_conversation_id,
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[piece])
+
+        await node._score_response_async(response=response, objective="test objective")
+
+        assert node.objective_score is not None
+        assert node.objective_score.get_value() == 0.0
+        assert node.objective_score.score_type == "float_scale"
+        assert "blocked" in node.objective_score.score_rationale
+
+    @pytest.mark.asyncio
+    async def test_score_response_skips_unmapped_error(self, attack_builder):
+        """Test that unmapped errors still go through normal scoring path."""
+        builder = attack_builder.with_default_mocks()
+        attack = builder.build()
+
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        # error_score_map only maps "blocked", not "unknown"
+        node = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map={"blocked": 0.0},
+        )
+
+        # Create a Message with "unknown" error (not in map)
+        piece = MessagePiece(
+            role="assistant",
+            original_value="Unknown error",
+            converted_value="Unknown error",
+            conversation_id=node.objective_target_conversation_id,
+            response_error="unknown",
+        )
+        response = Message(message_pieces=[piece])
+
+        # Mock Scorer.score_response_async to return objective scores
+        mock_score = Score(
+            score_value="0.5",
+            score_value_description="test",
+            score_type="float_scale",
+            score_rationale="test rationale",
+            message_piece_id=str(piece.id),
+            scorer_class_identifier=builder.objective_scorer.get_identifier(),
+            objective="test objective",
+        )
+        with patch.object(
+            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+        ):
+            await node._score_response_async(response=response, objective="test objective")
+
+        # Should have used the normal scorer, not the error map
+        assert node.objective_score is not None
+        assert node.objective_score.get_value() == 0.5
+
+    @pytest.mark.asyncio
+    async def test_score_response_empty_map_disables_interception(self, attack_builder):
+        """Test that empty error_score_map lets all errors through to normal scoring."""
+        builder = attack_builder.with_default_mocks()
+
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        node = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map={},
+        )
+
+        # Create a blocked response
+        piece = MessagePiece(
+            role="assistant",
+            original_value="Content blocked",
+            converted_value="Content blocked",
+            conversation_id=node.objective_target_conversation_id,
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[piece])
+
+        mock_score = Score(
+            score_value="0.0",
+            score_value_description="test",
+            score_type="float_scale",
+            score_rationale="scorer handled it",
+            message_piece_id=str(piece.id),
+            scorer_class_identifier=builder.objective_scorer.get_identifier(),
+        )
+        with patch.object(
+            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+        ) as mock_scorer:
+            await node._score_response_async(response=response, objective="test objective")
+
+        # Empty map → normal scoring path was called
+        mock_scorer.assert_called_once()
+
+    def test_duplicate_preserves_error_score_map(self, attack_builder):
+        """Test that duplicate() preserves the error_score_map on child nodes."""
+        builder = attack_builder.with_default_mocks()
+
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        custom_map = {"blocked": 0.1, "unknown": 0.2}
+        parent = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map=custom_map,
+        )
+
+        with patch.object(parent._memory, "duplicate_conversation", return_value="new_conv_id"):
+            child = parent.duplicate()
+
+        assert child._error_score_map == custom_map
+        # Verify it's a copy, not the same object
+        assert child._error_score_map is not parent._error_score_map
 
 
 @pytest.mark.usefixtures("patch_central_database")

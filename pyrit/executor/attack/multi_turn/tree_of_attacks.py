@@ -298,6 +298,11 @@ class _TreeOfAttacksNode:
             prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts and responses.
             initial_prompt (Optional[Message]): Initial message to send for the first turn,
                 bypassing adversarial chat generation. Supports multimodal messages.
+            error_score_map (dict[str, float] | None): Mapping of response error types to fixed
+                scores. When a target response has an error matching a key in this map, the
+                corresponding score is assigned instead of invoking the scorer. This prevents
+                premature branch pruning when targets return blocked/filtered responses.
+                Defaults to {"blocked": 0.0}. Pass an empty dict to disable.
         """
         # Store configuration
         self._objective_target = objective_target
@@ -314,7 +319,9 @@ class _TreeOfAttacksNode:
         self._attack_id = attack_id
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
-        self._error_score_map = error_score_map
+        self._error_score_map: dict[str, float] = (
+            dict(error_score_map) if error_score_map is not None else {"blocked": 0.0}
+        )
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -637,28 +644,34 @@ class _TreeOfAttacksNode:
             Higher scores indicate more successful attacks and influence which branches
             the TAP algorithm explores in subsequent iterations.
         """
-        response_piece = response.request_pieces[0]
-
-        if response_piece.has_error() and response_piece.response_error in self._error_score_map:
-            assigned_score = self._error_score_map[response_piece.response_error]
-            logger.debug(
-                f"Node {self.node_id}: Response has error '{response_piece.response_error}', assigning score {assigned_score}"
-            )
-            self.objective_score = Score(
-                score_value=str(assigned_score),  # Convert float to string
-                score_value_description=f"Assigned score {assigned_score} for {response_piece.response_error} response",
-                score_type="float_scale",  
-                score_category="error_handling",
-                score_rationale=f"Assigned score {assigned_score} for {response_piece.response_error} error",
-                score_metadata=str(response_piece.prompt_metadata) if response_piece.prompt_metadata else "",
-                prompt_request_response_id=str(response_piece.id),
-                scorer_class_identifier=self._objective_scorer.get_identifier(),
-                task=objective,
-            )
-            logger.debug(
-                f"Node {self.node_id}: Assigned error score {assigned_score} for response error: {response_piece.response_error}; objective_score: {self.objective_score.get_value()}"
-            )
-            return
+        # Check if the response has a mapped error before attempting normal scoring.
+        # This prevents scorer failures when the target returns a blocked/filtered response
+        # (e.g., content policy violations from image generation targets).
+        if self._error_score_map and response.is_error():
+            response_piece = response.get_piece()
+            error_type = response_piece.response_error
+            if error_type in self._error_score_map:
+                assigned_score = self._error_score_map[error_type]
+                logger.debug(
+                    f"Node {self.node_id}: Response has mapped error '{error_type}', "
+                    f"assigning score {assigned_score}"
+                )
+                self.objective_score = Score(
+                    score_value=str(assigned_score),
+                    score_value_description=(
+                        f"Assigned score {assigned_score} for '{error_type}' response error"
+                    ),
+                    score_type="float_scale",
+                    score_category=["error_handling"],
+                    score_rationale=(
+                        f"Response had '{error_type}' error. Assigned fixed score {assigned_score} "
+                        f"via error_score_map to prevent premature branch pruning."
+                    ),
+                    message_piece_id=str(response_piece.id),
+                    scorer_class_identifier=self._objective_scorer.get_identifier(),
+                    objective=objective,
+                )
+                return
 
         # Use the Scorer utility method to handle all scoring
         with execution_context(
@@ -1317,6 +1330,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             prepended_conversation_config (Optional[PrependedConversationConfiguration]):
                 Configuration for how to process prepended conversations. Controls converter
                 application by role, message normalization, and non-chat target behavior.
+            error_score_map (dict[str, float] | None): Mapping of response error types to fixed
+                scores. When a target response has an error matching a key in this map, the
+                corresponding score is assigned instead of invoking the scorer. This prevents
+                premature branch pruning when targets return blocked/filtered responses (e.g.,
+                content policy violations from image generation targets). Defaults to
+                {"blocked": 0.0}. Pass an empty dict to disable.
 
         Raises:
             ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,
@@ -1346,7 +1365,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._on_topic_checking_enabled = on_topic_checking_enabled
         self._desired_response_prefix = desired_response_prefix
         self._batch_size = batch_size
-        self._error_score_map = error_score_map or {}
+        self._error_score_map: dict[str, float] = (
+            dict(error_score_map) if error_score_map is not None else {"blocked": 0.0}
+        )
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
