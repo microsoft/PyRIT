@@ -23,8 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.10, <3.14"
+requires-python = ">=3.10, <3.15"
 dependencies = [
     "aiofiles>=24,<25",
     "appdirs>=1.4.0",
@@ -43,7 +44,8 @@ dependencies = [
     "fastapi>=0.115.0",
     "httpx[http2]>=0.27.2",
     "jinja2>=3.1.6",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0; python_version < '3.14'",
+    "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
     "pillow>=12.2.0",
@@ -120,7 +122,7 @@ playwright = [
     "playwright>=1.49.0",
 ]
 fairness_bias = [
-    "spacy>=3.8.7",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
 ]
 opencv = [
     "opencv-python>=4.11.0.86",
@@ -145,7 +147,7 @@ all = [
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
-    "spacy>=3.8.7",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
     "torch>=2.7.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",

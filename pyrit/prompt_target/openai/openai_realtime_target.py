@@ -377,14 +377,12 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
             output_audio_path, result = await self.send_audio_async(
                 filename=request.converted_value,
                 conversation_id=conversation_id,
-                conversation=normalized_conversation,
             )
 
         elif response_type == "text":
             output_audio_path, result = await self.send_text_async(
                 text=request.converted_value,
                 conversation_id=conversation_id,
-                conversation=normalized_conversation,
             )
         else:
             raise ValueError(f"Unsupported response type: {response_type}")
@@ -503,6 +501,7 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
 
         result = RealtimeTargetResult()
         audio_done_received = False
+        current_turn_event_count = 0
         grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
 
         try:
@@ -542,20 +541,32 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
                     raise
 
                 event_type = event.type
+                current_turn_event_count += 1
                 logger.debug(f"Processing event type: {event_type}")
 
                 if event_type == "response.done":
                     self._handle_response_done_event(event=event, result=result)
-                    logger.debug("Received response.done - finishing normally")
-                    break
+                    if result.audio_bytes or current_turn_event_count > 1:
+                        # Legitimate response.done: either we have audio, or other events
+                        # (e.g. response.created) preceded it, confirming it belongs to this turn.
+                        logger.debug("Received response.done - finishing normally")
+                        break
+                    # Stale response.done from a previous turn's soft-finish that was
+                    # left unconsumed in the WebSocket buffer. This is the very first
+                    # event received, so it can't belong to the current turn. Skip it
+                    # and continue waiting for the current turn's events.
+                    logger.debug(
+                        "Received response.done as first event with no audio data — "
+                        "likely a stale event from a prior turn's soft-finish. Skipping."
+                    )
 
-                if event_type == "error":
+                elif event_type == "error":
                     error_message = event.error.message if hasattr(event.error, "message") else str(event.error)
                     error_type = event.error.type if hasattr(event.error, "type") else "unknown"
                     logger.error(f"Received 'error' event: [{error_type}] {error_message}")
                     raise RuntimeError(f"Server error: [{error_type}] {error_message}")
 
-                if event_type in ["response.audio.delta", "response.output_audio.delta"]:
+                elif event_type in ["response.audio.delta", "response.output_audio.delta"]:
                     audio_data = base64.b64decode(event.delta)
                     result.audio_bytes += audio_data
                     logger.debug(f"Decoded {len(audio_data)} bytes of audio data")
@@ -686,7 +697,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         *,
         text: str,
         conversation_id: str,
-        conversation: list[Message],
     ) -> tuple[str, RealtimeTargetResult]:
         """
         Send text prompt using OpenAI Realtime API client.
@@ -694,7 +704,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         Args:
             text: prompt to send.
             conversation_id: conversation ID
-            conversation: The normalized conversation history.
 
         Returns:
             Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
@@ -727,17 +736,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         if not result.audio_bytes:
             raise RuntimeError("No audio received from the server.")
 
-        # Close and recreate connection to avoid websockets library state issues with fragmented frames
-        # This prevents "cannot reset() while queue isn't empty" errors in multi-turn conversations
-        await self.cleanup_conversation(conversation_id=conversation_id)
-        new_connection = await self.connect(conversation_id=conversation_id)
-        self._existing_conversation[conversation_id] = new_connection
-
-        # Send session configuration to new connection
-        system_prompt = self._get_system_prompt_from_conversation(conversation=conversation)
-        session_config = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
-        await new_connection.session.update(session=session_config)
-
         # Azure GA uses 24000 Hz sample rate
         output_audio_path = await self.save_audio(audio_bytes=result.audio_bytes, sample_rate=24000)
         return output_audio_path, result
@@ -747,7 +745,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         *,
         filename: str,
         conversation_id: str,
-        conversation: list[Message],
     ) -> tuple[str, RealtimeTargetResult]:
         """
         Send an audio message using OpenAI Realtime API client.
@@ -755,7 +752,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         Args:
             filename (str): The path to the audio file.
             conversation_id (str): Conversation ID
-            conversation (list[Message]): The normalized conversation history.
 
         Returns:
             Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
@@ -802,17 +798,6 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         result = await receive_tasks
         if not result.audio_bytes:
             raise RuntimeError("No audio received from the server.")
-
-        # Close and recreate connection to avoid websockets library state issues with fragmented frames
-        # This prevents "cannot reset() while queue isn't empty" errors in multi-turn conversations
-        await self.cleanup_conversation(conversation_id=conversation_id)
-        new_connection = await self.connect(conversation_id=conversation_id)
-        self._existing_conversation[conversation_id] = new_connection
-
-        # Send session configuration to new connection
-        system_prompt = self._get_system_prompt_from_conversation(conversation=conversation)
-        session_config = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
-        await new_connection.session.update(session=session_config)
 
         output_audio_path = await self.save_audio(result.audio_bytes, num_channels, sample_width, frame_rate)
         return output_audio_path, result

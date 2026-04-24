@@ -14,6 +14,8 @@ import pytest
 
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
+    AttackSummary,
+    ConversationMessagesResponse,
     CreateAttackRequest,
     MessagePieceRequest,
     PrependedMessageRequest,
@@ -748,7 +750,7 @@ class TestCreateAttack:
             call_args = mock_memory.add_attack_results_to_memory.call_args
             stored_ar = call_args[1]["attack_results"][0]
             assert stored_ar.objective == "Manual attack via GUI"
-            assert stored_ar.attack_identifier.class_name == "ManualAttack"
+            assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
 
 
 # ============================================================================
@@ -1158,9 +1160,9 @@ class TestAddMessage:
             # Normalizer should still get empty converter configs since pieces are preconverted
             call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
             assert call_kwargs["request_converter_configurations"] == []
-            # attack_identifier should be updated with converter identifiers
+            # atomic_attack_identifier should be updated with converter identifiers
             update_call = mock_memory.update_attack_result_by_id.call_args[1]
-            assert "attack_identifier" in update_call["update_fields"]
+            assert "atomic_attack_identifier" in update_call["update_fields"]
 
     @pytest.mark.asyncio
     async def test_add_message_no_existing_pieces_uses_request_labels(self, attack_service, mock_memory) -> None:
@@ -2199,11 +2201,93 @@ class TestAttackServiceAdditionalCoverage:
             await attack_service.add_message_async(attack_result_id="attack-1", request=request)
 
         update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
-        persisted_identifiers = update_fields["attack_identifier"]["children"]["request_converters"]
+        # Converters are now stored inside atomic_attack_identifier -> attack_technique -> attack
+        atomic_id = update_fields["atomic_attack_identifier"]
+        attack_id = atomic_id["children"]["attack_technique"]["children"]["attack"]
+        persisted_identifiers = attack_id["children"]["request_converters"]
         persisted_classes = [identifier["class_name"] for identifier in persisted_identifiers]
 
         assert persisted_classes.count("ExistingConverter") == 1
         assert persisted_classes.count("NewConverter") == 1
+        # The deprecated attack_identifier column should NOT be written
+        assert "attack_identifier" not in update_fields
+
+    @pytest.mark.asyncio
+    async def test_converter_merge_with_flat_atomic_identifier(self, attack_service, mock_memory):
+        """Should merge converters via fallback path when atomic_attack_identifier has no attack_technique child."""
+        new_converter = ComponentIdentifier(
+            class_name="NewConverter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+
+        # Build a flat atomic identifier (no attack_technique nesting — legacy shape)
+        attack_id = ComponentIdentifier(
+            class_name="ManualAttack",
+            class_module="pyrit.backend",
+            children={
+                "objective_target": ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target"),
+            },
+        )
+        ar = make_attack_result(conversation_id="flat-1")
+        ar.atomic_attack_identifier = ComponentIdentifier(
+            class_name="AtomicAttack",
+            class_module="pyrit.scenario.core.atomic_attack",
+            children={"attack": attack_id},
+        )
+
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_message_pieces.return_value = []
+
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="flat-1",
+            send=False,
+            converter_ids=["c-1"],
+        )
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
+            patch.object(
+                attack_service,
+                "get_attack_async",
+                new=AsyncMock(
+                    return_value=AttackSummary(
+                        attack_result_id="ar-flat-1",
+                        conversation_id="flat-1",
+                        attack_type="ManualAttack",
+                        converters=[],
+                        message_count=0,
+                        labels={},
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                ),
+            ),
+            patch.object(
+                attack_service,
+                "get_conversation_messages_async",
+                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="flat-1", messages=[])),
+            ),
+        ):
+            mock_converter_service = MagicMock()
+            mock_converter_service.get_converter_objects_for_ids.return_value = [
+                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
+            ]
+            mock_get_converter_service.return_value = mock_converter_service
+
+            await attack_service.add_message_async(attack_result_id="flat-1", request=request)
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        assert "atomic_attack_identifier" in update_fields
+        assert "attack_identifier" not in update_fields
+        # Flat fallback: converter should be under atomic -> attack -> children
+        atomic_id = update_fields["atomic_attack_identifier"]
+        attack_child = atomic_id["children"]["attack"]
+        persisted_converters = attack_child["children"]["request_converters"]
+        assert len(persisted_converters) == 1
+        assert persisted_converters[0]["class_name"] == "NewConverter"
 
     def test_duplicate_conversation_up_to_adds_pieces_when_present(self, attack_service, mock_memory):
         """Should duplicate up to cutoff and persist duplicated pieces only when returned."""

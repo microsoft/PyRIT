@@ -118,6 +118,22 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                     logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
                     continue
 
+                # Skip re-exported aliases: if the class was defined in a different
+                # module than the one being discovered, it's an alias (e.g.,
+                # ContentHarms in content_harms.py is really RapidResponse from
+                # rapid_response.py).
+                class_module = getattr(scenario_class, "__module__", "")
+                expected_module_suffix = registry_name.replace(".", "/")
+                if not class_module.endswith(registry_name.replace("/", ".")):
+                    # Build the full expected module name for comparison
+                    expected_module = f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
+                    if class_module != expected_module:
+                        logger.debug(
+                            f"Skipping alias '{scenario_class.__name__}' in '{registry_name}' "
+                            f"(defined in {class_module})"
+                        )
+                        continue
+
                 # Check for registry key collision
                 if registry_name in self._class_entries:
                     logger.warning(

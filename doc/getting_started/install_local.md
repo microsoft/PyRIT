@@ -4,7 +4,7 @@ Install PyRIT directly into your Python environment for full control and easy in
 
 ## Prerequisites
 
-- Python 3.10, 3.11, 3.12, or 3.13 (check with `python --version`)
+- Python 3.10, 3.11, 3.12, 3.13, or 3.14 (check with `python --version`)
 
 ## Install with pip or uv
 
