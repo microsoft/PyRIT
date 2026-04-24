@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
@@ -33,7 +33,7 @@ class WordLevelConverter(PromptConverter):
         *,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
         word_split_separator: Optional[str] = " ",
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the converter with the specified selection strategy.
