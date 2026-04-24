@@ -3,25 +3,26 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import warnings
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
-def deprecation_message(
+def print_deprecation_message(
     *,
     old_item: type | Callable[..., Any] | str,
     new_item: type | Callable[..., Any] | str,
     removed_in: str,
-) -> str:
+) -> None:
     """
-    Generate a deprecation message string.
+    Emit a deprecation warning.
 
     Args:
         old_item: The deprecated class, function, or its string name
         new_item: The replacement class, function, or its string name
         removed_in: The version in which the deprecated item will be removed
-
-    Returns:
-        A formatted deprecation message string
     """
     # Get the qualified name for old item
     if callable(old_item) or isinstance(old_item, type):
@@ -35,4 +36,8 @@ def deprecation_message(
     else:
         new_name = new_item
 
-    return f"{old_name} is deprecated and will be removed in {removed_in}; use {new_name} instead."
+    warnings.warn(
+        f"{old_name} is deprecated and will be removed in {removed_in}. Use {new_name} instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )

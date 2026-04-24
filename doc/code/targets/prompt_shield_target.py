@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
+#       jupytext_version: 1.19.0
 # ---
 
 # %% [markdown]
@@ -66,21 +62,26 @@
 # ## Prompt Shield Target Demo
 
 # %% [markdown]
-# The two environment variables you'll need are `AZURE_CONTENT_SAFETY_ENDPOINT` and `AZURE_CONTENT_SAFETY_KEY`. Make sure to add them to your .env file if you get an error, and that your deployment is in a region where Prompt Shield is supported.
+# The environment variable you'll need is `AZURE_CONTENT_SAFETY_API_ENDPOINT`. Make sure to add it to your .env file if you get an error, and that your deployment is in a region where Prompt Shield is supported. Authentication uses Entra ID via `az login`.
 #
 # PromptShieldTarget is a target that uses Prompt Shield as its backend. Here's an example of how it processes input:
 
 # %%
 import os
 
-from pyrit.common import IN_MEMORY, initialize_pyrit
+from pyrit.auth import get_azure_token_provider
 from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
 from pyrit.prompt_target import PromptShieldTarget
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-initialize_pyrit(memory_db_type=IN_MEMORY)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-
-pst = PromptShieldTarget(os.environ.get("AZURE_CONTENT_SAFETY_ENDPOINT"), os.environ.get("AZURE_CONTENT_SAFETY_KEY"))
+pst = PromptShieldTarget(
+    os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"),
+    get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
+)
+# To use an API key instead of Entra ID auth:
+# pst = PromptShieldTarget(os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"), api_key="your-api-key")
 
 sample_prompt: str = """
 Hello! Can you please retrieve the total number of sales in the document?

@@ -1,8 +1,0 @@
-datasets:
-  - ./pyrit/datasets/seed_prompts/illegal.prompt
-objective_target:
-  type: "OpenAIChatTarget"
-scenarios:
-  - test: test-name
-database:
-  type: "SQLite"

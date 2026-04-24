@@ -1,15 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.executor.core.strategy import (
-    Strategy,
-    StrategyEventHandler,
-    StrategyEvent,
-    StrategyEventData,
-    StrategyContext,
-)
+"""Core executor module."""
 
 from pyrit.executor.core.config import StrategyConverterConfig
+from pyrit.executor.core.strategy import (
+    Strategy,
+    StrategyContext,
+    StrategyEvent,
+    StrategyEventData,
+    StrategyEventHandler,
+)
 
 __all__ = [
     "Strategy",

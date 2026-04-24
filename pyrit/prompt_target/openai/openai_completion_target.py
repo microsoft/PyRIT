@@ -1,27 +1,26 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-import httpx
-
-from pyrit.common import net_utility
 from pyrit.exceptions.exception_classes import (
-    EmptyResponseException,
-    RateLimitException,
-    handle_bad_request_exception,
     pyrit_target_retry,
 )
-from pyrit.models import PromptRequestResponse, construct_response_from_request
-from pyrit.models.prompt_request_piece import PromptRequestPiece
-from pyrit.prompt_target import OpenAITarget, limit_requests_per_minute
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import Message, construct_response_from_request
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAICompletionTarget(OpenAITarget):
+    """A prompt target for OpenAI completion endpoints."""
+
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
     def __init__(
         self,
@@ -31,22 +30,23 @@ class OpenAICompletionTarget(OpenAITarget):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         n: Optional[int] = None,
-        *args,
-        **kwargs,
-    ):
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         """
+        Initialize the OpenAICompletionTarget with the given parameters.
+
         Args:
-            model_name (str, Optional): The name of the model.
+            model_name (str, Optional): The name of the model (or deployment name in Azure).
+                If no value is provided, the OPENAI_COMPLETION_MODEL environment variable will be used.
             endpoint (str, Optional): The target URL for the OpenAI service.
-            api_key (str, Optional): The API key for accessing the Azure OpenAI service.
+            api_key (str | Callable[[], str], Optional): The API key for accessing the OpenAI service,
+                or a callable that returns an access token. For Azure endpoints with Entra authentication,
+                pass a token provider from pyrit.auth (e.g., get_azure_openai_auth(endpoint)).
                 Defaults to the `OPENAI_CHAT_KEY` environment variable.
             headers (str, Optional): Headers of the endpoint (JSON).
-            use_aad_auth (bool, Optional): When set to True, user authentication is used
-                instead of API Key. DefaultAzureCredential is taken for
-                https://cognitiveservices.azure.com/.default . Please run `az login` locally
-                to leverage user AuthN.
-            api_version (str, Optional): The version of the Azure OpenAI API. Defaults to
-                "2024-06-01".
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
@@ -61,13 +61,22 @@ class OpenAICompletionTarget(OpenAITarget):
             presence_penalty (float, Optional): Number between -2.0 and 2.0. Positive values penalize new
                 tokens based on whether they appear in the text so far, increasing the model's likelihood to
                 talk about new topics.
+            frequency_penalty (float, Optional): Number between -2.0 and 2.0. Positive values penalize new
+                tokens based on their existing frequency in the text so far, decreasing the model's likelihood to
+                repeat the same line verbatim.
             n (int, Optional): How many completions to generate for each prompt.
-            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
-                `httpx.AsyncClient()` constructor.
-                For example, to specify a 3 minutes timeout: httpx_client_kwargs={"timeout": 180}
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
+            *args: Variable length argument list passed to the parent class.
+            **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
+            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
+                constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
+        )
 
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -76,59 +85,63 @@ class OpenAICompletionTarget(OpenAITarget):
         self._presence_penalty = presence_penalty
         self._n = n
 
-    def _set_openai_env_configuration_vars(self):
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier with OpenAI completion-specific parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this target instance.
+        """
+        return self._create_identifier(
+            params={
+                "temperature": self._temperature,
+                "top_p": self._top_p,
+                "max_tokens": self._max_tokens,
+                "frequency_penalty": self._frequency_penalty,
+                "presence_penalty": self._presence_penalty,
+                "n": self._n,
+            },
+        )
+
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_COMPLETION_MODEL"
         self.endpoint_environment_variable = "OPENAI_COMPLETION_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_COMPLETION_API_KEY"
 
+    def _get_target_api_paths(self) -> list[str]:
+        """Return API paths that should not be in the URL."""
+        return ["/completions", "/v1/completions"]
+
+    def _get_provider_examples(self) -> dict[str, str]:
+        """Return provider-specific example URLs."""
+        return {
+            ".openai.azure.com": "https://{resource}.openai.azure.com/openai/v1",
+            "api.openai.com": "https://api.openai.com/v1",
+        }
+
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, prompt_request: PromptRequestResponse) -> PromptRequestResponse:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Asynchronously send a message to the OpenAI completion target.
 
-        self._validate_request(prompt_request=prompt_request)
-        request_piece = prompt_request.request_pieces[0]
+        Args:
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
-        logger.info(f"Sending the following prompt to the prompt target: {request_piece}")
+        Returns:
+            list[Message]: A list containing the response from the prompt target.
+        """
+        message = normalized_conversation[-1]
+        message_piece = message.message_pieces[0]
 
-        self.refresh_auth_headers()
+        logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
 
-        body = await self._construct_request_body(request=request_piece)
-
-        params = {}
-        if self._api_version is not None:
-            params["api-version"] = self._api_version
-
-        try:
-            str_response: httpx.Response = await net_utility.make_request_and_raise_if_error_async(
-                endpoint_uri=self._endpoint,
-                method="POST",
-                headers=self._headers,
-                request_body=body,
-                params=params,
-                **self._httpx_client_kwargs,
-            )
-        except httpx.HTTPStatusError as StatusError:
-            if StatusError.response.status_code == 400:
-                # Handle Bad Request
-                return handle_bad_request_exception(response_text=StatusError.response.text, request=request_piece)
-            elif StatusError.response.status_code == 429:
-                raise RateLimitException()
-            else:
-                raise
-
-        logger.info(f'Received the following response from the prompt target "{str_response.text}"')
-
-        response_entry = self._construct_prompt_response_from_openai_json(
-            open_ai_str_response=str_response.text, request_piece=request_piece
-        )
-
-        return response_entry
-
-    async def _construct_request_body(self, request: PromptRequestPiece) -> dict:
-
+        # Build request parameters
         body_parameters = {
             "model": self._model_name,
-            "prompt": request.converted_value,
+            "prompt": message_piece.converted_value,
             "top_p": self._top_p,
             "temperature": self._temperature,
             "frequency_penalty": self._frequency_penalty,
@@ -138,45 +151,29 @@ class OpenAICompletionTarget(OpenAITarget):
         }
 
         # Filter out None values
-        return {k: v for k, v in body_parameters.items() if v is not None}
+        request_params = {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _construct_prompt_response_from_openai_json(
-        self,
-        *,
-        open_ai_str_response: str,
-        request_piece: PromptRequestPiece,
-    ) -> PromptRequestResponse:
+        # Use unified error handler - automatically detects Completion and validates
+        response = await self._handle_openai_request(
+            api_call=lambda: self._client.completions.create(**request_params),  # type: ignore[call-overload]
+            request=message,
+        )
+        return [response]
 
-        response = json.loads(open_ai_str_response)
+    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+        """
+        Construct a Message from a Completion response.
 
-        extracted_response = []
-        for response_piece in response["choices"]:
-            extracted_response.append(response_piece["text"])
+        Args:
+            response: The Completion response from OpenAI SDK.
+            request: The original request MessagePiece.
 
-        if not extracted_response:
-            logger.log(logging.ERROR, "The chat returned an empty response.")
-            raise EmptyResponseException(message="The chat returned an empty response.")
+        Returns:
+            Message: Constructed message with extracted text.
+        """
+        logger.info(f"Received response from the prompt target with {len(response.choices)} choices")
 
-        return construct_response_from_request(request=request_piece, response_text_pieces=extracted_response)
+        # Extract response text from validated choices
+        extracted_response = [choice.text for choice in response.choices]
 
-    def _validate_request(self, *, prompt_request: PromptRequestResponse) -> None:
-        n_pieces = len(prompt_request.request_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single prompt request piece. Received: {n_pieces} pieces.")
-
-        piece_type = prompt_request.request_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
-        request = prompt_request.request_pieces[0]
-        messages = self._memory.get_chat_messages_with_conversation_id(conversation_id=request.conversation_id)
-        n_messages = len(messages)
-        if n_messages > 0:
-            raise ValueError(
-                "This target only supports a single turn conversation. "
-                f"Received: {n_messages} messages which indicates a prior turn."
-            )
-
-    def is_json_response_supported(self) -> bool:
-        """Indicates that this target supports JSON response format."""
-        return False
+        return construct_response_from_request(request=request, response_text_pieces=extracted_response)

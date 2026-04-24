@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import random
-import re
-from typing import List, Optional, Union
+from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
 
@@ -17,29 +18,20 @@ class LeetspeakConverter(WordLevelConverter):
         self,
         *,
         deterministic: bool = True,
-        custom_substitutions: Optional[dict] = None,
-        indices: Optional[List[int]] = None,
-        keywords: Optional[List[str]] = None,
-        proportion: Optional[float] = None,
-        regex: Optional[Union[str, re.Pattern]] = None,
+        custom_substitutions: Optional[dict[str, list[str]]] = None,
+        word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with optional deterministic mode and custom substitutions.
-
-        This class allows for selection of words to convert based on various criteria.
-        Only one selection parameter may be provided at a time (indices, keywords, proportion, or regex).
-        If no selection parameter is provided, all words will be converted.
+        Initialize the converter with optional deterministic mode and custom substitutions.
 
         Args:
             deterministic (bool): If True, use the first substitution for each character.
                 If False, randomly choose a substitution for each character.
             custom_substitutions (Optional[dict]): A dictionary of custom substitutions to override the defaults.
-            indices (Optional[List[int]]): Specific indices of words to convert.
-            keywords (Optional[List[str]]): Keywords to select words for conversion.
-            proportion (Optional[float]): Proportion of randomly selected words to convert [0.0-1.0].
-            regex (Optional[Union[str, re.Pattern]]): Regex pattern to match words for conversion.
+            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+                If None, all words will be converted.
         """
-        super().__init__(indices=indices, keywords=keywords, proportion=proportion, regex=regex)
+        super().__init__(word_selection_strategy=word_selection_strategy)
 
         default_substitutions = {
             "a": ["4", "@", "/\\", "@", "^", "/-\\"],
@@ -58,8 +50,41 @@ class LeetspeakConverter(WordLevelConverter):
         # Use custom substitutions if provided, otherwise default to the standard ones
         self._leet_substitutions = custom_substitutions if custom_substitutions else default_substitutions
         self._deterministic = deterministic
+        self._has_custom_substitutions = custom_substitutions is not None
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with leetspeak parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        import hashlib
+        import json
+
+        # Hash custom substitutions if provided
+        substitutions_hash = None
+        if self._has_custom_substitutions:
+            substitutions_str = json.dumps(self._leet_substitutions, sort_keys=True)
+            substitutions_hash = hashlib.sha256(substitutions_str.encode("utf-8")).hexdigest()[:16]
+
+        return self._create_identifier(
+            params={
+                "deterministic": self._deterministic,
+                "custom_substitutions_hash": substitutions_hash,
+            },
+        )
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         converted_word = []
         for char in word:
             lower_char = char.lower()

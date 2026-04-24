@@ -1,56 +1,68 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""Attack executor module."""
+
+from pyrit.executor.attack.component import (
+    ConversationManager,
+    ConversationState,
+    PrependedConversationConfig,
+)
 from pyrit.executor.attack.core import (
-    AttackStrategy,
+    AttackAdversarialConfig,
     AttackContext,
     AttackConverterConfig,
-    AttackScoringConfig,
-    AttackAdversarialConfig,
     AttackExecutor,
+    AttackExecutorResult,
+    AttackParameters,
+    AttackScoringConfig,
+    AttackStrategy,
 )
-
-from pyrit.executor.attack.single_turn import (
-    SingleTurnAttackStrategy,
-    SingleTurnAttackContext,
-    PromptSendingAttack,
-    FlipAttack,
-    ContextComplianceAttack,
-    ManyShotJailbreakAttack,
-    RolePlayAttack,
-    RolePlayPaths,
-    SkeletonKeyAttack,
-)
-
 from pyrit.executor.attack.multi_turn import (
+    ChunkedRequestAttack,
+    ChunkedRequestAttackContext,
     ConversationSession,
-    MultiTurnAttackStrategy,
-    MultiTurnAttackContext,
-    MultiPromptSendingAttack,
-    MultiPromptSendingAttackContext,
-    RedTeamingAttack,
-    RTASystemPromptPaths,
     CrescendoAttack,
     CrescendoAttackContext,
     CrescendoAttackResult,
+    MultiPromptSendingAttack,
+    MultiPromptSendingAttackParameters,
+    MultiTurnAttackContext,
+    MultiTurnAttackStrategy,
+    RedTeamingAttack,
+    RTASystemPromptPaths,
     TAPAttack,
-    TreeOfAttacksWithPruningAttack,
     TAPAttackContext,
     TAPAttackResult,
+    TreeOfAttacksWithPruningAttack,
+    generate_simulated_conversation_async,
 )
 
-from pyrit.executor.attack.printer import ConsoleAttackResultPrinter, AttackResultPrinter, MarkdownAttackResultPrinter
-
-from pyrit.executor.attack.component import ConversationManager, ConversationState, ObjectiveEvaluator
+# Import printer modules last to avoid circular dependencies
+from pyrit.executor.attack.printer import AttackResultPrinter, ConsoleAttackResultPrinter, MarkdownAttackResultPrinter
+from pyrit.executor.attack.single_turn import (
+    ContextComplianceAttack,
+    FlipAttack,
+    ManyShotJailbreakAttack,
+    PromptSendingAttack,
+    RolePlayAttack,
+    RolePlayPaths,
+    SingleTurnAttackContext,
+    SingleTurnAttackStrategy,
+    SkeletonKeyAttack,
+)
 
 __all__ = [
     "AttackStrategy",
     "AttackContext",
+    "AttackParameters",
+    "ChunkedRequestAttack",
+    "ChunkedRequestAttackContext",
     "CrescendoAttack",
     "CrescendoAttackContext",
     "CrescendoAttackResult",
     "MultiPromptSendingAttack",
-    "MultiPromptSendingAttackContext",
+    "MultiPromptSendingAttackParameters",
     "TAPAttack",
     "TreeOfAttacksWithPruningAttack",
     "TAPAttackContext",
@@ -78,5 +90,7 @@ __all__ = [
     "ConversationManager",
     "ConversationState",
     "AttackExecutor",
-    "ObjectiveEvaluator",
+    "AttackExecutorResult",
+    "PrependedConversationConfig",
+    "generate_simulated_conversation_async",
 ]

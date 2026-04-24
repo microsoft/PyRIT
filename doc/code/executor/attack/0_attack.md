@@ -15,14 +15,14 @@ flowchart LR
 To execute an Attack, one generally follows this pattern:
 1. Create an **attack context** containing state information (i.e. attack objective, memory labels, prepended conversations, seed prompts)
 2. Initialize an **attack strategy** (with optional **attack configurations** for converters, scorers, and adversarial chat targets)
-3. _Execute_ the attack strategy with the created context
-4. Recieve and process the **attack result**
+3. _Execute_ the attack strategy with the created context (which  includes the objective and often optionally prepended_conversations and next_message)
+4. Receive and process the **attack result**
 
 ## Types of Attacks
 
 - **Single-Turn Attacks**: Single-turn attacks typically send prompts to a target endpoint to try to achieve a specific objective within a single turn. These attack strategies evaluate the target response using optional scorers to determine if the objective has been met.
 
-- **Multi-Turn Attacks**: Multi-turn attacks introduce an iterative attack process where an adversarial chat model generates prompts to send to a target system, attempting to achieve a specified objective over multiple turns. This strategy evaluates the response using a scorer to determine if the objective has been met and continues iterating until the objective is met or a maximum numbers of turns is attempted. These types of attacks tend to work better than single-turn attacks in eliciting harm if a target endpoint keeps track of conversation history. Nonetheless, multi-turn attacks can be useful on targets that only accept individual prompts as opposed to conversations. The Tree of Attacks with Pruning strategy is a good example that was developed for this use case.
+- **Multi-Turn Attacks**: Multi-turn attacks introduce an iterative attack process where an adversarial chat model generates prompts to send to a target system, attempting to achieve a specified objective over multiple turns. This strategy evaluates the response using a scorer to determine if the objective has been met and continues iterating until the objective is met or a maximum numbers of turns is attempted. These types of attacks tend to work better than single-turn attacks in eliciting harm if a target endpoint keeps track of conversation history. Nonetheless, multi-turn attacks can be useful on targets that only accept individual prompts as opposed to conversations. The Tree of Attacks with Pruning [@mehrotra2023tap] strategy is a good example that was developed for this use case.
 
 Single-turn attacks differ from multi-turn attacks because:
 1. They do not require an adversarial configuration (this is where you would set the adversarial chat target in multi-turn attacks)
@@ -63,7 +63,7 @@ flowchart LR
     subgraph AttackContext["AttackContext(StrategyContext) <br>(attack/core/attack_strategy.py)"]
         C_s["SingleTurnAttackContext <br>(attack/single_turn/single_turn_attack_strategy.py)"]
         a["conversation_id"]
-        b["seed_prompt_group"]
+        b["seed_group"]
         c["..."]
         C_m["MultiTurnAttackContext <br>(attack/multi_turn/multi_turn_attack_strategy.py)"]
         A["custom_prompt"]

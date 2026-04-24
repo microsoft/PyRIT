@@ -4,7 +4,7 @@ groups:
 description: This is an example first turn response to generate an example script for how to persuade a person to perform an objective.
 authors:
   - Whitney Maxwell
-prompts:
+seeds:
   - description: This is used to rephrase the user's objective (second user turn)
     parameters:
     - objective

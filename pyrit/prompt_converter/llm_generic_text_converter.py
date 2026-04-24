@@ -1,17 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
+from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    Message,
+    MessagePiece,
     PromptDataType,
-    PromptRequestPiece,
-    PromptRequestResponse,
     SeedPrompt,
 )
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 from pyrit.prompt_target import PromptChatTarget
 
 logger = logging.getLogger(__name__)
@@ -22,36 +25,75 @@ class LLMGenericTextConverter(PromptConverter):
     Represents a generic LLM converter that expects text to be transformed (e.g. no JSON parsing or format).
     """
 
+    SUPPORTED_INPUT_TYPES = ("text",)
+    SUPPORTED_OUTPUT_TYPES = ("text",)
+
+    @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget,
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         system_prompt_template: Optional[SeedPrompt] = None,
         user_prompt_template_with_objective: Optional[SeedPrompt] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
-        Initializes the converter with a target and optional prompt templates.
+        Initialize the converter with a target and optional prompt templates.
 
         Args:
             converter_target (PromptChatTarget): The endpoint that converts the prompt.
+                Can be omitted if a default has been configured via PyRIT initialization.
             system_prompt_template (SeedPrompt, Optional): The prompt template to set as the system prompt.
             user_prompt_template_with_objective (SeedPrompt, Optional): The prompt template to set as the user prompt.
                 expects
             kwargs: Additional parameters for the prompt template.
+
+        Raises:
+            ValueError: If converter_target is not provided and no default has been configured.
         """
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
         self._prompt_kwargs = kwargs
 
-        if user_prompt_template_with_objective and "objective" not in user_prompt_template_with_objective.parameters:
+        if user_prompt_template_with_objective and (
+            user_prompt_template_with_objective.parameters is None
+            or "objective" not in user_prompt_template_with_objective.parameters
+        ):
             raise ValueError("user_prompt_template_with_objective must contain the 'objective' parameter")
 
         self._user_prompt_template_with_objective = user_prompt_template_with_objective
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with LLM and template parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        # Hash templates if they exist and have a value attribute
+        system_prompt_hash = None
+        if self._system_prompt_template and hasattr(self._system_prompt_template, "value"):
+            system_prompt_hash = hashlib.sha256(str(self._system_prompt_template.value).encode("utf-8")).hexdigest()[
+                :16
+            ]
+
+        user_prompt_hash = None
+        if self._user_prompt_template_with_objective and hasattr(self._user_prompt_template_with_objective, "value"):
+            user_prompt_hash = hashlib.sha256(
+                str(self._user_prompt_template_with_objective.value).encode("utf-8")
+            ).hexdigest()[:16]
+
+        return self._create_identifier(
+            params={
+                "system_prompt_template_hash": system_prompt_hash,
+                "user_prompt_template_hash": user_prompt_hash,
+            },
+            children={"converter_target": self._converter_target.get_identifier()},
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt using an LLM via the specified converter target.
+        Convert the given prompt using an LLM via the specified converter target.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -59,20 +101,21 @@ class LLMGenericTextConverter(PromptConverter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
-        """
 
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         conversation_id = str(uuid.uuid4())
 
         kwargs = self._prompt_kwargs.copy()
 
         if self._system_prompt_template:
-
             system_prompt = self._system_prompt_template.render_template_value(**kwargs)
 
             self._converter_target.set_system_prompt(
                 system_prompt=system_prompt,
                 conversation_id=conversation_id,
-                orchestrator_identifier=None,
+                attack_identifier=None,
             )
 
         if not self.input_supported(input_type):
@@ -81,9 +124,9 @@ class LLMGenericTextConverter(PromptConverter):
         if self._user_prompt_template_with_objective:
             prompt = self._user_prompt_template_with_objective.render_template_value(objective=prompt)
 
-        request = PromptRequestResponse(
+        request = Message(
             [
-                PromptRequestPiece(
+                MessagePiece(
                     role="user",
                     original_value=prompt,
                     conversation_id=conversation_id,
@@ -96,11 +139,5 @@ class LLMGenericTextConverter(PromptConverter):
             ]
         )
 
-        response = await self._converter_target.send_prompt_async(prompt_request=request)
-        return ConverterResult(output_text=response.get_value(), output_type="text")
-
-    def input_supported(self, input_type: PromptDataType) -> bool:
-        return input_type == "text"
-
-    def output_supported(self, output_type: PromptDataType) -> bool:
-        return output_type == "text"
+        response = await self._converter_target.send_prompt_async(message=request)
+        return ConverterResult(output_text=response[0].get_value(), output_type="text")

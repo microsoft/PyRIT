@@ -14,7 +14,8 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "executor").resolve()
 folder_paths = [d for d in nb_directory_path.iterdir() if d.is_dir()]
 
 skipped_files = [
-    "1_xpia_workflow.ipynb",  # requires Azure SQL Storage IO for Azure Storage Account (see #4001)
+    "1_xpia_website.ipynb",  # requires publicly accessible Azure Storage Account
+    "2_xpia_ai_recruiter.ipynb",  # requires AI recruiter service running locally
 ]
 
 

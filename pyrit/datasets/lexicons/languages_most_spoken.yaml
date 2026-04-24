@@ -7,7 +7,7 @@ description: |
 authors: Frédéric Dubut
 groups: AI Red Team
 source: Wikipedia https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers
-prompts:
+seeds:
 # More than one billion speakers
   - value: English
   - value: Mandarin Chinese

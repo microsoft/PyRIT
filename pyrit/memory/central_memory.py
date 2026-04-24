@@ -10,11 +10,11 @@ logger = logging.getLogger(__name__)
 
 class CentralMemory:
     """
-    Provides a centralized memory instance across the framework. The provided memory
-    instance will be reused for future calls.
+    Provide a centralized memory instance across the framework.
+    The provided memory instance will be reused for future calls.
     """
 
-    _memory_instance: MemoryInterface = None
+    _memory_instance: MemoryInterface | None = None
 
     @classmethod
     def set_memory_instance(cls, passed_memory: MemoryInterface) -> None:
@@ -30,10 +30,15 @@ class CentralMemory:
     @classmethod
     def get_memory_instance(cls) -> MemoryInterface:
         """
-        Returns a centralized memory instance.
+        Return a centralized memory instance.
+
+        Returns:
+            MemoryInterface: The singleton memory instance.
+
+        Raises:
+            ValueError: If the central memory instance has not been set.
         """
         if cls._memory_instance:
             logger.info(f"Using existing memory instance: {type(cls._memory_instance).__name__}")
             return cls._memory_instance
-        else:
-            raise ValueError("Central memory instance has not been set. Use `set_memory_instance` to set it.")
+        raise ValueError("Central memory instance has not been set. Use `set_memory_instance` to set it.")

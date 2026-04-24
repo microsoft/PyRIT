@@ -1,14 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Optional, Protocol
 
 from pyrit.models import (
-    PromptRequestPiece,
-    PromptRequestResponse,
+    Message,
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 # Avoid errors for users who don't have playwright installed
 if TYPE_CHECKING:
@@ -22,50 +24,110 @@ class InteractionFunction(Protocol):
     Defines the structure of interaction functions used with PlaywrightTarget.
     """
 
-    async def __call__(self, page: "Page", request_piece: PromptRequestPiece) -> str: ...
+    async def __call__(self, page: "Page", message: Message) -> str:
+        """
+        Execute the interaction function with the given page and message.
+
+        Args:
+            page (Page): The Playwright page object.
+            message (Message): The message object containing the prompt.
+
+        Returns:
+            str: The response text from the interaction.
+        """
+        ...
 
 
 class PlaywrightTarget(PromptTarget):
     """
     PlaywrightTarget uses Playwright to interact with a web UI.
 
+    The interaction function receives the complete Message and can process
+    multiple pieces as needed. All pieces must be of type 'text' or 'image_path'.
+
     Parameters:
         interaction_func (InteractionFunction): The function that defines how to interact with the page.
+            This function receives the Playwright page and the complete Message.
         page (Page): The Playwright page object to use for interaction.
     """
+
+    # Supported data types
+    SUPPORTED_DATA_TYPES = {"text", "image_path"}
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        )
+    )
 
     def __init__(
         self,
         *,
         interaction_func: InteractionFunction,
         page: "Page",
+        max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
-        super().__init__()
+        """
+        Initialize the Playwright target.
+
+        Args:
+            interaction_func (InteractionFunction): The function that defines how to interact with the page.
+            page (Page): The Playwright page object to use for interaction.
+            max_requests_per_minute (int, Optional): Number of requests the target can handle per
+                minute before hitting a rate limit. The number of requests sent to the target
+                will be capped at the value provided.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
+        """
+        endpoint = page.url if page else ""
+        super().__init__(
+            max_requests_per_minute=max_requests_per_minute,
+            endpoint=endpoint,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
         self._interaction_func = interaction_func
         self._page = page
 
-    async def send_prompt_async(self, *, prompt_request: PromptRequestResponse) -> PromptRequestResponse:
-        self._validate_request(prompt_request=prompt_request)
+    @limit_requests_per_minute
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Asynchronously send a message to the Playwright target.
+
+        Args:
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
+
+        Returns:
+            list[Message]: A list containing the response from the prompt target.
+
+        Raises:
+            RuntimeError: If the Playwright page is not initialized or if an error occurs during interaction.
+        """
+        message = normalized_conversation[-1]
         if not self._page:
             raise RuntimeError(
                 "Playwright page is not initialized. Please pass a Page object when initializing PlaywrightTarget."
             )
 
-        request_piece = prompt_request.request_pieces[0]
-
         try:
-            text = await self._interaction_func(self._page, request_piece)
+            text = await self._interaction_func(self._page, message)
         except Exception as e:
             raise RuntimeError(f"An error occurred during interaction: {str(e)}") from e
 
+        # For response construction, we'll use the first piece as reference
+        # but the interaction function can process all pieces.
+        request_piece = message.message_pieces[0]
         response_entry = construct_response_from_request(request=request_piece, response_text_pieces=[text])
-        return response_entry
-
-    def _validate_request(self, *, prompt_request: PromptRequestResponse) -> None:
-        n_pieces = len(prompt_request.request_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single prompt request piece. Received: {n_pieces} pieces.")
-
-        piece_type = prompt_request.request_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
+        return [response_entry]

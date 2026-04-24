@@ -25,7 +25,7 @@ To execute, one generally follows this pattern:
 1. Create an **strategy context** containing state information
 2. Initialize a **strategy** (with optional **configurations** for converters etc.)
 3. _Execute_ the attack strategy with the created context
-4. Recieve and process the **strategy result**
+4. Receive and process the **strategy result**
 
 Each attack implements a lifecycle with distinct phases (all abstract methods), and the `Strategy` class provides a non-abstract `execute_async()` method that enforces this lifecycle:
 * `_validate_context`: Validate context

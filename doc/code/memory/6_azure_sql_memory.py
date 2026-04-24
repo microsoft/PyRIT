@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.17.3
 # ---
 
 # %% [markdown]
@@ -14,7 +14,7 @@
 #
 # The memory AzureSQL database can be thought of as a normalized source of truth. The memory module is the primary way pyrit keeps track of requests and responses to targets and scores. Most of this is done automatically. All attacks write to memory for later retrieval. All scorers also write to memory when scoring.
 #
-# The schema is found in `memory_models.py` and can be programatically viewed as follows
+# The schema is found in `memory_models.py` and can be programmatically viewed as follows
 #
 # ## Azure Login
 #
@@ -39,14 +39,13 @@
 #
 
 # %%
-from pyrit.common import AZURE_SQL, initialize_pyrit
 from pyrit.memory import CentralMemory
+from pyrit.setup import AZURE_SQL, initialize_pyrit_async
 
-initialize_pyrit(memory_db_type=AZURE_SQL)
+await initialize_pyrit_async(memory_db_type=AZURE_SQL)  # type: ignore
 
 memory = CentralMemory.get_memory_instance()
 memory.print_schema()  # type: ignore
-
 
 # %% [markdown]
 # ## Basic Azure SQL Memory Programming Usage
@@ -56,34 +55,29 @@ memory.print_schema()  # type: ignore
 # %%
 from uuid import uuid4
 
-from pyrit.models import PromptRequestPiece, PromptRequestResponse
+from pyrit.models import Message, MessagePiece
 
 conversation_id = str(uuid4())
 
 message_list = [
-    PromptRequestPiece(
+    MessagePiece(
         role="user", original_value="Hi, chat bot! This is my initial prompt.", conversation_id=conversation_id
     ),
-    PromptRequestPiece(
+    MessagePiece(
         role="assistant", original_value="Nice to meet you! This is my response.", conversation_id=conversation_id
     ),
-    PromptRequestPiece(
+    MessagePiece(
         role="user",
         original_value="Wonderful! This is my second prompt to the chat bot!",
         conversation_id=conversation_id,
     ),
 ]
 
-memory.add_request_response_to_memory(request=PromptRequestResponse([message_list[0]]))
-memory.add_request_response_to_memory(request=PromptRequestResponse([message_list[1]]))
-memory.add_request_response_to_memory(request=PromptRequestResponse([message_list[2]]))
-
+memory.add_message_to_memory(request=Message([message_list[0]]))
+memory.add_message_to_memory(request=Message([message_list[1]]))
+memory.add_message_to_memory(request=Message([message_list[2]]))
 
 entries = memory.get_conversation(conversation_id=conversation_id)
 
 for entry in entries:
     print(entry)
-
-
-# Cleanup memory resources
-memory.dispose_engine()

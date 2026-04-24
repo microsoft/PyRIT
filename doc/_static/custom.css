@@ -1,0 +1,5 @@
+/* Specifically added for:
+  doc\code\converters\transparency_attack_converter.ipynb */
+.cell_output img {
+	background-color: transparent !important;
+}

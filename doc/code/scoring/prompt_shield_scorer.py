@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
+#       jupytext_version: 1.17.3
 # ---
 
 # %% [markdown]
@@ -39,7 +35,6 @@
 #
 # Also, for scoring purposes, remember that **True** means an attack *was* detected, and **False** means an attack *was NOT* detected. Use a custom scoring template to define the behavior you want (e.g. true is a failure because the prompt was flagged as a jailbreak when it wasn't), because this can get confusing quickly. This helps a lot in the scenario that you're using PromptShieldTarget in conjunction with a SelfAskScorer instead, because you can instruct the SelfAskScorer much more granularly, e.g. "true: if document 2 and the userPrompt have both been flagged."
 # %%
-from pyrit.common import IN_MEMORY, initialize_pyrit
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ConsoleAttackResultPrinter,
@@ -48,10 +43,18 @@ from pyrit.executor.attack import (
 from pyrit.memory import CentralMemory
 from pyrit.prompt_target import OpenAIChatTarget, PromptShieldTarget
 from pyrit.score import BatchScorer, PromptShieldScorer
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-initialize_pyrit(memory_db_type=IN_MEMORY)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 pst = PromptShieldTarget()
+# For Azure Content Safety with Entra ID authentication enabled, use the following command instead. Make sure to run `az login` first.
+# from pyrit.auth import get_azure_token_provider
+# endpoint = "https://your-endpoint.cognitiveservices.azure.com"
+# pst = PromptShieldTarget(
+#     endpoint=endpoint,
+#     api_key=get_azure_token_provider("https://cognitiveservices.azure.com/.default")
+# )
 
 scorer = PromptShieldScorer(prompt_shield_target=pst)
 
@@ -70,16 +73,13 @@ await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ig
 
 # Fetch prompts to score by conversation ID
 memory = CentralMemory.get_memory_instance()
-prompt_to_score = memory.get_prompt_request_pieces(conversation_id=result.conversation_id)[0]
+prompt_to_score = memory.get_message_pieces(conversation_id=result.conversation_id)[0]
 
 batch_scorer = BatchScorer()
-scores = await batch_scorer.score_prompts_by_id_async(  # type: ignore
+scores = await batch_scorer.score_responses_by_filters_async(  # type: ignore
     scorer=scorer, prompt_ids=[str(prompt_to_score.id)]
 )
 
 for score in scores:
-    prompt_text = memory.get_prompt_request_pieces(prompt_ids=[str(score.prompt_request_response_id)])[0].original_value
+    prompt_text = memory.get_message_pieces(prompt_ids=[str(score.message_piece_id)])[0].original_value
     print(f"{score} : {prompt_text}")  # We can see that the attack was detected
-
-# %%
-memory.dispose_engine()

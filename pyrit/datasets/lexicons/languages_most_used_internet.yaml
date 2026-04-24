@@ -6,7 +6,7 @@ description: |
 authors: Frédéric Dubut
 groups: AI Red Team
 source: Wikipedia https://en.wikipedia.org/wiki/Languages_used_on_the_Internet
-prompts:
+seeds:
   - value: English
   - value: Spanish
   - value: German

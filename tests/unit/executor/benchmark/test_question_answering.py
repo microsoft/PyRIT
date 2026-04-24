@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,24 +9,33 @@ from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
-    PromptRequestPiece,
-    PromptRequestResponse,
+    Message,
+    MessagePiece,
     QuestionAnsweringEntry,
     QuestionChoice,
-    SeedPrompt,
-    SeedPromptGroup,
 )
 from pyrit.prompt_target import PromptTarget
 
-
 # Fixtures at the top of the file
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
 @pytest.fixture
 def mock_prompt_target() -> MagicMock:
     """Mock prompt target for testing."""
     target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = _mock_target_id("mock_prompt_target")
     return target
 
 
@@ -87,7 +95,6 @@ def sample_attack_result() -> AttackResult:
     return AttackResult(
         conversation_id="test-conversation-id",
         objective="Test objective",
-        attack_identifier={"name": "test_attack"},
         executed_turns=1,
         execution_time_ms=1000,
         outcome=AttackOutcome.SUCCESS,
@@ -152,16 +159,13 @@ class TestQuestionAnsweringBenchmark:
         assert "Option 0: London" in sample_benchmark_context.generated_question_prompt
         assert "Option 1: Paris" in sample_benchmark_context.generated_question_prompt
 
-        # Check that seed prompt group was created
-        assert sample_benchmark_context.generated_seed_prompt_group is not None
-        assert len(sample_benchmark_context.generated_seed_prompt_group.prompts) == 1
-
-        seed_prompt = sample_benchmark_context.generated_seed_prompt_group.prompts[0]
-        assert seed_prompt.value == sample_benchmark_context.generated_question_prompt
-        assert seed_prompt.data_type == "text"
-        assert seed_prompt.metadata is not None
-        assert seed_prompt.metadata["correct_answer_index"] == "1"
-        assert seed_prompt.metadata["correct_answer"] == "Paris"
+        # Check that message was created with metadata
+        assert sample_benchmark_context.generated_message is not None
+        message_piece = sample_benchmark_context.generated_message.get_piece()
+        assert message_piece.original_value == sample_benchmark_context.generated_question_prompt
+        assert message_piece.prompt_metadata is not None
+        assert message_piece.prompt_metadata["correct_answer_index"] == "1"
+        assert message_piece.prompt_metadata["correct_answer"] == "Paris"
 
     @pytest.mark.asyncio
     async def test_format_question_prompt(
@@ -198,27 +202,22 @@ class TestQuestionAnsweringBenchmark:
         assert len(options_lines) == 4
 
     @pytest.mark.asyncio
-    async def test_create_seed_prompt_group(
+    async def test_create_message(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
-        """Test seed prompt group creation."""
+        """Test message creation with metadata."""
         benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
         question_prompt = "Test question prompt"
 
-        seed_prompt_group = benchmark._create_seed_prompt_group(
-            entry=sample_question_entry, question_prompt=question_prompt
-        )
+        message = benchmark._create_message(entry=sample_question_entry, question_prompt=question_prompt)
 
-        assert isinstance(seed_prompt_group, SeedPromptGroup)
-        assert len(seed_prompt_group.prompts) == 1
-
-        seed_prompt = seed_prompt_group.prompts[0]
-        assert isinstance(seed_prompt, SeedPrompt)
-        assert seed_prompt.value == question_prompt
-        assert seed_prompt.data_type == "text"
-        assert seed_prompt.metadata is not None
-        assert seed_prompt.metadata["correct_answer_index"] == "1"
-        assert seed_prompt.metadata["correct_answer"] == "Paris"
+        assert isinstance(message, Message)
+        message_piece = message.get_piece()
+        assert message_piece.original_value == question_prompt
+        assert message_piece.api_role == "user"
+        assert message_piece.prompt_metadata is not None
+        assert message_piece.prompt_metadata["correct_answer_index"] == "1"
+        assert message_piece.prompt_metadata["correct_answer"] == "Paris"
 
     @pytest.mark.asyncio
     async def test_perform_async_calls_prompt_sending_attack(
@@ -246,7 +245,8 @@ class TestQuestionAnsweringBenchmark:
             call_kwargs = mock_attack_instance.execute_async.call_args.kwargs
 
             assert call_kwargs["objective"] == sample_benchmark_context.generated_objective
-            assert call_kwargs["seed_prompt_group"] == sample_benchmark_context.generated_seed_prompt_group
+            # Check that next_message was passed (from generated_message)
+            assert "next_message" in call_kwargs
             assert call_kwargs["prepended_conversation"] == sample_benchmark_context.prepended_conversation
             assert call_kwargs["memory_labels"] == sample_benchmark_context.memory_labels
 
@@ -356,8 +356,8 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
         sample_attack_result: AttackResult,
     ) -> None:
         """Test execute_async with optional parameters."""
-        prepended_conversation: List[PromptRequestResponse] = []
-        memory_labels: Dict[str, str] = {"test": "label"}
+        prepended_conversation: list[Message] = []
+        memory_labels: dict[str, str] = {"test": "label"}
 
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
             mock_attack_instance = AsyncMock()
@@ -398,16 +398,16 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
         """Test context with prepended conversation."""
-        # Create a proper mock PromptRequestResponse
-        mock_request_piece = MagicMock(spec=PromptRequestPiece)
-        mock_request_piece.conversation_id = "test-conversation"
-        mock_request_piece.role = "user"
-        mock_request_piece.original_value = "Test message"
+        # Create a proper mock Message
+        mock_message_piece = MagicMock(spec=MessagePiece)
+        mock_message_piece.conversation_id = "test-conversation"
+        mock_message_piece.role = "user"
+        mock_message_piece.original_value = "Test message"
 
-        mock_response = MagicMock(spec=PromptRequestResponse)
-        mock_response.request_pieces = [mock_request_piece]
+        mock_response = MagicMock(spec=Message)
+        mock_response.message_pieces = [mock_message_piece]
 
-        prepended_conversation: List[PromptRequestResponse] = [mock_response]
+        prepended_conversation: list[Message] = [mock_response]
 
         context = QuestionAnsweringBenchmarkContext(
             question_answering_entry=sample_question_entry, prepended_conversation=prepended_conversation
@@ -451,7 +451,7 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
 
         assert context.generated_objective == ""
         assert context.generated_question_prompt == ""
-        assert context.generated_seed_prompt_group is None
+        assert context.generated_message is None
 
     @pytest.mark.asyncio
     async def test_full_workflow_integration(
@@ -478,7 +478,7 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
             # Verify all generated fields are populated after setup
             assert context.generated_objective != ""
             assert context.generated_question_prompt != ""
-            assert context.generated_seed_prompt_group is not None
+            assert context.generated_message is not None
 
             # Verify result is correct
             assert result == sample_attack_result

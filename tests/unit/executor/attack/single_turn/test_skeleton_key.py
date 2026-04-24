@@ -6,9 +6,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
 
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    AttackParameters,
     AttackScoringConfig,
     SingleTurnAttackContext,
     SkeletonKeyAttack,
@@ -16,14 +18,13 @@ from pyrit.executor.attack import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
-    PromptRequestPiece,
-    PromptRequestResponse,
+    Message,
+    MessagePiece,
     Score,
-    SeedPromptGroup,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import Scorer
+from pyrit.score import TrueFalseScorer
 
 
 @pytest.fixture
@@ -31,16 +32,16 @@ def mock_target():
     """Create a mock prompt target for testing"""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     return target
 
 
 @pytest.fixture
 def mock_true_false_scorer():
     """Create a mock true/false scorer for testing"""
-    scorer = MagicMock(spec=Scorer)
-    scorer.scorer_type = "true_false"
+    scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
 
@@ -55,25 +56,26 @@ def mock_prompt_normalizer():
 @pytest.fixture
 def basic_context():
     """Create a basic context for testing"""
-    return SingleTurnAttackContext(objective="Test objective", conversation_id=str(uuid.uuid4()))
+    return SingleTurnAttackContext(
+        params=AttackParameters(objective="Test objective"),
+        conversation_id=str(uuid.uuid4()),
+    )
 
 
 @pytest.fixture
 def sample_response():
     """Create a sample response for testing"""
-    return PromptRequestResponse(
-        request_pieces=[
-            PromptRequestPiece(role="assistant", original_value="Test response", original_value_data_type="text")
-        ]
+    return Message(
+        message_pieces=[MessagePiece(role="assistant", original_value="Test response", original_value_data_type="text")]
     )
 
 
 @pytest.fixture
 def skeleton_key_response():
     """Create a skeleton key response for testing"""
-    return PromptRequestResponse(
-        request_pieces=[
-            PromptRequestPiece(
+    return Message(
+        message_pieces=[
+            MessagePiece(
                 role="assistant",
                 original_value="I understand and will comply with your request.",
                 original_value_data_type="text",
@@ -88,11 +90,12 @@ def success_score():
     return Score(
         score_type="true_false",
         score_value="true",
-        score_category="test",
+        score_category=["test"],
         score_value_description="Test success score",
         score_rationale="Test rationale for success",
-        score_metadata="{}",
-        prompt_request_response_id=str(uuid.uuid4()),
+        score_metadata={},
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -102,11 +105,12 @@ def failure_score():
     return Score(
         score_type="true_false",
         score_value="false",
-        score_category="test",
+        score_category=["test"],
         score_value_description="Test failure score",
         score_rationale="Test rationale for failure",
-        score_metadata="{}",
-        prompt_request_response_id=str(uuid.uuid4()),
+        score_metadata={},
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -130,7 +134,7 @@ class TestSkeletonKeyAttackInitialization:
 
         assert attack._skeleton_key_prompt == custom_prompt
 
-    @patch("pyrit.executor.attack.single_turn.skeleton_key.SeedPromptDataset.from_yaml_file")
+    @patch("pyrit.executor.attack.single_turn.skeleton_key.SeedDataset.from_yaml_file")
     def test_init_loads_default_skeleton_key_prompt_when_none_provided(self, mock_dataset, mock_target):
         """Test that default skeleton key prompt is loaded when none is provided."""
         mock_seed_prompt = MagicMock()
@@ -182,7 +186,7 @@ class TestSkeletonKeyPromptLoading:
 
         assert result == custom_prompt
 
-    @patch("pyrit.executor.attack.single_turn.skeleton_key.SeedPromptDataset.from_yaml_file")
+    @patch("pyrit.executor.attack.single_turn.skeleton_key.SeedDataset.from_yaml_file")
     def test_load_skeleton_key_prompt_from_default_file(self, mock_dataset, mock_target):
         """Test loading skeleton key prompt from default file."""
         mock_seed_prompt = MagicMock()
@@ -198,7 +202,7 @@ class TestSkeletonKeyPromptLoading:
         assert result == "Default prompt from file"
         mock_dataset.assert_called_once_with(SkeletonKeyAttack.DEFAULT_SKELETON_KEY_PROMPT_PATH)
 
-    @patch("pyrit.executor.attack.single_turn.skeleton_key.SeedPromptDataset.from_yaml_file")
+    @patch("pyrit.executor.attack.single_turn.skeleton_key.SeedDataset.from_yaml_file")
     def test_load_skeleton_key_prompt_handles_empty_string(self, mock_dataset, mock_target):
         """Test that empty string triggers loading from default file."""
         mock_seed_prompt = MagicMock()
@@ -241,12 +245,12 @@ class TestSkeletonKeyPromptSending:
         assert call_args.kwargs["target"] == mock_target
         assert call_args.kwargs["conversation_id"] == basic_context.conversation_id
 
-        # Check that skeleton key prompt was included in seed prompt group
-        seed_prompt_group = call_args.kwargs["seed_prompt_group"]
-        assert isinstance(seed_prompt_group, SeedPromptGroup)
-        assert len(seed_prompt_group.prompts) == 1
-        assert seed_prompt_group.prompts[0].value == "Test skeleton key"
-        assert seed_prompt_group.prompts[0].data_type == "text"
+        # Check that skeleton key prompt was included in message
+        message = call_args.kwargs["message"]
+        assert isinstance(message, Message)
+        assert len(message.message_pieces) == 1
+        assert message.message_pieces[0].original_value == "Test skeleton key"
+        assert message.message_pieces[0].original_value_data_type == "text"
 
     @pytest.mark.asyncio
     async def test_send_skeleton_key_prompt_filtered_response(self, mock_target, mock_prompt_normalizer, basic_context):
@@ -294,7 +298,7 @@ class TestSkeletonKeyPromptSending:
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
         assert call_args.kwargs["labels"] == {"test": "label"}
-        assert "orchestrator_identifier" in call_args.kwargs
+        assert "attack_identifier" in call_args.kwargs
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -315,7 +319,7 @@ class TestSkeletonKeyFailureResult:
         assert result.executed_turns == 1
         assert result.last_response is None
         assert result.last_score is None
-        assert result.attack_identifier == attack.get_identifier()
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -343,7 +347,6 @@ class TestSkeletonKeyAttackExecution:
                 mock_parent.return_value = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    attack_identifier=attack.get_identifier(),
                     last_response=sample_response,
                     last_score=success_score,
                     outcome=AttackOutcome.SUCCESS,
@@ -375,7 +378,6 @@ class TestSkeletonKeyAttackExecution:
                 expected_result = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    attack_identifier=attack.get_identifier(),
                     outcome=AttackOutcome.FAILURE,
                     outcome_reason="Skeleton key prompt was filtered or failed",
                     executed_turns=1,
@@ -412,7 +414,6 @@ class TestSkeletonKeyAttackExecution:
                 mock_parent.return_value = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    attack_identifier=attack.get_identifier(),
                     last_response=sample_response,
                     last_score=failure_score,
                     outcome=AttackOutcome.FAILURE,
@@ -437,8 +438,14 @@ class TestSkeletonKeyAttackStateMangement:
         attack = SkeletonKeyAttack(objective_target=mock_target)
 
         # Create multiple contexts
-        context1 = SingleTurnAttackContext(objective="Objective 1", conversation_id=str(uuid.uuid4()))
-        context2 = SingleTurnAttackContext(objective="Objective 2", conversation_id=str(uuid.uuid4()))
+        context1 = SingleTurnAttackContext(
+            params=AttackParameters(objective="Objective 1"),
+            conversation_id=str(uuid.uuid4()),
+        )
+        context2 = SingleTurnAttackContext(
+            params=AttackParameters(objective="Objective 2"),
+            conversation_id=str(uuid.uuid4()),
+        )
 
         # Mock skeleton key prompt to return None (filtered)
         with patch.object(attack, "_send_skeleton_key_prompt_async", return_value=None):
@@ -469,73 +476,31 @@ class TestSkeletonKeyAttackParameterValidation:
         with pytest.raises(ValueError):
             SkeletonKeyAttack(objective_target=mock_target, max_attempts_on_failure=-1)
 
-    def test_skeleton_key_with_invalid_scorer_type(self, mock_target):
-        """Test that invalid scorer types are rejected."""
-        mock_scorer = MagicMock(spec=Scorer)
-        mock_scorer.scorer_type = "float_scale"  # Should be true_false
-
-        attack_scoring_config = AttackScoringConfig(objective_scorer=mock_scorer)
-
-        with pytest.raises(ValueError, match="Objective scorer must be a true/false scorer"):
-            SkeletonKeyAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
-
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestSkeletonKeyAttackContextValidation:
-    """Test skeleton key attack context validation functionality."""
+class TestSkeletonKeyAttackParamsType:
+    """Tests for params_type in SkeletonKeyAttack"""
 
-    def test_validate_context_raises_error_with_prepended_conversation(self, mock_target, basic_context):
-        """Test that context validation raises ValueError when prepended conversations exist."""
+    def test_params_type_excludes_next_message(self, mock_target):
+        """Test that params_type excludes next_message field."""
+        import dataclasses
+
         attack = SkeletonKeyAttack(objective_target=mock_target)
+        fields = {f.name for f in dataclasses.fields(attack.params_type)}
+        assert "next_message" not in fields
 
-        # Add some prepended conversation to context
-        mock_response = MagicMock()
-        basic_context.prepended_conversation = [mock_response]
+    def test_params_type_excludes_prepended_conversation(self, mock_target):
+        """Test that params_type excludes prepended_conversation field."""
+        import dataclasses
 
-        # Verify that ValueError is raised
-        with pytest.raises(ValueError, match="Skeleton key attack does not support prepended conversations"):
-            attack._validate_context(context=basic_context)
-
-    def test_validate_context_succeeds_when_no_prepended_conversation(self, mock_target, basic_context):
-        """Test that context validation succeeds when no prepended conversation exists."""
         attack = SkeletonKeyAttack(objective_target=mock_target)
+        fields = {f.name for f in dataclasses.fields(attack.params_type)}
+        assert "prepended_conversation" not in fields
 
-        # Ensure no prepended conversation
-        basic_context.prepended_conversation = []
+    def test_params_type_includes_objective(self, mock_target):
+        """Test that params_type includes objective field."""
+        import dataclasses
 
-        # Mock the parent _validate_context method
-        with patch.object(attack.__class__.__bases__[0], "_validate_context") as mock_parent_validate:
-            # Should not raise any exception
-            attack._validate_context(context=basic_context)
-
-            # Verify parent validation was called
-            mock_parent_validate.assert_called_once_with(context=basic_context)
-
-    def test_validate_context_calls_parent_validation(self, mock_target, basic_context):
-        """Test that validate_context properly calls parent validation method."""
         attack = SkeletonKeyAttack(objective_target=mock_target)
-
-        # Ensure no prepended conversation
-        basic_context.prepended_conversation = []
-
-        # Mock the parent _validate_context method
-        with patch.object(attack.__class__.__bases__[0], "_validate_context") as mock_parent_validate:
-            attack._validate_context(context=basic_context)
-
-            # Verify parent validation was called with the correct context
-            mock_parent_validate.assert_called_once_with(context=basic_context)
-
-    def test_validate_context_parent_validation_errors_propagate(self, mock_target, basic_context):
-        """Test that parent validation errors are properly propagated."""
-        attack = SkeletonKeyAttack(objective_target=mock_target)
-
-        # Ensure no prepended conversation
-        basic_context.prepended_conversation = []
-
-        # Mock the parent _validate_context method to raise an error
-        with patch.object(attack.__class__.__bases__[0], "_validate_context") as mock_parent_validate:
-            mock_parent_validate.side_effect = ValueError("Parent validation error")
-
-            # Verify that parent validation error is propagated
-            with pytest.raises(ValueError, match="Parent validation error"):
-                attack._validate_context(context=basic_context)
+        fields = {f.name for f in dataclasses.fields(attack.params_type)}
+        assert "objective" in fields

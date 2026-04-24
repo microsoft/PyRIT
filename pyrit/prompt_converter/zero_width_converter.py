@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from pyrit.models import PromptDataType
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
 class ZeroWidthConverter(PromptConverter):
@@ -10,18 +10,15 @@ class ZeroWidthConverter(PromptConverter):
     Injects zero-width spaces between characters in the provided text to bypass content safety mechanisms.
     """
 
+    SUPPORTED_INPUT_TYPES = ("text",)
+    SUPPORTED_OUTPUT_TYPES = ("text",)
+
     #: Constant for zero-width space character.
     ZERO_WIDTH_SPACE = "\u200b"
 
-    def input_supported(self, input_type: PromptDataType) -> bool:
-        return input_type == "text"
-
-    def output_supported(self, output_type: PromptDataType) -> bool:
-        return output_type == "text"
-
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by injecting zero-width spaces between each character.
+        Convert the given prompt by injecting zero-width spaces between each character.
 
         Args:
             prompt (str): The prompt to be converted.

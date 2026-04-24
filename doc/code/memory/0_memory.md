@@ -8,15 +8,15 @@ To simplify memory interaction, the `pyrit.memory.CentralMemory` class automatic
 
 At the beginning of each notebook, make sure to call:
 ```
-# Import initialize_pyrit
+# Import initialize_pyrit_async
 # Import the specific constant for the MemoryDatabaseType, or provide the literal value
-from pyrit.common import initialize_pyrit, IN_MEMORY, SQLITE, AZURE_SQL
+from pyrit.setup import initialize_pyrit_async, IN_MEMORY, SQLITE, AZURE_SQL
 
-initialize_pyrit(memory_db_type: MemoryDatabaseType, memory_instance_kwargs: Optional[Any])
+await initialize_pyrit_async(memory_db_type: MemoryDatabaseType, memory_instance_kwargs: Optional[Any])
 ```
 
 The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE_SQL. (Read more below)
-   - `initialize_pyrit` takes the `MemoryDatabaseType` and an argument list (`memory_instance_kwargs`), to initialize the shared memory instance.
+   - `initialize_pyrit_async` takes the `MemoryDatabaseType` and an argument list (`memory_instance_kwargs`), to initialize the shared memory instance.
 
 ##  Memory Database Type Options
 

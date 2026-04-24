@@ -8,9 +8,9 @@ from typing import Literal
 import numpy as np
 from scipy.io import wavfile
 
-from pyrit.models import PromptDataType
-from pyrit.models.data_type_serializer import data_serializer_factory
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,9 @@ class AudioFrequencyConverter(PromptConverter):
     Shifts the frequency of an audio file by a specified value.
     By default, it will shift it above the human hearing range (=20 kHz).
     """
+
+    SUPPORTED_INPUT_TYPES = ("audio_path",)
+    SUPPORTED_OUTPUT_TYPES = ("audio_path",)
 
     #: Accepted audio formats for conversion.
     AcceptedAudioFormats = Literal["wav"]
@@ -31,7 +34,7 @@ class AudioFrequencyConverter(PromptConverter):
         shift_value: int = 20000,
     ) -> None:
         """
-        Initializes the converter with the specified output format and shift value.
+        Initialize the converter with the specified output format and shift value.
 
         Args:
             output_format (str): The format of the audio file, defaults to "wav".
@@ -40,15 +43,23 @@ class AudioFrequencyConverter(PromptConverter):
         self._output_format = output_format
         self._shift_value = shift_value
 
-    def input_supported(self, input_type: PromptDataType) -> bool:
-        return input_type == "audio_path"
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with audio frequency parameters.
 
-    def output_supported(self, output_type: PromptDataType) -> bool:
-        return output_type == "audio_path"
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "output_format": self._output_format,
+                "shift_value": self._shift_value,
+            },
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "audio_path") -> ConverterResult:
         """
-        Converts the given audio file by shifting its frequency.
+        Convert the given audio file by shifting its frequency.
 
         Args:
             prompt (str): File path to the audio file to be converted.
@@ -86,11 +97,7 @@ class AudioFrequencyConverter(PromptConverter):
             converted_bytes = bytes_io.getvalue()
             await audio_serializer.save_data(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
-            logger.info(
-                "Speech synthesized for text [{}], and the audio was saved to [{}]".format(
-                    prompt, audio_serializer_file
-                )
-            )
+            logger.info(f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]")
 
         except Exception as e:
             logger.error("Failed to convert prompt to audio: %s", str(e))

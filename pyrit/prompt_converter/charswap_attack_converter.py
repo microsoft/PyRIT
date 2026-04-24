@@ -2,10 +2,14 @@
 # Licensed under the MIT license.
 
 import random
-import re
 import string
-from typing import List, Optional, Union
+from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.prompt_converter.text_selection_strategy import (
+    WordProportionSelectionStrategy,
+    WordSelectionStrategy,
+)
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
 
@@ -18,35 +22,57 @@ class CharSwapConverter(WordLevelConverter):
         self,
         *,
         max_iterations: int = 10,
-        indices: Optional[List[int]] = None,
-        keywords: Optional[List[str]] = None,
-        proportion: Optional[float] = 0.2,
-        regex: Optional[Union[str, re.Pattern]] = None,
+        word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with the specified parameters.
+        Initialize the converter with the specified parameters.
 
-        This class allows for selection of words to convert based on various criteria.
-        Only one selection parameter may be provided at a time (indices, keywords, proportion, or regex).
-        By default, proportion is set to 0.2, meaning 20% of randomly selected words will be perturbed.
+        By default, 20% of randomly selected words will be perturbed.
 
         Args:
             max_iterations (int): Number of times to generate perturbed prompts.
                 The higher the number the higher the chance that words are different from the original prompt.
-            indices (Optional[List[int]]): Specific indices of words to convert.
-            keywords (Optional[List[str]]): Keywords to select words for conversion.
-            proportion (Optional[float]): Proportion of randomly selected words to convert [0.0-1.0].
-            regex (Optional[Union[str, re.Pattern]]): Regex pattern to match words for conversion.
+            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+                If None, defaults to WordProportionSelectionStrategy(proportion=0.2).
+
+        Raises:
+            ValueError: If max_iterations is not greater than 0.
         """
-        super().__init__(indices=indices, keywords=keywords, proportion=proportion, regex=regex)
+        # Default to 20% proportion if no strategy provided
+        if word_selection_strategy is None:
+            word_selection_strategy = WordProportionSelectionStrategy(proportion=0.2)
+
+        super().__init__(word_selection_strategy=word_selection_strategy)
 
         # Ensure max_iterations is positive
         if max_iterations <= 0:
             raise ValueError("max_iterations must be greater than 0")
 
-        self.max_iterations = max_iterations
+        self._max_iterations = max_iterations
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with charswap parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "max_iterations": self._max_iterations,
+            },
+        )
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         return self._perturb_word(word)
 
     def _perturb_word(self, word: str) -> str:
@@ -60,12 +86,13 @@ class CharSwapConverter(WordLevelConverter):
             str: The perturbed word with swapped characters.
         """
         if word not in string.punctuation and len(word) > 3:
-            idx1 = random.randint(1, len(word) - 2)
             idx_elements = list(word)
-            # Swap characters
-            idx_elements[idx1], idx_elements[idx1 + 1] = (
-                idx_elements[idx1 + 1],
-                idx_elements[idx1],
-            )
+            for _ in range(self._max_iterations):
+                idx1 = random.randint(1, len(word) - 2)
+                # Swap characters
+                idx_elements[idx1], idx_elements[idx1 + 1] = (
+                    idx_elements[idx1 + 1],
+                    idx_elements[idx1],
+                )
             return "".join(idx_elements)
         return word

@@ -1,7 +1,0 @@
-name: pyrit
-channels:
-  - conda-forge
-  - defaults
-  - anaconda
-dependencies:
-  - python=3.11

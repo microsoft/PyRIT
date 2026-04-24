@@ -2,16 +2,11 @@
 # Licensed under the MIT license.
 
 import os
-from datetime import datetime
-from typing import List
-
-from IPython.display import Markdown, display
+from datetime import datetime, timezone
 
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackResult, Score
-from pyrit.models.prompt_request_piece import PromptRequestPiece
-from pyrit.models.prompt_request_response import PromptRequestResponse
+from pyrit.models import AttackResult, ConversationType, Message, MessagePiece, Score
 
 
 class MarkdownAttackResultPrinter(AttackResultPrinter):
@@ -35,7 +30,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         self._memory = CentralMemory.get_memory_instance()
         self._display_inline = display_inline
 
-    def _render_markdown(self, markdown_lines: List[str]) -> None:
+    def _render_markdown(self, markdown_lines: list[str]) -> None:
         """
         Render the markdown content using appropriate display method.
 
@@ -49,9 +44,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         if self._display_inline:
             try:
-                display(Markdown(full_markdown))
+                from IPython.display import Markdown, display
+
+                display(Markdown(full_markdown))  # type: ignore[no-untyped-call]
             except (ImportError, NameError):
-                # Fallback to print if not in Jupyter environment
+                # Fallback to print if IPython is not available
                 print(full_markdown)
         else:
             print(full_markdown)
@@ -84,15 +81,15 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         lines.append(f"{indent}- **Score Type:** {score.score_type}")
         lines.append(f"{indent}- **Value:** {value_str}")
-        lines.append(f"{indent}- **Category:** {score.score_category or 'N/A'}")
+        category_str = ", ".join(score.score_category) if score.score_category else "N/A"
+        lines.append(f"{indent}- **Category:** {category_str}")
 
         if score.score_rationale:
             # Handle multi-line rationale
             rationale_lines = score.score_rationale.split("\n")
             if len(rationale_lines) > 1:
                 lines.append(f"{indent}- **Rationale:**")
-                for line in rationale_lines:
-                    lines.append(f"{indent}  {line}")
+                lines.extend(f"{indent}  {line}" for line in rationale_lines)
             else:
                 lines.append(f"{indent}- **Rationale:** {score.score_rationale}")
 
@@ -101,7 +98,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return "\n".join(lines)
 
-    async def print_result_async(self, result: AttackResult, *, include_auxiliary_scores: bool = False) -> None:
+    async def print_result_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> None:
         """
         Print the complete attack result as formatted markdown.
 
@@ -113,6 +117,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             result (AttackResult): The attack result to print.
             include_auxiliary_scores (bool): Whether to include auxiliary scores
                 in the conversation display. Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations.
+                For each pruned conversation, only the last message and its score are shown.
+                Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial
+                conversation (the red teaming LLM's reasoning). Only shown for successful
+                attacks to avoid overwhelming output. Defaults to False.
         """
         markdown_lines = []
 
@@ -129,9 +139,21 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         # Conversation history
         markdown_lines.append("\n## Conversation History\n")
         conversation_lines = await self._get_conversation_markdown_async(
-            result=result, include_auxiliary_scores=include_auxiliary_scores
+            result=result, include_scores=include_auxiliary_scores
         )
         markdown_lines.extend(conversation_lines)
+
+        # Pruned conversations if requested
+        if include_pruned_conversations:
+            pruned_lines = await self._get_pruned_conversations_markdown_async(result)
+            if pruned_lines:
+                markdown_lines.extend(pruned_lines)
+
+        # Adversarial conversation if requested (only for successful attacks)
+        if include_adversarial_conversation:
+            adversarial_lines = await self._get_adversarial_conversation_markdown_async(result)
+            if adversarial_lines:
+                markdown_lines.extend(adversarial_lines)
 
         # Metadata if available
         if result.metadata:
@@ -148,11 +170,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         # Footer
         markdown_lines.append("\n---")
-        markdown_lines.append(f"*Report generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
         self._render_markdown(markdown_lines)
 
-    async def print_conversation_async(self, result: AttackResult, *, include_auxiliary_scores: bool = False) -> None:
+    async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
         """
         Print only the conversation history as formatted markdown.
 
@@ -163,12 +186,10 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         Args:
             result (AttackResult): The attack result containing the conversation
                 to display.
-            include_auxiliary_scores (bool): Whether to include auxiliary scores
+            include_scores (bool): Whether to include scores
                 for each message. Defaults to False.
         """
-        markdown_lines = await self._get_conversation_markdown_async(
-            result=result, include_auxiliary_scores=include_auxiliary_scores
-        )
+        markdown_lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
         self._render_markdown(markdown_lines)
 
     async def print_summary_async(self, result: AttackResult) -> None:
@@ -186,8 +207,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         self._render_markdown(markdown_lines)
 
     async def _get_conversation_markdown_async(
-        self, *, result: AttackResult, include_auxiliary_scores: bool = False
-    ) -> List[str]:
+        self, *, result: AttackResult, include_scores: bool = False
+    ) -> list[str]:
         """
         Generate markdown lines for the conversation history.
 
@@ -197,7 +218,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         Args:
             result (AttackResult): The attack result containing the conversation ID.
-            include_auxiliary_scores (bool): Whether to include auxiliary scores
+            include_scores (bool): Whether to include scores
                 for each message. Defaults to False.
 
         Returns:
@@ -205,6 +226,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
                 conversation history.
         """
         markdown_lines = []
+
+        if not result.conversation_id:
+            markdown_lines.append("*No conversation ID available*\n")
+            return markdown_lines
+
         messages = self._memory.get_conversation(conversation_id=result.conversation_id)
 
         if not messages:
@@ -214,10 +240,10 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         turn_number = 0
 
         for message in messages:
-            if not message.request_pieces:
+            if not message.message_pieces:
                 continue
 
-            message_role = message.get_piece().role
+            message_role = message.get_piece().api_role
 
             if message_role == "system":
                 markdown_lines.extend(self._format_system_message(message))
@@ -228,12 +254,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
                 markdown_lines.extend(await self._format_assistant_message_async(message=message))
 
             # Add scores if requested
-            if include_auxiliary_scores:
+            if include_scores:
                 markdown_lines.extend(self._format_message_scores(message))
 
         return markdown_lines
 
-    def _format_system_message(self, message: PromptRequestResponse) -> List[str]:
+    def _format_system_message(self, message: Message) -> list[str]:
         """
         Format a system message as markdown.
 
@@ -241,17 +267,16 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         containing instructions or context for the conversation.
 
         Args:
-            message (PromptRequestResponse): The system message to format.
+            message (Message): The system message to format.
 
         Returns:
             List[str]: List of markdown strings representing the system message.
         """
         lines = ["\n### System Message\n"]
-        for piece in message.request_pieces:
-            lines.append(f"{piece.converted_value}\n")
+        lines.extend(f"{piece.converted_value}\n" for piece in message.message_pieces)
         return lines
 
-    async def _format_user_message_async(self, *, message: PromptRequestResponse, turn_number: int) -> List[str]:
+    async def _format_user_message_async(self, *, message: Message, turn_number: int) -> list[str]:
         """
         Format a user message as markdown with turn numbering.
 
@@ -260,7 +285,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         values when they differ.
 
         Args:
-            message (PromptRequestResponse): The user message to format.
+            message (Message): The user message to format.
             turn_number (int): The conversation turn number for this message.
 
         Returns:
@@ -268,12 +293,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         """
         lines = [f"\n### Turn {turn_number}\n", "#### User\n"]
 
-        for piece in message.request_pieces:
+        for piece in message.message_pieces:
             lines.extend(await self._format_piece_content_async(piece=piece, show_original=True))
 
         return lines
 
-    async def _format_assistant_message_async(self, *, message: PromptRequestResponse) -> List[str]:
+    async def _format_assistant_message_async(self, *, message: Message) -> list[str]:
         """
         Format an assistant or system response message as markdown.
 
@@ -282,17 +307,18 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         for display purposes.
 
         Args:
-            message (PromptRequestResponse): The response message to format.
+            message (Message): The response message to format.
 
         Returns:
             List[str]: List of markdown strings representing the response message.
         """
         lines = []
-        role_name = message.request_pieces[0].role.capitalize()
+        piece = message.message_pieces[0]
+        role_name = "Assistant (Simulated)" if piece.is_simulated else piece.api_role.capitalize()
 
         lines.append(f"\n#### {role_name}\n")
 
-        for piece in message.request_pieces:
+        for piece in message.message_pieces:
             lines.extend(await self._format_piece_content_async(piece=piece, show_original=False))
 
         return lines
@@ -309,14 +335,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         """
         if audio_path.lower().endswith(".wav"):
             return "audio/wav"
-        elif audio_path.lower().endswith(".ogg"):
+        if audio_path.lower().endswith(".ogg"):
             return "audio/ogg"
-        elif audio_path.lower().endswith(".m4a"):
+        if audio_path.lower().endswith(".m4a"):
             return "audio/mp4"
-        else:
-            return "audio/mpeg"  # Default fallback for .mp3, .mpeg, and unknown formats
+        return "audio/mpeg"  # Default fallback for .mp3, .mpeg, and unknown formats
 
-    def _format_image_content(self, *, image_path: str) -> List[str]:
+    def _format_image_content(self, *, image_path: str) -> list[str]:
         """
         Format image content as markdown.
 
@@ -330,7 +355,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
 
-    def _format_audio_content(self, *, audio_path: str) -> List[str]:
+    def _format_audio_content(self, *, audio_path: str) -> list[str]:
         """
         Format audio content as HTML5 audio player.
 
@@ -351,12 +376,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    def _format_error_content(self, *, piece: PromptRequestPiece) -> List[str]:
+    def _format_error_content(self, *, piece: MessagePiece) -> list[str]:
         """
         Format error response content with proper styling.
 
         Args:
-            piece (PromptRequestPiece): The prompt piece containing the error.
+            piece (MessagePiece): The message piece containing the error.
 
         Returns:
             List[str]: List of markdown lines for the error response.
@@ -370,12 +395,12 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    def _format_text_content(self, *, piece: PromptRequestPiece, show_original: bool) -> List[str]:
+    def _format_text_content(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
         """
         Format regular text content.
 
         Args:
-            piece (PromptRequestPiece): The prompt piece containing the text.
+            piece (MessagePiece): The message piece containing the text.
             show_original (bool): Whether to show original value if different.
 
         Returns:
@@ -392,14 +417,14 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
 
         return lines
 
-    async def _format_piece_content_async(self, *, piece: PromptRequestPiece, show_original: bool) -> List[str]:
+    async def _format_piece_content_async(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
         """
         Format a single piece content based on its data type.
 
         Handles different content types including text, images, audio, and error responses.
 
         Args:
-            piece (PromptRequestPiece): The prompt piece to format.
+            piece (MessagePiece): The message piece to format.
             show_original (bool): Whether to show original value if different
                 from converted value.
 
@@ -408,41 +433,38 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         """
         if piece.converted_value_data_type == "image_path":
             return self._format_image_content(image_path=piece.converted_value)
-        elif piece.converted_value_data_type == "audio_path":
+        if piece.converted_value_data_type == "audio_path":
             return self._format_audio_content(audio_path=piece.converted_value)
-        else:
-            # Handle text content (including errors)
-            if piece.has_error():
-                return self._format_error_content(piece=piece)
-            else:
-                return self._format_text_content(piece=piece, show_original=show_original)
+        # Handle text content (including errors)
+        if piece.has_error():
+            return self._format_error_content(piece=piece)
+        return self._format_text_content(piece=piece, show_original=show_original)
 
-    def _format_message_scores(self, message: PromptRequestResponse) -> List[str]:
+    def _format_message_scores(self, message: Message) -> list[str]:
         """
         Format scores for all pieces in a message as markdown.
 
-        Retrieves and formats all scores associated with the prompt pieces
+        Retrieves and formats all scores associated with the message pieces
         in the given message. Creates a dedicated scores section with
         appropriate markdown formatting.
 
         Args:
-            message (PromptRequestResponse): The message containing pieces
+            message (Message): The message containing pieces
                 to format scores for.
 
         Returns:
             List[str]: List of markdown strings representing the scores.
         """
         lines = []
-        for piece in message.request_pieces:
+        for piece in message.message_pieces:
             scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
             if scores:
                 lines.append("\n##### Scores\n")
-                for score in scores:
-                    lines.append(self._format_score(score, indent=""))
+                lines.extend(self._format_score(score, indent="") for score in scores)
                 lines.append("")
         return lines
 
-    async def _get_summary_markdown_async(self, result: AttackResult) -> List[str]:
+    async def _get_summary_markdown_async(self, result: AttackResult) -> list[str]:
         """
         Generate markdown lines for the attack summary.
 
@@ -465,7 +487,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         markdown_lines.append("|-------|-------|")
         markdown_lines.append(f"| **Objective** | {result.objective} |")
 
-        attack_type = result.attack_identifier.get("__type__", "Unknown")
+        _strategy_id = result.get_attack_strategy_identifier()
+        attack_type = _strategy_id.class_name if _strategy_id is not None else "Unknown"
 
         markdown_lines.append(f"| **Attack Type** | `{attack_type}` |")
         markdown_lines.append(f"| **Conversation ID** | `{result.conversation_id}` |")
@@ -489,5 +512,129 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         if result.last_score:
             markdown_lines.append("\n### Final Score\n")
             markdown_lines.append(self._format_score(result.last_score))
+
+        return markdown_lines
+
+    async def _get_pruned_conversations_markdown_async(self, result: AttackResult) -> list[str]:
+        """
+        Generate markdown lines for pruned conversations.
+
+        For each pruned conversation, displays only the last message and its
+        associated score to provide context without overwhelming output.
+
+        Args:
+            result (AttackResult): The attack result containing related conversations.
+
+        Returns:
+            List[str]: List of markdown strings for pruned conversations, or empty list if none.
+        """
+        pruned_refs = result.get_conversations_by_type(ConversationType.PRUNED)
+
+        if not pruned_refs:
+            return []
+
+        markdown_lines = []
+        markdown_lines.append(f"\n## Pruned Conversations ({len(pruned_refs)} total)\n")
+        markdown_lines.append("*Showing only the last message and score for each pruned branch.*\n")
+
+        for idx, ref in enumerate(pruned_refs, 1):
+            # Header for this pruned conversation
+            label = f"### 🗑️ Pruned #{idx}"
+            if ref.description:
+                label += f" - {ref.description}"
+            markdown_lines.append(f"\n{label}\n")
+
+            # Get the conversation messages
+            messages = list(self._memory.get_conversation(conversation_id=ref.conversation_id))
+
+            if not messages:
+                markdown_lines.append(f"*No messages found for conversation: `{ref.conversation_id}`*\n")
+                continue
+
+            # Get only the last message
+            last_message = messages[-1]
+            role_label = last_message.api_role.upper()
+
+            markdown_lines.append(f"**Last Message ({role_label}):**\n")
+
+            for piece in last_message.message_pieces:
+                # Format the message content
+                content = piece.converted_value or ""
+                if "\n" in content:
+                    markdown_lines.append("```")
+                    markdown_lines.append(content)
+                    markdown_lines.append("```")
+                else:
+                    markdown_lines.append(f"> {content}\n")
+
+                # Get and format associated scores
+                scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
+                if scores:
+                    markdown_lines.append("\n**Score:**\n")
+                    markdown_lines.extend(self._format_score(score, indent="") for score in scores)
+
+        return markdown_lines
+
+    async def _get_adversarial_conversation_markdown_async(self, result: AttackResult) -> list[str]:
+        """
+        Generate markdown lines for the adversarial conversation.
+
+        The adversarial conversation shows the red teaming LLM's reasoning.
+        For attacks with multiple adversarial conversations (e.g., TAP), only the
+        best-scoring branch's adversarial conversation is shown if available.
+
+        Args:
+            result (AttackResult): The attack result containing related conversations.
+
+        Returns:
+            List[str]: List of markdown strings for the adversarial conversation, or empty list.
+        """
+        adversarial_refs = result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+
+        if not adversarial_refs:
+            return []
+
+        markdown_lines = []
+        markdown_lines.append("\n## Adversarial Conversation (Red Team LLM)\n")
+        markdown_lines.append("*This shows the reasoning and strategy of the red teaming LLM.*\n")
+
+        # Check if result has a best_adversarial_conversation_id (e.g., TAP attack)
+        # If so, only show that conversation instead of all adversarial conversations
+        best_adversarial_id = result.metadata.get("best_adversarial_conversation_id")
+        if best_adversarial_id:
+            # Filter to only the best adversarial conversation
+            adversarial_refs = [ref for ref in adversarial_refs if ref.conversation_id == best_adversarial_id]
+            if adversarial_refs:
+                markdown_lines.append("*📌 Showing best-scoring branch's adversarial conversation*\n")
+
+        for ref in adversarial_refs:
+            if ref.description:
+                markdown_lines.append(f"*📝 {ref.description}*\n")
+
+            messages = list(self._memory.get_conversation(conversation_id=ref.conversation_id))
+
+            if not messages:
+                markdown_lines.append(f"*No messages found for conversation: `{ref.conversation_id}`*\n")
+                continue
+
+            # Format each message in the adversarial conversation
+            turn_number = 0
+            for message in messages:
+                if message.api_role == "user":
+                    turn_number += 1
+                    markdown_lines.append(f"\n#### Turn {turn_number} - USER\n")
+                elif message.api_role == "system":
+                    markdown_lines.append("\n#### SYSTEM\n")
+                else:
+                    markdown_lines.append(f"\n#### {message.api_role.upper()}\n")
+
+                for piece in message.message_pieces:
+                    content = piece.converted_value or ""
+                    if len(content) > 200 or "\n" in content:
+                        markdown_lines.append("```")
+                        markdown_lines.append(content)
+                        markdown_lines.append("```")
+                    else:
+                        markdown_lines.append(f"> {content}\n")
 
         return markdown_lines

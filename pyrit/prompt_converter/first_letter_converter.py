@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import re
-from typing import List, Optional, Union
+from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
 
@@ -16,35 +17,57 @@ class FirstLetterConverter(WordLevelConverter):
     def __init__(
         self,
         *,
-        letter_separator=" ",
-        indices: Optional[List[int]] = None,
-        keywords: Optional[List[str]] = None,
-        proportion: Optional[float] = None,
-        regex: Optional[Union[str, re.Pattern]] = None,
-    ):
+        letter_separator: str = " ",
+        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+    ) -> None:
         """
-        Initializes the converter with the specified join value and selection parameters.
-
-        This class allows for selection of words to convert based on various criteria.
-        Only one selection parameter may be provided at a time (indices, keywords, proportion, or regex).
-        If no selection parameter is provided, all words will be converted.
+        Initialize the converter with the specified letter separator and selection strategy.
 
         Args:
-            join_value (str): The string used to join characters of each word.
-            indices (Optional[List[int]]): Specific indices of words to convert.
-            keywords (Optional[List[str]]): Keywords to select words for conversion.
-            proportion (Optional[float]): Proportion of randomly selected words to convert [0.0-1.0].
-            regex (Optional[Union[str, re.Pattern]]): Regex pattern to match words for conversion.
+            letter_separator (str): The string used to join the first letters.
+            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+                If None, all words will be converted.
         """
-        super().__init__(
-            indices=indices, keywords=keywords, proportion=proportion, regex=regex, word_split_separator=None
-        )
+        super().__init__(word_selection_strategy=word_selection_strategy, word_split_separator=None)
         self.letter_separator = letter_separator
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with first letter converter parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
+                "word_split_separator": self._word_split_separator,
+                "letter_separator": self.letter_separator,
+            }
+        )
+
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         stripped_word = "".join(filter(str.isalnum, word))
         return stripped_word[:1]
 
     def join_words(self, words: list[str]) -> str:
+        """
+        Join the converted words using the specified letter separator.
+
+        Args:
+            words (list[str]): The list of converted words.
+
+        Returns:
+            str: The joined string of converted words.
+        """
         cleaned_words = list(filter(None, words))
         return self.letter_separator.join(cleaned_words)

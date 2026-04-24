@@ -1,4 +1,4 @@
-prompts:
+seeds:
   - dataset_name: SkeletonKey
     description: "Sending this text can make models comply with harmful requests that follow in subsequent prompts."
     source: "https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/"

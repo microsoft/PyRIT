@@ -5,11 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.0
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
+#       jupytext_version: 1.17.3
 # ---
 
 # %% [markdown]
@@ -18,8 +14,7 @@
 # The `QuestionAnsweringBenchmark` can process Q&A datasets and evaluate how good a target is at answering the questions.
 
 # %%
-from pyrit.common import IN_MEMORY, initialize_pyrit
-from pyrit.datasets import fetch_wmdp_dataset
+from pyrit.datasets.executors.question_answer.wmdp_dataset import fetch_wmdp_dataset
 from pyrit.executor.attack import AttackScoringConfig, ConsoleAttackResultPrinter
 from pyrit.executor.benchmark import QuestionAnsweringBenchmark
 from pyrit.models import (
@@ -27,10 +22,11 @@ from pyrit.models import (
     QuestionChoice,
 )
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
+from pyrit.score import SelfAskQuestionAnswerScorer
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 # Initialize PyRIT (load environment files and set central memory instance)
-initialize_pyrit(memory_db_type=IN_MEMORY)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 # Define the scoring configuration for the benchmark
 scoring_config = AttackScoringConfig(objective_scorer=SelfAskQuestionAnswerScorer(chat_target=OpenAIChatTarget()))

@@ -1,5 +1,0 @@
-dataset_name: test illegal (audio path input)
-prompts:
-  - value: |
-      {{ datasets_path }}/seed_prompts/multimodal_data/molotov.wav
-    data_type: audio_path

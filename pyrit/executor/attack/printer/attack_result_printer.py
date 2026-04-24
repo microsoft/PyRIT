@@ -15,7 +15,14 @@ class AttackResultPrinter(ABC):
     """
 
     @abstractmethod
-    async def print_result_async(self, result: AttackResult, *, include_auxiliary_scores: bool = False) -> None:
+    async def print_result_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> None:
         """
         Print the complete attack result.
 
@@ -23,20 +30,24 @@ class AttackResultPrinter(ABC):
             result (AttackResult): The attack result to print
             include_auxiliary_scores (bool): Whether to include auxiliary scores in the output.
                 Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations.
+                For each pruned conversation, only the last message and its score are shown.
+                Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial
+                conversation (the red teaming LLM's reasoning). Only shown for successful
+                attacks to avoid overwhelming output. Defaults to False.
         """
-        pass
 
     @abstractmethod
-    async def print_conversation_async(self, result: AttackResult, *, include_auxiliary_scores: bool = False) -> None:
+    async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
         """
         Print only the conversation history.
 
         Args:
             result (AttackResult): The attack result containing the conversation to print
-            include_auxiliary_scores (bool): Whether to include auxiliary scores in the output.
+            include_scores (bool): Whether to include scores in the output.
                 Defaults to False.
         """
-        pass
 
     @abstractmethod
     async def print_summary_async(self, result: AttackResult) -> None:
@@ -46,7 +57,6 @@ class AttackResultPrinter(ABC):
         Args:
             result (AttackResult): The attack result to summarize
         """
-        pass
 
     @staticmethod
     def _get_outcome_icon(outcome: AttackOutcome) -> str:

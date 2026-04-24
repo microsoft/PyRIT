@@ -8,17 +8,30 @@ from pathlib import Path
 
 skip_files = {
     "conf.py",
-    "0_auxiliary_attacks.py",
-    "1_gcg_azure_ml.py",
-    "6_human_converter.py",
-    "5_human_in_the_loop_scorer.py",
+    # auxiliary_attacks
+    "1_gcg_azure_ml.py",  # missing required env variables
+    # converters
+    "6_human_converter.py",  # requires human input
+    # memory
+    "6_azure_sql_memory.py",  # requires Azure SQL setup, remove following completion of #4001
+    "7_azure_sql_memory_attacks.py",  # remove following completion of #4001
+    "4_non_llm_targets.py",  # requires Azure SQL Storage IO for Azure Storage Account (see #4001)
+    "playwright_target.py",  # Playwright installation takes too long
+    "playwright_target_copilot.py",  # Playwright installation takes too long, plus requires M365 account
+    "app.py",  # Flask app for playwright demo, not a notebook
+    # executor
+    "1_xpia_website.py",  # requires publicly accessible Azure Storage Account
+    "2_xpia_ai_recruiter.py",  # requires AI recruiter service running locally
 }
 
-exec_dir = Path(os.getcwd())
+# Get the doc directory (parent of generate_docs where this script is located)
+script_dir = Path(__file__).parent
+doc_dir = script_dir.parent
+pyrit_root = doc_dir.parent
 file_type = ".py"
-excluded_dir = {"deployment", "generate_docs"}
-cache_path = os.path.join(exec_dir, "cache")
-kernel_name = "pyrit_kernel"
+included_dirs = {"code"}
+cache_dir = os.path.join(pyrit_root, "dbdata")
+kernel_name = "pyrit-dev"
 
 
 def main():
@@ -33,20 +46,21 @@ def main():
     )
     args = parser.parse_args()
 
-    cache_file = os.path.join(cache_path, args.run_id)
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"pct_to_ipynb_{args.run_id}.cache")
     processed_files = set()
     if os.path.isfile(cache_file):
-        with open(cache_file, "r") as f:
+        with open(cache_file) as f:
             for file_path in f:
-                processed_files.add(file_path)
+                processed_files.add(file_path.strip())
 
-    found_files = find_files(exec_dir, file_type)
+    found_files = find_files(doc_dir, file_type)
 
     for file in found_files:
         if file in processed_files:
             print(f"Skipping already processed file: {file}")
             continue
-        if any([skip_file in file for skip_file in skip_files]):
+        if any(skip_file in file for skip_file in skip_files):
             print(f"Skipping configured skipped file: {file}")
             continue
         print(f"Processing {file}")
@@ -59,23 +73,24 @@ def main():
             continue
         print(f"Successfully processed {file}")
         # Log to cache file
-        f = open(cache_file, "a")
-        f.write(os.path.join(file))
-        f.close()
+        with open(cache_file, "a") as f:
+            f.write(file + "\n")
     return
 
 
 def find_files(directory, file_extension):
     matches = []
-    for root, dirs, files in os.walk(directory):
-        for dir in excluded_dir:
-            if dir in dirs:
-                dirs.remove(dir)
-        for file in files:
-            if file.endswith("_helpers.py"):
-                continue
-            if file.endswith(file_extension):
-                matches.append(os.path.join(root, file))
+    # Only search in included directories (code)
+    for included_dir in included_dirs:
+        dir_path = os.path.join(directory, included_dir)
+        if not os.path.exists(dir_path):
+            continue
+        for root, _dirs, files in os.walk(dir_path):
+            for file in files:
+                if file.endswith("_helpers.py"):
+                    continue
+                if file.endswith(file_extension):
+                    matches.append(os.path.join(root, file))
     return matches
 
 

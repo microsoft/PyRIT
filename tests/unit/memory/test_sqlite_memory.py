@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
+import logging
 import os
 import uuid
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,12 +15,12 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
-from unit.mocks import get_sample_conversation_entries
 
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
-from pyrit.models import PromptRequestPiece
+from pyrit.models import MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
+from unit.mocks import get_sample_conversation_entries
 
 
 @pytest.fixture
@@ -92,12 +95,15 @@ def test_conversation_data_column_types(sqlite_instance):
         "prompt_metadata": (String, JSON),
         "converter_identifiers": (String, JSON),
         "prompt_target_identifier": (String, JSON),
+        "attack_identifier": (String, JSON),
+        "response_error": String,
         "original_value_data_type": String,
         "original_value": String,
         "original_value_sha256": String,
         "converted_value_data_type": String,
         "converted_value": String,
         "converted_value_sha256": String,
+        "original_prompt_id": (UUID, CHAR),
     }
 
     for column, expected_type in expected_column_types.items():
@@ -106,13 +112,13 @@ def test_conversation_data_column_types(sqlite_instance):
 
             # Handle columns that can have multiple types depending on database
             if isinstance(expected_type, tuple):
-                assert any(
-                    issubclass(column_types[column], t) for t in expected_type
-                ), f"Expected {column} to be a subclass of any of {expected_type}, got {column_types[column]} instead."
+                assert any(issubclass(column_types[column], t) for t in expected_type), (
+                    f"Expected {column} to be a subclass of any of {expected_type}, got {column_types[column]} instead."
+                )
             else:
-                assert issubclass(
-                    column_types[column], expected_type
-                ), f"Expected {column} to be a subclass of {expected_type}, got {column_types[column]} instead."
+                assert issubclass(column_types[column], expected_type), (
+                    f"Expected {column} to be a subclass of {expected_type}, got {column_types[column]} instead."
+                )
 
 
 def test_embedding_data_column_types(sqlite_instance):
@@ -132,14 +138,14 @@ def test_embedding_data_column_types(sqlite_instance):
             assert column in column_types, f"{column} not found in EmbeddingStore schema."
             # Handle columns that can have multiple types depending on database
             if isinstance(expected_type, tuple):
-                assert any(
-                    issubclass(column_types[column], t) for t in expected_type
-                ), f"Expected {column} to be a subclass of any of {expected_type}, got {column_types[column]} instead."
+                assert any(issubclass(column_types[column], t) for t in expected_type), (
+                    f"Expected {column} to be a subclass of any of {expected_type}, got {column_types[column]} instead."
+                )
             else:
                 # Allow for flexibility in type representation (String vs. VARCHAR)
-                assert issubclass(
-                    column_types[column], expected_type
-                ), f"Expected {column} to be a subclass of {expected_type}, got {column_types[column]} instead."
+                assert issubclass(column_types[column], expected_type), (
+                    f"Expected {column} to be a subclass of {expected_type}, got {column_types[column]} instead."
+                )
     # Handle 'embedding' column separately
     assert "embedding" in column_types, "'embedding' column not found in EmbeddingData schema."
     # Check if 'embedding' column type is either NullType (due to reflection issue), ARRAY, or JSON (SQLite)
@@ -153,7 +159,7 @@ def test_embedding_data_column_types(sqlite_instance):
 @pytest.mark.asyncio()
 async def test_insert_entry(sqlite_instance):
     session = sqlite_instance.get_session()
-    prompt_request_piece_entry = PromptRequestPiece(
+    message_piece_entry = MessagePiece(
         id=uuid.uuid4(),
         conversation_id="123",
         role="user",
@@ -161,12 +167,12 @@ async def test_insert_entry(sqlite_instance):
         original_value="Hello",
         converted_value="Hello after conversion",
     )
-    await prompt_request_piece_entry.set_sha256_values_async()
+    await message_piece_entry.set_sha256_values_async()
 
-    prompt_request_piece_entry.original_value = "Hello"
-    prompt_request_piece_entry.converted_value = "Hello after conversion"
+    message_piece_entry.original_value = "Hello"
+    message_piece_entry.converted_value = "Hello after conversion"
 
-    entry = PromptMemoryEntry(entry=prompt_request_piece_entry)
+    entry = PromptMemoryEntry(entry=message_piece_entry)
     # Use the insert_entry method to insert the entry into the database
     sqlite_instance._insert_entry(entry)
 
@@ -188,7 +194,7 @@ def test_insert_entry_violates_constraint(sqlite_instance):
     fixed_uuid = uuid.uuid4()
     # Create two entries with the same UUID
     entry1 = PromptMemoryEntry(
-        entry=PromptRequestPiece(
+        entry=MessagePiece(
             id=fixed_uuid,
             conversation_id="123",
             role="user",
@@ -198,7 +204,7 @@ def test_insert_entry_violates_constraint(sqlite_instance):
     )
 
     entry2 = PromptMemoryEntry(
-        entry=PromptRequestPiece(
+        entry=MessagePiece(
             id=fixed_uuid,
             conversation_id="456",
             role="user",
@@ -222,7 +228,7 @@ def test_insert_entry_violates_constraint(sqlite_instance):
 def test_insert_entries(sqlite_instance):
     entries = [
         PromptMemoryEntry(
-            entry=PromptRequestPiece(
+            entry=MessagePiece(
                 conversation_id=str(i),
                 role="user",
                 original_value=f"Message {i}",
@@ -248,7 +254,7 @@ def test_insert_entries(sqlite_instance):
 def test_insert_embedding_entry(sqlite_instance):
     # Create a ConversationData entry
     conversation_entry = PromptMemoryEntry(
-        entry=PromptRequestPiece(conversation_id="123", role="user", original_value="Hello", converted_value="abc")
+        entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="abc")
     )
 
     # Insert the ConversationData entry using the insert_entry method
@@ -275,34 +281,33 @@ def test_insert_embedding_entry(sqlite_instance):
 def test_disable_embedding(sqlite_instance):
     sqlite_instance.disable_embedding()
 
-    assert (
-        sqlite_instance.memory_embedding is None
-    ), "disable_memory flag was passed, so memory embedding should be disabled."
+    assert sqlite_instance.memory_embedding is None, (
+        "disable_memory flag was passed, so memory embedding should be disabled."
+    )
 
 
 def test_default_enable_embedding(sqlite_instance):
-    os.environ["AZURE_OPENAI_EMBEDDING_KEY"] = "mock_key"
-    os.environ["AZURE_OPENAI_EMBEDDING_ENDPOINT"] = "embedding"
-    os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "deployment"
+    os.environ["OPENAI_EMBEDDING_KEY"] = "mock_key"
+    os.environ["OPENAI_EMBEDDING_ENDPOINT"] = "embedding"
+    os.environ["OPENAI_EMBEDDING_MODEL"] = "deployment"
 
     sqlite_instance.enable_embedding()
 
-    assert (
-        sqlite_instance.memory_embedding is not None
-    ), "Memory embedding should be enabled when set with environment variables."
+    assert sqlite_instance.memory_embedding is not None, (
+        "Memory embedding should be enabled when set with environment variables."
+    )
 
 
 def test_default_embedding_raises(sqlite_instance):
-    os.environ["AZURE_OPENAI_EMBEDDING_KEY"] = ""
-    os.environ["AZURE_OPENAI_EMBEDDING_ENDPOINT"] = ""
-    os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = ""
+    os.environ["OPENAI_EMBEDDING_KEY"] = ""
+    os.environ["OPENAI_EMBEDDING_ENDPOINT"] = ""
+    os.environ["OPENAI_EMBEDDING_MODEL"] = ""
 
     with pytest.raises(ValueError):
         sqlite_instance.enable_embedding()
 
 
 def test_query_entries(sqlite_instance, sample_conversation_entries):
-
     for i in range(3):
         sample_conversation_entries[i].conversation_id = str(i)
         sample_conversation_entries[i].original_value = f"Message {i}"
@@ -323,11 +328,10 @@ def test_query_entries(sqlite_instance, sample_conversation_entries):
 
 
 def test_get_all_memory(sqlite_instance, sample_conversation_entries):
-
     sqlite_instance._insert_entries(entries=sample_conversation_entries)
 
     # Fetch all entries
-    all_entries = sqlite_instance.get_prompt_request_pieces()
+    all_entries = sqlite_instance.get_message_pieces()
     assert len(all_entries) == 3
 
 
@@ -341,7 +345,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
     # Start a session
     with sqlite_instance.get_session() as session:
         # Create a ConversationData entry with all attributes filled
-        piece = PromptRequestPiece(
+        piece = MessagePiece(
             conversation_id=specific_conversation_id,
             role="user",
             sequence=1,
@@ -362,20 +366,20 @@ def test_get_memories_with_json_properties(sqlite_instance):
 
         # Verify that the retrieved entry matches the inserted entry
         assert len(retrieved_entries) == 1
-        retrieved_entry = retrieved_entries[0].request_pieces[0]
+        retrieved_entry = retrieved_entries[0].message_pieces[0]
         assert retrieved_entry.conversation_id == specific_conversation_id
-        assert retrieved_entry.role == "user"
+        assert retrieved_entry.api_role == "user"
         assert retrieved_entry.original_value == "Test content"
         # For timestamp, you might want to check if it's close to the current time instead of an exact match
         assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 0.1
-        assert abs((retrieved_entry.timestamp - entry.timestamp).total_seconds()) < 0.1
+        assert abs((retrieved_entry.timestamp - entry.timestamp.replace(tzinfo=timezone.utc)).total_seconds()) < 0.1
 
         converter_identifiers = retrieved_entry.converter_identifiers
         assert len(converter_identifiers) == 1
-        assert converter_identifiers[0]["__type__"] == "Base64Converter"
+        assert converter_identifiers[0].class_name == "Base64Converter"
 
         prompt_target = retrieved_entry.prompt_target_identifier
-        assert prompt_target["__type__"] == "TextTarget"
+        assert prompt_target.class_name == "TextTarget"
 
         labels = retrieved_entry.labels
         assert labels["normalizer_id"] == "id1"
@@ -384,7 +388,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
 def test_update_entries(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
-        entry=PromptRequestPiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
+        entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
     )
 
     sqlite_instance._insert_entry(entry)
@@ -404,7 +408,7 @@ def test_update_entries(sqlite_instance):
 def test_update_entries_empty_update_fields(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
-        entry=PromptRequestPiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
+        entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
     )
 
     sqlite_instance._insert_entry(entry)
@@ -420,7 +424,7 @@ def test_update_entries_empty_update_fields(sqlite_instance):
 def test_update_entries_nonexistent_fields(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
-        entry=PromptRequestPiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
+        entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
     )
 
     sqlite_instance._insert_entry(entry)
@@ -546,3 +550,170 @@ def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conve
         # Verify that the entry with a different conversation_id was not updated
         other_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="other_id").first()
         assert other_entry.prompt_metadata == original_metadata  # Metadata should remain unchanged
+
+
+def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
+    """Test that get_conversation_stats returns empty dict for empty input."""
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[])
+    assert result == {}
+
+
+def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):
+    """Test that get_conversation_stats omits unknown conversation IDs."""
+    result = sqlite_instance.get_conversation_stats(conversation_ids=["nonexistent"])
+    assert result == {}
+
+
+def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
+    """Test that message_count reflects distinct sequence numbers, not raw rows."""
+    # Extract conversation IDs and sequences before inserting (entries get detached after commit)
+    from pyrit.models import Message
+    from unit.mocks import get_sample_conversations
+
+    conversations = get_sample_conversations()
+    pieces = Message.flatten_to_message_pieces(conversations)
+    expected: dict[str, set[int]] = {}
+    for p in pieces:
+        expected.setdefault(p.conversation_id, set()).add(p.sequence)
+
+    sqlite_instance._insert_entries(entries=sample_conversation_entries)
+
+    conv_ids = list(expected.keys())
+    result = sqlite_instance.get_conversation_stats(conversation_ids=conv_ids)
+
+    for conv_id in conv_ids:
+        if conv_id in result:
+            assert result[conv_id].message_count == len(expected[conv_id]), (
+                f"Conv {conv_id}: expected {len(expected[conv_id])}, got {result[conv_id].message_count}"
+            )
+
+
+def test_get_conversation_stats_returns_labels(sqlite_instance):
+    """Test that labels from the first piece with non-empty labels are returned."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    piece = MessagePiece(
+        role="user",
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+        labels={"env": "prod", "source": "gui"},
+    )
+    entry = PromptMemoryEntry(entry=piece)
+    sqlite_instance._insert_entry(entry)
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    assert conv_id in result
+    assert result[conv_id].labels == {"env": "prod", "source": "gui"}
+
+
+def test_get_conversation_stats_preview_truncates(sqlite_instance):
+    """Test that last_message_preview is truncated to 100 chars + ellipsis."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    long_text = "x" * 200
+    piece = MessagePiece(
+        role="assistant",
+        original_value=long_text,
+        original_value_data_type="text",
+        converted_value=long_text,
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    entry = PromptMemoryEntry(entry=piece)
+    sqlite_instance._insert_entry(entry)
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    assert conv_id in result
+    preview = result[conv_id].last_message_preview
+    assert preview is not None
+    assert len(preview) == 103  # 100 chars + "..."
+    assert preview.endswith("...")
+
+
+def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
+    """Test that a single call returns stats for multiple conversations."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_ids = [str(uuid.uuid4()) for _ in range(3)]
+    entries = []
+    for i, cid in enumerate(conv_ids):
+        for seq in range(i + 1):  # conv 0: 1 msg, conv 1: 2 msgs, conv 2: 3 msgs
+            piece = MessagePiece(
+                role="user",
+                original_value=f"msg-{seq}",
+                original_value_data_type="text",
+                converted_value=f"msg-{seq}",
+                converted_value_data_type="text",
+                conversation_id=cid,
+                sequence=seq,
+            )
+            entries.append(PromptMemoryEntry(entry=piece))
+
+    sqlite_instance._insert_entries(entries=entries)
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=conv_ids)
+
+    assert len(result) == 3
+    assert result[conv_ids[0]].message_count == 1
+    assert result[conv_ids[1]].message_count == 2
+    assert result[conv_ids[2]].message_count == 3
+
+
+def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
+    """Verify dispose_engine does not raise or emit 'Logging error' when streams are closed (GH-1520)."""
+    pyrit_logger = logging.getLogger("pyrit")
+    prev_level = pyrit_logger.level
+    pyrit_logger.setLevel(logging.INFO)
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    root = logging.getLogger()
+    root.addHandler(handler)
+
+    try:
+        stream.close()
+        sqlite_instance.dispose_engine()
+    finally:
+        root.removeHandler(handler)
+        pyrit_logger.setLevel(prev_level)
+
+    captured = capsys.readouterr()
+    assert "Logging error" not in captured.err
+
+
+def test_create_engine_uses_static_pool_for_in_memory(sqlite_instance):
+    """In-memory databases must use StaticPool so all threads share one database."""
+    from sqlalchemy.pool import StaticPool
+
+    assert isinstance(sqlite_instance.engine.pool, StaticPool)
+
+
+def test_create_tables_raises_when_engine_none():
+    from pyrit.memory import SQLiteMemory
+
+    obj = SQLiteMemory.__new__(SQLiteMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj._create_tables_if_not_exist()
+
+
+def test_reset_database_raises_when_engine_none():
+    from pyrit.memory import SQLiteMemory
+
+    obj = SQLiteMemory.__new__(SQLiteMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj.reset_database()

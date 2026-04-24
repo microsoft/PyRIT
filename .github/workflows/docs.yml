@@ -22,6 +22,10 @@ concurrency:
   group: "pages"
   cancel-in-progress: false
 
+env:
+  # BASE_URL determines the website path prefix, including CSS & JS assets
+  BASE_URL: /${{ github.event.repository.name }}
+
 # This job installs dependencies, builds the book, and pushes it to `gh-pages`
 jobs:
   deploy-book:
@@ -32,23 +36,25 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # Cache pip packages for faster installs
-    - name: Cache pip packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
     # Install dependencies
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: 3.11
 
-    - name: Install PyRIT with pip
-      run: pip install .[dev]
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        # Install a specific version of uv.
+        version: "0.9.17"
+        enable-cache: true
+        cache-dependency-glob: |
+          **/pyproject.toml
+          **/uv.lock
+
+    - name: Install PyRIT with uv
+      run: uv sync --extra dev --extra all
+
     # Build the book
     - name: Build the book
       run: |

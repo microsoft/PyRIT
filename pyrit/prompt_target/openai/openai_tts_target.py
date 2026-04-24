@@ -2,23 +2,21 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-import httpx
-
-from pyrit.common import net_utility
 from pyrit.exceptions import (
-    RateLimitException,
-    handle_bad_request_exception,
     pyrit_target_retry,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
-    PromptRequestResponse,
+    Message,
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.models.prompt_request_piece import PromptRequestPiece
-from pyrit.prompt_target import OpenAITarget, limit_requests_per_minute
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +26,13 @@ TTSResponseFormat = Literal["flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", 
 
 
 class OpenAITTSTarget(OpenAITarget):
+    """A prompt target for OpenAI Text-to-Speech (TTS) endpoints."""
+
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            output_modalities=frozenset({frozenset(["audio_path"])}),
+        )
+    )
 
     def __init__(
         self,
@@ -36,24 +41,22 @@ class OpenAITTSTarget(OpenAITarget):
         response_format: TTSResponseFormat = "mp3",
         language: str = "en",
         speed: Optional[float] = None,
-        api_version: Optional[str] = "2025-02-01-preview",
-        **kwargs,
-    ):
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the TTS target with specified parameters.
 
         Args:
-            model_name (str, Optional): The name of the model. Defaults to "tts-1".
+            model_name (str, Optional): The name of the model (or deployment name in Azure).
+                If no value is provided, the OPENAI_TTS_MODEL environment variable will be used.
             endpoint (str, Optional): The target URL for the OpenAI service.
-            api_key (str, Optional): The API key for accessing the Azure OpenAI service.
+            api_key (str | Callable[[], str], Optional): The API key for accessing the OpenAI service,
+                or a callable that returns an access token. For Azure endpoints with Entra authentication,
+                pass a token provider from pyrit.auth (e.g., get_azure_openai_auth(endpoint)).
                 Defaults to the `OPENAI_TTS_KEY` environment variable.
             headers (str, Optional): Headers of the endpoint (JSON).
-            use_aad_auth (bool, Optional): When set to True, user authentication is used
-                instead of API Key. DefaultAzureCredential is taken for
-                https://cognitiveservices.azure.com/.default . Please run `az login` locally
-                to leverage user AuthN.
-            api_version (str, Optional): The version of the Azure OpenAI API. Defaults to
-                "2025-02-01-preview".
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
@@ -61,60 +64,109 @@ class OpenAITTSTarget(OpenAITarget):
             response_format (str, Optional): The format of the audio response. Defaults to "mp3".
             language (str): The language for TTS. Defaults to "en".
             speed (float, Optional): The speed of the TTS. Select a value from 0.25 to 4.0. 1.0 is normal.
-            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
-                httpx.AsyncClient() constructor.
-                For example, to specify a 3 minutes timeout: httpx_client_kwargs={"timeout": 180}
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
+            **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
+            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
+                constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-
-        super().__init__(api_version=api_version, **kwargs)
-
-        if not self._model_name:
-            self._model_name = "tts-1"
+        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
 
         self._voice = voice
         self._response_format = response_format
         self._language = language
         self._speed = speed
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_TTS_MODEL"
         self.endpoint_environment_variable = "OPENAI_TTS_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_TTS_KEY"
 
+    def _get_target_api_paths(self) -> list[str]:
+        """Return API paths that should not be in the URL."""
+        return ["/audio/speech", "/v1/audio/speech"]
+
+    def _get_provider_examples(self) -> dict[str, str]:
+        """Return provider-specific example URLs."""
+        return {
+            ".openai.azure.com": "https://{resource}.openai.azure.com/openai/v1",
+            "api.openai.com": "https://api.openai.com/v1",
+        }
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier with TTS-specific parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this target instance.
+        """
+        return self._create_identifier(
+            params={
+                "voice": self._voice,
+                "response_format": self._response_format,
+                "language": self._language,
+                "speed": self._speed,
+            },
+        )
+
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, prompt_request: PromptRequestResponse) -> PromptRequestResponse:
-        self._validate_request(prompt_request=prompt_request)
-        request = prompt_request.request_pieces[0]
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Asynchronously send a message to the OpenAI TTS target.
 
-        logger.info(f"Sending the following prompt to the prompt target: {request}")
+        Args:
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
-        # Refresh auth headers if using AAD
-        self.refresh_auth_headers()
+        Returns:
+            list[Message]: A list containing the audio response from the prompt target.
+        """
+        message = normalized_conversation[-1]
+        message_piece = message.message_pieces[0]
 
-        body = self._construct_request_body(request=request)
+        logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
 
-        params = {}
-        if self._api_version is not None:
-            params["api-version"] = self._api_version
+        # Construct request parameters for SDK
+        body_parameters: dict[str, object] = {
+            "model": self._model_name,
+            "input": message_piece.converted_value,
+            "voice": self._voice,
+            "response_format": self._response_format,
+        }
 
-        try:
-            response = await net_utility.make_request_and_raise_if_error_async(
-                endpoint_uri=self._endpoint,
-                method="POST",
-                headers=self._headers,
-                request_body=body,
-                params=params,
-                **self._httpx_client_kwargs,
-            )
-        except httpx.HTTPStatusError as StatusError:
-            if StatusError.response.status_code == 400:
-                # Handle Bad Request
-                return handle_bad_request_exception(response_text=StatusError.response.text, request=request)
-            elif StatusError.response.status_code == 429:
-                raise RateLimitException()
-            else:
-                raise
+        # Add optional parameters
+        if self._speed is not None:
+            body_parameters["speed"] = self._speed
+
+        # Use unified error handler for consistent error handling
+        response = await self._handle_openai_request(
+            api_call=lambda: self._client.audio.speech.create(
+                model=str(body_parameters["model"]),
+                voice=str(body_parameters["voice"]),
+                input=str(body_parameters["input"]),
+                response_format=body_parameters.get("response_format"),  # type: ignore[arg-type]
+                speed=body_parameters.get("speed"),  # type: ignore[arg-type]
+            ),
+            request=message,
+        )
+        return [response]
+
+    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+        """
+        Construct a Message from a TTS audio response.
+
+        Args:
+            response: The audio response from OpenAI SDK.
+            request: The original request MessagePiece.
+
+        Returns:
+            Message: Constructed message with audio file path.
+        """
+        audio_bytes = response.content
 
         logger.info("Received valid response from the prompt target")
 
@@ -122,51 +174,8 @@ class OpenAITTSTarget(OpenAITarget):
             category="prompt-memory-entries", data_type="audio_path", extension=self._response_format
         )
 
-        data = response.content
+        await audio_response.save_data(data=audio_bytes)
 
-        await audio_response.save_data(data=data)
-
-        response_entry = construct_response_from_request(
+        return construct_response_from_request(
             request=request, response_text_pieces=[str(audio_response.value)], response_type="audio_path"
         )
-
-        return response_entry
-
-    def _construct_request_body(self, request: PromptRequestPiece) -> dict:
-
-        body_parameters: dict[str, object] = {
-            "model": self._model_name,
-            "input": request.converted_value,
-            "voice": self._voice,
-            "file": self._response_format,
-            "language": self._language,
-            "speed": self._speed,
-        }
-
-        # Filter out None values
-        return {k: v for k, v in body_parameters.items() if v is not None}
-
-    def _validate_request(self, *, prompt_request: PromptRequestResponse) -> None:
-        n_pieces = len(prompt_request.request_pieces)
-        if n_pieces != 1:
-            raise ValueError(
-                "This target only supports a single prompt request piece. " f"Received: {n_pieces} pieces."
-            )
-
-        piece_type = prompt_request.request_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
-        request = prompt_request.request_pieces[0]
-        messages = self._memory.get_conversation(conversation_id=request.conversation_id)
-
-        n_messages = len(messages)
-        if n_messages > 0:
-            raise ValueError(
-                "This target only supports a single turn conversation. "
-                f"Received: {n_messages} messages which indicates a prior turn."
-            )
-
-    def is_json_response_supported(self) -> bool:
-        """Indicates that this target supports JSON response format."""
-        return False

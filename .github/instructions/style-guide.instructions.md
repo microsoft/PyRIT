@@ -14,11 +14,11 @@ Follow these coding standards to ensure consistent, readable, and maintainable c
 
 ```python
 # CORRECT
-async def send_prompt_async(self, prompt: str) -> PromptResponse:
+async def send_prompt_async(self, prompt: str) -> Message:
     ...
 
 # INCORRECT
-async def send_prompt(self, prompt: str) -> PromptResponse:  # Missing _async suffix
+async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
     ...
 ```
 
@@ -42,25 +42,26 @@ def validate_input(self, data: dict) -> None:  # Should be private
 - **EVERY** function parameter MUST have explicit type declaration
 - **EVERY** function MUST declare its return type
 - Use `None` for functions that don't return a value
-- Import types from `typing` module as needed
+
+### Modern Type Syntax (Python 3.10+)
+- Use built-in generics and union syntax:
+  - `list[str]` not `List[str]`
+  - `dict[str, Any]` not `Dict[str, Any]`
+  - `str | None` not `Optional[str]`
+  - `int | float` not `Union[int, float]`
+- Still import `Any`, `Literal`, `TypeVar`, `Protocol`, `cast` etc. from `typing` as needed
 
 ```python
 # CORRECT
-def process_data(self, *, data: List[str], threshold: float = 0.5) -> Dict[str, Any]:
+def process_data(self, *, data: list[str], threshold: float = 0.5) -> dict[str, Any]:
+    ...
+
+def get_name(self) -> str | None:
     ...
 
 # INCORRECT
 def process_data(self, data, threshold=0.5):  # Missing all type annotations
     ...
-```
-
-### Common Type Imports
-```python
-from typing import (
-    Any, Dict, List, Optional, Union, Tuple, Set,
-    Callable, TypeVar, Generic, Protocol, Literal,
-    cast, overload
-)
 ```
 
 ## Function Signatures
@@ -75,13 +76,13 @@ def __init__(
     self,
     *,
     target: PromptTarget,
-    scorer: Optional[Scorer] = None,
+    scorer: Scorer | None = None,
     max_retries: int = 3
 ) -> None:
     ...
 
 # INCORRECT
-def __init__(self, target: PromptTarget, scorer: Optional[Scorer] = None, max_retries: int = 3):
+def __init__(self, target: PromptTarget, scorer: Scorer | None = None, max_retries: int = 3):
     ...
 ```
 
@@ -96,12 +97,34 @@ def process(self, data: str) -> str:
 
 ## Documentation Standards
 
+### Import Placement
+- **MANDATORY**: All import statements MUST be at the top of the file
+- Do NOT use inline/local imports inside functions or methods
+- The only exception is breaking circular import dependencies, which should be rare and documented
+
+```python
+# CORRECT — imports at the top of the file
+from contextlib import closing
+from sqlalchemy.exc import SQLAlchemyError
+
+def update_entry(self, entry: Base) -> None:
+    with closing(self.get_session()) as session:
+        ...
+
+# INCORRECT — inline import inside a function
+def update_entry(self, entry: Base) -> None:
+    from contextlib import closing          # ← WRONG, must be at top of file
+    with closing(self.get_session()) as session:
+        ...
+```
+
 ### Docstring Format
 - Use Google-style docstrings
 - Include type information in parameter descriptions
 - Document return types and values
 - Include "Raises" section when applicable
 - Use triple quotes even for single-line docstrings
+- Do not include example calls for how it's used
 
 ```python
 def calculate_score(
@@ -110,7 +133,7 @@ def calculate_score(
     response: str,
     objective: str,
     threshold: float = 0.8,
-    max_attempts: Optional[int] = None
+    max_attempts: int | None = None
 ) -> Score:
     """
     Calculate the score for a response against an objective.
@@ -122,7 +145,7 @@ def calculate_score(
         response (str): The response text to evaluate.
         objective (str): The objective to evaluate against.
         threshold (float): The minimum score threshold. Defaults to 0.8.
-        max_attempts (Optional[int]): Maximum number of scoring attempts. Defaults to None.
+        max_attempts (int | None): Maximum number of scoring attempts. Defaults to None.
 
     Returns:
         Score: The calculated score object containing value and metadata.
@@ -131,31 +154,6 @@ def calculate_score(
         ValueError: If response or objective is empty.
         ScoringException: If the scoring process fails.
     """
-```
-
-## Enums and Constants
-
-### Use Enums Over Literals
-- Always use Enum classes instead of Literal types for predefined choices
-- Enums are more maintainable and provide better IDE support
-
-```python
-# CORRECT
-from enum import Enum
-
-class AttackOutcome(Enum):
-    SUCCESS = "success"
-    FAILURE = "failure"
-    UNDETERMINED = "undetermined"
-
-def process_result(self, *, outcome: AttackOutcome) -> None:
-    ...
-
-# INCORRECT
-from typing import Literal
-
-def process_result(self, *, outcome: Literal["success", "failure", "undetermined"]) -> None:
-    ...
 ```
 
 ### Class-Level Constants
@@ -222,7 +220,7 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any
 
 # Third-party imports
 import numpy as np
@@ -230,8 +228,44 @@ from tqdm import tqdm
 
 # Local application imports
 from pyrit.attacks.base import AttackStrategy
-from pyrit.models import AttackResult, PromptResponse
+from pyrit.models import AttackResult
 from pyrit.prompt_target import PromptTarget
+```
+
+Unless necessary, always import at the top of the file. Don't import inside a function or method.
+
+
+### Import paths
+
+Often, pyrit has specific files that can be imported. However IF you are importing from a different module than your namespace,
+import from the root pyrit module if it's exposed from init.
+
+In the same module, importing from the specific path is usually necessary to prevent circular imports.
+
+- Always check __init__.py exports first - Before using a specific file path, verify if the class/function is exposed at a higher level
+- Group related imports - Put all imports from the same root module together
+- Use multi-line formatting for readability - When importing 3+ items from the same module, use parentheses
+
+
+```python
+# Correct
+from pyrit.prompt_target import PromptChatTarget, OpenAIChatTarget
+
+# Correct
+from pyrit.score import (
+    AzureContentFilterScorer,
+    FloatScaleThresholdScorer,
+    SelfAskRefusalScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
+
+# Incorrect (if importing from a non-target module)
+from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+
 ```
 
 ## Error Handling
@@ -259,7 +293,7 @@ if not self._model:
 
 ```python
 # CORRECT
-def process_items(self, *, items: List[str]) -> List[str]:
+def process_items(self, *, items: list[str]) -> list[str]:
     if not items:
         return []
 
@@ -270,7 +304,7 @@ def process_items(self, *, items: List[str]) -> List[str]:
     return [self._process_single(item) for item in items]
 
 # INCORRECT - Excessive nesting
-def process_items(self, *, items: List[str]) -> List[str]:
+def process_items(self, *, items: list[str]) -> list[str]:
     if items:
         if len(items) == 1:
             return [self._process_single(items[0])]
@@ -353,7 +387,7 @@ class AttackExecutor:
         *,
         target: PromptTarget,
         scorer: Scorer,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ) -> None:
         self._target = target
         self._scorer = scorer
@@ -398,7 +432,7 @@ def process_large_dataset(self, *, file_path: Path) -> Generator[Result, None, N
             yield self._process_line(line)
 
 # INCORRECT
-def process_large_dataset(self, *, file_path: Path) -> List[Result]:
+def process_large_dataset(self, *, file_path: Path) -> list[Result]:
     with open(file_path) as f:
         lines = f.readlines()  # Loads entire file into memory
     return [self._process_line(line) for line in lines]
@@ -417,6 +451,15 @@ Before committing code, ensure:
 - [ ] Code follows the import organization pattern
 - [ ] No hard-coded dependencies
 - [ ] Complex logic is extracted to helper methods
+
+---
+
+## File Editing Rules
+
+### Never Use `sed` for File Edits
+- **MANDATORY**: Never use `sed` (or similar stream-editing CLI tools) to modify source files
+- `sed` frequently corrupts files, applies partial edits, or silently fails
+- Always use the editor's built-in replace/edit tools (e.g., `replace_string_in_file`, `multi_replace_string_in_file`) to make targeted, verifiable changes
 
 ---
 

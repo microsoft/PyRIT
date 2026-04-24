@@ -1,14 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import (
     combine_dict,
     get_kwarg_param,
     get_random_indices,
+    verify_and_resolve_path,
     warn_if_set,
 )
 
@@ -325,3 +329,33 @@ class TestGetKwargParam:
         assert result == "value1"
         assert "param1" not in kwargs
         assert "param2" in kwargs  # Other params should remain
+
+
+class TestVerifyAndResolvePath:
+    """Test class for verify_and_resolve_path function."""
+
+    def test_verify_and_resolve_path_rejects_nonexistent(self) -> None:
+        """Test that the function correctly refuses to verify a non-existent path."""
+        mock_path: str = "this/does/not/exist.yaml"
+        with pytest.raises(FileNotFoundError, match="Path not found"):
+            verify_and_resolve_path(mock_path)
+
+    def test_verify_and_resolve_path_confirms_existing(self) -> None:
+        """Test that the function verifies paths that currently exist under the scorer configs."""
+        full_paths: list[str] = []
+        for root, _dirs, files in os.walk(SCORER_SEED_PROMPT_PATH):
+            full_paths.extend([os.path.join(root, f) for f in files if f.endswith(".yaml")])
+        resolved_paths = [Path(p).resolve() for p in full_paths]
+        attempted_paths = [verify_and_resolve_path(p) for p in full_paths]
+        assert attempted_paths == resolved_paths
+
+    def test_verify_and_resolve_path_with_path_object(self) -> None:
+        """Test that the function works with Path objects."""
+        # Use SCORER_SEED_PROMPT_PATH which we know exists
+        result = verify_and_resolve_path(SCORER_SEED_PROMPT_PATH)
+        assert result == SCORER_SEED_PROMPT_PATH.resolve()
+
+    def test_verify_and_resolve_path_invalid_type(self) -> None:
+        """Test that the function raises ValueError for invalid types."""
+        with pytest.raises(ValueError, match="Path must be a string or Path object"):
+            verify_and_resolve_path(123)  # type: ignore[arg-type]

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import logging
+import logging  # noqa: TC003
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional, TypeVar
@@ -23,12 +23,12 @@ PromptGeneratorStrategyResultT = TypeVar("PromptGeneratorStrategyResultT", bound
 
 @dataclass
 class PromptGeneratorStrategyContext(StrategyContext, ABC):
-    """Base class for all prompt generator strategy contexts"""
+    """Base class for all prompt generator strategy contexts."""
 
 
 @dataclass
 class PromptGeneratorStrategyResult(StrategyResult, ABC):
-    """Base class for all prompt generator strategy results"""
+    """Base class for all prompt generator strategy results."""
 
 
 class _DefaultPromptGeneratorStrategyEventHandler(
@@ -53,6 +53,7 @@ class _DefaultPromptGeneratorStrategyEventHandler(
     ) -> None:
         """
         Handle an event during the execution of a prompt generator strategy.
+
         Args:
             event_data (StrategyEventData[PromptGeneratorStrategyContextT, PromptGeneratorStrategyResultT]):
                 The event data containing context and result.

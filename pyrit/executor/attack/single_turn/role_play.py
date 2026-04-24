@@ -4,30 +4,40 @@
 import enum
 import logging
 import pathlib
-from typing import Optional
+from typing import Any, Optional
 
-from pyrit.common.path import DATASETS_PATH
-from pyrit.executor.attack.core import AttackConverterConfig, AttackScoringConfig
+from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
 )
 from pyrit.models import (
-    PromptRequestResponse,
-    SeedPromptDataset,
+    Message,
+    SeedDataset,
 )
 from pyrit.prompt_converter import LLMGenericTextConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 
+# RolePlayAttack generates next_message and prepended_conversation internally,
+# so it does not accept these parameters from callers.
+RolePlayAttackParameters = AttackParameters.excluding("next_message", "prepended_conversation")
+
+
 class RolePlayPaths(enum.Enum):
-    VIDEO_GAME = pathlib.Path(DATASETS_PATH) / "executors" / "role_play" / "video_game.yaml"
-    MOVIE_SCRIPT = pathlib.Path(DATASETS_PATH) / "executors" / "role_play" / "movie_script.yaml"
-    TRIVIA_GAME = pathlib.Path(DATASETS_PATH) / "executors" / "role_play" / "trivia_game.yaml"
-    PERSUASION_SCRIPT = pathlib.Path(DATASETS_PATH) / "executors" / "role_play" / "persuasion_script.yaml"
+    """Enum for predefined role-play scenario paths."""
+
+    VIDEO_GAME = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH) / "role_play" / "video_game.yaml"
+    MOVIE_SCRIPT = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH) / "role_play" / "movie_script.yaml"
+    TRIVIA_GAME = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH) / "role_play" / "trivia_game.yaml"
+    PERSUASION_SCRIPT = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH) / "role_play" / "persuasion_script.yaml"
+    PERSUASION_SCRIPT_WRITTEN = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH) / "role_play" / "persuasion_script_written.yaml"
 
 
 class RolePlayAttack(PromptSendingAttack):
@@ -51,11 +61,12 @@ class RolePlayAttack(PromptSendingAttack):
     and multiple scorer types.
     """
 
+    @apply_defaults
     def __init__(
         self,
         *,
-        objective_target: PromptTarget,
-        adversarial_chat: PromptChatTarget,
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        attack_adversarial_config: AttackAdversarialConfig,
         role_play_definition_path: pathlib.Path,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -63,12 +74,12 @@ class RolePlayAttack(PromptSendingAttack):
         max_attempts_on_failure: int = 0,
     ) -> None:
         """
-        Initializes the role-play attack strategy.
+        Initialize the role-play attack strategy.
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            adversarial_chat (PromptChatTarget): The adversarial chat target used to rephrase
-                objectives into role-play scenarios.
+            attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
+                including the adversarial chat target used to rephrase objectives into role-play scenarios.
             role_play_definition_path (pathlib.Path): Path to the YAML file containing role-play
                 definitions (rephrase instructions, user start turn, assistant start turn).
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
@@ -87,19 +98,20 @@ class RolePlayAttack(PromptSendingAttack):
             attack_scoring_config=attack_scoring_config,
             prompt_normalizer=prompt_normalizer,
             max_attempts_on_failure=max_attempts_on_failure,
+            params_type=RolePlayAttackParameters,
         )
 
         # Store the adversarial chat for role-play rephrasing
-        self._adversarial_chat = adversarial_chat
+        self._adversarial_chat = attack_adversarial_config.target
 
         # Load role-play definitions
-        role_play_definition = SeedPromptDataset.from_yaml_file(role_play_definition_path)
+        role_play_definition = SeedDataset.from_yaml_file(role_play_definition_path)
 
         # Validate role-play definition structure
         self._parse_role_play_definition(role_play_definition)
 
         # Create the rephrase converter configuration
-        rephrase_converter = PromptConverterConfiguration.from_converters(
+        self._rephrase_converter = PromptConverterConfiguration.from_converters(
             converters=[
                 LLMGenericTextConverter(
                     converter_target=self._adversarial_chat,
@@ -108,59 +120,68 @@ class RolePlayAttack(PromptSendingAttack):
             ]
         )
 
-        # Prepend the rephrase converter to existing request converters
-        self._request_converters = rephrase_converter + self._request_converters
-
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
-        Sets up the attack by preparing conversation context with role-play start.
+        Set up the attack by preparing conversation context with role-play start
+        and converting the objective to role-play format.
 
         Args:
             context (SingleTurnAttackContext): The attack context containing attack parameters.
         """
-        # Get role-play conversation start
+        # Get role-play conversation start (turns 0 and 1)
         context.prepended_conversation = await self._get_conversation_start() or []
+
+        # Rephrase the objective using the LLM converter
+        # This converts the user's objective into a role-play scenario
+        rephrased_objective = await self._rephrase_objective_async(objective=context.objective)
+
+        # Set the rephrased objective as the message
+        # This will be used by _get_message() to send the rephrased content to the target
+        context.next_message = Message.from_prompt(prompt=rephrased_objective, role="user")
 
         # Call parent setup which handles conversation ID generation, memory labels, etc.
         await super()._setup_async(context=context)
 
-    def _validate_context(self, *, context: SingleTurnAttackContext) -> None:
+    async def _rephrase_objective_async(self, *, objective: str) -> str:
         """
-        Validate the context before executing the attack.
-        Args:
-            context (SingleTurnAttackContext): The attack context containing parameters and objective.
-        Raises:
-            ValueError: If the context is invalid.
-        """
-        if context.prepended_conversation:
-            raise ValueError("RolePlayAttack does not support prepended conversations.")
-        super()._validate_context(context=context)
+        Rephrase the objective into a role-play scenario using the adversarial chat.
 
-    async def _get_conversation_start(self) -> Optional[list[PromptRequestResponse]]:
+        Args:
+            objective (str): The original objective to rephrase.
+
+        Returns:
+            str: The rephrased objective in role-play format.
+        """
+        # Use the LLMGenericTextConverter to rephrase the objective
+        converter = self._rephrase_converter[0].converters[0]
+        result = await converter.convert_async(prompt=objective, input_type="text")
+        return result.output_text
+
+    async def _get_conversation_start(self) -> Optional[list[Message]]:
         """
         Get the role-play conversation start messages.
 
         Returns:
-            Optional[list[PromptRequestResponse]]: List containing user and assistant start turns
+            Optional[list[Message]]: List containing user and assistant start turns
                 for the role-play scenario.
         """
         return [
-            PromptRequestResponse.from_prompt(
+            Message.from_prompt(
                 prompt=self._user_start_turn.value,
                 role="user",
             ),
-            PromptRequestResponse.from_prompt(
+            Message.from_prompt(
                 prompt=self._assistant_start_turn.value,
                 role="assistant",
             ),
         ]
 
-    def _parse_role_play_definition(self, role_play_definition: SeedPromptDataset):
+    def _parse_role_play_definition(self, role_play_definition: SeedDataset) -> None:
         """
-        Parses and validates the role-play definition structure.
+        Parse and validate the role-play definition structure.
 
         Args:
-            role_play_definition (SeedPromptDataset): The role-play definition dataset to validate.
+            role_play_definition (SeedDataset): The role-play definition dataset to validate.
 
         Raises:
             ValueError: If the definition does not contain exactly 3 prompts or if any prompt is empty.

@@ -3,26 +3,31 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from pyrit.common.path import DATASETS_PATH
-from pyrit.executor.attack.core import AttackConverterConfig, AttackScoringConfig
+from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
-    PromptRequestResponse,
-    SeedPrompt,
-    SeedPromptDataset,
-    SeedPromptGroup,
+    Message,
+    SeedDataset,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+# SkeletonKeyAttack does not support prepended conversations
+# as it manages its own conversation flow with the skeleton key prompt.
+SkeletonKeyAttackParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
 
 class SkeletonKeyAttack(PromptSendingAttack):
@@ -38,17 +43,17 @@ class SkeletonKeyAttack(PromptSendingAttack):
     2. Sending the actual objective prompt to the primed target.
     3. Evaluating the response using configured scorers to determine success.
 
-    Learn more about attack at the link below:
-    https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/
+    Learn more about the attack [@microsoft2024skeletonkey].
     """
 
     # Default skeleton key prompt path
-    DEFAULT_SKELETON_KEY_PROMPT_PATH: Path = Path(DATASETS_PATH) / "executors" / "skeleton_key" / "skeleton_key.prompt"
+    DEFAULT_SKELETON_KEY_PROMPT_PATH: Path = Path(EXECUTOR_SEED_PROMPT_PATH) / "skeleton_key" / "skeleton_key.prompt"
 
+    @apply_defaults
     def __init__(
         self,
         *,
-        objective_target: PromptTarget,
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -74,6 +79,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
             attack_scoring_config=attack_scoring_config,
             prompt_normalizer=prompt_normalizer,
             max_attempts_on_failure=max_attempts_on_failure,
+            params_type=SkeletonKeyAttackParameters,
         )
 
         # Load skeleton key prompt
@@ -92,29 +98,9 @@ class SkeletonKeyAttack(PromptSendingAttack):
         if skeleton_key_prompt:
             return skeleton_key_prompt
 
-        return SeedPromptDataset.from_yaml_file(self.DEFAULT_SKELETON_KEY_PROMPT_PATH).prompts[0].value
+        return SeedDataset.from_yaml_file(self.DEFAULT_SKELETON_KEY_PROMPT_PATH).prompts[0].value
 
-    def _validate_context(self, *, context: SingleTurnAttackContext) -> None:
-        """
-        Validate the context for the skeleton key attack.
-        This attack does not support prepended conversations, so it raises an error if one exists.
-
-        Args:
-            context (SingleTurnAttackContext): The attack context to validate.
-
-        Raises:
-            ValueError: If the context has a prepended conversation.
-        """
-        # Call parent validation first
-        super()._validate_context(context=context)
-
-        if context.prepended_conversation:
-            raise ValueError(
-                "Skeleton key attack does not support prepended conversations. "
-                "Please clear the prepended conversation before starting the attack."
-            )
-
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Execute the skeleton key attack by first sending the skeleton key prompt,
         then sending the objective prompt and evaluating the response.
@@ -149,9 +135,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return result
 
-    async def _send_skeleton_key_prompt_async(
-        self, *, context: SingleTurnAttackContext
-    ) -> Optional[PromptRequestResponse]:
+    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext[Any]) -> Optional[Message]:
         """
         Send the skeleton key prompt to the target to prime it for the attack.
 
@@ -159,18 +143,16 @@ class SkeletonKeyAttack(PromptSendingAttack):
             context (SingleTurnAttackContext): The attack context containing configuration.
 
         Returns:
-            Optional[PromptRequestResponse]: The response from the target, or None if filtered.
+            Optional[Message]: The response from the target, or None if filtered.
         """
         self._logger.debug("Sending skeleton key prompt to target")
 
-        # Create seed prompt group for skeleton key
-        skeleton_key_prompt_group = SeedPromptGroup(
-            prompts=[SeedPrompt(value=self._skeleton_key_prompt, data_type="text")]
-        )
+        # Create message for skeleton key
+        skeleton_key_message = Message.from_prompt(prompt=self._skeleton_key_prompt, role="user")
 
         # Send skeleton key prompt
         skeleton_response = await self._send_prompt_to_objective_target_async(
-            prompt_group=skeleton_key_prompt_group, context=context
+            message=skeleton_key_message, context=context
         )
 
         if skeleton_response:
@@ -180,7 +162,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return skeleton_response
 
-    def _create_skeleton_key_failure_result(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    def _create_skeleton_key_failure_result(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Create an attack result for when the skeleton key prompt fails.
 
@@ -190,11 +172,10 @@ class SkeletonKeyAttack(PromptSendingAttack):
         Returns:
             AttackResult: The failure result.
         """
-
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             last_response=None,
             last_score=None,
             outcome=AttackOutcome.FAILURE,

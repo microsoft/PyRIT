@@ -41,7 +41,7 @@ flowchart LR
         P_prompt_metadata["prompt_metadata (VARCHAR)"]
         P_converter_identifiers["converter_identifiers (VARCHAR)"]
         P_prompt_target_identifier["prompt_target_identifier (VARCHAR)"]
-        P_orchestrator_identifier["orchestrator_identifier (VARCHAR)"]
+        P_attack_identifier["attack_identifier (VARCHAR)"]
         P_response_error["response_error (VARCHAR)"]
         P_converted_value_data_type["converted_value_data_type (VARCHAR)"]
         P_converted_value["converted_value (VARCHAR)"]

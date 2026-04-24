@@ -5,9 +5,11 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
 
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    AttackParameters,
     AttackScoringConfig,
     PromptSendingAttack,
     SingleTurnAttackContext,
@@ -16,16 +18,16 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ConversationType,
-    PromptRequestPiece,
-    PromptRequestResponse,
+    Message,
+    MessagePiece,
     Score,
+    SeedGroup,
     SeedPrompt,
-    SeedPromptGroup,
 )
 from pyrit.prompt_converter import Base64Converter, StringJoinConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import Scorer
+from pyrit.score import Scorer, TrueFalseScorer
 
 
 @pytest.fixture
@@ -33,16 +35,16 @@ def mock_target():
     """Create a mock prompt target for testing"""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     return target
 
 
 @pytest.fixture
 def mock_true_false_scorer():
     """Create a mock true/false scorer for testing"""
-    scorer = MagicMock(spec=Scorer)
-    scorer.scorer_type = "true_false"
+    scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
 
@@ -50,7 +52,7 @@ def mock_true_false_scorer():
 def mock_non_true_false_scorer():
     """Create a mock scorer that is not a true/false type"""
     scorer = MagicMock(spec=Scorer)
-    scorer.scorer_type = "float_scale"
+    scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
 
@@ -65,16 +67,17 @@ def mock_prompt_normalizer():
 @pytest.fixture
 def basic_context():
     """Create a basic context for testing"""
-    return SingleTurnAttackContext(objective="Test objective", conversation_id=str(uuid.uuid4()))
+    return SingleTurnAttackContext(
+        params=AttackParameters(objective="Test objective"),
+        conversation_id=str(uuid.uuid4()),
+    )
 
 
 @pytest.fixture
 def sample_response():
     """Create a sample response for testing"""
-    return PromptRequestResponse(
-        request_pieces=[
-            PromptRequestPiece(role="assistant", original_value="Test response", original_value_data_type="text")
-        ]
+    return Message(
+        message_pieces=[MessagePiece(role="assistant", original_value="Test response", original_value_data_type="text")]
     )
 
 
@@ -88,7 +91,8 @@ def success_score():
         score_value_description="Test success score",
         score_rationale="Test rationale for success",
         score_metadata="{}",
-        prompt_request_response_id=str(uuid.uuid4()),
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -98,11 +102,12 @@ def failure_score():
     return Score(
         score_type="true_false",
         score_value="false",
-        score_category="test",
+        score_category=["test"],
         score_value_description="Test failure score",
         score_rationale="Test rationale for failure",
-        score_metadata="{}",
-        prompt_request_response_id=str(uuid.uuid4()),
+        score_metadata={},
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -123,11 +128,6 @@ class TestPromptSendingAttackInitialization:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         assert attack._objective_scorer == mock_true_false_scorer
-
-    def test_init_raises_error_for_non_true_false_scorer(self, mock_target, mock_non_true_false_scorer):
-        attack_scoring_config = AttackScoringConfig(objective_scorer=mock_non_true_false_scorer)
-        with pytest.raises(ValueError, match="Objective scorer must be a true/false scorer"):
-            PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
     def test_init_with_all_custom_configurations(self, mock_target, mock_true_false_scorer, mock_prompt_normalizer):
         converter_cfg = AttackConverterConfig()
@@ -152,11 +152,29 @@ class TestPromptSendingAttackInitialization:
         attack = PromptSendingAttack(objective_target=mock_target)
 
         assert attack._conversation_manager is not None
-        assert hasattr(attack._conversation_manager, "update_conversation_state_async")
+        assert hasattr(attack._conversation_manager, "initialize_context_async")
 
     def test_init_with_negative_max_attempts_raises_error(self, mock_target):
         with pytest.raises(ValueError, match="max_attempts_on_failure must be a non-negative integer"):
             PromptSendingAttack(objective_target=mock_target, max_attempts_on_failure=-1)
+
+    def test_get_objective_target_returns_correct_target(self, mock_target):
+        """Test that get_objective_target returns the target passed to constructor"""
+        attack = PromptSendingAttack(objective_target=mock_target)
+
+        assert attack.get_objective_target() == mock_target
+
+    def test_get_attack_scoring_config_returns_config(self, mock_target, mock_true_false_scorer):
+        """Test that get_attack_scoring_config returns the scoring configuration"""
+        auxiliary_scorer = MagicMock(spec=Scorer)
+        scoring_cfg = AttackScoringConfig(objective_scorer=mock_true_false_scorer, auxiliary_scorers=[auxiliary_scorer])
+        attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=scoring_cfg)
+
+        result = attack.get_attack_scoring_config()
+
+        assert result is not None
+        assert result.objective_scorer == mock_true_false_scorer
+        assert result.auxiliary_scorers == [auxiliary_scorer]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -166,12 +184,19 @@ class TestContextValidation:
     @pytest.mark.parametrize(
         "objective,conversation_id,expected_error",
         [
-            ("", str(uuid.uuid4()), "Attack objective must be provided and non-empty in the context"),
+            (
+                "",
+                "a6742ba7-3ce7-4db7-a0f5-769a0fb18c3c",
+                "Attack objective must be provided and non-empty in the context",
+            ),
         ],
     )
     def test_validate_context_raises_errors(self, mock_target, objective, conversation_id, expected_error):
         attack = PromptSendingAttack(objective_target=mock_target)
-        context = SingleTurnAttackContext(objective=objective, conversation_id=conversation_id)
+        context = SingleTurnAttackContext(
+            params=AttackParameters(objective=objective),
+            conversation_id=conversation_id,
+        )
 
         with pytest.raises(ValueError, match=expected_error):
             attack._validate_context(context=context)
@@ -183,9 +208,11 @@ class TestContextValidation:
     def test_validate_context_with_additional_optional_fields(self, mock_target):
         attack = PromptSendingAttack(objective_target=mock_target)
         context = SingleTurnAttackContext(
-            objective="Test objective",
+            params=AttackParameters(
+                objective="Test objective",
+                next_message=Message.from_prompt(prompt="test", role="user"),
+            ),
             conversation_id=str(uuid.uuid4()),
-            seed_prompt_group=SeedPromptGroup(prompts=[SeedPrompt(value="test", data_type="text")]),
             system_prompt="System prompt",
             metadata={"key": "value"},
         )
@@ -205,8 +232,14 @@ class TestSetupPhase:
         attack._memory_labels = {"strategy_label": "strategy_value", "common": "strategy"}
         basic_context.memory_labels = {"context_label": "context_value", "common": "context"}
 
+        # Mock that simulates initialize_context_async merging labels
+        async def mock_initialize(*, context, memory_labels=None, **kwargs):
+            from pyrit.common.utils import combine_dict
+
+            context.memory_labels = combine_dict(existing_dict=memory_labels, new_dict=context.memory_labels)
+
         attack._conversation_manager = MagicMock()
-        attack._conversation_manager.update_conversation_state_async = AsyncMock()
+        attack._conversation_manager.initialize_context_async = AsyncMock(side_effect=mock_initialize)
 
         # Store original conversation_id
         original_conversation_id = basic_context.conversation_id
@@ -237,16 +270,17 @@ class TestSetupPhase:
         )
 
         attack._conversation_manager = MagicMock()
-        attack._conversation_manager.update_conversation_state_async = AsyncMock()
+        attack._conversation_manager.initialize_context_async = AsyncMock()
 
         await attack._setup_async(context=basic_context)
 
-        attack._conversation_manager.update_conversation_state_async.assert_called_once_with(
+        attack._conversation_manager.initialize_context_async.assert_called_once_with(
+            context=basic_context,
             target=mock_target,
             conversation_id=basic_context.conversation_id,
-            prepended_conversation=basic_context.prepended_conversation,
             request_converters=converter_config,
-            response_converters=[],
+            prepended_conversation_config=None,
+            memory_labels={},
         )
 
 
@@ -254,26 +288,97 @@ class TestSetupPhase:
 class TestPromptPreparation:
     """Tests for prompt preparation logic"""
 
-    def test_get_prompt_group_uses_existing_seed_prompt_group(self, mock_target, basic_context):
-        existing_group = SeedPromptGroup(prompts=[SeedPrompt(value="Existing prompt", data_type="text")])
-        basic_context.seed_prompt_group = existing_group
+    def test_get_message_uses_existing_message(self, mock_target, basic_context):
+        existing_message = Message.from_prompt(prompt="Existing prompt", role="user")
+        basic_context.next_message = existing_message
 
         attack = PromptSendingAttack(objective_target=mock_target)
-        result = attack._get_prompt_group(basic_context)
+        result = attack._get_message(basic_context)
 
-        assert result == existing_group
+        # _get_message returns a duplicate of the message with new IDs
+        assert result.message_pieces[0].id != existing_message.message_pieces[0].id
+        # But content should match
+        assert result.message_pieces[0].original_value == existing_message.message_pieces[0].original_value
+        assert result.message_pieces[0].api_role == existing_message.message_pieces[0].api_role
 
-    def test_get_prompt_group_creates_from_objective_when_no_seed_group(self, mock_target, basic_context):
-        basic_context.seed_prompt_group = None
-        basic_context.objective = "Custom objective text"
+    def test_get_message_creates_from_objective_when_no_message(self, mock_target):
+        # Create context with specific objective for this test
+        context = SingleTurnAttackContext(
+            params=AttackParameters(objective="Custom objective text"),
+            conversation_id=str(uuid.uuid4()),
+        )
+        context.next_message = None
 
         attack = PromptSendingAttack(objective_target=mock_target)
-        result = attack._get_prompt_group(basic_context)
+        result = attack._get_message(context)
 
-        assert isinstance(result, SeedPromptGroup)
-        assert len(result.prompts) == 1
-        assert result.prompts[0].value == "Custom objective text"
-        assert result.prompts[0].data_type == "text"
+        assert isinstance(result, Message)
+        assert len(result.message_pieces) == 1
+        assert result.message_pieces[0].original_value == "Custom objective text"
+        assert result.message_pieces[0].original_value_data_type == "text"
+
+    def test_get_message_preserves_original_prompt_id(self, mock_target, basic_context):
+        """Test that duplicate_message preserves original_prompt_id for tracing."""
+        existing_message = Message.from_prompt(prompt="Track this prompt", role="user")
+        original_prompt_id = existing_message.message_pieces[0].original_prompt_id
+        basic_context.next_message = existing_message
+
+        attack = PromptSendingAttack(objective_target=mock_target)
+        result = attack._get_message(basic_context)
+
+        # original_prompt_id should be preserved for tracing
+        assert result.message_pieces[0].original_prompt_id == original_prompt_id
+
+    def test_get_message_creates_unique_ids_each_call(self, mock_target, basic_context):
+        """Test that each call to _get_message creates unique IDs (important for retries)."""
+        existing_message = Message.from_prompt(prompt="Retry prompt", role="user")
+        basic_context.next_message = existing_message
+
+        attack = PromptSendingAttack(objective_target=mock_target)
+
+        # Get message multiple times (simulating retry scenario)
+        result1 = attack._get_message(basic_context)
+        result2 = attack._get_message(basic_context)
+        result3 = attack._get_message(basic_context)
+
+        # All should have unique IDs
+        ids = {
+            result1.message_pieces[0].id,
+            result2.message_pieces[0].id,
+            result3.message_pieces[0].id,
+        }
+        assert len(ids) == 3
+
+    def test_get_message_with_multi_piece_message(self, mock_target, basic_context):
+        """Test that multi-piece messages are properly duplicated."""
+        piece1 = MessagePiece(
+            role="user",
+            original_value="Text part",
+            converted_value="Text part",
+            conversation_id="test-conv",
+            sequence=1,
+        )
+        piece2 = MessagePiece(
+            role="user",
+            original_value="Image part",
+            converted_value="base64data",
+            original_value_data_type="image_path",
+            conversation_id="test-conv",
+            sequence=1,
+        )
+        multi_piece_message = Message(message_pieces=[piece1, piece2])
+        basic_context.next_message = multi_piece_message
+
+        attack = PromptSendingAttack(objective_target=mock_target)
+        result = attack._get_message(basic_context)
+
+        # Both pieces should be duplicated with new IDs
+        assert len(result.message_pieces) == 2
+        assert result.message_pieces[0].id != piece1.id
+        assert result.message_pieces[1].id != piece2.id
+        # Content preserved
+        assert result.message_pieces[0].original_value == "Text part"
+        assert result.message_pieces[1].original_value == "Image part"
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -299,33 +404,33 @@ class TestPromptSending:
             ),
         )
 
-        prompt_group = SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+        message = Message.from_prompt(prompt="Test prompt", role="user")
         basic_context.memory_labels = {"test": "label"}
         mock_response = MagicMock()
         mock_prompt_normalizer.send_prompt_async.return_value = mock_response
 
-        result = await attack._send_prompt_to_objective_target_async(prompt_group=prompt_group, context=basic_context)
+        result = await attack._send_prompt_to_objective_target_async(message=message, context=basic_context)
 
         assert result == mock_response
 
         # Verify all parameters were passed correctly
         call_args = mock_prompt_normalizer.send_prompt_async.call_args
-        assert call_args.kwargs["seed_prompt_group"] == prompt_group
+        assert call_args.kwargs["message"] == message
         assert call_args.kwargs["target"] == mock_target
         assert call_args.kwargs["conversation_id"] == basic_context.conversation_id
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
         assert call_args.kwargs["labels"] == {"test": "label"}
-        assert "orchestrator_identifier" in call_args.kwargs
+        assert "attack_identifier" in call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
 
-        prompt_group = SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+        message = Message.from_prompt(prompt="Test prompt", role="user")
         mock_prompt_normalizer.send_prompt_async.return_value = None
 
-        result = await attack._send_prompt_to_objective_target_async(prompt_group=prompt_group, context=basic_context)
+        result = await attack._send_prompt_to_objective_target_async(message=message, context=basic_context)
 
         assert result is None
 
@@ -342,11 +447,10 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_with_objective_async",
+            "pyrit.score.Scorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ) as mock_score_method:
-
             result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
 
             assert result == success_score
@@ -355,9 +459,10 @@ class TestResponseEvaluation:
             mock_score_method.assert_called_once_with(
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
-                objective_scorers=[mock_true_false_scorer],
+                objective_scorer=mock_true_false_scorer,
                 role_filter="assistant",
-                task="Test objective",
+                objective="Test objective",
+                skip_on_error_result=True,
             )
 
     @pytest.mark.asyncio
@@ -365,7 +470,7 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
 
         with patch(
-            "pyrit.score.Scorer.score_response_with_objective_async",
+            "pyrit.score.Scorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": []},
         ) as mock_score_method:
@@ -377,9 +482,10 @@ class TestResponseEvaluation:
             mock_score_method.assert_called_once_with(
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
-                objective_scorers=None,
+                objective_scorer=None,
                 role_filter="assistant",
-                task="Test objective",
+                objective="Test objective",
+                skip_on_error_result=True,
             )
 
     @pytest.mark.asyncio
@@ -390,11 +496,12 @@ class TestResponseEvaluation:
         auxiliary_score = Score(
             score_type="float_scale",
             score_value="0.8",
-            score_category="test_auxiliary",
+            score_category=["test_auxiliary"],
             score_value_description="Auxiliary score",
             score_rationale="Auxiliary rationale",
-            score_metadata="{}",
-            prompt_request_response_id=str(uuid.uuid4()),
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         attack = PromptSendingAttack(
@@ -405,11 +512,10 @@ class TestResponseEvaluation:
         )
 
         with patch(
-            "pyrit.score.Scorer.score_response_with_objective_async",
+            "pyrit.score.Scorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [auxiliary_score], "objective_scores": [success_score]},
         ) as mock_score_method:
-
             result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
 
             # Only objective score is returned
@@ -419,9 +525,10 @@ class TestResponseEvaluation:
             mock_score_method.assert_called_once_with(
                 response=sample_response,
                 auxiliary_scorers=[auxiliary_scorer],
-                objective_scorers=[mock_true_false_scorer],
+                objective_scorer=mock_true_false_scorer,
                 role_filter="assistant",
-                task="Test objective",
+                objective="Test objective",
+                skip_on_error_result=True,
             )
 
 
@@ -490,7 +597,7 @@ class TestAttackExecution:
 
         # Mock the internal methods
         attack._get_prompt_group = MagicMock(
-            return_value=SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
         )
 
         # Setup side effects based on attempt_results
@@ -532,7 +639,7 @@ class TestAttackExecution:
 
         # Mock the internal methods
         attack._get_prompt_group = MagicMock(
-            return_value=SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
         )
         attack._send_prompt_to_objective_target_async = AsyncMock(return_value=sample_response)
         attack._evaluate_response_async = AsyncMock(return_value=None)
@@ -566,7 +673,7 @@ class TestAttackExecution:
 
         # First attempt filtered, second succeeds
         attack._get_prompt_group = MagicMock(
-            return_value=SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
         )
         attack._send_prompt_to_objective_target_async = AsyncMock(side_effect=[None, sample_response])
 
@@ -576,6 +683,24 @@ class TestAttackExecution:
         # Verify completion after retry
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
+
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(return_value=sample_response)
+        attack._evaluate_response_async = AsyncMock(return_value=None)
+
+        result = await attack._perform_async(context=basic_context)
+
+        # Verify atomic_attack_identifier is set and has the correct AtomicAttack format
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -614,11 +739,15 @@ class TestConverterIntegration:
             prompt_normalizer=mock_prompt_normalizer,
         )
 
-        basic_context.objective = input_text
+        # Create context with specific objective for this parameterized test
+        context = SingleTurnAttackContext(
+            params=AttackParameters(objective=input_text),
+            conversation_id=str(uuid.uuid4()),
+        )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
         # Execute the attack
-        await attack._perform_async(context=basic_context)
+        await attack._perform_async(context=context)
 
         # Verify the converter configuration was passed
         call_args = mock_prompt_normalizer.send_prompt_async.call_args
@@ -710,7 +839,10 @@ class TestDetermineAttackOutcome:
             attack = PromptSendingAttack(objective_target=mock_target, max_attempts_on_failure=max_attempts)
             attack._objective_scorer = MagicMock()
 
-            context = SingleTurnAttackContext(objective="Test objective", conversation_id=str(uuid.uuid4()))
+            context = SingleTurnAttackContext(
+                params=AttackParameters(objective="Test objective"),
+                conversation_id=str(uuid.uuid4()),
+            )
 
             outcome, reason = attack._determine_attack_outcome(
                 response=sample_response, score=failure_score, context=context
@@ -731,7 +863,8 @@ class TestDetermineAttackOutcome:
             score_value_description="Success",
             score_rationale="Objective achieved",
             score_metadata="{}",
-            prompt_request_response_id=str(uuid.uuid4()),
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         outcome, reason = attack._determine_attack_outcome(
@@ -755,7 +888,8 @@ class TestDetermineAttackOutcome:
             score_value_description="Failure",
             score_rationale="Objective not achieved",
             score_metadata="{}",
-            prompt_request_response_id=str(uuid.uuid4()),
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         outcome, reason = attack._determine_attack_outcome(
@@ -779,7 +913,8 @@ class TestDetermineAttackOutcome:
             score_value_description="Failure",
             score_rationale="Objective not achieved",
             score_metadata="{}",
-            prompt_request_response_id=str(uuid.uuid4()),
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
         outcome, reason = attack._determine_attack_outcome(
@@ -805,7 +940,8 @@ class TestDetermineAttackOutcome:
         attack._objective_scorer = MagicMock()
 
         # Create an empty response
-        empty_response = PromptRequestResponse(request_pieces=[])
+        empty_response = MagicMock(spec=Message)
+        empty_response.message_pieces = []
 
         outcome, reason = attack._determine_attack_outcome(response=empty_response, score=None, context=basic_context)
 
@@ -827,7 +963,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
         attack._perform_async = AsyncMock(return_value=mock_result)
@@ -907,7 +1042,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id="test-id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
             last_response=sample_response.get_piece(),
         )
@@ -915,13 +1049,13 @@ class TestAttackLifecycle:
         attack._teardown_async = AsyncMock()
 
         # Create test data
-        seed_group = SeedPromptGroup(prompts=[SeedPrompt(value="test", data_type="text")])
+        message = Message.from_prompt(prompt="test", role="user")
 
         result = await attack.execute_async(
             objective="Test objective",
             prepended_conversation=[sample_response],
             memory_labels={"test": "label"},
-            seed_prompt_group=seed_group,
+            next_message=message,
             system_prompt="System prompt",
         )
 
@@ -935,7 +1069,7 @@ class TestAttackLifecycle:
         assert isinstance(context, SingleTurnAttackContext)
         assert context.objective == "Test objective"
         assert context.memory_labels == {"test": "label"}
-        assert context.seed_prompt_group == seed_group
+        assert context.next_message is not None
         assert context.system_prompt == "System prompt"
 
     @pytest.mark.asyncio
@@ -943,15 +1077,13 @@ class TestAttackLifecycle:
         """Test execute_async raises error when invalid parameters are passed"""
         attack = PromptSendingAttack(objective_target=mock_target)
 
-        # Test with invalid seed_prompt_group type
-        with pytest.raises(TypeError, match="Parameter 'seed_prompt_group' must be of type SeedPromptGroup"):
-            await attack.execute_async(
-                objective="Test objective", seed_prompt_group="invalid_type"  # Should be SeedPromptGroup
-            )
+        # Test with invalid message type - causes error during execution
+        with pytest.raises(RuntimeError):
+            await attack.execute_async(objective="Test objective", next_message="invalid_type")  # Should be Message
 
-        # Test with invalid system_prompt type
-        with pytest.raises(TypeError, match="Parameter 'system_prompt' must be of type str"):
-            await attack.execute_async(objective="Test objective", system_prompt=123)  # Should be string
+        # Test with unknown parameter - should raise ValueError
+        with pytest.raises(ValueError, match="does not accept parameters"):
+            await attack.execute_async(objective="Test objective", unknown_param="invalid")  # Unknown param
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -978,7 +1110,7 @@ class TestEdgeCasesAndErrorHandling:
 
         # Mock successful response
         attack._get_prompt_group = MagicMock(
-            return_value=SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
         )
         attack._send_prompt_to_objective_target_async = AsyncMock(return_value=sample_response)
         attack._evaluate_response_async = AsyncMock(return_value=success_score)
@@ -994,11 +1126,11 @@ class TestEdgeCasesAndErrorHandling:
     async def test_perform_attack_with_minimal_prompt_group(self, mock_target, basic_context, sample_response):
         attack = PromptSendingAttack(objective_target=mock_target)
 
-        # Set minimal prompt group with a single empty prompt
-        minimal_group = SeedPromptGroup(prompts=[SeedPrompt(value="", data_type="text")])
-        basic_context.seed_prompt_group = minimal_group
+        # Set minimal message with a single empty prompt
+        minimal_message = Message.from_prompt(prompt="", role="user")
+        basic_context.next_message = minimal_message
 
-        attack._get_prompt_group = MagicMock(return_value=minimal_group)
+        attack._get_message = MagicMock(return_value=minimal_message)
         attack._send_prompt_to_objective_target_async = AsyncMock(return_value=sample_response)
 
         # Execute the attack
@@ -1006,9 +1138,7 @@ class TestEdgeCasesAndErrorHandling:
 
         # Verify it still executes
         assert result.executed_turns == 1
-        attack._send_prompt_to_objective_target_async.assert_called_with(
-            prompt_group=minimal_group, context=basic_context
-        )
+        attack._send_prompt_to_objective_target_async.assert_called_with(message=minimal_message, context=basic_context)
 
     @pytest.mark.asyncio
     async def test_evaluate_response_handles_scorer_exception(
@@ -1018,11 +1148,10 @@ class TestEdgeCasesAndErrorHandling:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_with_objective_async",
+            "pyrit.score.Scorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Scorer error"),
         ):
-
             # Should propagate the exception
             with pytest.raises(RuntimeError, match="Scorer error"):
                 await attack._evaluate_response_async(response=sample_response, objective="Test")
@@ -1035,13 +1164,13 @@ class TestEdgeCasesAndErrorHandling:
         id2 = attack2.get_identifier()
 
         # Verify identifier structure
-        assert "__type__" in id1
-        assert "__module__" in id1
-        assert "id" in id1
+        assert id1.class_name == "PromptSendingAttack"
+        assert id1.class_module is not None
+        assert id1.hash is not None
 
-        # Verify uniqueness
-        assert id1["id"] != id2["id"]
-        assert id1["__type__"] == id2["__type__"] == "PromptSendingAttack"
+        # Same config produces same identifier
+        assert id1.hash == id2.hash
+        assert id1.class_name == id2.class_name == "PromptSendingAttack"
 
     @pytest.mark.asyncio
     async def test_retry_stores_unsuccessful_conversation_and_updates_id(
@@ -1057,7 +1186,7 @@ class TestEdgeCasesAndErrorHandling:
 
         # Mock the internal methods
         attack._get_prompt_group = MagicMock(
-            return_value=SeedPromptGroup(prompts=[SeedPrompt(value="Test prompt", data_type="text")])
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
         )
 
         # Setup to return response on first two attempts but fail scoring, succeed on third

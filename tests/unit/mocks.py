@@ -2,17 +2,82 @@
 # Licensed under the MIT license.
 
 import os
+import shutil
 import tempfile
 import uuid
+from collections.abc import Generator, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Generator, MutableSequence, Optional, Sequence
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
-from mock_alchemy.mocking import UnifiedAlchemyMagicMock
-
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
-from pyrit.models import PromptRequestPiece, PromptRequestResponse
-from pyrit.prompt_target import PromptChatTarget, limit_requests_per_minute
+from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptChatTarget, PromptTarget, limit_requests_per_minute
+
+
+def get_mock_scorer_identifier() -> ComponentIdentifier:
+    """
+    Returns a mock ComponentIdentifier for use in tests where the specific
+    scorer identity doesn't matter.
+    """
+    return ComponentIdentifier(
+        class_name="MockScorer",
+        class_module="tests.unit.mocks",
+    )
+
+
+def get_mock_target_identifier(name: str = "MockTarget", module: str = "tests.unit.mocks") -> ComponentIdentifier:
+    """
+    Returns a mock ComponentIdentifier for use in tests where the specific
+    target identity doesn't matter.
+
+    Args:
+        name: The class name for the mock target. Defaults to "MockTarget".
+        module: The module path for the mock target. Defaults to "tests.unit.mocks".
+
+    Returns:
+        A ComponentIdentifier configured with the provided name and module.
+    """
+    return ComponentIdentifier(
+        class_name=name,
+        class_module=module,
+    )
+
+
+def get_mock_attack_identifier(name: str = "MockAttack", module: str = "tests.unit.mocks") -> ComponentIdentifier:
+    """
+    Returns a mock ComponentIdentifier for use in tests where the specific
+    attack identity doesn't matter.
+
+    Args:
+        name: The class name for the mock attack. Defaults to "MockAttack".
+        module: The module path for the mock attack. Defaults to "tests.unit.mocks".
+
+    Returns:
+        A ComponentIdentifier configured with the provided name and module.
+    """
+    return ComponentIdentifier(
+        class_name=name,
+        class_module=module,
+    )
+
+
+def get_mock_target(name: str = "MockTarget") -> MagicMock:
+    """
+    Returns a MagicMock target whose ``get_identifier()`` returns a real
+    :class:`ComponentIdentifier`. Use this wherever a ``MagicMock(spec=PromptTarget)``
+    is needed as an ``objective_target``.
+
+    Args:
+        name: The class name for the mock target. Defaults to "MockTarget".
+
+    Returns:
+        A MagicMock configured to return a real ComponentIdentifier.
+    """
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier(name)
+    return target
 
 
 class MockHttpPostAsync(AbstractAsyncContextManager):
@@ -57,7 +122,7 @@ class MockHttpPostSync:
 class MockPromptTarget(PromptChatTarget):
     prompt_sent: list[str]
 
-    def __init__(self, id=None, rpm=None) -> None:
+    def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
         super().__init__(max_requests_per_minute=rpm)
         self.id = id
         self.prompt_sent = []
@@ -67,47 +132,48 @@ class MockPromptTarget(PromptChatTarget):
         *,
         system_prompt: str,
         conversation_id: str,
-        orchestrator_identifier: Optional[dict[str, str]] = None,
+        attack_identifier: Optional[ComponentIdentifier] = None,
         labels: Optional[dict[str, str]] = None,
     ) -> None:
         self.system_prompt = system_prompt
         if self._memory:
-            self._memory.add_request_response_to_memory(
-                request=PromptRequestPiece(
+            self._memory.add_message_to_memory(
+                request=MessagePiece(
                     role="system",
                     original_value=system_prompt,
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
-                    orchestrator_identifier=orchestrator_identifier,
+                    attack_identifier=attack_identifier,
                     labels=labels,
-                ).to_prompt_request_response()
+                ).to_message()
             )
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, prompt_request: PromptRequestResponse) -> PromptRequestResponse:
-        self.prompt_sent.append(prompt_request.get_value())
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        message = normalized_conversation[-1]
+        self.prompt_sent.append(message.get_value())
 
-        return PromptRequestPiece(
-            role="assistant",
-            original_value="default",
-            conversation_id=prompt_request.request_pieces[0].conversation_id,
-            orchestrator_identifier=prompt_request.request_pieces[0].orchestrator_identifier,
-            labels=prompt_request.request_pieces[0].labels,
-        ).to_prompt_request_response()
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value="default",
+                conversation_id=message.message_pieces[0].conversation_id,
+                attack_identifier=message.message_pieces[0].attack_identifier,
+                labels=message.message_pieces[0].labels,
+            ).to_message()
+        ]
 
-    def _validate_request(self, *, prompt_request: PromptRequestResponse) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
-        Validates the provided prompt request response
+        Validates the provided message
         """
-
-    def is_json_response_supported(self) -> bool:
-        return False
 
 
 def get_azure_sql_memory() -> Generator[AzureSQLMemory, None, None]:
-    # Create a test Azure SQL Server DB
+    # Create a test Azure SQL Server DB using in-memory SQLite
+    # This allows testing actual SQL queries (including JOINs and metadata filtering)
+    # without requiring a real Azure SQL instance
     with (
-        patch("pyrit.memory.AzureSQLMemory.get_session") as get_session_mock,
         patch("pyrit.memory.AzureSQLMemory._create_auth_token") as create_auth_token_mock,
         patch("pyrit.memory.AzureSQLMemory._enable_azure_authorization") as enable_azure_authorization_mock,
     ):
@@ -116,34 +182,40 @@ def get_azure_sql_memory() -> Generator[AzureSQLMemory, None, None]:
         )
         os.environ[AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN] = "valid_sas_token"
 
+        # Use in-memory SQLite instead of mock to allow real SQL queries
         azure_sql_memory = AzureSQLMemory(
-            connection_string="mssql+pyodbc://test:test@test/test?driver=ODBC+Driver+18+for+SQL+Server",
+            connection_string="sqlite:///:memory:",
             results_container_url=os.environ[AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL],
             results_sas_token=os.environ[AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN],
         )
 
-        session_mock = UnifiedAlchemyMagicMock()
-        session_mock.__enter__.return_value = session_mock
-        session_mock.is_modified.return_value = True
-        get_session_mock.return_value = session_mock
-
         create_auth_token_mock.return_value = "token"
         enable_azure_authorization_mock.return_value = None
 
+        # Create a temporary directory for results
+        temp_dir = tempfile.mkdtemp()
+        azure_sql_memory.results_path = temp_dir
+
         azure_sql_memory.disable_embedding()
+
+        # Initialize the database schema
+        azure_sql_memory.reset_database()
+
         CentralMemory.set_memory_instance(azure_sql_memory)
         yield azure_sql_memory
 
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
     azure_sql_memory.dispose_engine()
 
 
-def get_image_request_piece() -> PromptRequestPiece:
+def get_image_message_piece() -> MessagePiece:
     file_name: str
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
         file_name = temp_file.name
         temp_file.write(b"image data")
 
-        return PromptRequestPiece(
+        return MessagePiece(
             role="user",
             original_value=file_name,
             converted_value=file_name,
@@ -152,13 +224,13 @@ def get_image_request_piece() -> PromptRequestPiece:
         )
 
 
-def get_audio_request_piece() -> PromptRequestPiece:
+def get_audio_message_piece() -> MessagePiece:
     file_name: str
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
         file_name = temp_file.name
         temp_file.write(b"audio data")
 
-        return PromptRequestPiece(
+        return MessagePiece(
             role="user",
             original_value=file_name,
             converted_value=file_name,
@@ -167,9 +239,8 @@ def get_audio_request_piece() -> PromptRequestPiece:
         )
 
 
-def get_test_request_piece() -> PromptRequestPiece:
-
-    return PromptRequestPiece(
+def get_test_message_piece() -> MessagePiece:
+    return MessagePiece(
         role="user",
         original_value="some text",
         converted_value="some text",
@@ -178,46 +249,42 @@ def get_test_request_piece() -> PromptRequestPiece:
     )
 
 
-def get_sample_conversations() -> MutableSequence[PromptRequestPiece]:
+def get_sample_conversations() -> MutableSequence[Message]:
     with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
-
         conversation_1 = str(uuid.uuid4())
-        attack_identifier = {
-            "__type__": "MockPromptTarget",
-            "__module__": "unit.mocks",
-            "id": str(uuid.uuid4()),
-        }
+        attack_id = get_mock_attack_identifier()
 
         return [
-            PromptRequestPiece(
+            MessagePiece(
                 role="user",
                 original_value="original prompt text",
                 converted_value="Hello, how are you?",
                 conversation_id=conversation_1,
                 sequence=0,
-                orchestrator_identifier=attack_identifier,
-            ),
-            PromptRequestPiece(
+                attack_identifier=attack_id,
+            ).to_message(),
+            MessagePiece(
                 role="assistant",
                 original_value="original prompt text",
                 converted_value="I'm fine, thank you!",
                 conversation_id=conversation_1,
-                sequence=0,
-                orchestrator_identifier=attack_identifier,
-            ),
-            PromptRequestPiece(
+                sequence=1,
+                attack_identifier=attack_id,
+            ).to_message(),
+            MessagePiece(
                 role="assistant",
                 original_value="original prompt text",
                 converted_value="I'm fine, thank you!",
                 conversation_id=str(uuid.uuid4()),
-                orchestrator_identifier=attack_identifier,
-            ),
+                attack_identifier=attack_id,
+            ).to_message(),
         ]
 
 
 def get_sample_conversation_entries() -> Sequence[PromptMemoryEntry]:
     conversations = get_sample_conversations()
-    return [PromptMemoryEntry(entry=conversation) for conversation in conversations]
+    pieces = Message.flatten_to_message_pieces(conversations)
+    return [PromptMemoryEntry(entry=piece) for piece in pieces]
 
 
 def openai_chat_response_json_dict() -> dict:

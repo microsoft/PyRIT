@@ -1,15 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import textwrap
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any
 
 from colorama import Back, Fore, Style
 
 from pyrit.common.display_response import display_image_response
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, Score
+from pyrit.models import AttackOutcome, AttackResult, ConversationType, Score
 
 
 class ConsoleAttackResultPrinter(AttackResultPrinter):
@@ -55,7 +57,14 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         else:
             print(text)
 
-    async def print_result_async(self, result: AttackResult, *, include_auxiliary_scores: bool = False) -> None:
+    async def print_result_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> None:
         """
         Print the complete attack result to console.
 
@@ -66,6 +75,12 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
             result (AttackResult): The attack result to print. Must not be None.
             include_auxiliary_scores (bool): Whether to include auxiliary scores in the output.
                 Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations.
+                For each pruned conversation, only the last message and its score are shown.
+                Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial
+                conversation (the red teaming LLM's reasoning). Only shown for successful
+                attacks to avoid overwhelming output. Defaults to False.
         """
         # Print header with outcome
         self._print_header(result)
@@ -74,8 +89,16 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         await self.print_summary_async(result)
 
         # Print conversation
-        self._print_section_header("Conversation History")
-        await self.print_conversation_async(result, include_auxiliary_scores=include_auxiliary_scores)
+        self._print_section_header("Conversation History with Objective Target")
+        await self.print_conversation_async(result, include_scores=include_auxiliary_scores)
+
+        # Print pruned conversations if requested
+        if include_pruned_conversations:
+            await self._print_pruned_conversations_async(result)
+
+        # Print adversarial conversation if requested (only for successful attacks)
+        if include_adversarial_conversation:
+            await self._print_adversarial_conversation_async(result)
 
         # Print metadata if available
         if result.metadata:
@@ -85,7 +108,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         self._print_footer()
 
     async def print_conversation_async(
-        self, result: AttackResult, *, include_auxiliary_scores: bool = False, include_reasoning_trace: bool = False
+        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> None:
         """
         Print the conversation history to console with enhanced formatting.
@@ -100,60 +123,114 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         Args:
             result (AttackResult): The attack result containing the conversation_id.
                 Must have a valid conversation_id attribute.
-            include_auxiliary_scores (bool): Whether to include auxiliary scores in the output.
+            include_scores (bool): Whether to include scores in the output.
                 Defaults to False.
             include_reasoning_trace (bool): Whether to include model reasoning trace in the output
                 for applicable models. Defaults to False.
         """
-        messages = self._memory.get_conversation(conversation_id=result.conversation_id)
+        if not result.conversation_id:
+            self._print_colored(f"{self._indent} No conversation ID available", Fore.YELLOW)
+            return
+
+        messages = list(self._memory.get_conversation(conversation_id=result.conversation_id))
 
         if not messages:
             self._print_colored(f"{self._indent} No conversation found for ID: {result.conversation_id}", Fore.YELLOW)
             return
 
+        await self.print_messages_async(
+            messages=messages,
+            include_scores=include_scores,
+            include_reasoning_trace=include_reasoning_trace,
+        )
+
+    async def print_messages_async(
+        self,
+        messages: list[Any],
+        *,
+        include_scores: bool = False,
+        include_reasoning_trace: bool = False,
+    ) -> None:
+        """
+        Print a list of messages to console with enhanced formatting.
+
+        This method can be called directly with a list of Message objects,
+        without needing an AttackResult. Useful for printing prepended_conversation
+        or any other list of messages.
+
+        Displays:
+        - Turn numbers
+        - Role indicators (USER/ASSISTANT/SYSTEM)
+        - Original and converted values when different
+        - Images if present
+        - Scores for each response (if include_scores=True)
+
+        Args:
+            messages (list): List of Message objects to print.
+            include_scores (bool): Whether to include scores in the output.
+                Defaults to False.
+            include_reasoning_trace (bool): Whether to include model reasoning trace in the output
+                for applicable models. Defaults to False.
+        """
+        if not messages:
+            self._print_colored(f"{self._indent} No messages to display.", Fore.YELLOW)
+            return
+
         turn_number = 0
         for message in messages:
-            for piece in message.request_pieces:
-                if piece.role == "user":
-                    turn_number += 1
-                    # User message header
-                    print()
-                    self._print_colored("─" * self._width, Fore.BLUE)
-                    self._print_colored(f"🔹 Turn {turn_number} - USER", Style.BRIGHT, Fore.BLUE)
-                    self._print_colored("─" * self._width, Fore.BLUE)
+            # Increment turn number once per message with role="user"
+            if message.api_role == "user":
+                turn_number += 1
+                # User message header
+                print()
+                self._print_colored("─" * self._width, Fore.BLUE)
+                self._print_colored(f"🔹 Turn {turn_number} - USER", Style.BRIGHT, Fore.BLUE)
+                self._print_colored("─" * self._width, Fore.BLUE)
+            elif message.api_role == "system":
+                # System message header (not counted as a turn)
+                print()
+                self._print_colored("─" * self._width, Fore.MAGENTA)
+                self._print_colored("🔧 SYSTEM", Style.BRIGHT, Fore.MAGENTA)
+                self._print_colored("─" * self._width, Fore.MAGENTA)
+            else:
+                # Assistant or other role message header
+                print()
+                self._print_colored("─" * self._width, Fore.YELLOW)
+                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
+                self._print_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW)
+                self._print_colored("─" * self._width, Fore.YELLOW)
 
-                    # Handle converted values
-                    if piece.converted_value != piece.original_value:
-                        self._print_colored(f"{self._indent} Original:", Fore.CYAN)
-                        self._print_wrapped_text(piece.original_value, Fore.WHITE)
-                        print()
-                        self._print_colored(f"{self._indent} Converted:", Fore.CYAN)
-                        self._print_wrapped_text(piece.converted_value, Fore.WHITE)
-                    else:
-                        self._print_wrapped_text(piece.converted_value, Fore.BLUE)
-                elif piece.role == "system":
-                    # System message header (not counted as a turn)
-                    print()
-                    self._print_colored("─" * self._width, Fore.MAGENTA)
-                    self._print_colored("🔧 SYSTEM", Style.BRIGHT, Fore.MAGENTA)
-                    self._print_colored("─" * self._width, Fore.MAGENTA)
+            # Now print all pieces in this message
+            for piece in message.message_pieces:
+                # Reasoning pieces: show summary when include_reasoning_trace is set
+                if piece.original_value_data_type == "reasoning":
+                    if include_reasoning_trace:
+                        summary_text = self._extract_reasoning_summary(piece.original_value)
+                        if summary_text:
+                            self._print_colored(f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN)
+                            self._print_wrapped_text(summary_text, Fore.CYAN)
+                            print()
+                    continue
 
+                # Handle converted values for user and assistant messages
+                if piece.converted_value != piece.original_value:
+                    self._print_colored(f"{self._indent} Original:", Fore.CYAN)
+                    self._print_wrapped_text(piece.original_value, Fore.WHITE)
+                    print()
+                    self._print_colored(f"{self._indent} Converted:", Fore.CYAN)
+                    self._print_wrapped_text(piece.converted_value, Fore.WHITE)
+                elif piece.api_role == "user":
+                    self._print_wrapped_text(piece.converted_value, Fore.BLUE)
+                elif piece.api_role == "system":
                     self._print_wrapped_text(piece.converted_value, Fore.MAGENTA)
                 else:
-                    if piece.original_value_data_type != "reasoning" or include_reasoning_trace:
-                        # Assistant message header
-                        print()
-                        self._print_colored("─" * self._width, Fore.YELLOW)
-                        self._print_colored(f"🔸 {piece.role.upper()}", Style.BRIGHT, Fore.YELLOW)
-                        self._print_colored("─" * self._width, Fore.YELLOW)
-
-                        self._print_wrapped_text(piece.converted_value, Fore.YELLOW)
+                    self._print_wrapped_text(piece.converted_value, Fore.YELLOW)
 
                 # Display images if present
                 await display_image_response(piece)
 
-                # Print scores with better formatting (only if auxiliary scores are requested)
-                if include_auxiliary_scores:
+                # Print scores with better formatting (only if scores are requested)
+                if include_scores:
                     scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
                     if scores:
                         print()
@@ -163,6 +240,28 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
 
         print()
         self._print_colored("─" * self._width, Fore.BLUE)
+
+    def _extract_reasoning_summary(self, reasoning_value: str) -> str:
+        """
+        Extract human-readable summary text from a reasoning piece's JSON value.
+
+        Args:
+            reasoning_value (str): The JSON string stored in the reasoning piece.
+
+        Returns:
+            str: The concatenated summary text, or empty string if no summary is present.
+        """
+        try:
+            data = json.loads(reasoning_value)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+
+        summary = data.get("summary") if isinstance(data, dict) else None
+        if not summary or not isinstance(summary, list):
+            return ""
+
+        parts = [item.get("text", "") for item in summary if isinstance(item, dict) and item.get("text")]
+        return "\n".join(parts)
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """
@@ -186,12 +285,11 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         self._print_colored(f"{self._indent}📋 Basic Information", Style.BRIGHT)
         self._print_colored(f"{self._indent * 2}• Objective: {result.objective}", Fore.CYAN)
 
-        # Extract attack type name from attack_identifier
+        # Extract attack type name from atomic_attack_identifier
         attack_type = "Unknown"
-        if isinstance(result.attack_identifier, dict) and "__type__" in result.attack_identifier:
-            attack_type = result.attack_identifier["__type__"]
-        elif isinstance(result.attack_identifier, str):
-            attack_type = result.attack_identifier
+        attack_strategy_id = result.get_attack_strategy_identifier()
+        if attack_strategy_id:
+            attack_type = attack_strategy_id.class_name
 
         self._print_colored(f"{self._indent * 2}• Attack Type: {attack_type}", Fore.CYAN)
         self._print_colored(f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN)
@@ -248,10 +346,10 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
 
         Displays the current timestamp when the report was generated.
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print()
         self._print_colored("─" * self._width, Style.DIM, Fore.WHITE)
-        footer_text = f"Report generated at: {timestamp}"
+        footer_text = f"Report generated at: {timestamp} UTC"
         self._print_colored(footer_text.center(self._width), Style.DIM, Fore.WHITE)
 
     def _print_section_header(self, title: str) -> None:
@@ -268,7 +366,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         self._print_colored(f" {title} ", Style.BRIGHT, Back.BLUE, Fore.WHITE)
         self._print_colored("─" * self._width, Fore.BLUE)
 
-    def _print_metadata(self, metadata: dict) -> None:
+    def _print_metadata(self, metadata: dict[str, Any]) -> None:
         """
         Print metadata in a formatted way.
 
@@ -276,7 +374,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
         consistent bullet-point format.
 
         Args:
-            metadata (dict): Dictionary containing metadata key-value pairs.
+            metadata (dict[str, Any]): Dictionary containing metadata key-value pairs.
                 Keys and values should be convertible to strings.
         """
         self._print_section_header("Additional Metadata")
@@ -295,7 +393,8 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
             indent_level (int): Number of indent units to apply. Defaults to 3.
         """
         indent = self._indent * indent_level
-        print(f"{indent}Scorer: {score.scorer_class_identifier['__type__']}")
+        scorer_name = score.scorer_class_identifier.class_name
+        print(f"{indent}Scorer: {scorer_name}")
         self._print_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX)
         self._print_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN)
 
@@ -363,6 +462,110 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
             else:  # Print empty lines as-is to preserve formatting
                 self._print_colored(f"{self._indent}", color)
 
+    async def _print_pruned_conversations_async(self, result: AttackResult) -> None:
+        """
+        Print pruned conversations showing only the last message and score for each.
+
+        Pruned conversations represent branches that were abandoned during the attack.
+        For each pruned conversation, only the final message and its associated score
+        are displayed to provide context without overwhelming output.
+
+        Args:
+            result (AttackResult): The attack result containing related conversations.
+        """
+        pruned_refs = result.get_conversations_by_type(ConversationType.PRUNED)
+
+        if not pruned_refs:
+            return
+
+        self._print_section_header(f"Pruned Conversations ({len(pruned_refs)} total)")
+
+        for idx, ref in enumerate(pruned_refs, 1):
+            # Print conversation header with description if available
+            print()
+            self._print_colored("─" * self._width, Fore.RED)
+            label = f"🗑️ PRUNED #{idx}"
+            if ref.description:
+                label += f" - {ref.description}"
+            self._print_colored(label, Style.BRIGHT, Fore.RED)
+            self._print_colored("─" * self._width, Fore.RED)
+
+            # Get the conversation messages
+            messages = list(self._memory.get_conversation(conversation_id=ref.conversation_id))
+
+            if not messages:
+                self._print_colored(
+                    f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
+                )
+                continue
+
+            # Get only the last message
+            last_message = messages[-1]
+
+            # Print the last message
+            role_label = last_message.api_role.upper()
+            self._print_colored(f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE)
+
+            for piece in last_message.message_pieces:
+                self._print_wrapped_text(piece.converted_value, Fore.WHITE)
+
+                # Print associated scores
+                scores = self._memory.get_prompt_scores(prompt_ids=[str(piece.id)])
+                if scores:
+                    print()
+                    self._print_colored(f"{self._indent}📊 Score:", Style.DIM, Fore.MAGENTA)
+                    for score in scores:
+                        self._print_score(score)
+
+        print()
+        self._print_colored("─" * self._width, Fore.RED)
+
+    async def _print_adversarial_conversation_async(self, result: AttackResult) -> None:
+        """
+        Print the adversarial conversation for the best-scoring attack branch.
+
+        The adversarial conversation shows the red teaming LLM's reasoning and
+        strategy development. For attacks with multiple adversarial conversations
+        (e.g., TAP), only the best-scoring branch's adversarial conversation is
+        shown if available.
+
+        Args:
+            result (AttackResult): The attack result containing related conversations.
+        """
+        adversarial_refs = result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+
+        if not adversarial_refs:
+            return
+
+        self._print_section_header("Adversarial Conversation (Red Team LLM)")
+
+        # Check if result has a best_adversarial_conversation_id (e.g., TAP attack)
+        # If so, only show that conversation instead of all adversarial conversations
+        best_adversarial_id = result.metadata.get("best_adversarial_conversation_id")
+        if best_adversarial_id:
+            # Filter to only the best adversarial conversation
+            adversarial_refs = [ref for ref in adversarial_refs if ref.conversation_id == best_adversarial_id]
+            if adversarial_refs:
+                self._print_colored(
+                    f"{self._indent}📌 Showing best-scoring branch's adversarial conversation",
+                    Style.DIM,
+                    Fore.CYAN,
+                )
+
+        for ref in adversarial_refs:
+            if ref.description:
+                self._print_colored(f"{self._indent}📝 {ref.description}", Style.DIM, Fore.CYAN)
+
+            messages = list(self._memory.get_conversation(conversation_id=ref.conversation_id))
+
+            if not messages:
+                self._print_colored(
+                    f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
+                )
+                continue
+
+            await self.print_messages_async(messages=messages, include_scores=False)
+
     def _get_outcome_color(self, outcome: AttackOutcome) -> str:
         """
         Get the color for an outcome.
@@ -376,8 +579,10 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
             str: Colorama color constant (Fore.GREEN, Fore.RED, Fore.YELLOW,
                 or Fore.WHITE for unknown outcomes).
         """
-        return {
-            AttackOutcome.SUCCESS: Fore.GREEN,
-            AttackOutcome.FAILURE: Fore.RED,
-            AttackOutcome.UNDETERMINED: Fore.YELLOW,
-        }.get(outcome, Fore.WHITE)
+        return str(
+            {
+                AttackOutcome.SUCCESS: Fore.GREEN,
+                AttackOutcome.FAILURE: Fore.RED,
+                AttackOutcome.UNDETERMINED: Fore.YELLOW,
+            }.get(outcome, Fore.WHITE)
+        )

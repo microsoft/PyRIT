@@ -1,11 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Generator
+from collections.abc import Generator
+from typing import Optional
 
 from sqlalchemy import inspect
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptChatTarget, limit_requests_per_minute
 
 
 def get_memory_interface() -> Generator[MemoryInterface, None, None]:
@@ -30,3 +34,53 @@ def get_sqlite_memory() -> Generator[SQLiteMemory, None, None]:
 
     yield sqlite_memory
     sqlite_memory.dispose_engine()
+
+
+class MockPromptTarget(PromptChatTarget):
+    prompt_sent: list[str]
+
+    def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
+        super().__init__(max_requests_per_minute=rpm)
+        self.id = id  # noqa: A003
+        self.prompt_sent = []
+
+    def set_system_prompt(
+        self,
+        *,
+        system_prompt: str,
+        conversation_id: str,
+        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: Optional[dict[str, str]] = None,
+    ) -> None:
+        self.system_prompt = system_prompt
+        if self._memory:
+            self._memory.add_message_to_memory(
+                request=MessagePiece(
+                    role="system",
+                    original_value=system_prompt,
+                    converted_value=system_prompt,
+                    conversation_id=conversation_id,
+                    attack_identifier=attack_identifier,
+                    labels=labels,
+                ).to_message()
+            )
+
+    @limit_requests_per_minute
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        message = normalized_conversation[-1]
+        self.prompt_sent.append(message.get_value())
+
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value="default",
+                conversation_id=message.message_pieces[0].conversation_id,
+                attack_identifier=message.message_pieces[0].attack_identifier,
+                labels=message.message_pieces[0].labels,
+            ).to_message()
+        ]
+
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
+        """
+        Validates the provided message
+        """

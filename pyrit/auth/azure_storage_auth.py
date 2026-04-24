@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -22,7 +22,7 @@ class AzureStorageAuth:
     @staticmethod
     async def get_user_delegation_key(blob_service_client: BlobServiceClient) -> UserDelegationKey:
         """
-        Retrieves a user delegation key valid for one day.
+        Retrieve a user delegation key valid for one day.
 
         Args:
             blob_service_client (BlobServiceClient): An instance of BlobServiceClient to interact
@@ -31,25 +31,26 @@ class AzureStorageAuth:
         Returns:
             UserDelegationKey: A user delegation key valid for one day.
         """
-        delegation_key_start_time = datetime.now()
+        delegation_key_start_time = datetime.now(tz=timezone.utc)
         delegation_key_expiry_time = delegation_key_start_time + timedelta(days=1)
 
-        user_delegation_key = await blob_service_client.get_user_delegation_key(
+        return await blob_service_client.get_user_delegation_key(
             key_start_time=delegation_key_start_time, key_expiry_time=delegation_key_expiry_time
         )
-
-        return user_delegation_key
 
     @staticmethod
     async def get_sas_token(container_url: str) -> str:
         """
-        Generates a SAS token for the specified blob using a user delegation key.
+        Generate a SAS token for the specified blob using a user delegation key.
 
         Args:
             container_url (str): The URL of the Azure Blob Storage container.
 
         Returns:
             str: The generated SAS token.
+
+        Raises:
+            ValueError: If container_url is empty or invalid.
         """
         if not container_url:
             raise ValueError(
@@ -71,7 +72,6 @@ class AzureStorageAuth:
 
         try:
             async with BlobServiceClient(account_url=account_url, credential=credential) as blob_service_client:
-
                 user_delegation_key = await AzureStorageAuth.get_user_delegation_key(
                     blob_service_client=blob_service_client
                 )
@@ -79,18 +79,18 @@ class AzureStorageAuth:
                 storage_account_name = parsed_url.netloc.split(".")[0]
 
                 # Set start_time 5 minutes before the current time to account for any clock skew
-                start_time = datetime.now() - timedelta(minutes=5)
+                start_time = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
                 expiry_time = start_time + timedelta(days=1)
 
                 sas_token = generate_container_sas(
                     account_name=storage_account_name,
                     container_name=container_name,
                     user_delegation_key=user_delegation_key,
-                    permission=ContainerSasPermissions(read=True, write=True, create=True, list=True, delete=True),
+                    permission=ContainerSasPermissions(read=True, write=True, create=True, list=True, delete=True),  # type: ignore[no-untyped-call, unused-ignore]
                     expiry=expiry_time,
                     start=start_time,
                 )
         finally:
             await credential.close()
 
-        return sas_token
+        return sas_token  # type: ignore[return-value, no-any-return, unused-ignore]

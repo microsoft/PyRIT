@@ -2,6 +2,10 @@
 
 This Docker container provides a pre-configured environment for running PyRIT (Python Risk Identification Tool for generative AI) with JupyterLab integration. It comes with pre-installed PyRIT, all necessary dependencies, and supports both CPU and optional GPU modes.
 
+📚 **For complete installation instructions and troubleshooting, see the [Docker Installation Guide](./../doc/getting_started/install_docker.md) on our documentation site.**
+
+This README contains technical details for working with the Docker setup locally.
+
 ## Features
 
 - Pre-installed PyRIT with all dependencies
@@ -19,7 +23,7 @@ This Docker container provides a pre-configured environment for running PyRIT (P
 ├── README.md                        # This documentation file
 ├── requirements.txt                 # Python packages
 ├── docker-compose.yaml              # Docker Compose configuration
-├── .env_container_settings_example  # Container's example env file (rename .env.container.settings)
+├── .env_container_settings_example  # Example env file (copy to .env.container.settings)
 └── start.sh                         # Container startup script
 ```
 
@@ -29,8 +33,6 @@ This Docker container provides a pre-configured environment for running PyRIT (P
 - [Docker Compose](https://docs.docker.com/compose/install/)
 
 ## Quick Start
-
-### Building and Running the Container
 
 ```bash
 # Build and start the container in detached mode
@@ -43,15 +45,9 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### Accessing JupyterLab
+**Access JupyterLab**: Navigate to `http://localhost:8888` in your browser.
 
-Once the container is running, open your browser and navigate to:
-
-```
-http://localhost:8888
-```
-
-By default, JupyterLab is configured to run without a password or token.
+> 💡 **New to Docker setup?** Check out the [step-by-step installation guide](./../doc/getting_started/install_docker.md) with detailed explanations and troubleshooting tips.
 
 ## Configuration
 
@@ -60,13 +56,17 @@ By default, JupyterLab is configured to run without a password or token.
 - **CLONE_DOCS**: When set to `true` (default), the container automatically clones the PyRIT repository and copies the documentation files to the notebooks directory. To disable this behavior, set `CLONE_DOCS=false` in your environment or in the `.env.container.settings` file.
 - **ENABLE_GPU**: Set to `true` to enable GPU support (requires NVIDIA drivers and container toolkit). The container defaults to CPU-only mode.
 
-The container expects a .env file and optionally a .env.local file to provide secret keys and configuration values. If these files do not exist, please create them by copying the provided example files:
+The container expects environment files to provide configuration. Create them by copying the provided examples:
+
 ```bash
 cp ../.env.example ../.env
 cp ../.env.local_example ../.env.local
+# Note: Example file has underscores, but copy it to a file with dots
 cp .env_container_settings_example .env.container.settings
 ```
-These files will automatically be pulled into the container (.env and .env.local), and if they're missing, you might encounter errors indicating that required environment files are not found.
+
+- **`.env`** and **`.env.local`**: API keys and secrets (in parent directory)
+- **`.env.container.settings`**: Container-specific settings like GPU and docs cloning
 
 
 ### Adding Your Own Notebooks and Data
@@ -152,21 +152,13 @@ To enable GPU support:
 
 ## Troubleshooting
 
-### JupyterLab Not Accessible
+For detailed troubleshooting steps, see the [Docker Installation Guide - Troubleshooting Section](./../doc/getting_started/install_docker.md#troubleshooting).
 
-If you cannot access JupyterLab, check the container logs:
+**Quick fixes:**
 
-```bash
-docker-compose logs pyrit
-```
-
-### Permission Issues
-
-If you encounter permission issues with the notebooks or data directories, adjust the permissions:
-
-```bash
-chmod -R 777 notebooks/ data/ ../assets/
-```
+- **JupyterLab not accessible**: Check logs with `docker-compose logs pyrit`
+- **Permission issues**: Run `chmod -R 777 notebooks/ data/ ../assets/`
+- **Environment file errors**: Ensure `.env`, `.env.local`, and `.env.container.settings` files exist
 
 ## Version Information
 
@@ -186,3 +178,10 @@ You can further customize the container by:
 ## Security Note
 
 The JupyterLab instance is configured to run without authentication by default for ease of use. For production deployments, consider adding authentication or running behind a secured proxy.
+
+## Documentation & Support
+
+- 📖 **[Docker Installation Guide](./../doc/getting_started/install_docker.md)** - Complete user-friendly installation instructions
+- 🚀 **[PyRIT Documentation](https://microsoft.github.io/PyRIT/)** - Full documentation site
+- 🔧 **[Contributing Guide](https://microsoft.github.io/PyRIT/contributing/readme/)** - For developers and contributors
+- 🐛 **[Issues](https://github.com/microsoft/PyRIT/issues)** - Report bugs or request features

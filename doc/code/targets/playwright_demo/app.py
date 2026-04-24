@@ -11,7 +11,7 @@ app = Flask(__name__, template_folder="./")
 
 # Initialize Ollama client for chat API
 client = Client(host="http://localhost:11434")
-model = "llama2:latest"  # adapt to your model
+model = "llama3.2:1b"  # adapt to your model
 # Define the system prompt
 SYSTEM_PROMPT = {"role": "system", "content": ("You are a helpful bot answering questions with a Cowboy accent.")}
 

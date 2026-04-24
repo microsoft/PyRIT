@@ -1,7 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+Tests for the simplified AttackExecutor.
+
+These tests verify the new API that uses AttackParameters and params_type.
+"""
+
 import asyncio
+import dataclasses
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,404 +16,223 @@ import pytest
 
 from pyrit.executor.attack import (
     AttackExecutor,
+    AttackParameters,
     AttackStrategy,
-    MultiTurnAttackContext,
     SingleTurnAttackContext,
 )
-from pyrit.models import AttackOutcome, AttackResult, SeedPrompt, SeedPromptGroup
+from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    SeedAttackGroup,
+    SeedObjective,
+    SeedPrompt,
+)
 
 
-@pytest.fixture
-def mock_attack_strategy():
-    """Create a mock attack strategy for testing"""
-    strategy = MagicMock(spec=AttackStrategy)
-    strategy.execute_async = AsyncMock()
-    strategy.execute_with_context_async = AsyncMock()
-    strategy.get_identifier.return_value = {
-        "__type__": "TestAttack",
-        "__module__": "pyrit.executor.attack.test_attack",
-        "id": str(uuid.uuid4()),
-    }
-    return strategy
+# Helper to create a properly configured mock attack
+def create_mock_attack(params_type=AttackParameters, context_type=SingleTurnAttackContext):
+    """Create a mock attack with required attributes for the new executor."""
+    attack = MagicMock(spec=AttackStrategy)
+    attack.params_type = params_type
+    attack._context_type = context_type
+    attack.execute_with_context_async = AsyncMock()
+    return attack
 
 
-@pytest.fixture
-def basic_context():
-    """Create a basic context for testing"""
-    return SingleTurnAttackContext(objective="Test objective", conversation_id=str(uuid.uuid4()))
-
-
-@pytest.fixture
-def multi_turn_context():
-    """Create a basic multi-turn context for testing"""
-    return MultiTurnAttackContext(objective="Test multi-turn objective")
-
-
-@pytest.fixture
-def mock_single_turn_attack_strategy():
-    """Create a mock single-turn attack strategy for testing"""
-    strategy = MagicMock(spec=AttackStrategy)
-    strategy.execute_async = AsyncMock()
-    strategy.execute_with_context_async = AsyncMock()
-    strategy._context_type = SingleTurnAttackContext
-    strategy.get_identifier.return_value = {
-        "__type__": "TestSingleTurnAttack",
-        "__module__": "pyrit.executor.attack.test_attack",
-        "id": str(uuid.uuid4()),
-    }
-    return strategy
-
-
-@pytest.fixture
-def mock_multi_turn_attack_strategy():
-    """Create a mock multi-turn attack strategy for testing"""
-    strategy = MagicMock(spec=AttackStrategy)
-    strategy.execute_async = AsyncMock()
-    strategy.execute_with_context_async = AsyncMock()
-    strategy._context_type = MultiTurnAttackContext
-    strategy.get_identifier.return_value = {
-        "__type__": "TestMultiTurnAttack",
-        "__module__": "pyrit.executor.attack.test_attack",
-        "id": str(uuid.uuid4()),
-    }
-    return strategy
-
-
-@pytest.fixture
-def sample_seed_prompt_groups():
-    """Create sample seed prompt groups for testing"""
-    return [
-        SeedPromptGroup(prompts=[SeedPrompt(value="First prompt", data_type="text")]),
-        SeedPromptGroup(prompts=[SeedPrompt(value="Second prompt", data_type="text")]),
-        SeedPromptGroup(prompts=[SeedPrompt(value="Third prompt", data_type="text")]),
-    ]
-
-
-@pytest.fixture
-def sample_attack_result():
-    """Create a sample attack result for testing"""
+def create_attack_result(objective: str) -> AttackResult:
+    """Create a sample attack result."""
     return AttackResult(
         conversation_id=str(uuid.uuid4()),
-        objective="Test objective",
-        attack_identifier={
-            "__type__": "TestAttack",
-            "__module__": "pyrit.executor.attack.test_attack",
-            "id": str(uuid.uuid4()),
-        },
+        objective=objective,
         outcome=AttackOutcome.SUCCESS,
-        outcome_reason="Objective achieved successfully",
         executed_turns=1,
     )
 
 
-@pytest.fixture
-def multiple_objectives():
-    """Create a list of multiple objectives for testing"""
-    return [
-        "Objective 1: Extract sensitive information",
-        "Objective 2: Bypass security controls",
-        "Objective 3: Execute unauthorized commands",
-    ]
+def create_seed_group(objective: str) -> SeedAttackGroup:
+    """Create a seed attack group with an objective."""
+    return SeedAttackGroup(
+        seeds=[
+            SeedObjective(value=objective),
+            SeedPrompt(value=objective, data_type="text"),
+        ]
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackExecutorInitialization:
-    """Tests for AttackExecutor initialization and configuration"""
+    """Tests for AttackExecutor initialization."""
 
     def test_init_with_default_max_concurrency(self):
         executor = AttackExecutor()
-
         assert executor._max_concurrency == 1
 
     def test_init_with_custom_max_concurrency(self):
         executor = AttackExecutor(max_concurrency=10)
-
         assert executor._max_concurrency == 10
 
-    @pytest.mark.parametrize(
-        "invalid_concurrency,expected_error",
-        [
-            (0, "max_concurrency must be a positive integer, got 0"),
-            (-1, "max_concurrency must be a positive integer, got -1"),
-            (-10, "max_concurrency must be a positive integer, got -10"),
-        ],
-    )
-    def test_init_raises_error_for_invalid_concurrency(self, invalid_concurrency, expected_error):
-        with pytest.raises(ValueError, match=expected_error):
+    @pytest.mark.parametrize("invalid_concurrency", [0, -1, -10])
+    def test_init_raises_error_for_invalid_concurrency(self, invalid_concurrency):
+        with pytest.raises(ValueError, match="max_concurrency must be a positive integer"):
             AttackExecutor(max_concurrency=invalid_concurrency)
-
-    def test_init_with_maximum_concurrency(self):
-        executor = AttackExecutor(max_concurrency=1000)
-
-        assert executor._max_concurrency == 1000
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestExecuteMultiObjectiveAttack:
-    """Tests for execute_multi_objective_attack_with_context_async method"""
+class TestExecuteAttackAsync:
+    """Tests for execute_attack_async method."""
 
     @pytest.mark.asyncio
-    async def test_execute_single_objective(self, mock_attack_strategy, basic_context, sample_attack_result):
-        executor = AttackExecutor(max_concurrency=5)
+    async def test_execute_single_objective(self):
+        """Test executing with a single objective."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
 
-        # Mock duplicate to return a new context
-        duplicated_context = MagicMock()
-        duplicated_context.objective = None  # Will be set by executor
-        basic_context.duplicate = MagicMock(return_value=duplicated_context)
-
-        mock_attack_strategy.execute_with_context_async.return_value = sample_attack_result
-
-        results = await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=["Single objective"]
+        executor = AttackExecutor()
+        results = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["Test objective"],
         )
 
         assert len(results) == 1
-        assert results[0] == sample_attack_result
-
-        # Verify duplicate was called
-        basic_context.duplicate.assert_called_once()
-
-        # Verify objective was set on duplicated context
-        assert duplicated_context.objective == "Single objective"
-
-        # Verify execute_with_context_async was called with duplicated context
-        mock_attack_strategy.execute_with_context_async.assert_called_once_with(context=duplicated_context)
+        attack.execute_with_context_async.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_execute_multiple_objectives(self, mock_attack_strategy, basic_context, multiple_objectives):
+    async def test_execute_multiple_objectives(self):
+        """Test executing with multiple objectives."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.side_effect = [create_attack_result(f"Obj{i}") for i in range(3)]
+
         executor = AttackExecutor(max_concurrency=5)
-
-        # Create duplicated contexts for each objective
-        duplicated_contexts = []
-        for i in range(len(multiple_objectives)):
-            ctx = MagicMock()
-            ctx.objective = None
-            duplicated_contexts.append(ctx)
-
-        basic_context.duplicate = MagicMock(side_effect=duplicated_contexts)
-
-        # Create unique results for each objective - using side_effect with a function
-        async def create_result(context):
-            # Find which objective this is based on the context
-            for i, ctx in enumerate(duplicated_contexts):
-                if context == ctx:
-                    return AttackResult(
-                        conversation_id=str(uuid.uuid4()),
-                        objective=multiple_objectives[i],
-                        attack_identifier={
-                            "__type__": "TestAttack",
-                            "__module__": "pyrit.executor.attack.test_attack",
-                            "id": str(uuid.uuid4()),
-                        },
-                        outcome=AttackOutcome.SUCCESS if i % 2 == 0 else AttackOutcome.FAILURE,
-                        outcome_reason="Success" if i % 2 == 0 else "Failed",
-                        executed_turns=i + 1,
-                    )
-            raise ValueError("Unknown context")
-
-        mock_attack_strategy.execute_with_context_async.side_effect = create_result
-
-        results = await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=multiple_objectives
+        results = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["Obj1", "Obj2", "Obj3"],
         )
 
-        assert len(results) == len(multiple_objectives)
-
-        # Verify duplicate was called for each objective
-        assert basic_context.duplicate.call_count == len(multiple_objectives)
-
-        # Verify each duplicated context had its objective set
-        for i, ctx in enumerate(duplicated_contexts):
-            assert ctx.objective == multiple_objectives[i]
-
-        # Verify execute_with_context_async was called for each context
-        assert mock_attack_strategy.execute_with_context_async.call_count == len(multiple_objectives)
-
-        # Verify results match expected pattern
-        for i, result in enumerate(results):
-            assert result.objective == multiple_objectives[i]
-            assert result.outcome == (AttackOutcome.SUCCESS if i % 2 == 0 else AttackOutcome.FAILURE)
-            assert result.executed_turns == i + 1
+        assert len(results) == 3
+        assert attack.execute_with_context_async.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_execute_empty_objectives_list(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=5)
+    async def test_execute_with_broadcast_memory_labels(self):
+        """Test memory_labels broadcast to all objectives."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
 
-        # Mock the duplicate method on the context
-        original_duplicate = basic_context.duplicate
-        basic_context.duplicate = MagicMock(side_effect=original_duplicate)
-
-        results = await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=[]
+        executor = AttackExecutor()
+        await executor.execute_attack_async(
+            attack=attack,
+            objectives=["Obj1", "Obj2"],
+            memory_labels={"test": "value"},
         )
 
-        assert results == []
-        mock_attack_strategy.execute_with_context_async.assert_not_called()
-
-        # Verify duplicate was never called since there are no objectives
-        basic_context.duplicate.assert_not_called()
+        # Check that contexts were created with memory_labels
+        calls = attack.execute_with_context_async.call_args_list
+        for call in calls:
+            context = call.kwargs["context"]
+            assert context.params.memory_labels == {"test": "value"}
 
     @pytest.mark.asyncio
-    async def test_context_duplication_isolation(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=5)
+    async def test_execute_with_field_overrides(self):
+        """Test field_overrides provides per-objective values."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
 
-        # Set up initial context state
-        basic_context.memory_labels = {"original": "value"}
-        basic_context.metadata = {"test": "data"}
-
-        # Create truly independent duplicated contexts
-        duplicated_contexts = []
-
-        def create_duplicate():
-            ctx = MagicMock()
-            ctx.objective = None
-            ctx.memory_labels = {"original": "value"}  # Copy of original
-            ctx.metadata = {"test": "data"}  # Copy of original
-            duplicated_contexts.append(ctx)
-            return ctx
-
-        basic_context.duplicate = MagicMock(side_effect=create_duplicate)
-
-        objectives = ["Objective 1", "Objective 2"]
-        mock_attack_strategy.execute_with_context_async.return_value = MagicMock()
-
-        await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
+        executor = AttackExecutor()
+        await executor.execute_attack_async(
+            attack=attack,
+            objectives=["Obj1", "Obj2"],
+            field_overrides=[
+                {"memory_labels": {"id": "1"}},
+                {"memory_labels": {"id": "2"}},
+            ],
         )
 
-        # Verify duplicate was called for each objective
-        assert basic_context.duplicate.call_count == 2
-
-        # Verify each context was independent
-        assert len(duplicated_contexts) == 2
-        context1, context2 = duplicated_contexts
-
-        # Contexts should be different objects
-        assert context1 is not context2
-        assert context1 is not basic_context
-        assert context2 is not basic_context
-
-        # But should have the same initial values
-        assert context1.memory_labels == {"original": "value"}
-        assert context2.memory_labels == {"original": "value"}
-        assert context1.metadata == {"test": "data"}
-        assert context2.metadata == {"test": "data"}
-
-        # And objectives should be set correctly
-        assert context1.objective == "Objective 1"
-        assert context2.objective == "Objective 2"
+        calls = attack.execute_with_context_async.call_args_list
+        assert calls[0].kwargs["context"].params.memory_labels == {"id": "1"}
+        assert calls[1].kwargs["context"].params.memory_labels == {"id": "2"}
 
     @pytest.mark.asyncio
-    async def test_preserves_result_order(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=2)
+    async def test_validates_empty_objectives(self):
+        """Test that empty objectives raises ValueError."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
 
-        objectives = [f"Objective {i}" for i in range(5)]
-
-        # Create duplicated contexts
-        duplicated_contexts = []
-        for _ in objectives:
-            ctx = MagicMock()
-            ctx.objective = None
-            duplicated_contexts.append(ctx)
-
-        basic_context.duplicate = MagicMock(side_effect=duplicated_contexts)
-
-        # Simulate varying execution times
-        async def mock_execute(context):
-            # Find which context this is
-            for i, ctx in enumerate(duplicated_contexts):
-                if context == ctx:
-                    delay = 0.1 if i in [1, 3] else 0.01
-                    await asyncio.sleep(delay)
-                    return AttackResult(
-                        conversation_id=str(uuid.uuid4()),
-                        objective=objectives[i],
-                        attack_identifier={
-                            "__type__": "TestAttack",
-                            "__module__": "pyrit.executor.attack.test_attack",
-                            "id": str(uuid.uuid4()),
-                        },
-                        outcome=AttackOutcome.SUCCESS,
-                        executed_turns=1,
-                    )
-            raise ValueError("Unknown context")
-
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
-
-        results = await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
-        )
-
-        # Results should be in the same order as objectives despite varying execution times
-        assert len(results) == len(objectives)
-        for i, result in enumerate(results):
-            assert result.objective == objectives[i]
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestConcurrencyControl:
-    """Tests for concurrency control in attack execution"""
+        with pytest.raises(ValueError, match="At least one objective must be provided"):
+            await executor.execute_attack_async(attack=attack, objectives=[])
 
     @pytest.mark.asyncio
-    async def test_respects_max_concurrency_limit(self, mock_attack_strategy, basic_context):
+    async def test_validates_field_overrides_length(self):
+        """Test validation of field_overrides length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Obj1", "Obj2"],
+                field_overrides=[{}],  # Wrong length
+            )
+
+    @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides(self):
+        """Test that explicit empty field_overrides still validate length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Obj1", "Obj2"],
+                field_overrides=[],
+            )
+
+    @pytest.mark.asyncio
+    async def test_concurrency_control(self):
+        """Test that concurrency is properly limited."""
+        attack = create_mock_attack()
         max_concurrency = 2
         executor = AttackExecutor(max_concurrency=max_concurrency)
 
-        # Mock duplicate method
-        basic_context.duplicate = MagicMock(side_effect=lambda: MagicMock(objective=None))
-
-        # Track concurrent executions
         concurrent_count = 0
         max_concurrent = 0
 
-        async def mock_execute(context):
+        async def mock_execute(*, context):
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.1)  # Simulate work
+            await asyncio.sleep(0.05)
             concurrent_count -= 1
-            return MagicMock()
+            return create_attack_result(context.params.objective)
 
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
+        attack.execute_with_context_async.side_effect = mock_execute
 
-        objectives = [f"Objective {i}" for i in range(10)]
-
-        await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
+        await executor.execute_attack_async(
+            attack=attack,
+            objectives=[f"Obj{i}" for i in range(10)],
         )
 
         assert max_concurrent <= max_concurrency
-        assert mock_attack_strategy.execute_with_context_async.call_count == len(objectives)
 
     @pytest.mark.asyncio
-    async def test_single_concurrency_serializes_execution(self, mock_attack_strategy, basic_context):
+    async def test_single_concurrency_serializes_execution(self):
+        """Test that max_concurrency=1 truly serializes execution."""
+        attack = create_mock_attack()
         executor = AttackExecutor(max_concurrency=1)
-
-        # Create duplicated contexts with tracking
-        duplicated_contexts = []
-
-        def create_duplicate():
-            ctx = MagicMock()
-            ctx.objective = None
-            duplicated_contexts.append(ctx)
-            return ctx
-
-        basic_context.duplicate = MagicMock(side_effect=create_duplicate)
 
         execution_order = []
 
-        async def mock_execute(context):
-            execution_order.append(f"start_{context.objective}")
+        async def mock_execute(*, context):
+            objective = context.params.objective
+            execution_order.append(f"start_{objective}")
             await asyncio.sleep(0.01)
-            execution_order.append(f"end_{context.objective}")
-            return MagicMock()
+            execution_order.append(f"end_{objective}")
+            return create_attack_result(objective)
 
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
+        attack.execute_with_context_async.side_effect = mock_execute
 
-        objectives = ["A", "B", "C"]
-
-        await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
+        await executor.execute_attack_async(
+            attack=attack,
+            objectives=["A", "B", "C"],
         )
 
         # With max_concurrency=1, executions should not overlap
@@ -415,703 +241,330 @@ class TestConcurrencyControl:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestErrorHandling:
-    """Tests for error handling in attack execution"""
+class TestExecuteAttackFromSeedGroupsAsync:
+    """Tests for execute_attack_from_seed_groups_async method."""
 
     @pytest.mark.asyncio
-    async def test_propagates_strategy_execution_errors(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=5)
+    async def test_extracts_objectives_from_seed_groups(self):
+        """Test that objectives are extracted from seed groups."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
 
-        basic_context.duplicate = MagicMock(return_value=MagicMock(objective=None))
+        executor = AttackExecutor()
+        sg1 = create_seed_group("Objective 1")
+        sg2 = create_seed_group("Objective 2")
 
-        mock_attack_strategy.execute_with_context_async.side_effect = RuntimeError("Strategy execution failed")
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=[sg1, sg2],
+        )
 
-        with pytest.raises(RuntimeError, match="Strategy execution failed"):
-            await executor.execute_multi_objective_attack_with_context_async(
-                attack=mock_attack_strategy, context_template=basic_context, objectives=["Test objective"]
+        calls = attack.execute_with_context_async.call_args_list
+        assert calls[0].kwargs["context"].params.objective == "Objective 1"
+        assert calls[1].kwargs["context"].params.objective == "Objective 2"
+
+    @pytest.mark.asyncio
+    async def test_validates_empty_seed_groups(self):
+        """Test that empty seed_groups raises ValueError."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+
+        with pytest.raises(ValueError, match="At least one seed_group must be provided"):
+            await executor.execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[],
             )
 
     @pytest.mark.asyncio
-    async def test_handles_partial_failures(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=5)
+    async def test_validates_seed_group_has_objective(self):
+        """Test that seed groups without objectives raise ValueError at construction."""
+        # SeedAttackGroup now validates exactly one objective at construction
+        with pytest.raises(ValueError, match="must have exactly one objective"):
+            SeedAttackGroup(seeds=[SeedPrompt(value="test", data_type="text")])
 
-        # Create contexts for each objective
-        contexts = []
-        for _ in range(3):
-            ctx = MagicMock()
-            ctx.objective = None
-            contexts.append(ctx)
+    @pytest.mark.asyncio
+    async def test_passes_broadcast_fields(self):
+        """Test that broadcast fields are passed to all seed groups."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
 
-        basic_context.duplicate = MagicMock(side_effect=contexts)
+        executor = AttackExecutor()
+        sg = create_seed_group("Test objective")
 
-        # Define execution behavior based on context
-        async def mock_execute(context):
-            if context == contexts[0]:
-                return AttackResult(
-                    conversation_id=str(uuid.uuid4()),
-                    objective="Success 1",
-                    attack_identifier={
-                        "__type__": "TestAttack",
-                        "__module__": "pyrit.executor.attack.test_attack",
-                        "id": str(uuid.uuid4()),
-                    },
-                    outcome=AttackOutcome.SUCCESS,
-                    executed_turns=1,
-                )
-            elif context == contexts[1]:
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=[sg],
+            memory_labels={"broadcast": "value"},
+        )
+
+        context = attack.execute_with_context_async.call_args.kwargs["context"]
+        assert context.params.memory_labels == {"broadcast": "value"}
+
+    @pytest.mark.asyncio
+    async def test_passes_adversarial_chat_and_objective_scorer(self):
+        """Test that adversarial_chat and objective_scorer are passed to from_seed_group_async."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
+
+        mock_adversarial_chat = MagicMock()
+        mock_objective_scorer = MagicMock()
+        captured_kwargs = {}
+
+        original_from_seed_group_async = attack.params_type.from_seed_group_async
+
+        async def capture_from_seed_group_async(*, seed_group, **kwargs):
+            captured_kwargs.update(kwargs)
+            return await original_from_seed_group_async(seed_group=seed_group, **kwargs)
+
+        attack.params_type.from_seed_group_async = capture_from_seed_group_async
+
+        try:
+            executor = AttackExecutor()
+            sg = create_seed_group("Test objective")
+
+            await executor.execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[sg],
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+            )
+
+            assert captured_kwargs.get("adversarial_chat") is mock_adversarial_chat
+            assert captured_kwargs.get("objective_scorer") is mock_objective_scorer
+        finally:
+            # Restore the original to prevent test pollution in parallel test runs
+            attack.params_type.from_seed_group_async = original_from_seed_group_async
+
+    @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
+        """Test that explicit empty field_overrides still validate seed group length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+        sg1 = create_seed_group("Objective 1")
+        sg2 = create_seed_group("Objective 2")
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[sg1, sg2],
+                field_overrides=[],
+            )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPartialFailureHandling:
+    """Tests for partial failure handling."""
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_preserves_input_indices(self):
+        """Test that input_indices correctly maps completed results when some fail."""
+        attack = create_mock_attack()
+
+        async def mock_execute(*, context):
+            if "fail" in context.params.objective:
                 raise RuntimeError("Execution failed")
-            else:
-                return AttackResult(
-                    conversation_id=str(uuid.uuid4()),
-                    objective="Success 2",
-                    attack_identifier={
-                        "__type__": "TestAttack",
-                        "__module__": "pyrit.executor.attack.test_attack",
-                        "id": str(uuid.uuid4()),
-                    },
-                    outcome=AttackOutcome.SUCCESS,
-                    executed_turns=1,
-                )
+            return create_attack_result(context.params.objective)
 
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
+        attack.execute_with_context_async.side_effect = mock_execute
 
-        objectives = ["Success 1", "Failure", "Success 2"]
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["success0", "fail1", "success2"],
+            return_partial_on_failure=True,
+        )
 
-        # The failure should propagate
+        # success0 is input index 0, fail1 is index 1 (excluded), success2 is index 2
+        assert len(result.completed_results) == 2
+        assert result.input_indices == [0, 2]
+
+    @pytest.mark.asyncio
+    async def test_all_succeed_input_indices_sequential(self):
+        """Test that input_indices is [0, 1, 2, ...] when all succeed."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["obj0", "obj1", "obj2"],
+        )
+
+        assert result.input_indices == [0, 1, 2]
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_with_return_partial(self):
+        """Test return_partial_on_failure=True returns partial results."""
+        attack = create_mock_attack()
+
+        async def mock_execute(*, context):
+            if "fail" in context.params.objective:
+                raise RuntimeError("Execution failed")
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = mock_execute
+
+        executor = AttackExecutor()
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["success1", "fail", "success2"],
+            return_partial_on_failure=True,
+        )
+
+        assert len(result.completed_results) == 2
+        assert len(result.incomplete_objectives) == 1
+        assert result.has_incomplete
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_raises_by_default(self):
+        """Test that failures raise exception by default."""
+        attack = create_mock_attack()
+
+        async def mock_execute(*, context):
+            raise RuntimeError("Execution failed")
+
+        attack.execute_with_context_async.side_effect = mock_execute
+
+        executor = AttackExecutor()
         with pytest.raises(RuntimeError, match="Execution failed"):
-            await executor.execute_multi_objective_attack_with_context_async(
-                attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Test"],
             )
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestExecuteParallel:
-    """Tests for the internal _execute_parallel_async method"""
+class TestAttackExecutorResult:
+    """Tests for AttackExecutorResult dataclass."""
 
-    @pytest.mark.asyncio
-    async def test_execute_parallel_with_multiple_contexts(self, mock_attack_strategy):
-        executor = AttackExecutor(max_concurrency=5)
+    def test_iteration(self):
+        """Test that result is iterable."""
+        results = [create_attack_result(f"Obj{i}") for i in range(3)]
+        executor_result = AttackExecutorResult(
+            completed_results=results,
+            incomplete_objectives=[],
+        )
 
-        contexts = [
-            SingleTurnAttackContext(objective=f"Objective {i}", conversation_id=str(uuid.uuid4())) for i in range(3)
-        ]
+        assert list(executor_result) == results
 
-        # Create results for each context
-        async def create_result(context):
-            return AttackResult(
-                conversation_id=context.conversation_id,
-                objective=context.objective,
-                attack_identifier={
-                    "__type__": "TestAttack",
-                    "__module__": "pyrit.executor.attack.test_attack",
-                    "id": str(uuid.uuid4()),
-                },
-                outcome=AttackOutcome.SUCCESS,
-                executed_turns=1,
-            )
+    def test_len(self):
+        """Test len() on result."""
+        results = [create_attack_result(f"Obj{i}") for i in range(3)]
+        executor_result = AttackExecutorResult(
+            completed_results=results,
+            incomplete_objectives=[],
+        )
 
-        mock_attack_strategy.execute_with_context_async.side_effect = create_result
+        assert len(executor_result) == 3
 
-        results = await executor._execute_parallel_async(attack=mock_attack_strategy, contexts=contexts)
+    def test_indexing(self):
+        """Test indexing into result."""
+        results = [create_attack_result(f"Obj{i}") for i in range(3)]
+        executor_result = AttackExecutorResult(
+            completed_results=results,
+            incomplete_objectives=[],
+        )
 
-        assert len(results) == len(contexts)
-        assert mock_attack_strategy.execute_with_context_async.call_count == len(contexts)
+        assert executor_result[0] == results[0]
+        assert executor_result[2] == results[2]
 
-        # Verify each result matches its context
-        for i, result in enumerate(results):
-            assert result.conversation_id == contexts[i].conversation_id
-            assert result.objective == contexts[i].objective
+    def test_has_incomplete_true(self):
+        """Test has_incomplete when there are incomplete objectives."""
+        executor_result = AttackExecutorResult(
+            completed_results=[],
+            incomplete_objectives=[("Obj1", RuntimeError("Failed"))],
+        )
 
-    @pytest.mark.asyncio
-    async def test_execute_parallel_with_empty_contexts(self, mock_attack_strategy):
-        executor = AttackExecutor(max_concurrency=5)
+        assert executor_result.has_incomplete is True
 
-        results = await executor._execute_parallel_async(attack=mock_attack_strategy, contexts=[])
+    def test_has_incomplete_false(self):
+        """Test has_incomplete when all complete."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
+        )
 
-        assert results == []
-        mock_attack_strategy.execute_with_context_async.assert_not_called()
+        assert executor_result.has_incomplete is False
 
-    @pytest.mark.asyncio
-    async def test_execute_parallel_maintains_semaphore_integrity(self, mock_attack_strategy):
-        executor = AttackExecutor(max_concurrency=2)
+    def test_raise_if_incomplete(self):
+        """Test raise_if_incomplete raises first exception."""
+        error = RuntimeError("First error")
+        executor_result = AttackExecutorResult(
+            completed_results=[],
+            incomplete_objectives=[("Obj1", error)],
+        )
 
-        # Track semaphore state
-        active_tasks = []
+        with pytest.raises(RuntimeError, match="First error"):
+            executor_result.raise_if_incomplete()
 
-        async def mock_execute(context):
-            task_id = id(asyncio.current_task())
-            active_tasks.append(task_id)
-            assert len(active_tasks) <= 2  # Should never exceed max_concurrency
-            await asyncio.sleep(0.05)
-            active_tasks.remove(task_id)
-            return MagicMock()
+    def test_get_results_raises_when_incomplete(self):
+        """Test get_results raises when incomplete."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[("Obj1", RuntimeError("Failed"))],
+        )
 
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
+        with pytest.raises(RuntimeError):
+            executor_result.get_results()
 
-        contexts = [
-            SingleTurnAttackContext(objective=f"Objective {i}", conversation_id=str(uuid.uuid4())) for i in range(5)
-        ]
+    def test_get_results_returns_when_complete(self):
+        """Test get_results returns results when all complete."""
+        results = [create_attack_result("Test")]
+        executor_result = AttackExecutorResult(
+            completed_results=results,
+            incomplete_objectives=[],
+        )
 
-        await executor._execute_parallel_async(attack=mock_attack_strategy, contexts=contexts)
+        assert executor_result.get_results() == results
 
-        assert len(active_tasks) == 0  # All tasks should be complete
+    def test_input_indices_default_empty(self):
+        """Test that input_indices defaults to empty list."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
+        )
+
+        assert executor_result.input_indices == []
+
+    def test_input_indices_preserved(self):
+        """Test that input_indices are preserved when set."""
+        executor_result = AttackExecutorResult(
+            completed_results=[create_attack_result("Test")],
+            incomplete_objectives=[],
+            input_indices=[2],
+        )
+
+        assert executor_result.input_indices == [2]
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestIntegrationScenarios:
-    """Tests for integration scenarios and edge cases"""
+class TestParamsTypeIntegration:
+    """Tests for params_type integration with executor."""
 
     @pytest.mark.asyncio
-    async def test_large_scale_execution(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=10)
+    async def test_excluded_params_type_rejects_excluded_fields(self):
+        """Test that params_type.excluding() properly rejects fields."""
+        # Create a params type that excludes next_message
+        LimitedParams = AttackParameters.excluding("next_message", "prepended_conversation")  # noqa: N806
 
-        # Mock duplicate to create new contexts
-        basic_context.duplicate = MagicMock(side_effect=lambda: MagicMock(objective=None))
+        attack = create_mock_attack(params_type=LimitedParams)
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
 
-        # Test with a large number of objectives
-        objectives = [f"Objective {i}" for i in range(100)]
-
-        async def mock_execute(context):
-            await asyncio.sleep(0.001)  # Small delay to simulate work
-            return AttackResult(
-                conversation_id=str(uuid.uuid4()),
-                objective=context.objective,
-                attack_identifier={
-                    "__type__": "TestAttack",
-                    "__module__": "pyrit.executor.attack.test_attack",
-                    "id": str(uuid.uuid4()),
-                },
-                outcome=AttackOutcome.SUCCESS,
-                executed_turns=1,
-            )
-
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
-
-        results = await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
-        )
-
-        assert len(results) == 100
-        assert all(isinstance(r, AttackResult) for r in results)
-        assert basic_context.duplicate.call_count == 100
-
-    @pytest.mark.asyncio
-    async def test_mixed_success_and_failure_results(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=3)
-
-        objectives = [f"Objective {i}" for i in range(6)]
-
-        # Create contexts
-        contexts = []
-        for _ in objectives:
-            ctx = MagicMock()
-            ctx.objective = None
-            contexts.append(ctx)
-
-        basic_context.duplicate = MagicMock(side_effect=contexts)
-
-        # Alternate between success and failure
-        async def mock_execute(context):
-            # Find index based on objective
-            idx = int(context.objective.split()[-1])
-            return AttackResult(
-                conversation_id=str(uuid.uuid4()),
-                objective=context.objective,
-                attack_identifier={
-                    "__type__": "TestAttack",
-                    "__module__": "pyrit.executor.attack.test_attack",
-                    "id": str(uuid.uuid4()),
-                },
-                outcome=AttackOutcome.SUCCESS if idx % 2 == 0 else AttackOutcome.FAILURE,
-                executed_turns=idx + 1,
-            )
-
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
-
-        results = await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
-        )
-
-        # Verify alternating pattern
-        for i, result in enumerate(results):
-            assert result.outcome == (AttackOutcome.SUCCESS if i % 2 == 0 else AttackOutcome.FAILURE)
-            assert result.executed_turns == i + 1
-
-    @pytest.mark.asyncio
-    async def test_context_modifications_during_execution(self, mock_attack_strategy, basic_context):
-        executor = AttackExecutor(max_concurrency=2)
-
-        # Track context states during execution
-        captured_contexts = []
-
-        # Create contexts with initial state
-        contexts = []
-        for _ in range(3):
-            ctx = MagicMock()
-            ctx.objective = None
-            ctx.memory_labels = {"original": "value"}
-            ctx.achieved_objective = False
-            contexts.append(ctx)
-
-        basic_context.duplicate = MagicMock(side_effect=contexts)
-
-        async def mock_execute(context):
-            # Capture the context state
-            captured_contexts.append(
-                {
-                    "objective": context.objective,
-                    "memory_labels": dict(context.memory_labels),
-                    "achieved_objective": context.achieved_objective,
-                }
-            )
-            # Modify the context during execution
-            context.achieved_objective = True
-            context.memory_labels["modified"] = "yes"
-            return MagicMock()
-
-        mock_attack_strategy.execute_with_context_async.side_effect = mock_execute
-
-        objectives = ["Obj1", "Obj2", "Obj3"]
-
-        await executor.execute_multi_objective_attack_with_context_async(
-            attack=mock_attack_strategy, context_template=basic_context, objectives=objectives
-        )
-
-        # Verify each context started with clean state
-        assert len(captured_contexts) == 3
-        for i, captured in enumerate(captured_contexts):
-            assert captured["objective"] == objectives[i]
-            assert captured["achieved_objective"] is False
-            assert "modified" not in captured["memory_labels"]
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestExecuteMultiObjectiveAttackAsync:
-    """Tests for execute_multi_objective_attack_async method using parameters"""
-
-    @pytest.mark.asyncio
-    async def test_execute_with_parameters(self, mock_attack_strategy):
-        executor = AttackExecutor(max_concurrency=5)
-
-        objectives = ["Test objective 1", "Test objective 2"]
-        memory_labels = {"test": "label"}
-
-        # Create expected results
-        results = []
-        for obj in objectives:
-            results.append(
-                AttackResult(
-                    conversation_id=str(uuid.uuid4()),
-                    objective=obj,
-                    attack_identifier={
-                        "__type__": "TestAttack",
-                        "__module__": "pyrit.executor.attack.test_attack",
-                        "id": str(uuid.uuid4()),
-                    },
-                    outcome=AttackOutcome.SUCCESS,
-                    executed_turns=1,
-                )
-            )
-
-        mock_attack_strategy.execute_async.side_effect = results
-
-        actual_results = await executor.execute_multi_objective_attack_async(
-            attack=mock_attack_strategy,
-            objectives=objectives,
-            memory_labels=memory_labels,
-        )
-
-        assert len(actual_results) == len(objectives)
-        assert mock_attack_strategy.execute_async.call_count == len(objectives)
-
-        # Verify execute_async was called with correct parameters for each objective
-        for i, call in enumerate(mock_attack_strategy.execute_async.call_args_list):
-            assert call.kwargs["objective"] == objectives[i]
-            assert call.kwargs["memory_labels"] == memory_labels
-
-    @pytest.mark.asyncio
-    async def test_execute_with_attack_params(self, mock_attack_strategy):
-        executor = AttackExecutor(max_concurrency=3)
-
-        objectives = ["Obj1", "Obj2", "Obj3"]
-
-        mock_attack_strategy.execute_async.return_value = MagicMock()
-
-        await executor.execute_multi_objective_attack_async(
-            attack=mock_attack_strategy,
-            objectives=objectives,
-            custom_param="test_value",
-        )
-
-        # Verify all calls included the custom params
-        for call in mock_attack_strategy.execute_async.call_args_list:
-            assert call.kwargs["custom_param"] == "test_value"
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestExecuteSingleTurnAttacksAsync:
-    """Tests for execute_single_turn_attacks_async method"""
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_with_single_objective(
-        self, mock_single_turn_attack_strategy, sample_attack_result
-    ):
-        executor = AttackExecutor(max_concurrency=1)
-        objectives = ["Extract sensitive information"]
-
-        mock_single_turn_attack_strategy.execute_async.return_value = sample_attack_result
-
-        results = await executor.execute_single_turn_attacks_async(
-            attack=mock_single_turn_attack_strategy,
-            objectives=objectives,
-        )
-
-        assert len(results) == 1
-        assert results[0] == sample_attack_result
-        mock_single_turn_attack_strategy.execute_async.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_with_multiple_objectives(
-        self, mock_single_turn_attack_strategy, multiple_objectives
-    ):
-        executor = AttackExecutor(max_concurrency=2)
-
-        # Create expected results
-        results = []
-        for obj in multiple_objectives:
-            results.append(
-                AttackResult(
-                    conversation_id=str(uuid.uuid4()),
-                    objective=obj,
-                    attack_identifier={
-                        "__type__": "TestSingleTurnAttack",
-                        "__module__": "pyrit.executor.attack.test_attack",
-                        "id": str(uuid.uuid4()),
-                    },
-                    outcome=AttackOutcome.SUCCESS,
-                    executed_turns=1,
-                )
-            )
-
-        mock_single_turn_attack_strategy.execute_async.side_effect = results
-
-        actual_results = await executor.execute_single_turn_attacks_async(
-            attack=mock_single_turn_attack_strategy,
-            objectives=multiple_objectives,
-        )
-
-        assert len(actual_results) == len(multiple_objectives)
-        assert mock_single_turn_attack_strategy.execute_async.call_count == len(multiple_objectives)
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_with_seed_prompt_groups(
-        self, mock_single_turn_attack_strategy, sample_seed_prompt_groups
-    ):
-        executor = AttackExecutor(max_concurrency=1)
-        objectives = ["Obj1", "Obj2", "Obj3"]
-
-        mock_single_turn_attack_strategy.execute_async.return_value = MagicMock()
-
-        await executor.execute_single_turn_attacks_async(
-            attack=mock_single_turn_attack_strategy,
-            objectives=objectives,
-            seed_prompt_groups=sample_seed_prompt_groups,
-        )
-
-        # Verify execute_async was called with correct seed prompt groups
-        for i, call in enumerate(mock_single_turn_attack_strategy.execute_async.call_args_list):
-            assert call.kwargs["seed_prompt_group"] == sample_seed_prompt_groups[i]
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_validates_context_type(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor()
-        objectives = ["Test objective"]
-
-        with pytest.raises(TypeError, match="must use SingleTurnAttackContext"):
-            await executor.execute_single_turn_attacks_async(
-                attack=mock_multi_turn_attack_strategy,
-                objectives=objectives,
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_validates_empty_objectives(self, mock_single_turn_attack_strategy):
         executor = AttackExecutor()
 
-        with pytest.raises(ValueError, match="At least one objective must be provided"):
-            await executor.execute_single_turn_attacks_async(
-                attack=mock_single_turn_attack_strategy,
-                objectives=[],
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_validates_seed_prompt_groups_length(self, mock_single_turn_attack_strategy):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        seed_prompt_groups = [SeedPromptGroup(prompts=[SeedPrompt(value="prompt", data_type="text")])]
-
-        with pytest.raises(ValueError, match="Number of seed_prompt_groups .* must match number of objectives"):
-            await executor.execute_single_turn_attacks_async(
-                attack=mock_single_turn_attack_strategy,
-                objectives=objectives,
-                seed_prompt_groups=seed_prompt_groups,
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_validates_prepended_conversations_length(self, mock_single_turn_attack_strategy):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        prepended_conversations = [[]]  # Only one conversation for two objectives
-
-        with pytest.raises(ValueError, match="Number of prepended_conversations .* must match"):
-            await executor.execute_single_turn_attacks_async(
-                attack=mock_single_turn_attack_strategy,
-                objectives=objectives,
-                prepended_conversations=prepended_conversations,
-            )
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestExecuteMultiTurnAttacksAsync:
-    """Tests for execute_multi_turn_attacks_async method"""
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_with_single_objective(
-        self, mock_multi_turn_attack_strategy, sample_attack_result
-    ):
-        executor = AttackExecutor(max_concurrency=1)
-        objectives = ["Generate malicious content"]
-
-        mock_multi_turn_attack_strategy.execute_async.return_value = sample_attack_result
-
-        results = await executor.execute_multi_turn_attacks_async(
-            attack=mock_multi_turn_attack_strategy,
-            objectives=objectives,
+        # This should work - only passing valid fields
+        await executor.execute_attack_async(
+            attack=attack,
+            objectives=["Test"],
+            memory_labels={"test": "value"},
         )
 
-        assert len(results) == 1
-        assert results[0] == sample_attack_result
-        mock_multi_turn_attack_strategy.execute_async.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_with_multiple_objectives(
-        self, mock_multi_turn_attack_strategy, multiple_objectives
-    ):
-        executor = AttackExecutor(max_concurrency=2)
-
-        # Create expected results
-        results = []
-        for obj in multiple_objectives:
-            results.append(
-                AttackResult(
-                    conversation_id=str(uuid.uuid4()),
-                    objective=obj,
-                    attack_identifier={
-                        "__type__": "TestMultiTurnAttack",
-                        "__module__": "pyrit.executor.attack.test_attack",
-                        "id": str(uuid.uuid4()),
-                    },
-                    outcome=AttackOutcome.SUCCESS,
-                    executed_turns=3,
-                )
-            )
-
-        mock_multi_turn_attack_strategy.execute_async.side_effect = results
-
-        actual_results = await executor.execute_multi_turn_attacks_async(
-            attack=mock_multi_turn_attack_strategy,
-            objectives=multiple_objectives,
-        )
-
-        assert len(actual_results) == len(multiple_objectives)
-        assert mock_multi_turn_attack_strategy.execute_async.call_count == len(multiple_objectives)
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_with_custom_prompts(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor(max_concurrency=1)
-        objectives = ["Obj1", "Obj2", "Obj3"]
-        custom_prompts = ["Custom prompt 1", "Custom prompt 2", "Custom prompt 3"]
-
-        mock_multi_turn_attack_strategy.execute_async.return_value = MagicMock()
-
-        await executor.execute_multi_turn_attacks_async(
-            attack=mock_multi_turn_attack_strategy,
-            objectives=objectives,
-            custom_prompts=custom_prompts,
-        )
-
-        # Verify execute_async was called with correct custom prompts
-        for i, call in enumerate(mock_multi_turn_attack_strategy.execute_async.call_args_list):
-            assert call.kwargs["custom_prompt"] == custom_prompts[i]
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_validates_context_type(self, mock_single_turn_attack_strategy):
-        executor = AttackExecutor()
-        objectives = ["Test objective"]
-
-        with pytest.raises(TypeError, match="must use MultiTurnAttackContext"):
-            await executor.execute_multi_turn_attacks_async(
-                attack=mock_single_turn_attack_strategy,
-                objectives=objectives,
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_validates_empty_objectives(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor()
-
-        with pytest.raises(ValueError, match="At least one objective must be provided"):
-            await executor.execute_multi_turn_attacks_async(
-                attack=mock_multi_turn_attack_strategy,
-                objectives=[],
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_validates_custom_prompts_length(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        custom_prompts = ["Only one custom prompt"]
-
-        with pytest.raises(ValueError, match="Number of custom_prompts .* must match number of objectives"):
-            await executor.execute_multi_turn_attacks_async(
-                attack=mock_multi_turn_attack_strategy,
-                objectives=objectives,
-                custom_prompts=custom_prompts,
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_validates_prepended_conversations_length(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        prepended_conversations = [[]]  # Only one conversation for two objectives
-
-        with pytest.raises(ValueError, match="Number of prepended_conversations .* must match"):
-            await executor.execute_multi_turn_attacks_async(
-                attack=mock_multi_turn_attack_strategy,
-                objectives=objectives,
-                prepended_conversations=prepended_conversations,
-            )
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_with_prepended_conversations(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor(max_concurrency=1)
-        objectives = ["Obj1", "Obj2"]
-        prepended_conversations = [[], []]  # Two empty conversations
-
-        mock_multi_turn_attack_strategy.execute_async.return_value = MagicMock()
-
-        await executor.execute_multi_turn_attacks_async(
-            attack=mock_multi_turn_attack_strategy,
-            objectives=objectives,
-            prepended_conversations=prepended_conversations,
-        )
-
-        # Verify execute_async was called with correct prepended conversations
-        for i, call in enumerate(mock_multi_turn_attack_strategy.execute_async.call_args_list):
-            assert call.kwargs["prepended_conversation"] == prepended_conversations[i]
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_with_memory_labels(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor(max_concurrency=1)
-        objectives = ["Test objective"]
-        memory_labels = {"test": "label", "category": "attack"}
-
-        mock_multi_turn_attack_strategy.execute_async.return_value = MagicMock()
-
-        await executor.execute_multi_turn_attacks_async(
-            attack=mock_multi_turn_attack_strategy,
-            objectives=objectives,
-            memory_labels=memory_labels,
-        )
-
-        # Verify execute_async was called with correct memory labels
-        call = mock_multi_turn_attack_strategy.execute_async.call_args_list[0]
-        assert call.kwargs["memory_labels"] == memory_labels
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_concurrency_control(self, mock_multi_turn_attack_strategy):
-        executor = AttackExecutor(max_concurrency=2)
-        objectives = ["Obj1", "Obj2", "Obj3", "Obj4"]
-
-        # Track execution order
-        execution_order = []
-
-        async def track_execution(objective, **kwargs):
-            execution_order.append(f"start_{objective}")
-            await asyncio.sleep(0.1)  # Simulate work
-            execution_order.append(f"end_{objective}")
-            return MagicMock()
-
-        mock_multi_turn_attack_strategy.execute_async.side_effect = track_execution
-
-        await executor.execute_multi_turn_attacks_async(
-            attack=mock_multi_turn_attack_strategy,
-            objectives=objectives,
-        )
-
-        # With max_concurrency=2, at most 2 should start before any ends
-        start_count = 0
-        end_count = 0
-        max_concurrent = 0
-
-        for event in execution_order:
-            if event.startswith("start_"):
-                start_count += 1
-            elif event.startswith("end_"):
-                end_count += 1
-            current_concurrent = start_count - end_count
-            max_concurrent = max(max_concurrent, current_concurrent)
-
-        assert max_concurrent <= 2
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestValidateAttackBatchParameters:
-    """Tests for the shared validation method"""
-
-    def test_validate_empty_objectives(self):
-        executor = AttackExecutor()
-
-        with pytest.raises(ValueError, match="At least one objective must be provided"):
-            executor._validate_attack_batch_parameters(objectives=[])
-
-    def test_validate_optional_list_length_mismatch(self):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        optional_list = ["Only one item"]
-
-        with pytest.raises(ValueError, match="Number of test_list .* must match number of objectives"):
-            executor._validate_attack_batch_parameters(
-                objectives=objectives, optional_list=optional_list, optional_list_name="test_list"
-            )
-
-    def test_validate_prepended_conversations_length_mismatch(self):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        prepended_conversations = [[]]  # Only one conversation
-
-        with pytest.raises(ValueError, match="Number of prepended_conversations .* must match"):
-            executor._validate_attack_batch_parameters(
-                objectives=objectives, prepended_conversations=prepended_conversations
-            )
-
-    def test_validate_success_with_valid_parameters(self):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-        optional_list = ["Item1", "Item2"]
-        prepended_conversations = [[], []]
-
-        # Should not raise any exception
-        executor._validate_attack_batch_parameters(
-            objectives=objectives,
-            optional_list=optional_list,
-            optional_list_name="test_list",
-            prepended_conversations=prepended_conversations,
-        )
-
-    def test_validate_success_with_none_optional_parameters(self):
-        executor = AttackExecutor()
-        objectives = ["Obj1", "Obj2"]
-
-        # Should not raise any exception when optional parameters are None
-        executor._validate_attack_batch_parameters(
-            objectives=objectives, optional_list=None, prepended_conversations=None
-        )
+        # Verify context was created with correct params type
+        context = attack.execute_with_context_async.call_args.kwargs["context"]
+        fields = {f.name for f in dataclasses.fields(context.params)}
+        assert "next_message" not in fields
+        assert "prepended_conversation" not in fields
+        assert "objective" in fields
+        assert "memory_labels" in fields

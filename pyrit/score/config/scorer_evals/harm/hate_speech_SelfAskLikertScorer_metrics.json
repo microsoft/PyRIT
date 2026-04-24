@@ -1,9 +1,0 @@
-{
-    "mean_absolute_error": 0.1277219430485762,
-    "mae_standard_error": 0.009976151390371231,
-    "t_statistic": -0.27910255096825154,
-    "p_value": 0.7804574308600751,
-    "krippendorff_alpha_combined": 0.8495743543112846,
-    "krippendorff_alpha_humans": 0.8612011988306925,
-    "krippendorff_alpha_model": null
-}

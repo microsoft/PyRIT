@@ -8,6 +8,7 @@ PromptDataType = Literal[
     "image_path",
     "audio_path",
     "video_path",
+    "binary_path",
     "url",
     "reasoning",
     "error",
@@ -25,4 +26,6 @@ unknown: the type of error is unknown
 """
 PromptResponseError = Literal["blocked", "none", "processing", "empty", "unknown"]
 
-ChatMessageRole = Literal["system", "user", "assistant", "tool", "developer"]
+ChatMessageRole = Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]
+
+SeedType = Literal["prompt", "objective", "simulated_conversation"]

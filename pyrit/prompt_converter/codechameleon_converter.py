@@ -2,14 +2,17 @@
 # Licensed under the MIT license.
 
 import inspect
+import json
 import pathlib
 import re
 import textwrap
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, SeedPrompt
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
 class CodeChameleonConverter(PromptConverter):
@@ -40,18 +43,21 @@ class CodeChameleonConverter(PromptConverter):
             "How to cut down a tree?" becomes
             ``[{'a': 4}, {'to': 1}, {'How': 0}, {'cut': 2}, {'down': 3}, {'tree?': 5}]``
 
-    Code Chameleon Converter based on https://arxiv.org/abs/2402.16717 by Lv, Huijie, et al.
+    Code Chameleon Converter [@lv2024codechameleon].
     """
+
+    SUPPORTED_INPUT_TYPES = ("text",)
+    SUPPORTED_OUTPUT_TYPES = ("text",)
 
     def __init__(
         self,
         *,
         encrypt_type: str,
-        encrypt_function: Optional[Callable] = None,
-        decrypt_function: Optional[Callable | list[Callable | str]] = None,
+        encrypt_function: Optional[Callable[..., Any]] = None,
+        decrypt_function: Optional[Callable[..., Any] | list[Callable[..., Any] | str]] = None,
     ) -> None:
         """
-        Initializes the converter with the specified encryption type and optional functions.
+        Initialize the converter with the specified encryption type and optional functions.
 
         Args:
             encrypt_type (str): Must be one of "custom", "reverse", "binary_tree", "odd_even" or "length".
@@ -94,18 +100,42 @@ class CodeChameleonConverter(PromptConverter):
                     '"reverse", "binary_tree", "odd_even" or "length".'
                 )
 
+        self._encrypt_type = encrypt_type
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with encryption type.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "encrypt_type": self._encrypt_type,
+            }
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt by applying the specified encryption function."""
+        """
+        Convert the given prompt by applying the specified encryption function.
+
+        Args:
+            prompt (str): The input prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self.encrypt_function:
-            encoded_prompt = str(self.encrypt_function(prompt))
-        else:
-            encoded_prompt = prompt
+        encoded_prompt = str(self.encrypt_function(prompt)) if self.encrypt_function is not None else prompt
 
         seed_prompt = SeedPrompt.from_yaml_file(
-            pathlib.Path(DATASETS_PATH) / "prompt_converters" / "codechameleon_converter.yaml"
+            pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "codechameleon_converter.yaml"
         )
 
         formatted_prompt = seed_prompt.render_template_value(
@@ -114,13 +144,7 @@ class CodeChameleonConverter(PromptConverter):
 
         return ConverterResult(output_text=formatted_prompt, output_type="text")
 
-    def input_supported(self, input_type: PromptDataType) -> bool:
-        return input_type == "text"
-
-    def output_supported(self, output_type: PromptDataType) -> bool:
-        return output_type == "text"
-
-    def _stringify_decrypt(self, elements: list) -> str:
+    def _stringify_decrypt(self, elements: list[Callable[..., Any] | str]) -> str:
         output_text = "The following is the decryption function.\n```python\n"
         for element in elements:
             if inspect.isfunction(element):
@@ -134,17 +158,27 @@ class CodeChameleonConverter(PromptConverter):
             raise ValueError(f"Illegal character sequence in user decrypt function! Invalid chars: {illegal_chars}")
         return output_text
 
-    def _encrypt_binary_tree(self, sentence):
+    def _encrypt_binary_tree(self, sentence: str) -> str:
         class TreeNode:
             """A node in the binary tree."""
 
-            def __init__(self, value):
+            def __init__(self, value: str) -> None:
                 self.value = value
-                self.left = None
-                self.right = None
+                self.left: Optional[TreeNode] = None
+                self.right: Optional[TreeNode] = None
 
-        def build_tree(words, start, end):
-            """Builds the binary tree from the list of words."""
+        def build_tree(words: list[str], start: int, end: int) -> Optional[TreeNode]:
+            """
+            Recursively build a balanced binary tree from a sublist of words.
+
+            Args:
+                words (list): List of words to build the tree from.
+                start (int): Starting index (inclusive) of the current sublist.
+                end (int): Ending index (inclusive) of the current sublist.
+
+            Returns:
+                TreeNode or None: The root node of the subtree, or None if start > end.
+            """
             if start > end:
                 return None
 
@@ -156,8 +190,16 @@ class CodeChameleonConverter(PromptConverter):
 
             return node
 
-        def tree_to_json(node):
-            """Converts a tree to a JSON representation."""
+        def tree_to_json(node: Optional[TreeNode]) -> Optional[dict[str, Any]]:
+            """
+            Convert a tree to a JSON representation.
+
+            Args:
+                node (TreeNode): The root node of the tree.
+
+            Returns:
+                dict or None: JSON representation of the tree, or None if the node is None.
+            """
             if node is None:
                 return None
             return {"value": node.value, "left": tree_to_json(node.left), "right": tree_to_json(node.right)}
@@ -165,28 +207,27 @@ class CodeChameleonConverter(PromptConverter):
         words = sentence.split()
         root = build_tree(words, 0, len(words) - 1)
         tree_representation = tree_to_json(root)
-        return tree_representation
 
-    def _encrypt_reverse(self, sentence):
-        reverse_sentence = " ".join(sentence.split(" ")[::-1])
-        return reverse_sentence
+        return json.dumps(tree_representation)
 
-    def _encrypt_odd_even(self, sentence):
+    def _encrypt_reverse(self, sentence: str) -> str:
+        return " ".join(sentence.split(" ")[::-1])
+
+    def _encrypt_odd_even(self, sentence: str) -> str:
         words = sentence.split()
         odd_words = words[::2]
         even_words = words[1::2]
         encrypted_words = odd_words + even_words
-        encrypted_sentence = " ".join(encrypted_words)
-        return encrypted_sentence
+        return " ".join(encrypted_words)
 
-    def _encrypt_length(self, sentence):
+    def _encrypt_length(self, sentence: str) -> str:
         class WordData:
-            def __init__(self, word, index):
+            def __init__(self, word: str, index: int) -> None:
                 self.word = word
                 self.index = index
 
-        def to_json(word_data):
-            word_datas = []
+        def to_json(word_data: list[WordData]) -> list[dict[str, int]]:
+            word_datas: list[dict[str, int]] = []
             for data in word_data:
                 word = data.word
                 index = data.index
@@ -194,10 +235,11 @@ class CodeChameleonConverter(PromptConverter):
             return word_datas
 
         words = sentence.split()
-        word_data = [WordData(word, i) for i, word in enumerate(words)]
-        word_data.sort(key=lambda x: len(x.word))
-        word_data = to_json(word_data)
-        return word_data
+        word_data_list = [WordData(word, i) for i, word in enumerate(words)]
+        word_data_list.sort(key=lambda x: len(x.word))
+        import json
+
+        return json.dumps(to_json(word_data_list))
 
     _decrypt_reverse = textwrap.dedent(
         """

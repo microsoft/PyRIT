@@ -6,18 +6,29 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
 )
 from pyrit.executor.core import StrategyEvent, StrategyEventData
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
-    PromptRequestResponse,
+    Message,
 )
+from pyrit.prompt_target import PromptTarget
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test",
+    )
 
 
 @pytest.fixture
@@ -29,31 +40,38 @@ def mock_memory():
 
 
 @pytest.fixture
+def mock_objective_target():
+    """Mock PromptTarget instance"""
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
+    return target
+
+
+@pytest.fixture
 def sample_attack_context():
     """Create a sample AttackContext for testing"""
 
     class TestAttackContext(AttackContext):
         pass
 
-    return TestAttackContext(
+    params = AttackParameters(
         objective="Test harmful objective",
         memory_labels={"test": "label"},
     )
+    return TestAttackContext(params=params)
 
 
 @pytest.fixture
 def sample_attack_result():
     """Create a sample AttackResult for testing"""
-    result = AttackResult(
+    return AttackResult(
         conversation_id="test-conversation-id",
         objective="Test objective",
-        attack_identifier={"name": "test_attack"},
         outcome=AttackOutcome.SUCCESS,
         outcome_reason="Test successful",
         execution_time_ms=0,
         executed_turns=1,
     )
-    return result
 
 
 @pytest.fixture
@@ -71,9 +89,12 @@ def event_handler(mock_logger):
 @pytest.fixture
 def mock_attack_strategy():
     """Create a mock attack strategy with all abstract methods mocked"""
+    mock_target = MagicMock(spec=PromptTarget)
 
     class TestableAttackStrategy(AttackStrategy):
         def __init__(self, **kwargs):
+            if "objective_target" not in kwargs:
+                kwargs["objective_target"] = mock_target
             super().__init__(context_type=AttackContext, logger=kwargs.get("logger", logging.getLogger()), **kwargs)
 
         # Mock abstract methods from Strategy
@@ -84,16 +105,14 @@ def mock_attack_strategy():
             pass
 
         async def _perform_async(self, *, context):
-            result = AttackResult(
+            return AttackResult(
                 conversation_id="test-conversation-id",
                 objective="Test objective",
-                attack_identifier={"name": "test_attack"},
                 outcome=AttackOutcome.SUCCESS,
                 outcome_reason="Test successful",
                 execution_time_ms=0,
                 executed_turns=1,
             )
-            return result
 
         async def _teardown_async(self, *, context):
             pass
@@ -105,7 +124,7 @@ def mock_attack_strategy():
 class TestAttackStrategyInitialization:
     """Tests for AttackStrategy initialization"""
 
-    def test_init_creates_default_event_handler(self):
+    def test_init_creates_default_event_handler(self, mock_objective_target):
         """Test that AttackStrategy creates a default event handler"""
 
         class TestStrategy(AttackStrategy):
@@ -119,7 +138,6 @@ class TestAttackStrategyInitialization:
                 return AttackResult(
                     conversation_id="test-conversation-id",
                     objective="Test objective",
-                    attack_identifier={"name": "test_attack"},
                     outcome=AttackOutcome.SUCCESS,
                     outcome_reason="Test successful",
                     execution_time_ms=0,
@@ -129,14 +147,14 @@ class TestAttackStrategyInitialization:
             async def _teardown_async(self, *, context):
                 pass
 
-        strategy = TestStrategy(context_type=AttackContext)
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
 
         assert len(strategy._event_handlers) == 1
         handler_name = "_DefaultAttackStrategyEventHandler"
         assert handler_name in strategy._event_handlers
         assert isinstance(strategy._event_handlers[handler_name], _DefaultAttackStrategyEventHandler)
 
-    def test_init_with_custom_logger(self):
+    def test_init_with_custom_logger(self, mock_objective_target):
         """Test that AttackStrategy accepts a custom logger"""
         custom_logger = logging.getLogger("test_attack_logger")
 
@@ -151,7 +169,6 @@ class TestAttackStrategyInitialization:
                 return AttackResult(
                     conversation_id="test-conversation-id",
                     objective="Test objective",
-                    attack_identifier={"name": "test_attack"},
                     outcome=AttackOutcome.SUCCESS,
                     outcome_reason="Test successful",
                     execution_time_ms=0,
@@ -161,11 +178,13 @@ class TestAttackStrategyInitialization:
             async def _teardown_async(self, *, context):
                 pass
 
-        strategy = TestStrategy(context_type=AttackContext, logger=custom_logger)
+        strategy = TestStrategy(
+            context_type=AttackContext, objective_target=mock_objective_target, logger=custom_logger
+        )
 
         assert strategy._logger.logger == custom_logger
 
-    def test_init_sets_memory_labels_from_default_values(self):
+    def test_init_sets_memory_labels_from_default_values(self, mock_objective_target):
         """Test that memory labels are loaded from default values"""
         with patch("pyrit.executor.core.strategy.default_values") as mock_default:
             mock_default.get_non_required_value.return_value = '{"env_label": "env_value"}'
@@ -181,7 +200,6 @@ class TestAttackStrategyInitialization:
                     return AttackResult(
                         conversation_id="test-conversation-id",
                         objective="Test objective",
-                        attack_identifier={"name": "test_attack"},
                         outcome=AttackOutcome.SUCCESS,
                         outcome_reason="Test successful",
                         execution_time_ms=0,
@@ -191,7 +209,7 @@ class TestAttackStrategyInitialization:
                 async def _teardown_async(self, *, context):
                     pass
 
-            strategy = TestStrategy(context_type=AttackContext)
+            strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
 
             assert strategy._memory_labels == {"env_label": "env_value"}
 
@@ -202,90 +220,60 @@ class TestAttackStrategyExecution:
 
     @pytest.mark.asyncio
     async def test_execute_async_with_objective_creates_context(self, mock_attack_strategy):
-        """Test that execute_async with objective parameter creates context correctly"""
+        """Test that execute_async with objective parameter creates context and executes."""
         objective = "Test objective"
         memory_labels = {"test": "value"}
 
-        # Mock the context creation and execution
-        with patch.object(mock_attack_strategy, "_context_type") as mock_context_type:
-            mock_context = MagicMock()
-            mock_context_type.return_value = mock_context
+        # Call execute_async - it should create context internally and execute
+        result = await mock_attack_strategy.execute_async(
+            objective=objective,
+            memory_labels=memory_labels,
+        )
 
-            with patch.object(mock_attack_strategy, "execute_with_context_async") as mock_execute:
-                mock_result = MagicMock(spec=AttackResult)
-                mock_execute.return_value = mock_result
-
-                result = await mock_attack_strategy.execute_async(objective=objective, memory_labels=memory_labels)
-
-                # Verify context was created with correct parameters
-                mock_context_type.assert_called_once()
-                call_kwargs = mock_context_type.call_args.kwargs
-                assert call_kwargs["objective"] == objective
-                assert call_kwargs["memory_labels"] == memory_labels
-
-                # Verify execute_with_context_async was called
-                mock_execute.assert_called_once_with(context=mock_context)
-                assert result == mock_result
+        # Verify we got a result
+        assert result is not None
+        assert isinstance(result, AttackResult)
 
     @pytest.mark.asyncio
     async def test_execute_async_with_prepended_conversation(self, mock_attack_strategy):
-        """Test that execute_async handles prepended_conversation parameter"""
+        """Test that execute_async handles prepended_conversation parameter."""
         objective = "Test objective"
-        prepended_conversation = [MagicMock(spec=PromptRequestResponse)]
+        prepended_conversation = [Message.from_prompt(prompt="Test", role="user")]
 
-        with patch.object(mock_attack_strategy, "_context_type") as mock_context_type:
-            mock_context = MagicMock()
-            mock_context_type.return_value = mock_context
+        # This should work without errors
+        result = await mock_attack_strategy.execute_async(
+            objective=objective,
+            prepended_conversation=prepended_conversation,
+        )
 
-            with patch.object(mock_attack_strategy, "execute_with_context_async") as mock_execute:
-                mock_result = MagicMock(spec=AttackResult)
-                mock_execute.return_value = mock_result
-
-                await mock_attack_strategy.execute_async(
-                    objective=objective, prepended_conversation=prepended_conversation
-                )
-
-                # Verify context was created with prepended_conversation
-                call_kwargs = mock_context_type.call_args.kwargs
-                assert call_kwargs["objective"] == objective
-                assert call_kwargs["prepended_conversation"] == prepended_conversation
+        assert result is not None
 
     @pytest.mark.asyncio
-    async def test_execute_async_validates_objective_type(self, mock_attack_strategy):
-        """Test that execute_async validates objective parameter type"""
-        with pytest.raises(Exception):  # get_kwarg_param should raise for invalid type
-            await mock_attack_strategy.execute_async(objective=123)  # Should be string
+    async def test_execute_async_requires_objective(self, mock_attack_strategy):
+        """Test that execute_async requires objective parameter."""
+        with pytest.raises(ValueError, match="objective is required"):
+            await mock_attack_strategy.execute_async()
 
     @pytest.mark.asyncio
-    async def test_execute_async_validates_memory_labels_type(self, mock_attack_strategy):
-        """Test that execute_async validates memory_labels parameter type"""
-        with pytest.raises(Exception):  # get_kwarg_param should raise for invalid type
+    async def test_execute_async_rejects_unknown_params(self, mock_attack_strategy):
+        """Test that execute_async rejects unknown parameters."""
+        with pytest.raises(ValueError, match="does not accept parameters"):
             await mock_attack_strategy.execute_async(
-                objective="Test objective", memory_labels="invalid"  # Should be dict
+                objective="Test",
+                unknown_param="value",
             )
 
     @pytest.mark.asyncio
-    async def test_execute_async_allows_optional_parameters(self, mock_attack_strategy):
-        """Test that execute_async works with optional parameters as None"""
-        objective = "Test objective"
+    async def test_execute_async_allows_optional_parameters_as_none(self, mock_attack_strategy):
+        """Test that execute_async works with optional parameters as None."""
+        # None values should be skipped, not cause errors
+        result = await mock_attack_strategy.execute_async(
+            objective="Test objective",
+            memory_labels=None,
+            prepended_conversation=None,
+        )
 
-        with patch.object(mock_attack_strategy, "_context_type") as mock_context_type:
-            mock_context = MagicMock()
-            mock_context_type.return_value = mock_context
-
-            with patch.object(mock_attack_strategy, "execute_with_context_async") as mock_execute:
-                mock_result = MagicMock(spec=AttackResult)
-                mock_execute.return_value = mock_result
-
-                await mock_attack_strategy.execute_async(
-                    objective=objective, memory_labels=None, prepended_conversation=None
-                )
-
-                # Verify context was created correctly
-                call_kwargs = mock_context_type.call_args.kwargs
-                assert call_kwargs["objective"] == objective
-                assert call_kwargs["memory_labels"] is None
-                assert call_kwargs.get("prepended_conversation") is None
+        assert result is not None
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -486,7 +474,7 @@ class TestAttackStrategyIntegration:
     """Integration tests for AttackStrategy with event handlers"""
 
     @pytest.mark.asyncio
-    async def test_attack_strategy_event_flow(self, mock_memory):
+    async def test_attack_strategy_event_flow(self, mock_memory, mock_objective_target):
         """Test that AttackStrategy properly triggers events during execution"""
 
         class TestStrategy(AttackStrategy):
@@ -497,20 +485,18 @@ class TestAttackStrategyIntegration:
                 pass
 
             async def _perform_async(self, *, context):
-                result = AttackResult(
+                return AttackResult(
                     conversation_id="test-conversation-id",
                     objective="Test objective",
-                    attack_identifier={"name": "test_attack"},
                     outcome=AttackOutcome.SUCCESS,
                     outcome_reason="Test successful",
                     executed_turns=1,
                 )
-                return result
 
             async def _teardown_async(self, *, context):
                 pass
 
-        strategy = TestStrategy(context_type=AttackContext)
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
 
         with patch("time.perf_counter", side_effect=[100.0, 100.5]):  # Start and end times
             result = await strategy.execute_async(objective="Test objective")
@@ -525,7 +511,7 @@ class TestAttackStrategyIntegration:
         assert result.execution_time_ms == 500
 
     @pytest.mark.asyncio
-    async def test_attack_strategy_with_custom_event_handler(self):
+    async def test_attack_strategy_with_custom_event_handler(self, mock_objective_target):
         """Test that AttackStrategy can work with custom event handlers"""
         custom_handler_called = False
 
@@ -542,23 +528,21 @@ class TestAttackStrategyIntegration:
                 pass
 
             async def _perform_async(self, *, context):
-                result = AttackResult(
+                return AttackResult(
                     conversation_id="test-conversation-id",
                     objective="Test objective",
-                    attack_identifier={"name": "test_attack"},
                     outcome=AttackOutcome.SUCCESS,
                     outcome_reason="Test successful",
                     execution_time_ms=0,
                     executed_turns=1,
                 )
-                return result
 
             async def _teardown_async(self, *, context):
                 pass
 
         # Note: The current AttackStrategy implementation doesn't expose a way to add custom handlers
         # This test documents the expected behavior if that capability is added
-        strategy = TestStrategy(context_type=AttackContext)
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
 
         # The default handler should still be present
         assert len(strategy._event_handlers) == 1

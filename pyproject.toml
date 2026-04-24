@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "0.10.0.dev0"
+version = "0.14.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
@@ -23,69 +23,86 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.10, <3.14"
+requires-python = ">=3.10, <3.15"
 dependencies = [
-    "aioconsole>=0.8.1",
     "aiofiles>=24,<25",
     "appdirs>=1.4.0",
     "art>=6.5.0",
-    "azure-core>=1.34.0",
+    "av>=14.0.0",
+    "azure-core>=1.38.0",
     "azure-identity>=1.19.0",
     "azure-ai-contentsafety>=1.0.0",
     "azure-storage-blob>=12.19.0",
+    "base2048>=0.1.3",
     "colorama>=0.4.6",
     "confusables>=1.2.0",
     "confusable-homoglyphs>=3.3.1",
+    "ecoji>=0.1.1",
     "datasets>=3.6.0",
-    "fpdf2>=2.8.3",
+    "fastapi>=0.115.0",
     "httpx[http2]>=0.27.2",
     "jinja2>=3.1.6",
-    "krippendorff>=0.8.1",
-    "numpy>=2.2.6",
-    "openai>=1.58.1",
+    "numpy>=1.26.0; python_version < '3.14'",
+    "numpy>=2.3.0; python_version >= '3.14'",
+    "openai>=2.2.0",
     "openpyxl>=3.1.5",
-    "pillow>=11.2.1",
+    "pillow>=12.2.0",
     "pydantic>=2.11.5",
+    "PyJWT[crypto]>=2.8.0",
     "pyodbc>=5.1.0",
-    "pycountry>=24.6.1",
+    "pypdf>=6.10.0",
+    "python-docx>=1.1.0",
     "python-dotenv>=1.0.1",
-    "pypdf>=5.1.0",
+    "reportlab>=4.4.4",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy>=2.0.41",
     "termcolor>=2.4.0",
     "tenacity>=9.1.2",
-    "tinytag>=2.1.1",
+    "tinytag>=2.2.1",
     "tqdm>=4.67.1",
-    "transformers>=4.52.4",
+    "transformers>=4.55.0",
     "treelib>=1.7.1",
-    "websockets>=15.0.1",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=14.0",
 ]
 
 [project.optional-dependencies]
 # always make sure the individual ones are in sync with the all group
 dev = [
-    "black>=25.1.0",
     "feedgen>=1.0.0",
-    "flake8>=7.2.0",
-    "flake8-copyright>=0.2.4",
+    "griffe>=2.0.0",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "jupyter-book>=1.0.4",
+    "jupyter-book>=2.0.0",
     "jupytext>=1.17.1",
+    "matplotlib>=3.10.0",
     "mypy>=1.16.0",
     "mock-alchemy>=0.2.6",
+    "pandas>=2.2.0",
     "pre-commit>=4.2.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
+    "diff-cover>=9.0.0",
     "pytest-cov>=6.1.1",
     "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.6.1",
     "respx>=0.22.0",
-    "semantic-kernel>=1.32.0",
-    "sphinxcontrib-mermaid>=1.0.0",
+    "ruff>=0.14.4",
+    "types-aiofiles>=24.1.0",
+    "types-cachetools>=5.5.0",
+    "types-decorator>=5.1.0",
+    "types-paramiko>=3.5.0",
+    "types-pycurl>=7.45.0",
+    "types-pytz>=2024.2.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
+    "types-simplejson>=3.19.0",
+    "types-six>=1.16.0",
+    "types-tabulate>=0.9.0",
+    "types-ujson>=5.10.0",
 ]
 huggingface = [
     "torch>=2.7.0",
@@ -94,56 +111,57 @@ gcg = [
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.27.1",
     "azureml-mlflow>=1.60.0",
-    "mlflow>=2.22.0",
+    "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "sentencepiece>=0.2.0",
     "torch>=2.7.0",
 ]
 playwright = [
-    "flask>=3.1.0",
+    "flask>=3.1.3",
     "ollama>=0.5.1",
     "playwright>=1.49.0",
 ]
-gradio = [
-    "gradio>=5.32.0",
-    "rpyc>=6.0.1",
-    "pywebview>=5.4"
+fairness_bias = [
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
 ]
-
 opencv = [
     "opencv-python>=4.11.0.86",
 ]
 
 speech = [
-    "azure-cognitiveservices-speech>=1.44.0",
+    "azure-cognitiveservices-speech>=1.46.0",
 ]
 
 # all includes all functional dependencies excluding the ones from the "dev" extra
 all = [
     "accelerate>=1.7.0",
+    "av>=14.0.0",
     "azure-ai-ml>=1.27.1",
     "azure-cognitiveservices-speech>=1.44.0",
     "azureml-mlflow>=1.60.0",
-    "flask>=3.1.0",
+    "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "gradio>=5.32.0",
-    "mlflow>=2.22.0",
+    "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
-    "pywebview>=5.4",
-    "rpyc>=6.0.1",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
     "torch>=2.7.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
 ]
 
 [project.scripts]
-pyrit_scan = "pyrit.cli.__main__:main"
+pyrit_backend = "pyrit.cli.pyrit_backend:main"
+pyrit_scan = "pyrit.cli.pyrit_scan:main"
+pyrit_shell = "pyrit.cli.pyrit_shell:main"
 
 [tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
@@ -151,27 +169,50 @@ asyncio_mode = "auto"
 [tool.mypy]
 plugins = []
 ignore_missing_imports = true
-strict = false
+strict = true
 follow_imports = "silent"
-strict_optional = false
 disable_error_code = ["empty-body"]
+exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
 
-[tool.black]
-target-version = ["py310"]
-line-length = 120
+[[tool.mypy.overrides]]
+module = "pyrit.prompt_target.hugging_face.*"
+disallow_untyped_calls = false
+
+[tool.uv]
+constraint-dependencies = [
+    "aiohttp>=3.13.4",
+    "pyasn1>=0.6.3",
+    "cryptography>=46.0.7",
+    "orjson>=3.11.6",
+    "Pygments>=2.20.0",
+    "PyJWT>=2.12.0",
+    "requests>=2.33.0",
+    "tornado>=6.5.5",
+    "werkzeug>=3.1.6",
+]
 
 [build-system]
-requires = ["setuptools>=64.0.0", "wheel"]
+requires = ["setuptools>=64.0.0", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
+
+[tool.setuptools.package-data]
+pyrit = [
+    "backend/frontend/**/*",
+    "py.typed"
+]
 
 [tool.jupytext]
 formats = "ipynb,py:percent"
 
 [tool.ruff]
 line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+preview = true
 fixable = [
     "A",
     "B",
@@ -201,6 +242,7 @@ fixable = [
     "ISC",
     "NPY",
     "PD",
+    "PERF",
     "PGH",
     "PIE",
     "PL",
@@ -218,3 +260,90 @@ fixable = [
     "UP",
     "YTT",
 ]
+select = [
+    "A",  # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "B",  # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
+    "C4",  # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
+    "CPY001",  # missing-copyright-notice
+    "D",  # https://docs.astral.sh/ruff/rules/#pydocstyle-d
+    "DOC",  # https://docs.astral.sh/ruff/rules/#pydoclint-doc
+    "DTZ",  # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
+    "E",  # https://docs.astral.sh/ruff/rules/#pycodestyle-e
+    "ERA",  # https://docs.astral.sh/ruff/rules/#eradicate-era
+    "EXE",  # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
+    "F401",  # unused-import
+    "FA",  # https://docs.astral.sh/ruff/rules/#flake8-future-annotations-fa
+    "FLY",  # https://docs.astral.sh/ruff/rules/#flynt-fly
+    "I",  # isort
+    "ICN",  # https://docs.astral.sh/ruff/rules/#flake8-import-conventions-icn
+    "ISC",  # https://docs.astral.sh/ruff/rules/#flake8-implicit-str-concat-isc
+    "LOG",  # https://docs.astral.sh/ruff/rules/#flake8-logging-log
+    "N",  # https://docs.astral.sh/ruff/rules/#pep8-naming-n
+    "PERF",  # https://docs.astral.sh/ruff/rules/#perflint-perf
+    "PGH",  # https://docs.astral.sh/ruff/rules/#pygrep-hooks-pgh
+    "PIE",  # https://docs.astral.sh/ruff/rules/#flake8-pie-pie
+    "PLE",  # https://docs.astral.sh/ruff/rules/#pylint-ple
+    "Q",  # https://docs.astral.sh/ruff/rules/#flake8-quotes-q
+    "RET",  # https://docs.astral.sh/ruff/rules/#flake8-return-ret
+    "RSE",  # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "SIM",  # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
+    "SLOT",  # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
+    "T10",  # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
+    "TCH",  # https://docs.astral.sh/ruff/rules/#flake8-type-checking-tch
+    "TID",  # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
+    "UP",  # https://docs.astral.sh/ruff/rules/#pyupgrade-up
+    "W",  # https://docs.astral.sh/ruff/rules/#pycodestyle-w
+    "YTT",  # https://docs.astral.sh/ruff/rules/#flake8-2020-ytt
+]
+ignore = [
+    "B903",  # class-as-data-structure (test helper classes use @apply_defaults pattern)
+    "D100",  # Missing docstring in public module
+    "D200",  # One-line docstring should fit on one line
+    "D205",  # 1 blank line required between summary line and description
+    "D212",  # Multi-line docstring summary should start at the first line
+    "D301",  # Use r""" if any backslashes in a docstring
+    "DOC502",  # Raised exception is not explicitly raised
+    "PERF203",  # try-except-in-loop (intentional per-item error handling)
+    "SIM117",  # multiple-with-statements (combining often exceeds line length)
+    "UP007",  # non-pep604-annotation-union (keep Union[X, Y] syntax)
+    "UP045",  # non-pep604-annotation-optional (keep Optional[X] syntax)
+]
+extend-select = [
+    "D204",  # 1 blank line required after class docstring
+    "D213",  # Multi-line docstring summary should start at the second line
+    "D401",  # First line of docstring should be in imperative mood
+    "D404",  # First word of the docstring should not be "This"
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pyrit"]
+
+[tool.ruff.lint.flake8-copyright]
+min-file-size = 1
+notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under the MIT license"
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore D and DOC rules everywhere except for the pyrit/ directory
+"!pyrit/**.py" = ["D", "DOC"]
+# Ignore copyright, import-location (E402), line length (E501), type-checking, and blanket type-ignore (PGH003) rules in doc/ directory
+# E402: notebooks have imports in code cells, not at top of file
+# E501: markdown comments in notebooks can exceed line length
+# PGH003: blanket type: ignore in notebooks (not mypy-checked)
+# A: notebook code commonly uses builtins like id, dir, display
+# ERA001: jupytext markdown cells look like commented-out code
+# LOG: notebooks use root logger for convenience
+# PLE1142: top-level await is valid in Jupyter notebooks
+"doc/**" = ["CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
+"pyrit/{auxiliary_attacks,ui}/**/*.py" = ["B905", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501", "N", "PERF", "SIM101", "SIM108"]
+# Backend API routes raise HTTPException handled by FastAPI, not true exceptions
+"pyrit/backend/**/*.py" = ["DOC501", "B008"]
+# Vendored GCG attack code — external project with its own style
+"pyrit/auxiliary_attacks/**/*.py" = ["A", "B905", "D", "DOC", "SIM101", "SIM108"]
+# UI code has incomplete docstrings (external contributor code)
+"pyrit/ui/**/*.py" = ["D", "DOC201", "DOC501"]
+"pyrit/__init__.py" = ["D104"]
+# Allow broad pytest.raises(Exception) in tests
+"tests/**/*.py" = ["B017"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

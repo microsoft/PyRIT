@@ -1,0 +1,102 @@
+# PyRIT Configuration File Example
+# ================================
+# This is a YAML-formatted configuration file. Copy to ~/.pyrit/.pyrit_conf
+# or specify a custom path when loading via --config-file.
+#
+# For documentation on configuration options, see:
+# https://github.com/microsoft/PyRIT/blob/main/doc/setup/configuration.md
+
+# Memory Database Type
+# --------------------
+# Specifies which database backend to use for storing prompts and results.
+# Options: in_memory, sqlite, azure_sql (case-insensitive)
+# - in_memory: Temporary in-memory database (data lost on exit)
+# - sqlite: Persistent local SQLite database (default)
+# - azure_sql: Azure SQL database (requires connection string in env vars)
+memory_db_type: sqlite
+
+# Initializers
+# ------------
+# List of built-in initializers to run during PyRIT initialization.
+# Initializers configure default values for converters, scorers, and targets.
+# Names are normalized to snake_case (e.g., "SimpleInitializer" -> "simple").
+#
+# Available initializers:
+# - simple: Basic OpenAI configuration (requires OPENAI_CHAT_* env vars)
+# - airt: AI Red Team setup with Azure OpenAI (requires AZURE_OPENAI_* env vars)
+# - target: Registers available prompt targets into the TargetRegistry
+# - scorer: Registers pre-configured scorers into the ScorerRegistry
+# - load_default_datasets: Loads default datasets for all registered scenarios
+# - objective_list: Sets default objectives for scenarios
+#
+# Each initializer can be specified as:
+# - A simple string (name only)
+# - A dictionary with 'name' and optional 'args' for parameters
+#
+# Parameters are lists of strings. Use the CLI command
+# `pyrit_scan --list-initializers` to see available parameters.
+#
+# Example:
+# initializers:
+#   - simple
+#   - name: target
+#     args:
+#       tags:
+#         - default
+#         - scorer
+initializers:
+  - name: simple
+  - name: load_default_datasets
+  - name: scorer
+  - name: target
+    args:
+      tags:
+        - default
+        - scorer
+
+# Operator and Operation Labels
+# ------------------------------
+# Default labels applied to all attacks created with PyRIT.
+#
+# - operator: Identifies who is running the attack (e.g., your team name or alias).
+# - operation: Groups related attacks under a campaign or engagement name.
+#
+# Both are optional.
+operator: roakey
+operation: op_trash_panda
+
+# Initialization Scripts
+# ----------------------
+# List of paths to custom Python scripts containing PyRITInitializer subclasses.
+# Paths can be absolute or relative to the current working directory.
+#
+# Behavior:
+# - Omit this field (or set to null): No custom scripts loaded (default)
+# - Set to []: Explicitly load no scripts (same as omitting)
+# - Set to list of paths: Load the specified scripts
+#
+# Example:
+# initialization_scripts:
+#   - /path/to/my_custom_initializer.py
+#   - ./local_initializer.py
+
+# Environment Files
+# -----------------
+# List of .env file paths to load during initialization.
+# Later files override values from earlier files.
+#
+# Behavior:
+# - Omit this field (or set to null): Load default .env and .env.local from ~/.pyrit/ if they exist
+# - Set to []: Explicitly load NO environment files
+# - Set to list of paths: Load only the specified files
+#
+# Example:
+# env_files:
+#   - /path/to/.env
+#   - /path/to/.env.local
+
+# Silent Mode
+# -----------
+# If true, suppresses print statements during initialization.
+# Useful for non-interactive environments or when embedding PyRIT in other tools.
+silent: false

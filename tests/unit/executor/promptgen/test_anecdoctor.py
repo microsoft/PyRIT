@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,9 +12,18 @@ from pyrit.executor.promptgen.anecdoctor import (
     AnecdoctorGenerator,
     AnecdoctorResult,
 )
-from pyrit.models import PromptRequestResponse
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import Message
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
 
 
 @pytest.fixture
@@ -23,6 +31,7 @@ def mock_objective_target() -> PromptChatTarget:
     """Create a mock objective target for testing."""
     mock_target = MagicMock(spec=PromptChatTarget)
     mock_target.set_system_prompt = MagicMock()
+    mock_target.get_identifier.return_value = _mock_target_id("mock_objective_target")
     return mock_target
 
 
@@ -31,6 +40,7 @@ def mock_processing_model() -> PromptChatTarget:
     """Create a mock processing model for testing."""
     mock_model = MagicMock(spec=PromptChatTarget)
     mock_model.set_system_prompt = MagicMock()
+    mock_model.get_identifier.return_value = _mock_target_id("MockProcessingModel")
     return mock_model
 
 
@@ -43,7 +53,7 @@ def mock_prompt_normalizer() -> PromptNormalizer:
 
 
 @pytest.fixture
-def sample_evaluation_data() -> List[str]:
+def sample_evaluation_data() -> list[str]:
     """Sample evaluation data for testing."""
     return [
         "Claim: The earth is flat. Review: FALSE",
@@ -64,9 +74,9 @@ def sample_context(sample_evaluation_data) -> AnecdoctorContext:
 
 
 @pytest.fixture
-def mock_response() -> PromptRequestResponse:
+def mock_response() -> Message:
     """Create a mock response for testing."""
-    mock_response = MagicMock(spec=PromptRequestResponse)
+    mock_response = MagicMock(spec=Message)
     mock_response.get_piece.return_value = "Generated misinformation content"
     mock_response.get_value.return_value = "Generated misinformation content"
     return mock_response
@@ -528,3 +538,23 @@ class TestAnecdoctorGeneratorEdgeCases:
         result = generator._format_few_shot_examples(evaluation_data=evaluation_data)
         for data in evaluation_data:
             assert data in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_extract_knowledge_graph_raises_when_processing_model_is_none():
+    """Test that _extract_knowledge_graph_async raises ValueError when processing model is None."""
+    mock_target = MagicMock(spec=PromptChatTarget)
+    mock_target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test_module")
+    generator = AnecdoctorGenerator(objective_target=mock_target)
+    # Ensure processing model is explicitly None
+    assert generator._processing_model is None
+
+    context = AnecdoctorContext(
+        evaluation_data=["sample data"],
+        language="english",
+        content_type="viral tweet",
+    )
+
+    with pytest.raises(ValueError, match="self._processing_model is not initialized"):
+        await generator._extract_knowledge_graph_async(context=context)

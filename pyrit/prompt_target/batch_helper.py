@@ -2,19 +2,25 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from typing import Any, Optional
 
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
-def _get_chunks(*args, batch_size: int):
+def _get_chunks(*args: Sequence[Any], batch_size: int) -> Generator[list[Sequence[Any]], None, None]:
     """
-    Helper function utilized during prompt batching to chunk based off of size.
+    Split provided lists into chunks of specified batch size.
 
     Args:
         *args: Arguments to chunk; each argument should be a list
         batch_size (int): Batch size
 
+    Yields:
+        list: Lists of chunked items.
+
+    Raises:
+        ValueError: When no arguments are provided or when arguments have different lengths.
     """
     if len(args) == 0:
         raise ValueError("No arguments provided to chunk.")
@@ -25,10 +31,9 @@ def _get_chunks(*args, batch_size: int):
         yield [arg[i : i + batch_size] for arg in args]
 
 
-def _validate_rate_limit_parameters(prompt_target: PromptTarget, batch_size: int):
+def _validate_rate_limit_parameters(prompt_target: Optional[PromptTarget], batch_size: int) -> None:
     """
-    Helper function to validate the constraints between Rate Limit (Requests Per Minute)
-        and batch size.
+    Validate the constraints between Rate Limit (Requests Per Minute) and batch size.
 
     Args:
         prompt_target (PromptTarget): Target to validate
@@ -37,7 +42,6 @@ def _validate_rate_limit_parameters(prompt_target: PromptTarget, batch_size: int
     Raises:
         ValueError: When rate limit RPM is specified for the target and batching is not adjusted to 1.
     """
-
     exc_message = "Batch size must be configured to 1 for the target requests per minute value to be respected."
     if prompt_target and prompt_target._max_requests_per_minute and batch_size != 1:
         raise ValueError(exc_message)
@@ -45,15 +49,15 @@ def _validate_rate_limit_parameters(prompt_target: PromptTarget, batch_size: int
 
 async def batch_task_async(
     *,
-    prompt_target: PromptTarget,
+    prompt_target: Optional[PromptTarget] = None,
     batch_size: int,
     items_to_batch: Sequence[Sequence[Any]],
-    task_func: Callable,
+    task_func: Callable[..., Any],
     task_arguments: list[str],
-    **task_kwargs,
-):
+    **task_kwargs: Any,
+) -> list[Any]:
     """
-    Performs provided task in batches and validates parameters using helpers.
+    Perform provided task in batches and validate parameters using helpers.
 
     Args:
         prompt_target(PromptTarget): Target to validate
@@ -65,8 +69,11 @@ async def batch_task_async(
 
     Returns:
         responses(list): List of results from the batched function
-    """
 
+    Raises:
+        ValueError: When no items to batch are provided.
+        ValueError: When number of lists of items to batch does not match number of task arguments.
+    """
     responses = []
 
     _validate_rate_limit_parameters(prompt_target=prompt_target, batch_size=batch_size)

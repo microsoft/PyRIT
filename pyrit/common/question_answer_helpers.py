@@ -6,11 +6,13 @@ from pyrit.models import QuestionAnsweringEntry
 
 def construct_evaluation_prompt(entry: QuestionAnsweringEntry) -> str:
     """
-    From question and choices in entry, creates prompt to be send to target
+    From question and choices in entry, creates prompt to be send to target.
 
     Args:
-        entry (QuestionAnsweringEntry): A single entry from which the prompt is constructed
+        entry (QuestionAnsweringEntry): A single entry from which the prompt is constructed.
+
+    Returns:
+        str: The constructed prompt string.
     """
     available_choices = "\n".join(f"index={c.index}, value={c.text}" for c in entry.choices)
-    prompt = f"Question:\n" f"{entry.question}\n\n" f"Choices:\n" f"{available_choices}"
-    return prompt
+    return f"Question:\n{entry.question}\n\nChoices:\n{available_choices}"

@@ -7,10 +7,12 @@
   "containerEnv": {
     "PYTHONPATH": "/workspace"
   },
+  "containerUser": "vscode",
   "customizations": {
     "vscode": {
       "settings": {
-        "python.defaultInterpreterPath": "/opt/conda/envs/pyrit-dev/bin/python",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
         "python.analysis.extraPaths": [
           "/workspace"
         ],
@@ -31,7 +33,7 @@
           "pyrit/**"
         ],
         "python.analysis.exclude": [
-          "/opt/conda/envs/**",
+          "/opt/venv/**",
           "**/.venv/**",
           "**/site-packages/**",
           "**/doc/**",
@@ -50,7 +52,10 @@
           "**/dist/**": true,
           "**/pyrit/auxiliary_attacks/gcg/attack/**": true,
           "**/doc/**": true,
-          "**/.mypy_cache/**": true
+          "**/.mypy_cache/**": true,
+          "**/frontend/node_modules/**": true,
+          "**/frontend/dist/**": true,
+          "**/dbdata/**": true
         },
         "search.exclude": {
           "**/node_modules": true,
@@ -66,7 +71,7 @@
           "**/build": true,
           "**/__pycache__": true
         },
-        "explorer.autoReveal": false,
+        "explorer.autoReveal": true,
         "files.maxMemoryForLargeFilesMB": 4096,
         "files.useExperimentalFileWatcher": true,
         "git.showUntrackedFiles": true
@@ -75,10 +80,24 @@
         "ms-python.python",
         "ms-toolsai.jupyter",
         "ms-azuretools.vscode-docker",
-        "tamasfe.even-better-toml"
+        "tamasfe.even-better-toml",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-playwright.playwright",
+        "orta.vscode-jest",
+        "github.copilot",
+        "github.copilot-chat"
       ]
     }
   },
+  "features": {
+    "ghcr.io/devcontainers/features/azure-cli:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/copilot-cli:1": {
+      "version": "latest"
+    }
+  },
   "postCreateCommand": "/bin/bash -i .devcontainer/devcontainer_setup.sh",
-  "forwardPorts": [4213, 8888]
+  "forwardPorts": [3000, 4213, 5000, 8000, 8888]
 }

@@ -3,13 +3,15 @@
 
 import logging
 import random
-import re
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional
 
-from pyrit.common.path import DATASETS_PATH
-from pyrit.models import PromptDataType, SeedPrompt, SeedPromptDataset
-from pyrit.prompt_converter import ConverterResult, LLMGenericTextConverter
+from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DATASETS_PATH
+from pyrit.models import PromptDataType, SeedDataset, SeedPrompt
+from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult
+from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 from pyrit.prompt_target import PromptChatTarget
 
@@ -23,40 +25,47 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
     An existing ``PromptChatTarget`` is used to perform the translation (like Azure OpenAI).
     """
 
+    SUPPORTED_INPUT_TYPES = ("text",)
+    SUPPORTED_OUTPUT_TYPES = ("text",)
+
     # Default language list
     _DEFAULT_LANGUAGES_SEED_PROMPT_PATH = Path(DATASETS_PATH) / "lexicons" / "languages_most_spoken.yaml"
 
+    @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget,
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         system_prompt_template: Optional[SeedPrompt] = None,
-        languages: Optional[List[str]] = None,
-        indices: Optional[List[int]] = None,
-        keywords: Optional[List[str]] = None,
-        proportion: Optional[float] = None,
-        regex: Optional[Union[str, re.Pattern]] = None,
+        languages: Optional[list[str]] = None,
+        word_selection_strategy: Optional[WordSelectionStrategy] = None,
     ):
         """
-        Initializes the converter with a target, an optional system prompt template, and a denylist.
+        Initialize the converter with a target, an optional system prompt template, and language options.
 
         Args:
             converter_target (PromptChatTarget): The target for the prompt conversion.
+                Can be omitted if a default has been configured via PyRIT initialization.
             system_prompt_template (Optional[SeedPrompt]): The system prompt template to use for the conversion.
                 If not provided, a default template will be used.
             languages (Optional[List[str]]): The list of available languages to use for translation.
-            indices (Optional[List[int]]): Specific indices of words to convert.
-            keywords (Optional[List[str]]): Keywords to select words for conversion.
-            proportion (Optional[float]): Proportion of randomly selected words to convert [0.0-1.0].
-            regex (Optional[Union[str, re.Pattern]]): Regex pattern to match words for conversion.
+            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+                If None, all words will be converted.
+
+        Raises:
+            ValueError: If converter_target is not provided and no default has been configured.
         """
+        if converter_target is None:
+            raise ValueError(
+                "converter_target is required for LLM-based converters. "
+                "Either pass it explicitly or configure a default via PyRIT initialization "
+                "(e.g., initialize_pyrit_async with SimpleInitializer or AIRTInitializer)."
+            )
         # set to default strategy if not provided
         system_prompt_template = (
             system_prompt_template
             if system_prompt_template
-            else SeedPrompt.from_yaml_file(
-                Path(DATASETS_PATH) / "prompt_converters" / "random_translation_converter.yaml"
-            )
+            else SeedPrompt.from_yaml_file(Path(CONVERTER_SEED_PROMPT_PATH) / "random_translation_converter.yaml")
         )
 
         LLMGenericTextConverter.__init__(
@@ -65,12 +74,10 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
             system_prompt_template=system_prompt_template,
         )
 
-        WordLevelConverter.__init__(
-            self, indices=indices, keywords=keywords, proportion=proportion, regex=regex, word_split_separator=None
-        )
+        WordLevelConverter.__init__(self, word_selection_strategy=word_selection_strategy, word_split_separator=None)
 
         if not languages:
-            default_languages = SeedPromptDataset.from_yaml_file(
+            default_languages = SeedDataset.from_yaml_file(
                 RandomTranslationConverter._DEFAULT_LANGUAGES_SEED_PROMPT_PATH
             )
             self.languages = [prompt.value for prompt in default_languages.prompts]
@@ -79,7 +86,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into the target format supported by the converter.
+        Convert the given prompt into the target format supported by the converter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -89,7 +96,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
             ConverterResult: The result containing the converted output and its type.
         """
         words = prompt.split()
-        selected_indices = self._select_word_indices(words=words)
+        selected_indices = self._word_selection_strategy.select_words(words=words)
 
         language_word_pairs = [f"NOOP: {word}" for word in words]
 
@@ -105,7 +112,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
     async def convert_word_async(self, word: str) -> str:
         """
-        Converts a single word into the target format supported by the converter.
+        Convert a single word into the target format supported by the converter.
 
         Args:
             word (str): The word to be converted.

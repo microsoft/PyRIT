@@ -3,10 +3,13 @@
 
 import logging
 import pathlib
+from typing import Optional
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.models import PromptDataType, SeedPrompt
-from pyrit.prompt_converter import ConverterResult, LLMGenericTextConverter
+from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult
 from pyrit.prompt_target import PromptChatTarget
 
 logger = logging.getLogger(__name__)
@@ -19,29 +22,33 @@ class MathPromptConverter(LLMGenericTextConverter):
     An existing ``PromptChatTarget`` is used to perform the conversion (like Azure OpenAI).
     """
 
-    def __init__(self, *, converter_target: PromptChatTarget, prompt_template: SeedPrompt = None):
+    @apply_defaults
+    def __init__(
+        self,
+        *,
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        prompt_template: Optional[SeedPrompt] = None,
+    ):
         """
-        Initializes the converter with a specific target and template.
+        Initialize the converter with a specific target and template.
 
         Args:
             converter_target (PromptChatTarget): The endpoint that converts the prompt.
+                Can be omitted if a default has been configured via PyRIT initialization.
             prompt_template (SeedPrompt): The seed prompt template to use.
         """
-
         # Load the template from the YAML file or use a default template if not provided
         prompt_template = (
             prompt_template
             if prompt_template
-            else SeedPrompt.from_yaml_file(
-                pathlib.Path(DATASETS_PATH) / "prompt_converters" / "math_prompt_converter.yaml"
-            )
+            else SeedPrompt.from_yaml_file(pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "math_prompt_converter.yaml")
         )
 
         super().__init__(converter_target=converter_target, system_prompt_template=prompt_template)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into a mathematical problem format.
+        Convert the given prompt into a mathematical problem format.
 
         Args:
             prompt (str): The prompt to be converted.

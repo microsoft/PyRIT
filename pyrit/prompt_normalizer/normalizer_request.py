@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from pyrit.models import SeedPromptGroup
+from pyrit.models import Message
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
@@ -16,7 +16,7 @@ class NormalizerRequest:
     Represents a single request sent to normalizer.
     """
 
-    seed_prompt_group: SeedPromptGroup
+    message: Message
     request_converter_configurations: list[PromptConverterConfiguration]
     response_converter_configurations: list[PromptConverterConfiguration]
     conversation_id: str | None
@@ -24,19 +24,27 @@ class NormalizerRequest:
     def __init__(
         self,
         *,
-        seed_prompt_group: SeedPromptGroup,
-        request_converter_configurations: list[PromptConverterConfiguration] = [],
-        response_converter_configurations: list[PromptConverterConfiguration] = [],
+        message: Message,
+        request_converter_configurations: list[PromptConverterConfiguration] | None = None,
+        response_converter_configurations: list[PromptConverterConfiguration] | None = None,
         conversation_id: Optional[str] = None,
     ):
-        self.seed_prompt_group = seed_prompt_group
+        """
+        Initialize a normalizer request.
+
+        Args:
+            message (Message): The message to be normalized.
+            request_converter_configurations (list[PromptConverterConfiguration]): Configurations for converting
+                the request. Defaults to an empty list.
+            response_converter_configurations (list[PromptConverterConfiguration]): Configurations for converting
+                the response. Defaults to an empty list.
+            conversation_id (Optional[str]): The ID of the conversation. Defaults to None.
+        """
+        if response_converter_configurations is None:
+            response_converter_configurations = []
+        if request_converter_configurations is None:
+            request_converter_configurations = []
+        self.message = message
         self.request_converter_configurations = request_converter_configurations
         self.response_converter_configurations = response_converter_configurations
         self.conversation_id = conversation_id
-
-    def validate(self):
-        if not self.seed_prompt_group or len(self.seed_prompt_group.prompts) < 1:
-            raise ValueError("Seed prompt group must be provided.")
-
-        if not self.seed_prompt_group.is_single_request():
-            raise ValueError("Sequence must be equal for every piece of a single normalizer request.")

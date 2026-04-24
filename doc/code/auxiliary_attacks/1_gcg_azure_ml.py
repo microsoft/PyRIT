@@ -6,18 +6,14 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.4
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
+#       jupytext_version: 1.17.3
 # ---
 
 # %% [markdown]
 # # 1. Generating GCG Suffixes Using Azure Machine Learning
 
 # %% [markdown]
-# This notebook shows how to generate GCG suffixes using Azure Machine Learning (AML), which consists of three main steps:
+# This notebook shows how to generate GCG [@zou2023gcg] suffixes using Azure Machine Learning (AML), which consists of three main steps:
 # 1. Connect to an Azure Machine Learning (AML) workspace.
 # 2. Create AML Environment with the Python dependencies.
 # 3. Submit a training job to AML.

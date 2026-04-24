@@ -3,25 +3,20 @@
 
 import os
 import tempfile
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import inspect
 
+from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory.sqlite_memory import SQLiteMemory
+
 # This limits retries and speeds up execution
-# note this needs to be set before libraries that use them are imported
-
-# Note this module needs to be imported at the top of a file so the values are modified
-
 os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "2"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
-
-
-from pyrit.memory.central_memory import CentralMemory  # noqa: E402
-from pyrit.memory.sqlite_memory import SQLiteMemory  # noqa: E402
 
 
 @pytest.fixture

@@ -19,7 +19,6 @@ async def test_convert_image_to_data_url_file_not_found():
 
 @pytest.mark.asyncio()
 async def test_convert_image_with_unsupported_extension():
-
     with NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
 

@@ -6,22 +6,22 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
-from unit.mocks import get_image_request_piece
+from unit.mocks import get_image_message_piece
 
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import PromptRequestPiece
-from pyrit.score.question_answer_scorer import QuestionAnswerScorer
+from pyrit.models import Message, MessagePiece
+from pyrit.score import QuestionAnswerScorer
 
 
 @pytest.fixture
-def image_request_piece() -> PromptRequestPiece:
-    return get_image_request_piece()
+def image_message_piece() -> MessagePiece:
+    return get_image_message_piece()
 
 
 @pytest.fixture
-def text_request_piece(patch_central_database) -> PromptRequestPiece:
-    piece = PromptRequestPiece(
+def text_message_piece(patch_central_database) -> MessagePiece:
+    piece = MessagePiece(
         id=uuid.uuid4(),
         role="user",
         original_value="test content",
@@ -33,29 +33,38 @@ def text_request_piece(patch_central_database) -> PromptRequestPiece:
 
 
 @pytest.mark.asyncio
-async def test_question_answer_scorer_validate_image(image_request_piece: PromptRequestPiece):
-    scorer = QuestionAnswerScorer(category="new_category")
-    with pytest.raises(ValueError, match="Question Answer Scorer only supports text data type"):
-        await scorer.score_async(image_request_piece)
+async def test_score_async_unsupported_image_type_returns_false(
+    patch_central_database, image_message_piece: MessagePiece
+):
+    scorer = QuestionAnswerScorer(category=["new_category"])
+    message = Message(message_pieces=[image_message_piece])
 
-    os.remove(image_request_piece.converted_value)
+    # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
+    scores = await scorer.score_async(message)
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert "No supported pieces" in scores[0].score_rationale
+
+    os.remove(image_message_piece.converted_value)
 
 
 @pytest.mark.asyncio
-async def test_question_answer_scorer_validate_missing_metadata():
-    request_piece = PromptRequestPiece(
+async def test_score_async_missing_metadata_returns_false(patch_central_database):
+    request = MessagePiece(
         id="test_id",
         role="user",
         original_value="test content",
         converted_value="test response",
         converted_value_data_type="text",
         prompt_metadata={},
-    )
-    scorer = QuestionAnswerScorer(category="new_category")
-    with pytest.raises(
-        ValueError, match="Question Answer Scorer requires metadata with either correct_answer_index or correct_answer"
-    ):
-        await scorer.score_async(request_piece)
+    ).to_message()
+    scorer = QuestionAnswerScorer(category=["new_category"])
+
+    # With raise_on_no_valid_pieces=False (default), returns False for missing metadata
+    scores = await scorer.score_async(request)
+    assert len(scores) == 1
+    assert scores[0].get_value() is False
+    assert "No supported pieces" in scores[0].score_rationale
 
 
 @pytest.mark.asyncio
@@ -70,34 +79,35 @@ async def test_question_answer_scorer_validate_missing_metadata():
         ("The answer is Paris", True),
     ],
 )
-async def test_question_answer_scorer_score(
-    response: str, expected_score: bool, text_request_piece: PromptRequestPiece
-):
-    text_request_piece.converted_value = response
-    scorer = QuestionAnswerScorer(category="new_category")
+async def test_question_answer_scorer_score(response: str, expected_score: bool, text_message_piece: MessagePiece):
+    text_message_piece.converted_value = response
+    scorer = QuestionAnswerScorer(category=["new_category"])
+    message = Message(message_pieces=[text_message_piece])
 
-    score = await scorer.score_async(text_request_piece)
+    scores = await scorer.score_async(message)
 
-    assert len(score) == 1
-    assert score[0].score_value == str(expected_score)
-    assert score[0].score_type == "true_false"
-    assert score[0].score_category == "new_category"
+    assert len(scores) == 1
+    result_score = scores[0]
+    assert result_score.get_value() == expected_score
+    assert result_score.score_type == "true_false"
+    assert result_score.score_category == ["new_category"]
 
 
 @pytest.mark.asyncio
 async def test_question_answer_scorer_adds_to_memory():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-        scorer = QuestionAnswerScorer(category="new_category")
-        request_piece = PromptRequestPiece(
+        scorer = QuestionAnswerScorer(category=["new_category"])
+        message = MessagePiece(
             id="test_id",
             role="user",
             original_value="test content",
             converted_value="0: Paris",
             converted_value_data_type="text",
             prompt_metadata={"correct_answer_index": "0", "correct_answer": "Paris"},
-        )
-        await scorer.score_async(request_piece)
+        ).to_message()
+
+        await scorer.score_async(message)
 
         memory.add_scores_to_memory.assert_called_once()
 
@@ -107,14 +117,14 @@ async def test_question_answer_scorer_no_category():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = QuestionAnswerScorer()
-        request_piece = PromptRequestPiece(
+        message = MessagePiece(
             id="test_id",
             role="user",
             original_value="test content",
             converted_value="0: Paris",
             converted_value_data_type="text",
             prompt_metadata={"correct_answer_index": "0", "correct_answer": "Paris"},
-        )
-        await scorer.score_async(request_piece)
+        ).to_message()
+        await scorer.score_async(message)
 
         memory.add_scores_to_memory.assert_called_once()

@@ -7,11 +7,11 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, overload
+from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
 import yaml
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.executor.core.config import StrategyConverterConfig
 from pyrit.executor.promptgen.core import (
@@ -19,13 +19,14 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
+from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import (
-    PromptRequestResponse,
-    SeedPrompt,
-    SeedPromptGroup,
+    Message,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptChatTarget
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class AnecdoctorContext(PromptGeneratorStrategyContext):
     """
 
     # The data in ClaimsReview format to use in constructing the prompt
-    evaluation_data: List[str]
+    evaluation_data: list[str]
 
     # The language of the content to generate (e.g., "english", "spanish")
     language: str
@@ -52,7 +53,7 @@ class AnecdoctorContext(PromptGeneratorStrategyContext):
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # Optional memory labels to apply to the prompts
-    memory_labels: Dict[str, str] = field(default_factory=dict)
+    memory_labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -63,13 +64,16 @@ class AnecdoctorResult(PromptGeneratorStrategyResult):
     Contains the generated content from the misinformation prompt generation.
 
     Args:
-        generated_content (PromptRequestResponse): The generated content from the prompt generation.
+        generated_content (Message): The generated content from the prompt generation.
     """
 
-    generated_content: PromptRequestResponse
+    generated_content: Message
 
 
-class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorResult]):
+class AnecdoctorGenerator(
+    PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorResult],
+    Identifiable,
+):
     """
     Implementation of the Anecdoctor prompt generation strategy.
 
@@ -93,7 +97,7 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
     _ANECDOCTOR_BUILD_KG_YAML = "anecdoctor_build_knowledge_graph.yaml"
     _ANECDOCTOR_USE_KG_YAML = "anecdoctor_use_knowledge_graph.yaml"
     _ANECDOCTOR_USE_FEWSHOT_YAML = "anecdoctor_use_fewshot.yaml"
-    _ANECDOCTOR_PROMPT_PATH = Path("executors", "anecdoctor")
+    _ANECDOCTOR_PROMPT_PATH = Path("anecdoctor")
 
     def __init__(
         self,
@@ -133,6 +137,39 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         else:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_FEWSHOT_YAML)
 
+    def _create_identifier(
+        self,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+    ) -> ComponentIdentifier:
+        """
+        Construct the identifier for this prompt generator.
+
+        Args:
+            params (Optional[Dict[str, Any]]): Additional behavioral parameters.
+            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+                Named child component identifiers.
+
+        Returns:
+            ComponentIdentifier: The identifier for this prompt generator.
+        """
+        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+            "objective_target": self._objective_target.get_identifier(),
+        }
+        if children:
+            all_children.update(children)
+        return ComponentIdentifier.of(self, params=params, children=all_children)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this prompt generator.
+
+        Returns:
+            ComponentIdentifier: The constructed identifier.
+        """
+        return self._create_identifier()
+
     def _validate_context(self, *, context: AnecdoctorContext) -> None:
         """
         Validate the context before executing the prompt generation.
@@ -143,7 +180,6 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         Raises:
             ValueError: If the context is invalid.
         """
-
         if not context.content_type:
             raise ValueError("content_type must be provided in the context")
 
@@ -176,7 +212,7 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         self._objective_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=context.conversation_id,
-            orchestrator_identifier=self.get_identifier(),
+            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,
         )
 
@@ -221,7 +257,6 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
             context (AnecdoctorContext): The generation context.
         """
         # Nothing to clean up for this prompt generation
-        pass
 
     async def _prepare_examples_async(self, *, context: AnecdoctorContext) -> str:
         """
@@ -240,17 +275,16 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         if self._processing_model:
             # Extract knowledge graph from examples using the processing model
             return await self._extract_knowledge_graph_async(context=context)
-        else:
-            # Use few-shot examples directly without knowledge graph extraction
-            return self._format_few_shot_examples(evaluation_data=context.evaluation_data)
+        # Use few-shot examples directly without knowledge graph extraction
+        return self._format_few_shot_examples(evaluation_data=context.evaluation_data)
 
     async def _send_examples_to_target_async(
         self, *, formatted_examples: str, context: AnecdoctorContext
-    ) -> Optional[PromptRequestResponse]:
+    ) -> Optional[Message]:
         """
         Send the formatted examples to the target model.
 
-        Creates a seed prompt group from the formatted examples and sends it to the
+        Creates a message from the formatted examples and sends it to the
         objective target model using the configured converters and normalizer.
 
         Args:
@@ -258,28 +292,21 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
             context (AnecdoctorContext): The generation context containing conversation metadata.
 
         Returns:
-            Optional[PromptRequestResponse]: The response from the target model,
+            Optional[Message]: The response from the target model,
                 or None if the request failed.
         """
-        # Create seed prompt group containing the formatted examples
-        prompt_group = SeedPromptGroup(
-            prompts=[
-                SeedPrompt(
-                    value=formatted_examples,
-                    data_type="text",
-                )
-            ]
-        )
+        # Create message from the formatted examples
+        message = Message.from_prompt(prompt=formatted_examples, role="user")
 
         # Send to target model with configured converters
         return await self._prompt_normalizer.send_prompt_async(
-            seed_prompt_group=prompt_group,
+            message=message,
             target=self._objective_target,
             conversation_id=context.conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=context.memory_labels,
-            orchestrator_identifier=self.get_identifier(),
+            attack_identifier=self.get_identifier(),
         )
 
     def _load_prompt_from_yaml(self, *, yaml_filename: str) -> str:
@@ -300,12 +327,12 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
             yaml.YAMLError: If the YAML file is malformed.
             KeyError: If the 'value' key is not found in the YAML data.
         """
-        prompt_path = Path(DATASETS_PATH, self._ANECDOCTOR_PROMPT_PATH, yaml_filename)
+        prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH, self._ANECDOCTOR_PROMPT_PATH, yaml_filename)
         prompt_data = prompt_path.read_text(encoding="utf-8")
         yaml_data = yaml.safe_load(prompt_data)
-        return yaml_data["value"]
+        return str(yaml_data["value"])
 
-    def _format_few_shot_examples(self, *, evaluation_data: List[str]) -> str:
+    def _format_few_shot_examples(self, *, evaluation_data: list[str]) -> str:
         """
         Format the evaluation data as few-shot examples.
 
@@ -329,9 +356,11 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
 
         Raises:
             RuntimeError: If knowledge graph extraction fails.
+            ValueError: If the processing model is not initialized.
         """
         # Processing model is guaranteed to exist when this method is called
-        assert self._processing_model is not None
+        if self._processing_model is None:
+            raise ValueError("self._processing_model is not initialized")
 
         self._logger.debug("Extracting knowledge graph from evaluation data")
 
@@ -346,32 +375,25 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         self._processing_model.set_system_prompt(
             system_prompt=kg_system_prompt,
             conversation_id=kg_conversation_id,
-            orchestrator_identifier=self.get_identifier(),
+            attack_identifier=self.get_identifier(),
             labels=self._memory_labels,
         )
 
         # Format examples for knowledge graph extraction using few-shot format
         formatted_examples = self._format_few_shot_examples(evaluation_data=context.evaluation_data)
 
-        # Create seed prompt group for the processing model
-        kg_prompt_group = SeedPromptGroup(
-            prompts=[
-                SeedPrompt(
-                    value=formatted_examples,
-                    data_type="text",
-                )
-            ]
-        )
+        # Create message for the processing model
+        message = Message.from_prompt(prompt=formatted_examples, role="user")
 
         # Send to processing model with configured converters
         kg_response = await self._prompt_normalizer.send_prompt_async(
-            seed_prompt_group=kg_prompt_group,
+            message=message,
             target=self._processing_model,
             conversation_id=kg_conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=self._memory_labels,
-            orchestrator_identifier=self.get_identifier(),
+            attack_identifier=self.get_identifier(),
         )
 
         if not kg_response:
@@ -385,9 +407,20 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         *,
         content_type: str,
         language: str,
-        evaluation_data: List[str],
+        evaluation_data: list[str],
         memory_labels: Optional[dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
+    ) -> AnecdoctorResult: ...
+
+    @overload
+    async def execute_async(
+        self,
+        **kwargs: Any,
+    ) -> AnecdoctorResult: ...
+
+    async def execute_async(
+        self,
+        **kwargs: Any,
     ) -> AnecdoctorResult:
         """
         Execute the prompt generation strategy asynchronously with the provided parameters.
@@ -402,22 +435,6 @@ class AnecdoctorGenerator(PromptGeneratorStrategy[AnecdoctorContext, AnecdoctorR
         Returns:
             AnecdoctorResult: The result of the anecdoctor generation.
         """
-        ...
-
-    @overload
-    async def execute_async(
-        self,
-        **kwargs,
-    ) -> AnecdoctorResult: ...
-
-    async def execute_async(
-        self,
-        **kwargs,
-    ) -> AnecdoctorResult:
-        """
-        Execute the prompt generation strategy asynchronously with the provided parameters.
-        """
-
         # Validate parameters before creating context
         content_type = get_kwarg_param(kwargs=kwargs, param_name="content_type", expected_type=str)
         language = get_kwarg_param(kwargs=kwargs, param_name="language", expected_type=str)

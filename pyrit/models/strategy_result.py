@@ -12,8 +12,8 @@ StrategyResultT = TypeVar("StrategyResultT", bound="StrategyResult")
 
 
 @dataclass
-class StrategyResult(ABC):
-    """Base class for all strategy results"""
+class StrategyResult(ABC):  # noqa: B024
+    """Base class for all strategy results."""
 
     def duplicate(self: StrategyResultT) -> StrategyResultT:
         """
@@ -21,5 +21,6 @@ class StrategyResult(ABC):
 
         Returns:
             StrategyResult: A deep copy of the result.
+
         """
         return deepcopy(self)

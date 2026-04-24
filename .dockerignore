@@ -15,3 +15,30 @@ build/
 **/*$py.class
 **/.pytest_cache/
 **/.mypy_cache/
+
+# Environment files with secrets
+.env
+.env.*
+*.env
+
+# Database files with conversation history
+dbdata/
+results/
+default_memory.json.memory
+*.db
+*.sqlite
+
+# Azure and other credentials
+.azure/
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Frontend build artifacts (will be built inside Docker)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Backend frontend directory (generated during packaging)
+pyrit/backend/frontend/

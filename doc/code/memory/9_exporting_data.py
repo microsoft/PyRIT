@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.17.3
 # ---
 
 # %% [markdown]
@@ -16,25 +16,25 @@
 # %%
 from uuid import uuid4
 
-from pyrit.common import SQLITE, initialize_pyrit
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory import CentralMemory
-from pyrit.models import PromptRequestPiece, PromptRequestResponse
+from pyrit.models import Message, MessagePiece
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-initialize_pyrit(memory_db_type=SQLITE)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 conversation_id = str(uuid4())
 
 print(conversation_id)
 
 message_list = [
-    PromptRequestPiece(
+    MessagePiece(
         role="user", original_value="Hi, chat bot! This is my initial prompt.", conversation_id=conversation_id
     ),
-    PromptRequestPiece(
+    MessagePiece(
         role="assistant", original_value="Nice to meet you! This is my response.", conversation_id=conversation_id
     ),
-    PromptRequestPiece(
+    MessagePiece(
         role="user",
         original_value="Wonderful! This is my second prompt to the chat bot!",
         conversation_id=conversation_id,
@@ -42,9 +42,9 @@ message_list = [
 ]
 
 sqlite_memory = CentralMemory.get_memory_instance()
-sqlite_memory.add_request_response_to_memory(request=PromptRequestResponse([message_list[0]]))
-sqlite_memory.add_request_response_to_memory(request=PromptRequestResponse([message_list[1]]))
-sqlite_memory.add_request_response_to_memory(request=PromptRequestResponse([message_list[2]]))
+sqlite_memory.add_message_to_memory(request=Message([message_list[0]]))
+sqlite_memory.add_message_to_memory(request=Message([message_list[1]]))
+sqlite_memory.add_message_to_memory(request=Message([message_list[2]]))
 
 entries = sqlite_memory.get_conversation(conversation_id=conversation_id)
 
@@ -62,9 +62,6 @@ print(f"Exported conversation with scores to JSON: {json_file_path}")
 # Export the data to a CSV file
 # conversation_with_scores = sqlite_memory.export_conversations(file_path=csv_file_path, export_type="csv")
 # print(f"Exported conversation with scores to CSV: {csv_file_path}")
-
-# Cleanup memory resources
-sqlite_memory.dispose_engine()
 
 # %% [markdown]
 # You can also use the exported JSON or CSV files to import the data as a NumPy DataFrame. This can be useful for various data manipulation and analysis tasks.

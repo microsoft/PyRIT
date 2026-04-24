@@ -6,19 +6,21 @@ import logging
 import pathlib
 import uuid
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.exceptions import (
     InvalidJsonException,
     pyrit_json_retry,
     remove_markdown_json,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    Message,
+    MessagePiece,
     PromptDataType,
-    PromptRequestPiece,
-    PromptRequestResponse,
     SeedPrompt,
 )
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 from pyrit.prompt_target import PromptChatTarget
 
 logger = logging.getLogger(__name__)
@@ -28,7 +30,7 @@ class PersuasionConverter(PromptConverter):
     """
     Rephrases prompts using a variety of persuasion techniques.
 
-    Based on https://arxiv.org/abs/2401.06373 by Zeng et al.
+    Based on [@zeng2024persuasion].
 
     Supported persuasion techniques:
         - "authority_endorsement":
@@ -43,32 +45,70 @@ class PersuasionConverter(PromptConverter):
             Presenting oneself or an issue in a way that's not genuine or true.
     """
 
-    def __init__(self, *, converter_target: PromptChatTarget, persuasion_technique: str):
+    SUPPORTED_INPUT_TYPES = ("text",)
+    SUPPORTED_OUTPUT_TYPES = ("text",)
+
+    @apply_defaults
+    def __init__(
+        self,
+        *,
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        persuasion_technique: str,
+    ):
         """
-        Initializes the converter with the specified target and prompt template.
+        Initialize the converter with the specified target and prompt template.
 
         Args:
             converter_target (PromptChatTarget): The chat target used to perform rewriting on user prompts.
+                Can be omitted if a default has been configured via PyRIT initialization.
             persuasion_technique (str): Persuasion technique to be used by the converter, determines the system prompt
                 to be used to generate new prompts. Must be one of "authority_endorsement", "evidence_based",
                 "expert_endorsement", "logical_appeal", "misrepresentation".
 
         Raises:
+            ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If the persuasion technique is not supported or does not exist.
         """
         self.converter_target = converter_target
 
         try:
             prompt_template = SeedPrompt.from_yaml_file(
-                pathlib.Path(DATASETS_PATH) / "prompt_converters" / "persuasion" / f"{persuasion_technique}.yaml"
+                pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion" / f"{persuasion_technique}.yaml"
             )
         except FileNotFoundError:
-            raise ValueError(f"Persuasion technique '{persuasion_technique}' does not exist or is not supported.")
+            raise ValueError(
+                f"Persuasion technique '{persuasion_technique}' does not exist or is not supported."
+            ) from None
         self.system_prompt = str(prompt_template.value)
+        self._persuasion_technique = persuasion_technique
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with persuasion parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "persuasion_technique": self._persuasion_technique,
+            },
+            children={"converter_target": self.converter_target.get_identifier()},
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt using the persuasion technique specified during initialization.
+        Convert the given prompt using the persuasion technique specified during initialization.
+
+        Args:
+            prompt (str): The input prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted prompt text.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
@@ -78,12 +118,12 @@ class PersuasionConverter(PromptConverter):
         self.converter_target.set_system_prompt(
             system_prompt=self.system_prompt,
             conversation_id=conversation_id,
-            orchestrator_identifier=None,
+            attack_identifier=None,
         )
 
-        request = PromptRequestResponse(
+        request = Message(
             [
-                PromptRequestPiece(
+                MessagePiece(
                     role="user",
                     original_value=prompt,
                     converted_value=prompt,
@@ -102,11 +142,22 @@ class PersuasionConverter(PromptConverter):
         return ConverterResult(output_text=response, output_type="text")
 
     @pyrit_json_retry
-    async def send_persuasion_prompt_async(self, request):
-        """Sends the prompt to the converter target and processes the response."""
-        response = await self.converter_target.send_prompt_async(prompt_request=request)
+    async def send_persuasion_prompt_async(self, request: Message) -> str:
+        """
+        Send the prompt to the converter target and process the response.
 
-        response_msg = response.get_value()
+        Args:
+            request (Message): The message containing the prompt to be converted.
+
+        Returns:
+            str: The converted prompt text extracted from the response.
+
+        Raises:
+            InvalidJsonException: If the response is not valid JSON or missing expected keys.
+        """
+        response = await self.converter_target.send_prompt_async(message=request)
+
+        response_msg = response[0].get_value()
         response_msg = remove_markdown_json(response_msg)
 
         try:
@@ -115,13 +166,7 @@ class PersuasionConverter(PromptConverter):
                 raise InvalidJsonException(
                     message=f"Invalid JSON encountered; missing 'mutated_text' key: {response_msg}"
                 )
-            return parsed_response["mutated_text"]
+            return str(parsed_response["mutated_text"])
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}")
-
-    def input_supported(self, input_type: PromptDataType) -> bool:
-        return input_type == "text"
-
-    def output_supported(self, output_type: PromptDataType) -> bool:
-        return output_type == "text"
+            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}") from None

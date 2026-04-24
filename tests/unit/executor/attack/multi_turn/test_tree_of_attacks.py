@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Optional, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,24 +16,31 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
-    AttackScoringConfig,
+    AttackParameters,
     TAPAttackContext,
     TAPAttackResult,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNode
+from pyrit.executor.attack.multi_turn.tree_of_attacks import (
+    AttackScoringConfig,
+    TAPAttackScoringConfig,
+    _TreeOfAttacksNode,
+)
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     ConversationReference,
     ConversationType,
-    PromptRequestPiece,
-    PromptRequestResponse,
+    Message,
+    MessagePiece,
     Score,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
-from pyrit.score import Scorer
+from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.score_utils import normalize_score_to_float
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +55,9 @@ class NodeMockConfig:
     completed: bool = True
     off_topic: bool = False
     objective_score_value: Optional[float] = None
-    auxiliary_scores: Dict[str, float] = field(default_factory=dict)
+    auxiliary_scores: dict[str, float] = field(default_factory=dict)
     objective_target_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    adversarial_chat_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
 class MockNodeFactory:
@@ -70,13 +78,13 @@ class MockNodeFactory:
         node.completed = config.completed
         node.off_topic = config.off_topic
         node.objective_target_conversation_id = config.objective_target_conversation_id
+        node.adversarial_chat_conversation_id = config.adversarial_chat_conversation_id
         node.error_message = None
 
         node.send_prompt_async = AsyncMock(return_value=None)
 
         node._generate_adversarial_prompt_async = AsyncMock(return_value="test prompt")
         node._generate_red_teaming_prompt_async = AsyncMock(return_value='{"prompt": "test prompt"}')
-        node._is_prompt_off_topic_async = AsyncMock(return_value=False)
         node._send_prompt_to_target_async = AsyncMock(return_value=MagicMock())
         node._score_response_async = AsyncMock(return_value=None)
         node._send_to_adversarial_chat_async = AsyncMock(return_value='{"prompt": "test prompt"}')
@@ -85,7 +93,9 @@ class MockNodeFactory:
 
         # Set up objective score
         if config.objective_score_value is not None:
-            node.objective_score = MagicMock(get_value=MagicMock(return_value=config.objective_score_value))
+            node.objective_score = MagicMock(
+                get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+            )
         else:
             node.objective_score = None
 
@@ -102,7 +112,6 @@ class MockNodeFactory:
 
         node.last_prompt_sent = None
         node.last_response = None
-        node.adversarial_chat_conversation_id = str(uuid.uuid4())
 
         node._memory = MagicMock()
         node._memory.duplicate_conversation = MagicMock(return_value=str(uuid.uuid4()))
@@ -126,7 +135,7 @@ class MockNodeFactory:
         return node
 
     @staticmethod
-    def create_nodes_with_scores(scores: List[float]) -> List[_TreeOfAttacksNode]:
+    def create_nodes_with_scores(scores: list[float]) -> list[_TreeOfAttacksNode]:
         """Create multiple nodes with the given objective scores."""
         return [
             MockNodeFactory.create_node(NodeMockConfig(node_id=f"node_{i}", objective_score_value=score))
@@ -137,44 +146,44 @@ class MockNodeFactory:
 class AttackBuilder:
     """Builder for creating TreeOfAttacksWithPruningAttack instances with common configurations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.objective_target: Optional[PromptTarget] = None
         self.adversarial_chat: Optional[PromptChatTarget] = None
         self.objective_scorer: Optional[Scorer] = None
-        self.auxiliary_scorers: List[Scorer] = []
-        self.tree_params: Dict[str, Any] = {}
+        self.auxiliary_scorers: list[Scorer] = []
+        self.tree_params: dict[str, Any] = {}
         self.converters: Optional[AttackConverterConfig] = None
         self.successful_threshold: float = 0.8
         self.prompt_normalizer: Optional[PromptNormalizer] = None
         self.error_score_map: Dict[str, float] = {}
 
-    def with_default_mocks(self):
+    def with_default_mocks(self) -> "AttackBuilder":
         """Set up default mocks for all required components."""
         self.objective_target = self._create_mock_target()
         self.adversarial_chat = self._create_mock_chat()
-        self.objective_scorer = cast(Scorer, self._create_mock_scorer("MockScorer"))
+        self.objective_scorer = self._create_mock_scorer("MockScorer")
         return self
 
-    def with_tree_params(self, **kwargs):
+    def with_tree_params(self, **kwargs) -> "AttackBuilder":
         """Set tree parameters (width, depth, branching_factor, batch_size)."""
         self.tree_params = kwargs
         return self
 
-    def with_threshold(self, threshold: float):
+    def with_threshold(self, threshold: float) -> "AttackBuilder":
         """Set successful objective threshold."""
         self.successful_threshold = threshold
         return self
 
-    def with_auxiliary_scorers(self, count: int = 1):
+    def with_auxiliary_scorers(self, count: int = 1) -> "AttackBuilder":
         """Add auxiliary scorers."""
-        self.auxiliary_scorers = [cast(Scorer, self._create_mock_scorer(f"MockAuxScorer{i}")) for i in range(count)]
+        self.auxiliary_scorers = [self._create_mock_aux_scorer(f"MockAuxScorer{i}") for i in range(count)]
         return self
 
-    def with_prompt_normalizer(self):
+    def with_prompt_normalizer(self) -> "AttackBuilder":
         """Add a mock prompt normalizer."""
         normalizer = MagicMock(spec=PromptNormalizer)
         normalizer.send_prompt_async = AsyncMock(return_value=None)
-        self.prompt_normalizer = cast(PromptNormalizer, normalizer)
+        self.prompt_normalizer = cast("PromptNormalizer", normalizer)
         return self
     
     def with_error_score_map(self, error_score_map: Dict[str, float]):
@@ -186,10 +195,20 @@ class AttackBuilder:
         """Build the attack instance."""
         assert self.adversarial_chat is not None, "Adversarial chat target must be set."
         adversarial_config = AttackAdversarialConfig(target=self.adversarial_chat)
-        scoring_config = AttackScoringConfig(
-            objective_scorer=cast(Scorer, self.objective_scorer),
+
+        # Create a mock FloatScaleThresholdScorer with the specified threshold
+        mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        mock_threshold_scorer.threshold = self.successful_threshold
+        mock_threshold_scorer.scorer_type = "true_false"
+        mock_threshold_scorer.score_async = AsyncMock(return_value=[])
+        mock_threshold_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="FloatScaleThresholdScorer",
+            class_module="pyrit.score",
+        )
+
+        scoring_config = TAPAttackScoringConfig(
+            objective_scorer=mock_threshold_scorer,
             auxiliary_scorers=self.auxiliary_scorers,
-            successful_objective_threshold=self.successful_threshold,
         )
 
         kwargs = {
@@ -208,24 +227,45 @@ class AttackBuilder:
     def _create_mock_target() -> PromptTarget:
         target = MagicMock(spec=PromptTarget)
         target.send_prompt_async = AsyncMock(return_value=None)
-        target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test_module"}
-        return cast(PromptTarget, target)
+        target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget",
+            class_module="test_module",
+        )
+        return cast("PromptTarget", target)
 
     @staticmethod
     def _create_mock_chat() -> PromptChatTarget:
         chat = MagicMock(spec=PromptChatTarget)
         chat.send_prompt_async = AsyncMock(return_value=None)
         chat.set_system_prompt = MagicMock()
-        chat.get_identifier.return_value = {"__type__": "MockChatTarget", "__module__": "test_module"}
-        return cast(PromptChatTarget, chat)
+        chat.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockChatTarget",
+            class_module="test_module",
+        )
+        return cast("PromptChatTarget", chat)
 
     @staticmethod
-    def _create_mock_scorer(name: str) -> Scorer:
+    def _create_mock_scorer(name: str) -> TrueFalseScorer:
+        scorer = MagicMock(spec=TrueFalseScorer)
+        scorer.scorer_type = "true_false"
+        scorer.score_async = AsyncMock(return_value=[])
+        scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name=name,
+            class_module="test_module",
+        )
+        return cast("TrueFalseScorer", scorer)
+
+    @staticmethod
+    def _create_mock_aux_scorer(name: str) -> Scorer:
+        """Create a mock auxiliary scorer (can be any Scorer type)."""
         scorer = MagicMock(spec=Scorer)
         scorer.scorer_type = "float_scale"
         scorer.score_async = AsyncMock(return_value=[])
-        scorer.get_identifier.return_value = {"__type__": name, "__module__": "test_module"}
-        return cast(Scorer, scorer)
+        scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name=name,
+            class_module="test_module",
+        )
+        return cast("Scorer", scorer)
 
 
 class TestHelpers:
@@ -235,8 +275,7 @@ class TestHelpers:
     def create_basic_context() -> TAPAttackContext:
         """Create a basic context with initialized tree."""
         context = TAPAttackContext(
-            objective="Test objective",
-            memory_labels={"test": "label"},
+            params=AttackParameters(objective="Test objective", memory_labels={"test": "label"}),
         )
         context.tree_visualization.create_node("Root", "root")
         return context
@@ -248,33 +287,119 @@ class TestHelpers:
             id=None,
             score_type="float_scale",
             score_value=str(value),
-            score_category="test",
+            score_category=["test"],
             score_value_description="Test score",
             score_rationale="Test rationale",
-            score_metadata="{}",
-            prompt_request_response_id=str(uuid.uuid4()),
-            scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
+            score_metadata={"test": "metadata"},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=ComponentIdentifier(
+                class_name="MockScorer",
+                class_module="test_module",
+            ),
         )
 
     @staticmethod
-    def add_nodes_to_tree(context: TAPAttackContext, nodes: List[_TreeOfAttacksNode], parent: str = "root"):
+    async def create_threshold_score_async(*, original_float_value: float, threshold: float = 0.8) -> Score:
+        """
+        Create a TrueFalse Score using actual FloatScaleThresholdScorer.
+
+        This uses the real FloatScaleThresholdScorer with a mock underlying FloatScaleScorer,
+        ensuring tests will catch any changes to how FloatScaleThresholdScorer produces scores.
+
+        Args:
+            original_float_value: The original float score (0.0-1.0).
+            threshold: The threshold used for true/false determination.
+
+        Returns:
+            Score with TrueFalse type and original_float_value in metadata.
+        """
+        # Create a mock FloatScaleScorer that returns the desired float value
+        mock_float_scorer = MagicMock(spec=FloatScaleScorer)
+        # Set up a proper identifier that can be JSON serialized
+        mock_float_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockFloatScaleScorer",
+            class_module="test_module",
+        )
+
+        # Create the float scale score that the mock scorer will return
+        float_score = Score(
+            id=None,
+            score_type="float_scale",
+            score_value=str(original_float_value),
+            score_category=["objective"],
+            score_value_description="Mock float score",
+            score_rationale="Mock rationale",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=ComponentIdentifier(
+                class_name="MockFloatScaleScorer",
+                class_module="test_module",
+            ),
+        )
+        mock_float_scorer.score_async = AsyncMock(return_value=[float_score])
+
+        # Create the actual FloatScaleThresholdScorer
+        threshold_scorer = FloatScaleThresholdScorer(scorer=mock_float_scorer, threshold=threshold)
+
+        # Patch get_identifier to avoid MagicMock serialization issues
+        threshold_scorer.get_identifier = lambda: ComponentIdentifier(
+            class_name="FloatScaleThresholdScorer",
+            class_module="pyrit.score",
+        )
+
+        # Create a dummy message to score
+        dummy_message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="test response",
+                    converted_value="test response",
+                    conversation_id=str(uuid.uuid4()),
+                    id=str(uuid.uuid4()),
+                )
+            ]
+        )
+
+        # Score using the actual FloatScaleThresholdScorer
+        scores = await threshold_scorer.score_async(dummy_message)
+        return scores[0]
+
+    @staticmethod
+    def create_threshold_score(*, original_float_value: float, threshold: float = 0.8) -> Score:
+        """
+        Create a TrueFalse Score using actual FloatScaleThresholdScorer (sync wrapper).
+
+        This is a synchronous wrapper around create_threshold_score_async for use in
+        non-async test methods. Uses asyncio.run() for proper event loop handling.
+
+        Args:
+            original_float_value: The original float score (0.0-1.0).
+            threshold: The threshold used for true/false determination.
+
+        Returns:
+            Score with TrueFalse type and original_float_value in metadata.
+        """
+        return asyncio.run(
+            TestHelpers.create_threshold_score_async(original_float_value=original_float_value, threshold=threshold)
+        )
+
+    @staticmethod
+    def add_nodes_to_tree(context: TAPAttackContext, nodes: list[_TreeOfAttacksNode], parent: str = "root"):
         """Add nodes to the context's tree visualization."""
-        for i, node in enumerate(nodes):
+        for _i, node in enumerate(nodes):
             score_str = ""
             if node.objective_score:
                 score_str = f": Score {node.objective_score.get_value()}"
-            context.tree_visualization.create_node(
-                f"{context.current_iteration}{score_str}", node.node_id, parent=parent
-            )
+            context.tree_visualization.create_node(f"{context.executed_turns}{score_str}", node.node_id, parent=parent)
 
     @staticmethod
     def mock_prompt_loading(attack: TreeOfAttacksWithPruningAttack):
         """Mock the prompt loading process."""
         mock_seed_prompts = [MagicMock(spec=SeedPrompt) for _ in range(3)]
         mock_dataset = MagicMock()
-        mock_dataset.prompts = mock_seed_prompts
+        mock_dataset.seeds = mock_seed_prompts
 
-        with patch("pyrit.models.seed_prompt_dataset.SeedPromptDataset.from_yaml_file", return_value=mock_dataset):
+        with patch("pyrit.models.seeds.seed_dataset.SeedDataset.from_yaml_file", return_value=mock_dataset):
             attack._load_adversarial_prompts()
 
 
@@ -352,6 +477,82 @@ class TestTreeOfAttacksInitialization:
         attack = attack_builder.with_default_mocks().with_auxiliary_scorers(2).build()
         assert len(attack._auxiliary_scorers) == 2
 
+    def test_init_accepts_base_attack_scoring_config(self, attack_builder):
+        """Test that TAP accepts AttackScoringConfig and converts to TAPAttackScoringConfig."""
+        # Set up attack builder with default mocks
+        attack_builder.with_default_mocks()
+
+        # Create a mock FloatScaleThresholdScorer with proper spec so isinstance checks pass
+        mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        mock_threshold_scorer.threshold = 0.8
+        mock_threshold_scorer.scorer_type = "true_false"
+        mock_threshold_scorer.score_async = AsyncMock(return_value=[])
+        mock_threshold_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="FloatScaleThresholdScorer",
+            class_module="pyrit.score",
+        )
+
+        # Pass base AttackScoringConfig (not TAPAttackScoringConfig)
+        base_config = AttackScoringConfig(
+            objective_scorer=mock_threshold_scorer,
+            use_score_as_feedback=False,
+        )
+
+        adversarial_config = AttackAdversarialConfig(target=attack_builder.adversarial_chat)
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=attack_builder.objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=base_config,
+        )
+
+        # Verify it was converted to TAPAttackScoringConfig
+        result = attack.get_attack_scoring_config()
+        assert isinstance(result, TAPAttackScoringConfig)
+        assert result.threshold == 0.8
+        assert result.use_score_as_feedback is False
+
+    def test_get_objective_target_returns_correct_target(self, attack_builder):
+        """Test that get_objective_target returns the target passed to constructor"""
+        attack = attack_builder.with_default_mocks().build()
+
+        assert attack.get_objective_target() == attack_builder.objective_target
+
+    def test_get_attack_scoring_config_returns_config(self, attack_builder):
+        """Test that get_attack_scoring_config returns the scoring configuration"""
+        attack = attack_builder.with_default_mocks().with_auxiliary_scorers(1).with_threshold(0.75).build()
+
+        result = attack.get_attack_scoring_config()
+
+        assert result is not None
+        assert isinstance(result, TAPAttackScoringConfig)
+        # The objective_scorer should be a FloatScaleThresholdScorer (or mock of one)
+        assert result.objective_scorer is not None
+        assert len(result.auxiliary_scorers) == 1
+        # TAPAttackScoringConfig exposes threshold property
+        assert result.threshold == 0.75
+
+    @pytest.mark.asyncio
+    async def test_tree_depth_validation_with_prepended_conversation(self, attack_builder, helpers):
+        """Test that prepended conversation turns are validated against tree_depth."""
+        attack = attack_builder.with_default_mocks().with_tree_params(tree_depth=1).build()
+
+        # Create prepended conversation with 2 assistant messages (2 turns)
+        prepended = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi there!", role="assistant"),
+            Message.from_prompt(prompt="How are you?", role="user"),
+            Message.from_prompt(prompt="I'm fine!", role="assistant"),
+        ]
+        next_message = Message.from_prompt(prompt="Continue conversation", role="user")
+
+        # Should raise RuntimeError because prepended turns (2) exceed tree_depth (1)
+        with pytest.raises(RuntimeError, match="equals or exceeds tree_depth"):
+            await attack.execute_async(
+                objective="Test objective",
+                prepended_conversation=prepended,
+                next_message=next_message,
+            )
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPruningLogic:
@@ -394,6 +595,74 @@ class TestPruningLogic:
         assert len(completed) == 3
         assert all(not node.off_topic for node in completed)
 
+    @pytest.mark.asyncio
+    async def test_send_prompts_adds_off_topic_and_incomplete_nodes_to_related_conversations(
+        self, attack_builder, node_factory, helpers
+    ):
+        """Test that off-topic and incomplete nodes are added to related_conversations as PRUNED."""
+        attack = attack_builder.with_default_mocks().with_prompt_normalizer().build()
+        context = helpers.create_basic_context()
+
+        # Create mix of off-topic, incomplete, and valid nodes
+        off_topic_node = node_factory.create_node(
+            NodeMockConfig(
+                node_id="off_topic",
+                off_topic=True,
+                objective_score_value=0.9,
+                objective_target_conversation_id="off_topic_conv",
+            )
+        )
+        incomplete_node = node_factory.create_node(
+            NodeMockConfig(
+                node_id="incomplete",
+                completed=False,
+                objective_score_value=None,
+                objective_target_conversation_id="incomplete_conv",
+            )
+        )
+        valid_node = node_factory.create_node(
+            NodeMockConfig(
+                node_id="valid",
+                completed=True,
+                off_topic=False,
+                objective_score_value=0.7,
+                objective_target_conversation_id="valid_conv",
+            )
+        )
+
+        context.nodes = [off_topic_node, incomplete_node, valid_node]
+        helpers.add_nodes_to_tree(context, context.nodes)
+
+        # Execute sending prompts (which updates visualization and tracks pruned nodes)
+        await attack._send_prompts_to_all_nodes_async(context=context)
+
+        # Verify off-topic node's conversation is tracked as PRUNED
+        assert (
+            ConversationReference(
+                conversation_id="off_topic_conv",
+                conversation_type=ConversationType.PRUNED,
+            )
+            in context.related_conversations
+        )
+
+        # Verify incomplete node's conversation is tracked as PRUNED
+        assert (
+            ConversationReference(
+                conversation_id="incomplete_conv",
+                conversation_type=ConversationType.PRUNED,
+            )
+            in context.related_conversations
+        )
+
+        # Verify valid node's conversation is NOT tracked as PRUNED
+        assert (
+            ConversationReference(
+                conversation_id="valid_conv",
+                conversation_type=ConversationType.PRUNED,
+            )
+            not in context.related_conversations
+        )
+
     def test_update_best_performing_node_with_unsorted_nodes(self, basic_attack, node_factory, helpers):
         """Test that _update_best_performing_node correctly finds the best node regardless of input order."""
         context = helpers.create_basic_context()
@@ -413,6 +682,37 @@ class TestPruningLogic:
         assert context.best_objective_score is not None
         assert context.best_objective_score.get_value() == 0.9
         assert context.best_conversation_id is not None
+
+    def test_update_best_performing_node_tracks_adversarial_conversation_id(self, basic_attack, node_factory, helpers):
+        """Test that _update_best_performing_node also tracks the best adversarial conversation ID."""
+        context = helpers.create_basic_context()
+
+        # Create nodes with specific conversation IDs
+        best_node = node_factory.create_node(
+            NodeMockConfig(
+                node_id="best",
+                objective_score_value=0.9,
+                objective_target_conversation_id="best_obj_conv",
+                adversarial_chat_conversation_id="best_adv_conv",
+            )
+        )
+        other_node = node_factory.create_node(
+            NodeMockConfig(
+                node_id="other",
+                objective_score_value=0.5,
+                objective_target_conversation_id="other_obj_conv",
+                adversarial_chat_conversation_id="other_adv_conv",
+            )
+        )
+
+        context.nodes = [other_node, best_node]  # Put best node second to verify sorting works
+
+        # Execute update
+        basic_attack._update_best_performing_node(context)
+
+        # Verify both conversation IDs are tracked for the best node
+        assert context.best_conversation_id == "best_obj_conv"
+        assert context.best_adversarial_conversation_id == "best_adv_conv"
 
     def test_update_best_performing_node_with_empty_nodes(self, basic_attack, helpers):
         """Test that _update_best_performing_node handles empty nodes gracefully."""
@@ -455,7 +755,11 @@ class TestPruningLogic:
         assert context.best_conversation_id == valid_node.objective_target_conversation_id
 
     def test_update_best_performing_node_with_all_invalid_nodes(self, basic_attack, node_factory, helpers):
-        """Test that _update_best_performing_node handles case where no valid nodes exist."""
+        """Test that _update_best_performing_node uses fallback when no valid nodes exist.
+
+        When all nodes are invalid (incomplete or off-topic), the method should use the
+        fallback to pick any node with a conversation_id for result reporting purposes.
+        """
         context = helpers.create_basic_context()
 
         # Create only invalid nodes
@@ -468,12 +772,12 @@ class TestPruningLogic:
 
         context.nodes = [incomplete_node, off_topic_node]
 
-        # Execute update - should not update best scores when no valid nodes
+        # Execute update - should use fallback since no valid completed nodes
         basic_attack._update_best_performing_node(context)
 
-        # Best scores should remain None since no valid nodes exist
-        assert context.best_objective_score is None
-        assert context.best_conversation_id is None
+        # Fallback should pick first node with a conversation_id for reporting
+        assert context.best_conversation_id == incomplete_node.objective_target_conversation_id
+        assert context.best_objective_score == incomplete_node.objective_score
 
     def test_update_best_performing_node_preserves_existing_best_when_no_valid_nodes(
         self, basic_attack, node_factory, helpers
@@ -648,7 +952,7 @@ class TestBranchingLogic:
         initial_nodes = node_factory.create_nodes_with_scores([0.8, 0.7])
         helpers.add_nodes_to_tree(context, initial_nodes)
         context.nodes = initial_nodes.copy()
-        context.current_iteration = 2
+        context.executed_turns = 2
 
         # Execute branching
         basic_attack._branch_existing_nodes(context=context)
@@ -686,7 +990,7 @@ class TestExecutionPhase:
         )
 
         with patch.object(attack, "_create_attack_node", return_value=success_node):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         assert result.outcome == AttackOutcome.SUCCESS
@@ -714,7 +1018,7 @@ class TestExecutionPhase:
         )
 
         with patch.object(attack, "_create_attack_node", return_value=success_node):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         # Should succeed after first iteration
@@ -745,6 +1049,30 @@ class TestExecutionPhase:
         for node in nodes:
             node.send_prompt_async.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_perform_async_sets_atomic_attack_identifier(self, attack_builder, node_factory, helpers):
+        """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(tree_depth=1, tree_width=1)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        context = helpers.create_basic_context()
+
+        success_node = node_factory.create_node(
+            NodeMockConfig(node_id="id_node", objective_score_value=0.9, objective_target_conversation_id="id_conv")
+        )
+
+        with patch.object(attack, "_create_attack_node", return_value=success_node):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
+                result = await attack._perform_async(context=context)
+
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+        assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestHelperMethods:
@@ -769,7 +1097,7 @@ class TestHelperMethods:
         assert "/10" in result
 
     def test_is_objective_achieved(self, attack_builder, helpers):
-        """Test _is_objective_achieved logic."""
+        """Test _is_objective_achieved logic with mock scores."""
         attack = attack_builder.with_default_mocks().with_threshold(0.8).build()
         context = helpers.create_basic_context()
 
@@ -778,21 +1106,130 @@ class TestHelperMethods:
         assert attack._is_objective_achieved(context=context) is False
 
         # Test 2: Score below threshold
-        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.5))
+        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.5), score_metadata=None)
         assert attack._is_objective_achieved(context=context) is False
 
         # Test 3: Score at threshold
-        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.8))
+        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.8), score_metadata=None)
         assert attack._is_objective_achieved(context=context) is True
 
         # Test 4: Score above threshold
-        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.9))
+        context.best_objective_score = MagicMock(get_value=MagicMock(return_value=0.9), score_metadata=None)
         assert attack._is_objective_achieved(context=context) is True
+
+    def test_is_objective_achieved_with_threshold_scores(self, attack_builder, helpers):
+        """Test _is_objective_achieved with realistic FloatScaleThresholdScorer output.
+
+        This test verifies that threshold comparison correctly extracts float values
+        from score_metadata when using TrueFalse scores produced by FloatScaleThresholdScorer.
+        """
+        attack = attack_builder.with_default_mocks().with_threshold(0.8).build()
+        context = helpers.create_basic_context()
+
+        # Test 1: TrueFalse score with original_float_value below threshold
+        # Even though score_value is "False", we verify the float extraction works
+        context.best_objective_score = helpers.create_threshold_score(original_float_value=0.5, threshold=0.8)
+        assert attack._is_objective_achieved(context=context) is False
+        # Verify normalize_score_to_float extracts the float correctly
+        assert normalize_score_to_float(context.best_objective_score) == 0.5
+
+        # Test 2: TrueFalse score with original_float_value at threshold
+        context.best_objective_score = helpers.create_threshold_score(original_float_value=0.8, threshold=0.8)
+        assert attack._is_objective_achieved(context=context) is True
+        assert normalize_score_to_float(context.best_objective_score) == 0.8
+
+        # Test 3: TrueFalse score with original_float_value above threshold
+        context.best_objective_score = helpers.create_threshold_score(original_float_value=0.95, threshold=0.8)
+        assert attack._is_objective_achieved(context=context) is True
+        assert normalize_score_to_float(context.best_objective_score) == 0.95
+
+        # Test 4: Edge case - float value just below threshold
+        context.best_objective_score = helpers.create_threshold_score(original_float_value=0.79, threshold=0.8)
+        assert attack._is_objective_achieved(context=context) is False
+        assert normalize_score_to_float(context.best_objective_score) == 0.79
+
+    def test_create_success_result_with_threshold_score(self, attack_builder, helpers):
+        """Test that _create_success_result correctly formats score in outcome_reason."""
+        attack = attack_builder.with_default_mocks().with_threshold(0.8).build()
+        context = helpers.create_basic_context()
+
+        # Set up context with a threshold score
+        context.best_objective_score = helpers.create_threshold_score(original_float_value=0.92, threshold=0.8)
+        context.successful_objective_conversation_id = "conv_123"
+
+        result = attack._create_success_result(context=context)
+
+        # Verify the outcome reason contains the float score, not "True"
+        assert "0.92" in result.outcome_reason
+        assert result.outcome == AttackOutcome.SUCCESS
+
+    def test_create_failure_result_with_threshold_score(self, attack_builder, helpers):
+        """Test that _create_failure_result correctly formats score in outcome_reason."""
+        attack = attack_builder.with_default_mocks().with_threshold(0.8).build()
+        context = helpers.create_basic_context()
+
+        # Set up context with a threshold score below the threshold
+        context.best_objective_score = helpers.create_threshold_score(original_float_value=0.65, threshold=0.8)
+
+        result = attack._create_failure_result(context=context)
+
+        # Verify the outcome reason contains the float score, not "False"
+        assert "0.65" in result.outcome_reason
+        assert result.outcome == AttackOutcome.FAILURE
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestEndToEndExecution:
     """Tests for end-to-end execution using execute_async."""
+
+    @pytest.mark.asyncio
+    async def test_execute_async_with_message_uses_it_for_root_node(self, attack_builder, helpers):
+        """Test that providing a message parameter uses it for the root node prompt."""
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(tree_width=2, tree_depth=1)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        # Mock seed prompt loading
+        helpers.mock_prompt_loading(attack)
+
+        # Custom message to use for root node
+        custom_message = Message.from_prompt(prompt="Custom root prompt", role="user")
+
+        # Mock the tree execution to verify message was used
+        mock_result = TAPAttackResult(
+            conversation_id="test_conv_id",
+            objective="Test objective",
+            last_response=None,
+            last_score=helpers.create_score(0.5),
+            executed_turns=1,
+            execution_time_ms=100,
+            outcome=AttackOutcome.FAILURE,
+            outcome_reason="Test",
+        )
+        mock_result.tree_visualization = Tree()
+        mock_result.nodes_explored = 1
+        mock_result.nodes_pruned = 0
+        mock_result.max_depth_reached = 1
+        mock_result.auxiliary_scores_summary = {}
+
+        with patch.object(attack, "_perform_async", return_value=mock_result) as mock_perform:
+            with patch.object(attack._memory, "get_conversation", return_value=[]):
+                with patch.object(attack._memory, "get_message_pieces", return_value=[]):
+                    with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
+                        result = await attack.execute_async(
+                            objective="Test objective",
+                            next_message=custom_message,
+                            memory_labels={"test": "label"},
+                        )
+
+        # Verify perform_async was called and context had the message
+        assert mock_perform.called
+        context = mock_perform.call_args.kwargs["context"]
+        assert context.next_message == custom_message
+        assert isinstance(result, TAPAttackResult)
 
     @pytest.mark.asyncio
     async def test_execute_async_success_flow(self, attack_builder, helpers):
@@ -811,7 +1248,6 @@ class TestEndToEndExecution:
         mock_result = TAPAttackResult(
             conversation_id="success_conv_id",
             objective="Test objective",
-            attack_identifier=attack.get_identifier(),
             last_response=None,
             last_score=helpers.create_score(0.9),
             executed_turns=1,
@@ -828,7 +1264,7 @@ class TestEndToEndExecution:
 
         with patch.object(attack, "_perform_async", return_value=mock_result):
             with patch.object(attack._memory, "get_conversation", return_value=[]):
-                with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+                with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(objective="Test objective", memory_labels={"test": "label"})
 
@@ -859,7 +1295,7 @@ class TestTreeOfAttacksNode:
         prompt_normalizer = MagicMock()
         prompt_normalizer.send_prompt_async = AsyncMock(return_value=None)
 
-        components = {
+        return {
             "objective_target": builder.objective_target,
             "adversarial_chat": builder.adversarial_chat,
             "objective_scorer": builder.objective_scorer,
@@ -872,11 +1308,11 @@ class TestTreeOfAttacksNode:
             "response_converters": [],
             "auxiliary_scorers": [],
             "attack_id": {"id": "test_attack"},
+            "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
         }
-        return components
 
     def test_node_initialization(self, node_components):
         """Test _TreeOfAttacksNode initialization."""
@@ -944,7 +1380,11 @@ class TestTreeOfAttacksNode:
 
     @pytest.mark.asyncio
     async def test_node_off_topic_detection(self, node_components):
-        """Test off-topic detection in nodes."""
+        """Test off-topic detection in nodes after retry exhaustion.
+
+        The node should retry off-topic prompts with feedback before marking as off-topic.
+        This test verifies that after all retries are exhausted, the node is marked off-topic.
+        """
         # Enable on-topic checking
         on_topic_scorer = MagicMock(spec=Scorer)
 
@@ -953,6 +1393,7 @@ class TestTreeOfAttacksNode:
         on_topic_score.get_value = MagicMock(return_value=False)  # False = off-topic
         on_topic_score.score_value = "False"
         on_topic_score.score_type = "true_false"
+        on_topic_score.score_rationale = "Prompt is not relevant to the objective"
         on_topic_scorer.score_text_async = AsyncMock(return_value=[on_topic_score])
 
         components_with_scorer = node_components.copy()
@@ -963,20 +1404,25 @@ class TestTreeOfAttacksNode:
         node = _TreeOfAttacksNode(**components_with_scorer)
 
         test_prompt = "test adversarial prompt"
-        with patch.object(
-            node, "_generate_red_teaming_prompt_async", new_callable=AsyncMock, return_value=test_prompt
-        ) as red_teaming_mock:
-
+        # Mock the retry attempts to 1 so it exhausts quickly
+        with (
+            patch.object(
+                node, "_generate_single_red_teaming_prompt_async", new_callable=AsyncMock, return_value=test_prompt
+            ) as red_teaming_mock,
+            patch("pyrit.executor.attack.multi_turn.tree_of_attacks.get_retry_max_num_attempts", return_value=1),
+            patch.object(node, "_send_to_adversarial_chat_async", new_callable=AsyncMock, return_value="new prompt"),
+            patch.object(node, "_parse_red_teaming_response", return_value="new prompt"),
+        ):
             await node.send_prompt_async(objective="Test objective")
 
-        # Verify off-topic detection worked
+        # Verify off-topic detection worked after retry exhaustion
         assert node.off_topic is True
         # Node stops execution when off-topic
         assert node.completed is False
 
         red_teaming_mock.assert_called_once()
-        # Verify the on-topic scorer was called with the generated prompt
-        on_topic_scorer.score_text_async.assert_called_once_with(text=test_prompt)
+        # Verify the on-topic scorer was called multiple times (initial + retries + final check)
+        assert on_topic_scorer.score_text_async.call_count >= 2
 
     @pytest.mark.asyncio
     async def test_node_auxiliary_scoring(self, node_components):
@@ -984,13 +1430,19 @@ class TestTreeOfAttacksNode:
         # Add auxiliary scorers with specific class identifiers
         aux_score1 = MagicMock()
         aux_score1.get_value.return_value = 0.8
-        aux_score1.scorer_class_identifier = {"__type__": "AuxScorer1"}
+        aux_score1.scorer_class_identifier = ComponentIdentifier(
+            class_name="AuxScorer1",
+            class_module="test.module",
+        )
         aux_scorer1 = MagicMock(spec=Scorer)
         aux_scorer1.score_async = AsyncMock(return_value=[aux_score1])
 
         aux_score2 = MagicMock()
         aux_score2.get_value.return_value = 0.6
-        aux_score2.scorer_class_identifier = {"__type__": "AuxScorer2"}
+        aux_score2.scorer_class_identifier = ComponentIdentifier(
+            class_name="AuxScorer2",
+            class_module="test.module",
+        )
         aux_scorer2 = MagicMock(spec=Scorer)
         aux_scorer2.score_async = AsyncMock(return_value=[aux_score2])
 
@@ -1007,9 +1459,9 @@ class TestTreeOfAttacksNode:
 
             if target == node._adversarial_chat:
                 # Return JSON response for adversarial chat
-                return PromptRequestResponse(
-                    request_pieces=[
-                        PromptRequestPiece(
+                return Message(
+                    message_pieces=[
+                        MessagePiece(
                             role="assistant",
                             original_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
                             converted_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
@@ -1018,34 +1470,36 @@ class TestTreeOfAttacksNode:
                         )
                     ]
                 )
-            else:
-                # Return normal response for objective target
-                return PromptRequestResponse(
-                    request_pieces=[
-                        PromptRequestPiece(
-                            role="assistant",
-                            original_value="Target response",
-                            converted_value="Target response",
-                            conversation_id=node.objective_target_conversation_id,
-                            id=str(uuid.uuid4()),
-                        )
-                    ]
-                )
+            # Return normal response for objective target
+            return Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="assistant",
+                        original_value="Target response",
+                        converted_value="Target response",
+                        conversation_id=node.objective_target_conversation_id,
+                        id=str(uuid.uuid4()),
+                    )
+                ]
+            )
 
         mock_normalizer.send_prompt_async = AsyncMock(side_effect=normalizer_side_effect)
 
         # Mocking objective scorer
         obj_score = MagicMock()
         obj_score.get_value.return_value = 0.7
-        obj_score.scorer_class_identifier = {"__type__": "ObjectiveScorer"}
+        obj_score.scorer_class_identifier = ComponentIdentifier(
+            class_name="ObjectiveScorer",
+            class_module="test.module",
+        )
         node._objective_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-        # Mock for Scorer.score_response_with_objective_async
+        # Mock for Scorer.score_response_async
         def mock_score_response(*args, **kwargs):
             return {"objective_scores": [obj_score], "auxiliary_scores": [aux_score1, aux_score2]}
 
         with patch(
-            "pyrit.score.Scorer.score_response_with_objective_async",
+            "pyrit.score.Scorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=mock_score_response,
         ):
@@ -1103,7 +1557,7 @@ class TestTreeOfAttacksErrorHandling:
         node_iterator = iter(failing_nodes)
 
         with patch.object(attack, "_create_attack_node", side_effect=lambda **kwargs: next(node_iterator)):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         # Should return failure when all nodes fail
@@ -1149,7 +1603,7 @@ class TestTreeOfAttacksErrorHandling:
         # Create all nodes at once
         node_iter = iter(nodes)
         with patch.object(attack, "_create_attack_node", side_effect=lambda **kwargs: next(node_iter, nodes[0])):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         # Attack should continue despite some nodes failing
@@ -1160,6 +1614,30 @@ class TestTreeOfAttacksErrorHandling:
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksMemoryOperations:
     """Tests for memory-related operations."""
+
+    def test_setup_with_prepended_conversation_without_next_message(self, attack_builder, helpers):
+        """Test that setup works with prepended_conversation even without next_message.
+
+        The adversarial chat will generate the first prompt based on the prepended
+        conversation context. This is similar to a fresh attack, but with context.
+        """
+        attack = attack_builder.with_default_mocks().build()
+
+        # Create context with prepended_conversation but no next_message
+        prepended = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi there!", role="assistant"),
+        ]
+        context = helpers.create_basic_context()
+        context.prepended_conversation = prepended
+        context.next_message = None  # Explicitly no next_message
+
+        # Setup should succeed without raising an error
+        asyncio.run(attack._setup_async(context=context))
+
+        # Verify setup completed - tree visualization initialized
+        assert context.tree_visualization is not None
+        assert context.next_message is None  # No custom message, adversarial chat will generate
 
     def test_attack_updates_memory_labels(self, attack_builder, helpers):
         """Test that memory labels are properly combined."""
@@ -1211,7 +1689,7 @@ class TestTreeOfAttacksVisualization:
         node = MagicMock()
         node.off_topic = False
         node.completed = True
-        node.objective_score = MagicMock(get_value=MagicMock(return_value=0.7))
+        node.objective_score = MagicMock(get_value=MagicMock(return_value=0.7), score_metadata=None)
 
         result = basic_attack._format_node_result(node)
 
@@ -1238,7 +1716,7 @@ class TestTreeOfAttacksVisualization:
         node_1 = node_factory.create_node(NodeMockConfig(node_id="node_1"))
 
         # Add first level to tree
-        context.current_iteration = 1
+        context.executed_turns = 1
         helpers.add_nodes_to_tree(context, [node_0, node_1])
 
         # Second level nodes
@@ -1247,7 +1725,7 @@ class TestTreeOfAttacksVisualization:
         node_1_child_0 = node_factory.create_node(NodeMockConfig(node_id="node_1_child_0", parent_id="node_1"))
 
         # Add second level to tree using the helper with proper parent relationships
-        context.current_iteration = 2
+        context.executed_turns = 2
         # Add children under node_0
         for child in [node_0_child_0, node_0_child_1]:
             context.tree_visualization.create_node(
@@ -1453,3 +1931,38 @@ class TestTreeOfAttacksConversationTracking:
             )
             in context.related_conversations
         )
+
+
+def test_tap_init_raises_when_objective_scorer_is_none():
+    """Test that TAP __init__ raises ValueError when AttackScoringConfig has objective_scorer=None."""
+    scoring_config = AttackScoringConfig(objective_scorer=None)
+    with pytest.raises(ValueError, match="objective_scorer is required"):
+        TreeOfAttacksWithPruningAttack(
+            objective_target=MagicMock(spec=PromptChatTarget),
+            attack_adversarial_config=MagicMock(
+                target=MagicMock(spec=PromptChatTarget),
+                system_prompt_path=None,
+            ),
+            attack_scoring_config=scoring_config,
+        )
+
+
+def test_tap_attack_result_tree_visualization_getter_returns_value():
+    """Test that TAPAttackResult.tree_visualization returns the stored tree."""
+    tree = Tree()
+    tree.create_node("root", "root")
+    result = TAPAttackResult(
+        conversation_id="conv1",
+        objective="test",
+    )
+    result.metadata["tree_visualization"] = tree
+    assert result.tree_visualization is tree
+
+
+def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing():
+    """Test that TAPAttackResult.tree_visualization returns None when not set."""
+    result = TAPAttackResult(
+        conversation_id="conv1",
+        objective="test",
+    )
+    assert result.tree_visualization is None

@@ -74,6 +74,15 @@ class SuperscriptConverter(WordLevelConverter):
     }
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         result = []
         for char in word:
             if char in self._superscript_map:

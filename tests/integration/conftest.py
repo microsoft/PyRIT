@@ -1,28 +1,27 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
 import tempfile
-from typing import Generator
+from collections.abc import Generator
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import inspect
 
-from pyrit.common import IN_MEMORY, initialize_pyrit
 from pyrit.memory.azure_sql_memory import AzureSQLMemory
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.sqlite_memory import SQLiteMemory
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 # This limits retries to 10 attempts with a 1 second wait between retries
-# note this needs to be set before libraries that use them are imported
-
-# Note this module needs to be imported at the top of a file so the values are modified
-
 os.environ["RETRY_MAX_NUM_ATTEMPTS"] = "9"
 os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
 
-initialize_pyrit(memory_db_type=IN_MEMORY)
+# Initialize PyRIT for integration tests
+asyncio.run(initialize_pyrit_async(memory_db_type=IN_MEMORY))
 
 
 @pytest.fixture
@@ -79,3 +78,10 @@ def sqlite_instance() -> Generator[SQLiteMemory, None, None]:
     yield sqlite_memory
     temp_dir.cleanup()
     sqlite_memory.dispose_engine()
+
+
+@pytest.fixture()
+def patch_central_database(sqlite_instance):
+    """Fixture to mock CentralMemory.get_memory_instance"""
+    with patch.object(CentralMemory, "get_memory_instance", return_value=sqlite_instance) as sqlite_memory:
+        yield sqlite_memory

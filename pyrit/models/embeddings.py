@@ -11,12 +11,16 @@ from pydantic import BaseModel, ConfigDict
 
 
 class EmbeddingUsageInformation(BaseModel):
+    """Token usage metadata returned by an embedding API."""
+
     model_config = ConfigDict(extra="forbid")
     prompt_tokens: int
     total_tokens: int
 
 
 class EmbeddingData(BaseModel):
+    """Single embedding vector payload with index and object metadata."""
+
     model_config = ConfigDict(extra="forbid")
     embedding: list[float]
     index: int
@@ -24,6 +28,8 @@ class EmbeddingData(BaseModel):
 
 
 class EmbeddingResponse(BaseModel):
+    """Embedding API response containing vectors, model metadata, and usage."""
+
     model_config = ConfigDict(extra="forbid")
     model: str
     object: str
@@ -31,12 +37,15 @@ class EmbeddingResponse(BaseModel):
     data: list[EmbeddingData]
 
     def save_to_file(self, directory_path: Path) -> str:
-        """Save the embedding response to disk and return the path of the new file
+        """
+        Save the embedding response to disk and return the path of the new file.
 
         Args:
-            directory_path: The path to save the file to
+            directory_path (Path): The path to save the file to.
+
         Returns:
-            The full path to the file that was saved
+            str: The full path to the file that was saved.
+
         """
         embedding_json = self.model_dump_json()
         embedding_hash = sha256(embedding_json.encode()).hexdigest()
@@ -46,24 +55,37 @@ class EmbeddingResponse(BaseModel):
 
     @staticmethod
     def load_from_file(file_path: Path) -> EmbeddingResponse:
-        """Load the embedding response from disk
+        """
+        Load the embedding response from disk.
 
         Args:
-            file_path: The path to load the file from
+            file_path (Path): The path to load the file from.
+
         Returns:
-            The loaded embedding response
+            EmbeddingResponse: The loaded embedding response.
+
         """
         embedding_json_data = file_path.read_text(encoding="utf-8")
         return EmbeddingResponse.model_validate_json(embedding_json_data)
 
     def to_json(self) -> str:
+        """
+        Serialize this embedding response to JSON.
+
+        Returns:
+            str: JSON-encoded embedding response.
+
+        """
         return self.model_dump_json()
 
 
 class EmbeddingSupport(ABC):
+    """Protocol-like interface for classes that generate text embeddings."""
+
     @abstractmethod
-    def generate_text_embedding(self, text: str, **kwargs) -> EmbeddingResponse:
-        """Generate text embedding
+    def generate_text_embedding(self, text: str, **kwargs: object) -> EmbeddingResponse:
+        """
+        Generate text embedding synchronously.
 
         Args:
             text: The text to generate the embedding for
@@ -71,5 +93,21 @@ class EmbeddingSupport(ABC):
 
         Returns:
             The embedding response
+
         """
         raise NotImplementedError("generate_text_embedding method not implemented")
+
+    @abstractmethod
+    async def generate_text_embedding_async(self, text: str, **kwargs: object) -> EmbeddingResponse:
+        """
+        Generate text embedding asynchronously.
+
+        Args:
+            text: The text to generate the embedding for
+            **kwargs: Additional arguments to pass to the function.
+
+        Returns:
+            The embedding response
+
+        """
+        raise NotImplementedError("generate_text_embedding_async method not implemented")

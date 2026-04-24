@@ -1,18 +1,35 @@
 repos:
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.1
+    rev: 34071b78c181af3bf5af955c1426466e096fc3db #0.9.1
     hooks:
       - id: nbstripout
-        args:
-          - '--keep-output'
+        args: [--keep-output, '--extra-keys=metadata.kernelspec']
+        files: ^doc/.*\.ipynb$
 
   - repo: local
     hooks:
-    - id: remove-notebook-headers
-      name: Remove Notebook Headers
-      entry: python ./build_scripts/remove_notebook_headers.py
-      language: python
-      files: ^doc.*\.(ipynb)$
+      - id: sanitize-notebook-paths
+        name: Sanitize Notebook Paths
+        entry: python ./build_scripts/sanitize_notebook_paths.py
+        language: python
+        files: ^doc.*\.(ipynb)$
+      - id: strip-notebook-progress-bars
+        name: Strip Notebook Progress Bars
+        entry: python ./build_scripts/strip_notebook_progress_bars.py
+        language: python
+        files: ^doc.*\.(ipynb)$
+      - id: strip-py-kernelspec
+        name: Strip kernelspec from jupytext .py files
+        entry: python ./build_scripts/strip_py_kernelspec.py
+        language: python
+        files: ^doc/.*\.py$
+      - id: validate-docs
+        name: Validate Documentation Structure
+        entry: python ./build_scripts/validate_docs.py
+        language: python
+        files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
+        pass_filenames: false
+        additional_dependencies: ['pyyaml']
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -26,35 +43,19 @@ repos:
         args: ["--maxkb=3072"]  # Set limit to 3072 KB (3 MB) for displaying images in notebooks
       - id: detect-private-key
 
-  # https://black.readthedocs.io/en/stable/integrations/source_version_control.html
-  # Using this mirror lets us use mypyc-compiled black, which is about 2x faster
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 25.1.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.4
     hooks:
-      - id: black
-        language_version: python3
-
-  - repo: https://github.com/pycqa/isort
-    rev: 6.0.1
-    hooks:
-      - id: isort
-        name: Import Sort (Python files)
-        exclude: __init__.py
-        args: [--profile=black, --filter-files, --treat-comment-as-code "# %%"]
+      - id: ruff-format
+      - id: ruff-check
+        args: [--fix]
 
   - repo: https://github.com/nbQA-dev/nbQA
     rev: 1.9.1
     hooks:
-    - id: nbqa-isort
-      name: Import Sort (Jupyter Notebooks)
-      args: [--profile=black]
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.1.2
-    hooks:
-      - id: flake8
-        additional_dependencies: ['flake8-copyright']
-        exclude: (doc/|.github/|pyrit/prompt_converter/morse_converter.py|tests/unit/converter/test_prompt_converter.py|pyrit/prompt_converter/emoji_converter.py|tests/unit/models/test_seed_prompt.py|tests/unit/converter/test_unicode_confusable_converter.py|tests/unit/converter/test_first_letter_converter.py)
+    - id: nbqa-ruff
+      name: Ruff (Jupyter Notebooks)
+      args: [--fix]
 
   - repo: local
     hooks:
@@ -66,28 +67,14 @@ repos:
       additional_dependencies: ['requests']
       exclude: (release_process.md|git.md|^doc/deployment/|tests|pyrit/prompt_converter/morse_converter.py|.github|pyrit/prompt_converter/emoji_converter.py|pyrit/score/markdown_injection.py|^pyrit/datasets/|^pyrit/auxiliary_attacks/gcg/)
 
-  - repo: https://github.com/pycqa/pylint
-    rev: v3.3.7
-    hooks:
-      - id: pylint
-        args: [--disable=all, --enable=unused-import]
-        exclude: NOTICE.txt
-
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.15.0
     hooks:
       - id: mypy
-        args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache]
-        name: mypy
+        name: mypy (strict)
+        files: &strict_modules ^pyrit/
+        exclude: ^pyrit/auxiliary_attacks/
+        args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache, --strict]
         entry: mypy
         language: system
         types: [ python ]
-
-  - repo: local
-    hooks:
-      - id: website
-        name: Jupyter Book Build Check
-        entry: jb build -W -q ./doc
-        language: system
-        types: [python]
-        pass_filenames: false

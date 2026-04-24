@@ -1,5 +1,0 @@
-dataset_name: test illegal (image path input)
-prompts:
-  - value: |
-      {{ datasets_path }}/seed_prompts/multimodal_data/pyrit_architecture.png
-    data_type: image_path

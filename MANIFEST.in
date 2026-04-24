@@ -1,6 +1,12 @@
+recursive-include pyrit *.csv
 recursive-include pyrit *.json
+recursive-include pyrit *.jsonl
 recursive-include pyrit *.prompt
 recursive-include pyrit *.yaml
-recursive-include pyrit/datasets/seed_prompts *
-recursive-include pyrit/datasets/score/scorer_evals *
+recursive-include pyrit *.pdf
+recursive-include pyrit *.png
+recursive-include pyrit *.wav
+recursive-include pyrit *.mp4
+recursive-include pyrit *.md
 include pyrit/auxiliary_attacks/gcg/src/Dockerfile
+recursive-include pyrit/backend/frontend *

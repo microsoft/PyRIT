@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
+# Licensed under the MIT license.
 
 """
-This module provides command-line interface functionalities for PyRIT.
+Module to provide command-line interface functionalities for PyRIT.
 The CLI module is currently experimental.
 """

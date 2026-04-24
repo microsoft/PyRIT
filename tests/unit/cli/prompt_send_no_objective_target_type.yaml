@@ -1,7 +1,0 @@
-datasets:
-  - ./pyrit/datasets/seed_prompts/illegal.prompt
-scenarios:
-  - type: "PromptSendingAttack"
-database:
-  type: "SQLite"
-objective_target:

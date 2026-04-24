@@ -4,7 +4,7 @@ groups:
 description: This is an example first turn response to a trivia game role play scenario for the role_play attack. Order matters for this attack.
 authors:
   - Justin Song
-prompts:
+seeds:
   - description: This used to rephrase the user's objective (second user turn)
     parameters:
     - objective

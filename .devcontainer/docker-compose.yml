@@ -10,22 +10,23 @@ services:
           memory: "16G"
     volumes:
       - ..:/workspace:delegated
-      - pyrit-env:/opt/conda/envs/pyrit-dev:cached
       - pip-cache:/home/vscode/.cache/pip:cached
+      - uv-cache:/home/vscode/.cache/uv:cached
       - precommit-cache:/home/vscode/.cache/pre-commit:cached
-      - conda-cache:/home/vscode/.cache/conda:cached
       - mypy-cache:/workspace/.mypy_cache:cached
       - pylance-cache:/home/vscode/.cache/pylance:cached
-    ports:
-      - "4213:4213"
-      - "8888:8888"
+      - node-modules:/workspace/frontend/node_modules:cached
+      - ~/.pyrit:/home/vscode/.pyrit:cached
+    network_mode: "host"
+    # Note: ports section is not needed with host network mode
+    # The container will have direct access to all host network interfaces
     # Keep the container running so the post-create command can execute.
     command: "sleep infinity"
 
 volumes:
-  pyrit-env:
   pip-cache:
+  uv-cache:
   precommit-cache:
-  conda-cache:
   mypy-cache:
   pylance-cache:
+  node-modules:

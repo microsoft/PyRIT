@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Union
+from typing import Any, Union
 
 import tenacity
 from openai import AzureOpenAI, OpenAI
@@ -16,7 +16,7 @@ from pyrit.models import (
 
 
 class _TextEmbedding(EmbeddingSupport, abc.ABC):
-    """Text embedding base class"""
+    """Text embedding base class."""
 
     _client: Union[OpenAI, AzureOpenAI]
     _model: str
@@ -29,8 +29,9 @@ class _TextEmbedding(EmbeddingSupport, abc.ABC):
             )
 
     @tenacity.retry(wait=tenacity.wait_fixed(0.1), stop=tenacity.stop_after_delay(3))
-    def generate_text_embedding(self, text: str, **kwargs) -> EmbeddingResponse:
-        """Generate text embedding
+    def generate_text_embedding(self, text: str, **kwargs: Any) -> EmbeddingResponse:
+        """
+        Generate text embedding.
 
         Args:
             text: The text to generate the embedding for
@@ -40,7 +41,7 @@ class _TextEmbedding(EmbeddingSupport, abc.ABC):
             The embedding response
         """
         embedding_obj = self._client.embeddings.create(input=text, model=self._model, **kwargs)
-        embedding_response = EmbeddingResponse(
+        return EmbeddingResponse(
             model=embedding_obj.model,
             object=embedding_obj.object,
             data=[
@@ -55,4 +56,3 @@ class _TextEmbedding(EmbeddingSupport, abc.ABC):
                 total_tokens=embedding_obj.usage.total_tokens,
             ),
         )
-        return embedding_response

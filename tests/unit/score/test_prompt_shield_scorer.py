@@ -1,19 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import MutableSequence
+from collections.abc import MutableSequence
 from unittest.mock import Mock
 
 import pytest
 from unit.mocks import get_sample_conversations
 
-from pyrit.models import PromptRequestPiece
+from pyrit.models import Message, MessagePiece
 from pyrit.score import PromptShieldScorer
 
 
 @pytest.fixture
-def sample_conversations() -> MutableSequence[PromptRequestPiece]:
-    return get_sample_conversations()
+def sample_conversations() -> MutableSequence[MessagePiece]:
+    conversations = get_sample_conversations()
+    return Message.flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -39,3 +40,9 @@ def sample_delineated_prompt_as_str() -> str:
 
 def test_prompt_shield_scorer_parsing(promptshield_scorer: PromptShieldScorer, sample_response_json_str: str):
     assert any(promptshield_scorer._parse_response_to_boolean_list(sample_response_json_str))
+
+
+def test_prompt_shield_scorer_parsing_without_documents_analysis(promptshield_scorer: PromptShieldScorer):
+    response_json_str = '{"userPromptAnalysis":{"attackDetected":false}}'
+    result = promptshield_scorer._parse_response_to_boolean_list(response_json_str)
+    assert result == [False, False]
