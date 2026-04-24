@@ -596,8 +596,6 @@ def test_llm_based_converters_supported_types(
 def test_llm_based_converters_validate_target_requirements(setup_memory, converter_class, converter_args):
     """Ensure LLM-based converters validate their target via TARGET_REQUIREMENTS on construction."""
     converter_args["converter_target"] = setup_memory
-    with patch(
-        "pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"
-    ) as mock_validate:
+    with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
         converter_class(**converter_args)
     mock_validate.assert_called_once_with(target=setup_memory)

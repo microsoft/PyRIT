@@ -52,6 +52,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     Scorer,
@@ -64,6 +65,13 @@ from pyrit.score.score_utils import normalize_score_to_float
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 logger = logging.getLogger(__name__)
+
+# TAP sets a system prompt on its adversarial target and drives a multi-turn dialogue through it.
+# Both capabilities must be natively supported — adaptation would silently change the semantics
+# (e.g. history-squash normalization would collapse the escalation into a single turn).
+_ADVERSARIAL_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
+)
 
 
 class TAPAttackScoringConfig(AttackScoringConfig):
@@ -1326,17 +1334,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._adversarial_chat = attack_adversarial_config.target
         # TAP sets a system prompt on the adversarial target and drives a
         # multi-turn dialogue through it; both capabilities must be native.
-        adversarial_config = self._adversarial_chat.configuration
-        missing_native = [
-            capability.value
-            for capability in (CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT)
-            if not adversarial_config.includes(capability=capability)
-        ]
-        if missing_native:
-            raise ValueError(
-                "TreeOfAttacksWithPruningAttack requires an adversarial target that natively supports: "
-                + ", ".join(missing_native)
-            )
+        # (The class-level ``TARGET_REQUIREMENTS`` inherited from ``AttackStrategy``
+        # only covers ``objective_target``; this is a separate target.)
+        try:
+            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+        except ValueError as exc:
+            raise ValueError(f"TreeOfAttacksWithPruningAttack {exc}") from exc
 
         # Load system prompts
         self._adversarial_chat_system_prompt_path = (

@@ -297,9 +297,7 @@ class TestScenarioInitialization2:
         """Test that initialize_async validates objective_target against TARGET_REQUIREMENTS."""
         scenario = ConcreteScenario(name="Test Scenario", version=1)
 
-        with patch(
-            "pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"
-        ) as mock_validate:
+        with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
             await scenario.initialize_async(objective_target=mock_objective_target)
 
         mock_validate.assert_called_once_with(target=mock_objective_target)

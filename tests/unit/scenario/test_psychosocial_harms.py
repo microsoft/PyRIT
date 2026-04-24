@@ -344,18 +344,16 @@ class TestPsychosocialTargetRequirements:
         """initialize_async must delegate capability validation to TARGET_REQUIREMENTS.validate."""
         with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
             scenario = Psychosocial(objective_scorer=mock_objective_scorer)
-            with patch(
-                "pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"
-            ) as mock_validate:
+            with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
                 await scenario.initialize_async(
                     objective_target=mock_objective_target,
                     dataset_config=mock_dataset_config,
                 )
 
             # Scorers / attacks also validate; ensure the scenario itself validated objective_target.
-            assert any(
-                call.kwargs.get("target") is mock_objective_target for call in mock_validate.call_args_list
-            ), "Expected TARGET_REQUIREMENTS.validate to be called with objective_target"
+            assert any(call.kwargs.get("target") is mock_objective_target for call in mock_validate.call_args_list), (
+                "Expected TARGET_REQUIREMENTS.validate to be called with objective_target"
+            )
 
     @pytest.mark.asyncio
     async def test_initialize_async_rejects_target_missing_editable_history(
