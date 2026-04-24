@@ -9,6 +9,8 @@ import zipfile
 from enum import Enum
 from pathlib import Path
 
+from huggingface_hub import hf_hub_download
+
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -37,7 +39,14 @@ class VLGuardCategory(Enum):
 
 
 class VLGuardSubcategory(Enum):
-    """Subcategories in the VLGuard dataset, nested under the main categories."""
+    """
+    Subcategories in the VLGuard dataset. Each subcategory belongs to a specific category.
+
+    privacy: personal data
+    risky behavior: professional advice, political, sexually explicit, violence
+    deception: disinformation
+    discrimination: sex, race, other
+    """
 
     PERSONAL_DATA = "personal data"
     PROFESSIONAL_ADVICE = "professional advice"
@@ -263,8 +272,6 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         Returns:
             tuple[list[dict], Path]: Tuple of (metadata list, image directory path).
         """
-        from huggingface_hub import hf_hub_download
-
         cache_dir = DB_DATA_PATH / "seed-prompt-entries" / "vlguard"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
