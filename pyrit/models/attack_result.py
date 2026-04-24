@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Optional, TypeVar
 from pyrit.models.strategy_result import StrategyResult
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from pyrit.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.conversation_reference import ConversationReference
     from pyrit.models.message_piece import MessagePiece
@@ -80,6 +82,12 @@ class AttackResult(StrategyResult):
 
     # Optional reason for the outcome, providing additional context
     outcome_reason: Optional[str] = None
+
+    # Wall-clock time the result was persisted. Hydrated from
+    # AttackResultEntries.timestamp when loaded from memory; None when the
+    # AttackResult has never been persisted. Downstream consumers (e.g. the
+    # backend mapper) use this to populate user-facing creation times.
+    timestamp: Optional[datetime] = None
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = field(default_factory=set)
