@@ -64,15 +64,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 
 
-def _converter_classes_on_attack(ar: AttackResult) -> set[str]:
-    """Return the set of converter class_name values for the attack (lowercased)."""
-    aid = ar.get_attack_strategy_identifier()
-    if not aid:
-        return set()
-    converter_ids = aid.get_child_list("request_converters")
-    return {c.class_name.lower() for c in converter_ids}
-
-
 class AttackService:
     """
     Service for managing attacks.
@@ -141,23 +132,14 @@ class AttackService:
         # consistent.
         effective_converter_types = converter_types if converter_types else None
 
-        # For converter_types, push AND-logic down to the DB for "all" mode and for
-        # the degenerate cases (None, single entry). For "any" mode with 2+
-        # entries, skip the DB filter and apply OR-matching in Python below.
-        push_converter_filter = (
-            effective_converter_types is None or len(effective_converter_types) == 1 or converter_types_match == "all"
-        )
         attack_results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
             attack_classes=attack_types if attack_types else None,
-            converter_classes=effective_converter_types if push_converter_filter else None,
+            converter_classes=effective_converter_types,
+            converter_classes_match=converter_types_match,
             has_converters=has_converters,
         )
-
-        if not push_converter_filter:
-            requested = {c.lower() for c in effective_converter_types or []}
-            attack_results = [ar for ar in attack_results if _converter_classes_on_attack(ar) & requested]
 
         filtered: list[AttackResult] = []
         for ar in attack_results:

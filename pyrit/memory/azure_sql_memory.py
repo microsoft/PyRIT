@@ -7,7 +7,7 @@ import struct
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast
 
 from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
@@ -370,6 +370,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         property_path: str,
         array_element_path: str | None = None,
         array_to_match: Sequence[str],
+        match_mode: Literal["all", "any"] = "all",
     ) -> Any:
         """
         Return an Azure SQL DB condition for matching an array at a given path within a JSON object.
@@ -379,8 +380,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             property_path (str): The JSON path for the target array.
             array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
-                For a match, ALL values in this array must be present in the JSON array.
-                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+                Combination semantics for multiple entries are controlled by ``match_mode``.
+                If ``array_to_match`` is empty, the condition matches only if the target is also an
+                empty array or None (overloaded "absence" semantics, regardless of ``match_mode``).
+            match_mode (Literal["all", "any"]): How to combine multiple entries in ``array_to_match``.
+                ``"all"`` (default) requires every listed value to be present in the JSON array.
+                ``"any"`` requires at least one listed value to be present.
 
         Returns:
             Any: A database-specific SQLAlchemy condition.
@@ -414,8 +419,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
             bindparams_dict[mv_param] = match_value.lower()
 
-        combined = " AND ".join(conditions)
-        return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND {combined}""").bindparams(**bindparams_dict)
+        joiner = " OR " if match_mode == "any" else " AND "
+        combined = joiner.join(conditions)
+        return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """

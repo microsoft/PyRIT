@@ -12,7 +12,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union
 
 from sqlalchemy import MetaData, and_, not_, or_
 from sqlalchemy.engine.base import Engine
@@ -251,6 +251,7 @@ class MemoryInterface(abc.ABC):
         property_path: str,
         array_element_path: str | None = None,
         array_to_match: Sequence[str],
+        match_mode: Literal["all", "any"] = "all",
     ) -> Any:
         """
         Return a database-specific condition for matching an array at a given path within a JSON object.
@@ -260,8 +261,13 @@ class MemoryInterface(abc.ABC):
             property_path (str): The JSON path for the target array.
             array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
-                For a match, ALL values in this array must be present in the JSON array.
-                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+                Combination semantics for multiple entries are controlled by ``match_mode``.
+                If ``array_to_match`` is empty, the condition matches only if the target is also an
+                empty array or None (overloaded "absence" semantics, regardless of ``match_mode``).
+            match_mode (Literal["all", "any"]): How to combine multiple entries in ``array_to_match``.
+                ``"all"`` (default) requires every listed value to be present in the JSON array.
+                ``"any"`` requires at least one listed value to be present. Ignored when
+                ``array_to_match`` has fewer than 2 entries or is empty.
 
         Returns:
             Any: A database-specific SQLAlchemy condition.
@@ -1469,6 +1475,7 @@ class MemoryInterface(abc.ABC):
         attack_class: Optional[str] = None,
         attack_classes: Optional[Sequence[str]] = None,
         converter_classes: Optional[Sequence[str]] = None,
+        converter_classes_match: Literal["all", "any"] = "all",
         has_converters: Optional[bool] = None,
         targeted_harm_categories: Optional[Sequence[str]] = None,
         labels: Optional[dict[str, str | Sequence[str]]] = None,
@@ -1492,10 +1499,15 @@ class MemoryInterface(abc.ABC):
                 attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
                 case-sensitive). An empty sequence applies no filter. Defaults to None.
             converter_classes (Optional[Sequence[str]], optional): Filter by converter class names.
-                Returns only attacks that used ALL specified converters (AND logic, case-insensitive).
+                Combination semantics for multiple entries are controlled by ``converter_classes_match``.
                 An empty sequence filters to attacks that used no converters; ``None`` applies no
                 filter. To filter by presence/absence of any converter explicitly, use the
                 ``has_converters`` parameter instead. Defaults to None.
+            converter_classes_match (Literal["all", "any"]): How to combine multiple entries in
+                ``converter_classes``. ``"all"`` (default) matches attacks that used every listed
+                converter (AND, case-insensitive). ``"any"`` matches attacks that used at least one
+                listed converter (OR, case-insensitive). Ignored when ``converter_classes`` has
+                fewer than 2 entries or is empty.
             has_converters (Optional[bool], optional): Filter by converter presence.
                 ``True`` returns only attacks that used at least one converter. ``False`` returns
                 only attacks that used no converters. ``None`` applies no filter. Defaults to None.
@@ -1565,7 +1577,8 @@ class MemoryInterface(abc.ABC):
             )
 
         if converter_classes is not None:
-            # Non-empty sequence: filter to attacks that used ALL listed converters.
+            # Non-empty sequence: filter to attacks that used ALL (or ANY, depending on
+            # converter_classes_match) of the listed converters.
             # Empty sequence: filter to attacks that used NO converters.
             # None: no filter.
             conditions.append(
@@ -1574,6 +1587,7 @@ class MemoryInterface(abc.ABC):
                     property_path="$.children.attack_technique.children.attack.children.request_converters",
                     array_element_path="$.class_name",
                     array_to_match=converter_classes,
+                    match_mode=converter_classes_match,
                 )
             )
 

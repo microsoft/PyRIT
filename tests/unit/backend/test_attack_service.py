@@ -22,7 +22,6 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.services.attack_service import (
     AttackService,
-    _converter_classes_on_attack,
     get_attack_service,
 )
 from pyrit.identifiers import ComponentIdentifier
@@ -319,9 +318,10 @@ class TestListAttacks:
 
         assert len(result.items) == 1
         assert result.items[0].conversation_id == "attack-1"
-        # Verify converter_types was forwarded to the memory layer
+        # Verify converter_types was forwarded to the memory layer with default "all" mode
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
+        assert call_kwargs["converter_classes_match"] == "all"
 
     @pytest.mark.asyncio
     async def test_list_attacks_converter_match_all_explicit_pushes_to_memory(
@@ -338,12 +338,17 @@ class TestListAttacks:
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
+        assert call_kwargs["converter_classes_match"] == "all"
 
     @pytest.mark.asyncio
     async def test_list_attacks_converter_match_any_single_converter_pushes_to_memory(
         self, attack_service, mock_memory
     ) -> None:
-        """Degenerate case: converter_types_match='any' with one converter still pushes to memory."""
+        """Degenerate case: converter_types_match='any' with one converter still pushes to memory.
+
+        The memory layer ignores the match mode when the list has fewer than 2 entries, but the
+        service still forwards the mode verbatim (memory is authoritative for that optimization).
+        """
         mock_memory.get_attack_results.return_value = []
         mock_memory.get_message_pieces.return_value = []
 
@@ -354,54 +359,27 @@ class TestListAttacks:
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter"]
+        assert call_kwargs["converter_classes_match"] == "any"
 
     @pytest.mark.asyncio
-    async def test_list_attacks_converter_match_any_filters_in_python(self, attack_service, mock_memory) -> None:
-        """converter_types_match='any' with 2+ converters skips DB pushdown and filters in Python.
+    async def test_list_attacks_converter_match_any_pushes_to_memory(self, attack_service, mock_memory) -> None:
+        """converter_types_match='any' with 2+ converters pushes down to the DB via memory.
 
-        Fixture: attack-1 has Base64 only, attack-2 has ROT13 only, attack-3 has neither.
-        Request ['Base64Converter', 'ROT13Converter'] with any -> attack-1 and attack-2 returned.
+        Previously this branch loaded every row matching other filters into Python and filtered
+        with a set intersection, which was O(total rows) per query. The OR-matching is now
+        expressed as a DB predicate so only matching rows are returned and pagination is honored.
         """
-
-        def _ar_with_converters(conv_id: str, converter_class_names: list[str]) -> AttackResult:
-            ar = make_attack_result(conversation_id=conv_id, name=f"Attack {conv_id}")
-            ar.atomic_attack_identifier = build_atomic_attack_identifier(
-                attack_identifier=ComponentIdentifier(
-                    class_name=f"Attack {conv_id}",
-                    class_module="pyrit.backend",
-                    children={
-                        "request_converters": [
-                            ComponentIdentifier(
-                                class_name=name,
-                                class_module="pyrit.converters",
-                                params={
-                                    "supported_input_types": ("text",),
-                                    "supported_output_types": ("text",),
-                                },
-                            )
-                            for name in converter_class_names
-                        ],
-                    },
-                ),
-            )
-            return ar
-
-        ar1 = _ar_with_converters("attack-1", ["Base64Converter"])
-        ar2 = _ar_with_converters("attack-2", ["ROT13Converter"])
-        ar3 = _ar_with_converters("attack-3", ["LeetspeakConverter"])
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
+        mock_memory.get_attack_results.return_value = []
         mock_memory.get_message_pieces.return_value = []
 
-        result = await attack_service.list_attacks_async(
+        await attack_service.list_attacks_async(
             converter_types=["Base64Converter", "ROT13Converter"],
             converter_types_match="any",
         )
 
-        # attack-3 is filtered out in Python; attack-1 and attack-2 remain
-        assert {item.conversation_id for item in result.items} == {"attack-1", "attack-2"}
-        # Memory was called WITHOUT converter_classes so pushdown is skipped
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert "converter_classes" not in call_kwargs or call_kwargs["converter_classes"] is None
+        assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
+        assert call_kwargs["converter_classes_match"] == "any"
 
     @pytest.mark.asyncio
     async def test_list_attacks_filters_by_min_turns(self, attack_service, mock_memory) -> None:
@@ -2375,16 +2353,6 @@ class TestAttackServiceAdditionalCoverage:
         )
 
         assert dup_piece._role == "simulated_assistant"
-
-    def test_converter_classes_on_attack_returns_empty_when_no_strategy_identifier(self):
-        """_converter_classes_on_attack returns an empty set when the attack has no strategy identifier."""
-        ar = AttackResult(
-            conversation_id="conv-1",
-            objective="obj",
-            atomic_attack_identifier=None,
-            outcome=AttackOutcome.UNDETERMINED,
-        )
-        assert _converter_classes_on_attack(ar) == set()
 
 
 class TestAddMessageGuards:

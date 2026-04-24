@@ -1364,6 +1364,65 @@ def test_get_attack_results_converter_classes_and_logic(sqlite_instance: MemoryI
     assert conv_ids == {"conv_3", "conv_4"}
 
 
+def test_get_attack_results_converter_classes_any_logic(sqlite_instance: MemoryInterface):
+    """converter_classes_match='any' returns rows that match at least one listed converter."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
+    ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
+    ar4 = _make_attack_result_with_identifier("conv_4", "Attack", ["UrlConverter"])
+    ar5 = _make_attack_result_with_identifier("conv_5", "Attack")  # No converters
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4, ar5])
+
+    results = sqlite_instance.get_attack_results(
+        converter_classes=["Base64Converter", "ROT13Converter"],
+        converter_classes_match="any",
+    )
+    conv_ids = {r.conversation_id for r in results}
+    # conv_1, conv_2, conv_3 all have at least one of the listed converters; conv_4 and conv_5 don't
+    assert conv_ids == {"conv_1", "conv_2", "conv_3"}
+
+
+def test_get_attack_results_converter_classes_any_logic_case_insensitive(sqlite_instance: MemoryInterface):
+    """converter_classes_match='any' preserves case-insensitive matching (parity with 'all' mode)."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results = sqlite_instance.get_attack_results(
+        converter_classes=["base64converter", "ROT13CONVERTER"],
+        converter_classes_match="any",
+    )
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
+def test_get_attack_results_converter_classes_any_logic_single_entry_degenerate(sqlite_instance: MemoryInterface):
+    """converter_classes_match='any' with a single entry is equivalent to 'all' with that entry."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results_any = sqlite_instance.get_attack_results(
+        converter_classes=["Base64Converter"], converter_classes_match="any"
+    )
+    results_all = sqlite_instance.get_attack_results(
+        converter_classes=["Base64Converter"], converter_classes_match="all"
+    )
+    assert {r.conversation_id for r in results_any} == {"conv_1"}
+    assert {r.conversation_id for r in results_any} == {r.conversation_id for r in results_all}
+
+
+def test_get_attack_results_converter_classes_any_logic_empty_preserves_absence_overload(
+    sqlite_instance: MemoryInterface,
+):
+    """converter_classes=[] with match_mode='any' still means 'no converters' (overload is mode-agnostic)."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
+    ar2 = _make_attack_result_with_identifier("conv_2", "Attack")  # No converters
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results = sqlite_instance.get_attack_results(converter_classes=[], converter_classes_match="any")
+    assert {r.conversation_id for r in results} == {"conv_2"}
+
+
 def test_get_attack_results_converter_classes_case_insensitive(sqlite_instance: MemoryInterface):
     """Test that converter class matching is case-insensitive."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
