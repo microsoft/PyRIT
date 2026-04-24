@@ -492,6 +492,55 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
 
 
 @pytest.mark.asyncio
+async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
+    """Test explicit empty objectives are rejected for non-empty message batches."""
+    scorer = MockScorer()
+    message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
+
+    with pytest.raises(ValueError, match="objectives"):
+        await scorer.score_prompts_batch_async(messages=[message], objectives=[])
+
+
+@pytest.mark.asyncio
+async def test_score_image_batch_async_rejects_explicit_empty_objectives():
+    """Test explicit empty objectives are rejected for non-empty image batches."""
+    scorer = MockScorer()
+
+    with pytest.raises(ValueError, match="objectives"):
+        await scorer.score_image_batch_async(image_paths=["test_image.png"], objectives=[])
+
+
+@pytest.mark.asyncio
+async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_central_database):
+    """Test that objectives=None defaults to empty-string objectives matching message count."""
+    scorer = MockScorer()
+
+    with patch.object(scorer, "score_async", new_callable=AsyncMock) as mock_score_async:
+        mock_score_async.return_value = [MagicMock()]
+        message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
+
+        await scorer.score_prompts_batch_async(messages=[message])
+
+        _, call_kwargs = mock_score_async.call_args
+        assert call_kwargs["objective"] == ""
+
+
+@pytest.mark.asyncio
+async def test_score_image_batch_async_works_when_objectives_none(patch_central_database):
+    """Test that objectives=None omits objectives from the batch call."""
+    scorer = MockScorer()
+
+    with patch.object(scorer, "score_image_async", new_callable=AsyncMock) as mock_score_image:
+        mock_score_image.return_value = [MagicMock()]
+
+        await scorer.score_image_batch_async(image_paths=["test.png"])
+
+        mock_score_image.assert_called_once()
+        _, call_kwargs = mock_score_image.call_args
+        assert "objective" not in call_kwargs
+
+
+@pytest.mark.asyncio
 async def test_score_response_async_empty_scorers():
     """Test that score_response_async returns empty list when no scorers provided."""
     response = Message(
