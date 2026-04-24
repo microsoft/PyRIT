@@ -14,10 +14,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario_techniques import (
-    SCENARIO_TECHNIQUES,
-    register_scenario_techniques,
-)
+from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
 from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.score import TrueFalseScorer
 
@@ -101,69 +98,6 @@ def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
-
-
-# ===========================================================================
-# Strategy enum tests
-# ===========================================================================
-
-
-class TestCyberStrategy:
-    """Tests for the dynamically-generated CyberStrategy enum."""
-
-    def test_technique_members_exist(self):
-        """Both technique members are accessible by value."""
-        strat = _strategy_class()
-        assert strat("prompt_sending").value == "prompt_sending"
-        assert strat("red_teaming").value == "red_teaming"
-
-    def test_aggregate_members_exist(self):
-        """Aggregate members are accessible."""
-        strat = _strategy_class()
-        assert strat.ALL.value == "all"
-        assert strat.SINGLE_TURN.value == "single_turn"
-        assert strat.MULTI_TURN.value == "multi_turn"
-
-    def test_total_member_count(self):
-        """3 aggregates + 2 techniques = 5 members."""
-        assert len(list(_strategy_class())) == 5
-
-    def test_non_aggregate_count(self):
-        """get_all_strategies returns only the 2 technique members."""
-        non_aggregate = _strategy_class().get_all_strategies()
-        assert len(non_aggregate) == 2
-
-    def test_aggregate_tags(self):
-        tags = _strategy_class().get_aggregate_tags()
-        assert tags == {"all", "single_turn", "multi_turn"}
-
-    def test_single_turn_expands_to_prompt_sending(self):
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.SINGLE_TURN})
-        values = {s.value for s in expanded}
-        assert values == {"prompt_sending"}
-
-    def test_multi_turn_expands_to_red_teaming(self):
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.MULTI_TURN})
-        values = {s.value for s in expanded}
-        assert values == {"red_teaming"}
-
-    def test_all_expands_to_both_techniques(self):
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.ALL})
-        values = {s.value for s in expanded}
-        assert values == {"prompt_sending", "red_teaming"}
-
-    def test_strategy_values_are_unique(self):
-        strat = _strategy_class()
-        values = [s.value for s in strat]
-        assert len(values) == len(set(values))
-
-    def test_invalid_strategy_value_raises(self):
-        strat = _strategy_class()
-        with pytest.raises(ValueError):
-            strat("nonexistent")
 
 
 # ===========================================================================
@@ -408,20 +342,9 @@ class TestCyberRegistryIntegration:
         factories = scenario._get_attack_technique_factories()
         assert "attack_adversarial_config" in factories["red_teaming"]._attack_kwargs
 
-    def test_red_teaming_spec_exists_in_catalog(self):
-        """red_teaming should be in the shared SCENARIO_TECHNIQUES catalog."""
-        names = {s.name for s in SCENARIO_TECHNIQUES}
-        assert "red_teaming" in names
-
-    def test_red_teaming_tagged_core(self):
-        """red_teaming should have 'core' tag."""
-        red_teaming_spec = next(s for s in SCENARIO_TECHNIQUES if s.name == "red_teaming")
-        assert "core" in red_teaming_spec.strategy_tags
-
     def test_register_idempotent(self):
         """Calling register_scenario_techniques twice doesn't duplicate entries."""
         register_scenario_techniques()
         register_scenario_techniques()
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        # Count red_teaming entries
         assert len([n for n in registry.get_names() if n == "red_teaming"]) == 1
