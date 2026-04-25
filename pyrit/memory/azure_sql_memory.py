@@ -65,6 +65,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_container_url: Optional[str] = None,
         results_sas_token: Optional[str] = None,
         verbose: bool = False,
+        skip_schema_migration: bool = False,
     ):
         """
         Initialize an Azure SQL Memory backend.
@@ -77,6 +78,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             results_sas_token (Optional[str]): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
+            skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
         """
         self._connection_string = default_values.get_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING, passed_value=connection_string
@@ -103,7 +105,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._enable_azure_authorization()
 
         self.SessionFactory = sessionmaker(bind=self.engine)
-        self._create_tables_if_not_exist()
+        if not skip_schema_migration:
+            self._run_schema_migration()
 
         super().__init__()
 
@@ -214,23 +217,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
             # add the encoded token
             cparams["attrs_before"] = {self.SQL_COPT_SS_ACCESS_TOKEN: packed_azure_token}
-
-    def _create_tables_if_not_exist(self) -> None:
-        """
-        Create all tables defined in the Base metadata, if they don't already exist in the database.
-
-        Raises:
-            Exception: If there's an issue creating the tables in the database.
-            RuntimeError: If the engine is not initialized.
-        """
-        try:
-            # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
-            if self.engine is None:
-                raise RuntimeError("Engine is not initialized")
-            Base.metadata.create_all(self.engine, checkfirst=True)
-        except Exception as e:
-            logger.exception(f"Error during table creation: {e}")
-            raise
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
@@ -798,18 +784,3 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 session.rollback()
                 logger.exception(f"Error updating entries: {e}")
                 raise
-
-    def reset_database(self) -> None:
-        """
-        Drop and recreate existing tables.
-
-        Raises:
-            RuntimeError: If the engine is not initialized.
-        """
-        # Drop all existing tables
-        if self.engine is None:
-            raise RuntimeError("Engine is not initialized")
-
-        Base.metadata.drop_all(self.engine)
-        # Recreate the tables
-        Base.metadata.create_all(self.engine, checkfirst=True)

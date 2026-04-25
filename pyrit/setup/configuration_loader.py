@@ -100,6 +100,7 @@ class ConfigurationLoader(YamlLoadable):
     initialization_scripts: Optional[list[str]] = None
     env_files: Optional[list[str]] = None
     silent: bool = False
+    check_schema: bool = True
     operator: Optional[str] = None
     operation: Optional[str] = None
 
@@ -189,6 +190,7 @@ class ConfigurationLoader(YamlLoadable):
         initializers: Optional[Sequence[Union[str, dict[str, Any]]]] = None,
         initialization_scripts: Optional[Sequence[str]] = None,
         env_files: Optional[Sequence[str]] = None,
+        check_schema: Optional[bool] = None,
     ) -> "ConfigurationLoader":
         """
         Load configuration with optional overrides.
@@ -208,6 +210,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
+            check_schema: Override for schema migration check. True to run, False to skip.
 
         Returns:
             A merged ConfigurationLoader instance.
@@ -227,6 +230,7 @@ class ConfigurationLoader(YamlLoadable):
             "initialization_scripts": None,  # None = use defaults
             "env_files": None,  # None = use defaults
             "silent": False,
+            "check_schema": True,
         }
 
         # 1. Try loading default config file if it exists
@@ -245,6 +249,7 @@ class ConfigurationLoader(YamlLoadable):
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
                 config_data["silent"] = default_config.silent
+                config_data["check_schema"] = default_config.check_schema
                 if default_config.operator:
                     config_data["operator"] = default_config.operator
                 if default_config.operation:
@@ -268,6 +273,7 @@ class ConfigurationLoader(YamlLoadable):
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
             config_data["silent"] = explicit_config.silent
+            config_data["check_schema"] = explicit_config.check_schema
             if explicit_config.operator:
                 config_data["operator"] = explicit_config.operator
             if explicit_config.operation:
@@ -292,6 +298,9 @@ class ConfigurationLoader(YamlLoadable):
 
         if env_files is not None:
             config_data["env_files"] = list(env_files)
+
+        if check_schema is not None:
+            config_data["check_schema"] = check_schema
 
         return ConfigurationLoader.from_dict(config_data)
 
@@ -418,6 +427,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers=resolved_initializers if resolved_initializers else None,
             env_files=resolved_env_files,
             silent=self.silent,
+            check_schema=self.check_schema,
         )
 
 
