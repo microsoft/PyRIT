@@ -60,6 +60,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         *,
         db_path: Optional[Union[Path, str]] = None,
         verbose: bool = False,
+        skip_schema_migration: bool = False,
     ):
         """
         Initialize the SQLiteMemory instance.
@@ -68,6 +69,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             db_path (Optional[Union[Path, str]]): Path to the SQLite database file.
                 Defaults to "pyrit.db".
             verbose (bool): Whether to enable verbose logging.
+                Defaults to False.
+            skip_schema_migration (bool): Whether to skip schema migration.
                 Defaults to False.
         """
         super().__init__()
@@ -80,7 +83,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine)
-        self._create_tables_if_not_exist()
+        if not skip_schema_migration:
+            self._run_schema_migration()
 
     def _init_storage_io(self) -> None:
         # Handles disk-based storage for SQLite local memory.
@@ -126,23 +130,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             return engine
         except SQLAlchemyError as e:
             logger.exception(f"Error creating the engine for the database: {e}")
-            raise
-
-    def _create_tables_if_not_exist(self) -> None:
-        """
-        Create all tables defined in the Base metadata, if they don't already exist in the database.
-
-        Raises:
-            Exception: If there's an issue creating the tables in the database.
-            RuntimeError: If the engine is not initialized.
-        """
-        try:
-            # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
-            if self.engine is None:
-                raise RuntimeError("Engine is not initialized")
-            Base.metadata.create_all(self.engine, checkfirst=True)
-        except Exception as e:
-            logger.exception(f"Error during table creation: {e}")
             raise
 
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
@@ -439,19 +426,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             Session: A SQLAlchemy session bound to the engine.
         """
         return self.SessionFactory()
-
-    def reset_database(self) -> None:
-        """
-        Drop and recreates all tables in the database.
-
-        Raises:
-            RuntimeError: If the engine is not initialized.
-        """
-        if self.engine is None:
-            raise RuntimeError("Engine is not initialized")
-
-        Base.metadata.drop_all(self.engine)
-        Base.metadata.create_all(self.engine)
 
     def dispose_engine(self) -> None:
         """

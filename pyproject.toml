@@ -28,6 +28,7 @@ classifiers = [
 requires-python = ">=3.10, <3.15"
 dependencies = [
     "aiofiles>=24,<25",
+    "alembic>=1.16.0",
     "appdirs>=1.4.0",
     "art>=6.5.0",
     "av>=14.0.0",
@@ -201,6 +202,8 @@ include = ["pyrit", "pyrit.*"]
 [tool.setuptools.package-data]
 pyrit = [
     "backend/frontend/**/*",
+    "memory/alembic/**/*",
+    "memory/alembic.ini",
     "py.typed"
 ]
 
