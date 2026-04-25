@@ -327,7 +327,7 @@ class Jailbreak(Scenario):
             raise ValueError(f"Attack cannot be None!")
 
         # Extract template stem from whichever source was provided
-        template_stem = Path(jailbreak_template_path or jailbreak_template_name).stem
+        template_stem = Path(str(jailbreak_template_path or jailbreak_template_name)).stem
 
         return AtomicAttack(
             atomic_attack_name=f"jailbreak_{template_stem}",

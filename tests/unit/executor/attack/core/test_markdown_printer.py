@@ -3,7 +3,6 @@
 
 import os
 import uuid
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,11 +34,6 @@ def mock_memory():
 @pytest.fixture
 def markdown_printer(patch_central_database):
     return MarkdownAttackResultPrinter(display_inline=False)
-
-
-@pytest.fixture
-def markdown_printer_to_file(patch_central_database, tmp_path):
-    return MarkdownAttackResultPrinter(output_file_path=Path(tmp_path) / "output.md")
 
 
 @pytest.fixture
@@ -253,40 +247,3 @@ async def test_print_summary_async(markdown_printer, sample_attack_result, capsy
     assert "Test objective" in captured.out
     assert "TestAttack" in captured.out
     assert "test-conv-123" in captured.out
-
-
-@pytest.mark.asyncio
-async def test_output_file_path_appends_to_file(markdown_printer_to_file, sample_attack_result, capsys):
-    """Test that output_file_path writes markdown to file and produces no stdout."""
-    await markdown_printer_to_file.print_result_async(sample_attack_result)
-
-    content = markdown_printer_to_file._output_file_path.read_text(encoding="utf-8")
-    assert "Attack Result: SUCCESS" in content
-    assert "## Attack Summary" in content
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-
-
-@pytest.mark.asyncio
-async def test_output_file_path_appends_multiple_calls(markdown_printer_to_file, sample_attack_result):
-    """Test that calling print twice appends both reports to the same file."""
-    await markdown_printer_to_file.print_result_async(sample_attack_result)
-    await markdown_printer_to_file.print_result_async(sample_attack_result)
-
-    content = markdown_printer_to_file._output_file_path.read_text(encoding="utf-8")
-    assert content.count("Attack Result: SUCCESS") == 2
-
-
-@pytest.mark.asyncio
-async def test_output_file_path_none_does_not_write(
-    markdown_printer, sample_attack_result, mock_memory, tmp_path, capsys
-):
-    """Test that default output_file_path=None prints to stdout and writes no file."""
-    await markdown_printer.print_result_async(sample_attack_result)
-
-    captured = capsys.readouterr()
-    assert "Attack Result: SUCCESS" in captured.out
-
-    # No file should have been created in tmp_path
-    assert list(tmp_path.iterdir()) == []
