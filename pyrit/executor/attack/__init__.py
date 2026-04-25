@@ -49,6 +49,8 @@ from pyrit.executor.attack.single_turn import (
     RolePlayPaths,
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
+    SingleTurnCrescendoAttack,
+    SingleTurnCrescendoParameters,
     SkeletonKeyAttack,
 )
 
@@ -75,6 +77,8 @@ __all__ = [
     "ManyShotJailbreakAttack",
     "RolePlayAttack",
     "RolePlayPaths",
+    "SingleTurnCrescendoAttack",
+    "SingleTurnCrescendoParameters",
     "SkeletonKeyAttack",
     "ConversationSession",
     "MultiTurnAttackStrategy",

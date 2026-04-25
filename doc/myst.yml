@@ -84,6 +84,7 @@ project:
                 - file: code/executor/attack/many_shot_jailbreak_attack.ipynb
                 - file: code/executor/attack/multi_prompt_sending_attack.ipynb
                 - file: code/executor/attack/role_play_attack.ipynb
+                - file: code/executor/attack/single_turn_crescendo_attack.ipynb
                 - file: code/executor/attack/skeleton_key_attack.ipynb
                 - file: code/executor/attack/tap_attack.ipynb
                 - file: code/executor/attack/violent_durian_attack.ipynb

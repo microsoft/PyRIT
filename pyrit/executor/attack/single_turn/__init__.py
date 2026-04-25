@@ -12,6 +12,10 @@ from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
 )
+from pyrit.executor.attack.single_turn.single_turn_crescendo import (
+    SingleTurnCrescendoAttack,
+    SingleTurnCrescendoParameters,
+)
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 
 __all__ = [
@@ -23,5 +27,7 @@ __all__ = [
     "ManyShotJailbreakAttack",
     "RolePlayAttack",
     "RolePlayPaths",
+    "SingleTurnCrescendoAttack",
+    "SingleTurnCrescendoParameters",
     "SkeletonKeyAttack",
 ]
