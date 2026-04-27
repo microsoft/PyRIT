@@ -363,7 +363,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         """
         # If output to file, set image path relative to output path
         start_path = os.path.dirname(self._output_file_path) if self._output_file_path else "."
-        relative_path = os.path.relpath(path=image_path, start=start_path)
+        try:
+            relative_path = os.path.relpath(path=image_path, start=start_path)
+        except ValueError:
+            # os.path.relpath raises ValueError on Windows when paths are on different drives
+            relative_path = image_path
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
 

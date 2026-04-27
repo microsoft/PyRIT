@@ -2,11 +2,26 @@
 # Licensed under the MIT license.
 
 import logging
+from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PIL import Image
 
 from pyrit.common.display_response import display_image_response
+
+
+@pytest.fixture
+def sample_image_bytes():
+    """Sample RGB image for testing with configurable format and size."""
+
+    def _create_image(format="PNG", size=(200, 200)):  # noqa: A002
+        img = Image.new("RGB", size, color=(125, 125, 125))
+        img_bytes = BytesIO()
+        img.save(img_bytes, format=format)
+        return img_bytes.getvalue()
+
+    return _create_image
 
 
 @pytest.fixture()
@@ -64,6 +79,29 @@ async def test_display_image_reads_and_displays(mock_display, mock_image, mock_i
     _mock_central_memory.results_storage_io.read_file.assert_awaited_once_with("path/to/img.png")
     mock_image.open.assert_called_once()
     mock_display.assert_called_once_with(mock_img_obj)
+
+
+@pytest.mark.asyncio
+@patch("pyrit.common.display_response.is_in_ipython_session", return_value=True)
+@patch("pyrit.common.display_response.display", create=True)
+async def test_display_image_applies_safe_outputs(mock_display, mock_ipython, _mock_central_memory, sample_image_bytes):
+    original_size = (200, 100)
+    image_bytes = sample_image_bytes(format="PNG", size=original_size)
+    _mock_central_memory.results_storage_io.read_file = AsyncMock(return_value=image_bytes)
+
+    piece = MagicMock()
+    piece.response_error = "none"
+    piece.converted_value_data_type = "image_path"
+    piece.converted_value = "path/to/img.png"
+
+    await display_image_response(piece, safe_outputs=True)
+
+    displayed_image = mock_display.call_args[0][0]
+    expected_size = (50, 100)
+    assert displayed_image.size == expected_size
+
+    pixels = list(displayed_image.get_flattened_data())
+    assert all(r == g == b for r, g, b in pixels)
 
 
 @pytest.mark.asyncio
