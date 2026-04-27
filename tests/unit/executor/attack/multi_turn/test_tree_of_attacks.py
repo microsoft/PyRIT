@@ -2158,3 +2158,293 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
         objective="test",
     )
     assert result.tree_visualization is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario-driven end-to-end TAP simulation tests
+# ---------------------------------------------------------------------------
+# Each scenario is a compact dict describing the behavior of every node at
+# every depth.  The test harness wires up mocked nodes whose send_prompt_async
+# applies the prescribed behavior (score, error, off-topic, json-error), then
+# runs _perform_async and asserts the expected outcome, best score, depth, and
+# node / prune counts.
+#
+# Node behaviors per depth are lists (one entry per node in that depth).
+# Allowed behavior keys:
+#   score     – float objective score (node completes successfully)
+#   error     – response_error string triggering error_score_map (e.g. "blocked")
+#   fail      – True → node raises an exception (unexpected error)
+#   off_topic – True → node is off-topic after retries
+#   json_err  – True → node raises InvalidJsonException
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _ScenarioNodeBehavior:
+    """Compact description of how a node should behave during send_prompt_async."""
+
+    score: float | None = None
+    error: str | None = None
+    fail: bool = False
+    off_topic: bool = False
+    json_err: bool = False
+
+
+def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _TreeOfAttacksNode:
+    """Create a mock node that applies the given behavior during send_prompt_async."""
+    _call_behaviors: list[_ScenarioNodeBehavior] = [behavior]
+
+    async def _send_prompt(objective: str) -> None:
+        # Use the latest behavior (may be updated for re-execution at deeper depths)
+        b = _call_behaviors[-1]
+        # Reset state for re-execution
+        node.completed = False
+        node.off_topic = False
+        node.objective_score = None
+        node.error_message = None
+        if b.json_err:
+            node.error_message = "JSON parsing error"
+            return
+        if b.fail:
+            node.error_message = "Execution error: simulated failure"
+            return
+        if b.off_topic:
+            node.off_topic = True
+            return
+        # Normal completion
+        node.completed = True
+        if b.error is not None:
+            node.objective_score = MagicMock(
+                get_value=MagicMock(return_value=0.0),
+                score_metadata=None,
+            )
+        elif b.score is not None:
+            node.objective_score = MagicMock(
+                get_value=MagicMock(return_value=b.score),
+                score_metadata=None,
+            )
+
+    node = MagicMock()
+    node.node_id = node_id
+    node.parent_id = None
+    node.completed = False
+    node.off_topic = False
+    node.objective_score = None
+    node.auxiliary_scores = {}
+    node.error_message = None
+    node.last_prompt_sent = None
+    node.last_response = None
+    node.objective_target_conversation_id = str(uuid.uuid4())
+    node.adversarial_chat_conversation_id = str(uuid.uuid4())
+    node.send_prompt_async = AsyncMock(side_effect=_send_prompt)
+    node.duplicate = MagicMock()  # replaced per-depth below
+    node._call_behaviors = _call_behaviors  # expose for re-programming
+    return node
+
+
+# Each scenario is a tuple:
+#   (id, tree_width, tree_depth, branching_factor, threshold,
+#    error_score_map, behaviors_per_depth, expected_outcome,
+#    expected_best_score, expected_max_depth)
+#
+# behaviors_per_depth: dict[int, list[_ScenarioNodeBehavior]]
+#   depth 1 has tree_width entries; depth N has <= tree_width * branching_factor
+
+_B = _ScenarioNodeBehavior  # shorthand
+
+_SCENARIOS = [
+    pytest.param(
+        # Scenario: immediate success on depth 1
+        2, 4, 2, 0.7, {"blocked": 0.0},
+        {1: [_B(score=0.9), _B(score=0.3)]},
+        AttackOutcome.SUCCESS, 0.9, 1,
+        id="immediate_success_depth1",
+    ),
+    pytest.param(
+        # Scenario: all nodes blocked on depth 1, branches survive, succeed on depth 2
+        2, 4, 2, 0.7, {"blocked": 0.0},
+        {
+            1: [_B(error="blocked"), _B(error="blocked")],
+            2: [_B(score=0.8), _B(score=0.5), _B(score=0.2), _B(score=0.1)],
+        },
+        AttackOutcome.SUCCESS, 0.8, 2,
+        id="blocked_depth1_recovers_depth2",
+    ),
+    pytest.param(
+        # Scenario: mixed — one blocked, one scores low; depth 2 one succeeds
+        2, 4, 2, 0.7, {"blocked": 0.0},
+        {
+            1: [_B(error="blocked"), _B(score=0.3)],
+            2: [_B(score=0.75), _B(fail=True), _B(score=0.4), _B(off_topic=True)],
+        },
+        AttackOutcome.SUCCESS, 0.75, 2,
+        id="mixed_errors_and_success",
+    ),
+    pytest.param(
+        # Scenario: all fail across all 4 depths → failure
+        2, 4, 2, 0.7, {"blocked": 0.0},
+        {
+            1: [_B(fail=True), _B(json_err=True)],
+            # No surviving nodes → all pruned after depth 1
+        },
+        AttackOutcome.FAILURE, 0.0, 1,
+        id="all_fail_all_depths",
+    ),
+    pytest.param(
+        # Scenario: gradual improvement over 3 depths (width=2, branching=2 → 4 nodes/depth)
+        # After pruning to width 2, only the top 2 survive.
+        # Original survivors get re-executed + branching_factor-1 new duplicates.
+        2, 3, 2, 0.7, {"blocked": 0.0},
+        {
+            1: [_B(score=0.2), _B(score=0.3)],
+            2: [_B(score=0.5), _B(score=0.4), _B(error="blocked"), _B(score=0.35)],
+            3: [_B(score=0.75), _B(score=0.6), _B(json_err=True), _B(off_topic=True)],
+        },
+        AttackOutcome.SUCCESS, 0.75, 3,
+        id="gradual_improvement_succeeds_depth3",
+    ),
+    pytest.param(
+        # Scenario: close but never reaches threshold across 3 depths
+        2, 3, 2, 0.7, {"blocked": 0.0},
+        {
+            1: [_B(score=0.2), _B(score=0.3)],
+            2: [_B(score=0.4), _B(score=0.5), _B(score=0.45), _B(score=0.35)],
+            3: [_B(score=0.6), _B(score=0.65), _B(score=0.55), _B(score=0.68)],
+        },
+        AttackOutcome.FAILURE, 0.65, 3,
+        id="close_but_never_reaches_threshold",
+    ),
+    pytest.param(
+        # Scenario: error_score_map disabled (empty), blocked = immediate prune
+        2, 4, 2, 0.7, {},
+        {
+            1: [_B(error="blocked"), _B(error="blocked")],
+            # With empty error_score_map, blocked nodes don't get scores → pruned
+        },
+        AttackOutcome.FAILURE, 0.0, 2,
+        id="empty_error_map_blocked_prunes_all",
+    ),
+    pytest.param(
+        # Scenario: off-topic nodes recovered by siblings
+        2, 4, 2, 0.7, {"blocked": 0.0},
+        {
+            1: [_B(off_topic=True), _B(score=0.4)],
+            2: [_B(score=0.8), _B(score=0.5)],
+        },
+        AttackOutcome.SUCCESS, 0.8, 2,
+        id="off_topic_sibling_recovers",
+    ),
+]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTAPScenarios:
+    """Scenario-driven tests exercising the full TAP execution loop with mocked nodes."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tree_width, tree_depth, branching_factor, threshold, error_score_map, "
+        "behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth",
+        _SCENARIOS,
+    )
+    async def test_tap_scenario(
+        self,
+        attack_builder,
+        helpers,
+        tree_width,
+        tree_depth,
+        branching_factor,
+        threshold,
+        error_score_map,
+        behaviors_per_depth,
+        expected_outcome,
+        expected_best_score,
+        expected_max_depth,
+    ):
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(
+                tree_width=tree_width,
+                tree_depth=tree_depth,
+                branching_factor=branching_factor,
+            )
+            .with_threshold(threshold)
+            .with_error_score_map(error_score_map)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        # Track per-depth behavior counters
+        _depth_counters: dict[int, int] = {}
+
+        def _get_next_behavior(depth: int) -> _ScenarioNodeBehavior:
+            if depth not in _depth_counters:
+                _depth_counters[depth] = 0
+            behaviors = behaviors_per_depth.get(depth, [])
+            idx = _depth_counters[depth]
+            _depth_counters[depth] += 1
+            return behaviors[idx] if idx < len(behaviors) else _B(fail=True)
+
+        def _make_nodes_for_depth(depth: int, count: int) -> list:
+            nodes = []
+            for i in range(count):
+                b = _get_next_behavior(depth)
+                node = _make_node_with_behavior(b, f"d{depth}_n{i}")
+                next_depth = depth + 1
+
+                def _dup_factory(parent=node, d=next_depth):
+                    # Reprogram parent for re-execution at next depth
+                    parent._call_behaviors.append(_get_next_behavior(d))
+                    # Create child with its own behavior
+                    cb = _get_next_behavior(d)
+                    child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child.parent_id = parent.node_id
+                    child.duplicate = MagicMock(
+                        side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd)
+                    )
+                    return child
+
+                def _dup_child(parent_node, d):
+                    parent_node._call_behaviors.append(_get_next_behavior(d))
+                    cb = _get_next_behavior(d)
+                    child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child.parent_id = parent_node.node_id
+                    child.duplicate = MagicMock(
+                        side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd)
+                    )
+                    return child
+
+                node.duplicate = MagicMock(side_effect=_dup_factory)
+                nodes.append(node)
+            return nodes
+
+        # Mock _create_attack_node to produce nodes with prescribed behaviors
+        depth1_nodes = _make_nodes_for_depth(1, tree_width)
+        _depth1_idx = [0]
+
+        def _create_node_side_effect(**kwargs):
+            if _depth1_idx[0] < len(depth1_nodes):
+                node = depth1_nodes[_depth1_idx[0]]
+                _depth1_idx[0] += 1
+            else:
+                node = _make_node_with_behavior(_B(fail=True), f"extra_{_depth1_idx[0]}")
+                _depth1_idx[0] += 1
+            return node
+
+        context = helpers.create_basic_context()
+
+        with patch.object(attack, "_create_attack_node", side_effect=_create_node_side_effect):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
+                result = await attack._perform_async(context=context)
+
+        assert result.outcome == expected_outcome, (
+            f"Expected {expected_outcome}, got {result.outcome}. "
+            f"Best score: {context.best_objective_score.get_value() if context.best_objective_score else 'None'}"
+        )
+        assert result.max_depth_reached == expected_max_depth
+
+        if expected_best_score > 0:
+            assert context.best_objective_score is not None
+            assert abs(context.best_objective_score.get_value() - expected_best_score) < 0.01, (
+                f"Expected best score ~{expected_best_score}, "
+                f"got {context.best_objective_score.get_value()}"
+            )
