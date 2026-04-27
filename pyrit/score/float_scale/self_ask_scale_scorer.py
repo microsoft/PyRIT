@@ -109,7 +109,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             message_piece (MessagePiece): The message piece containing the content to be scored.
                 Supports text and non-text types (e.g., image_path). For non-text content,
                 the objective context is sent as a prepended text piece alongside the raw content.
-            objective (str): The task based on which the content should be scored (the original
+            objective (str): The objective based on which the content should be scored (the original
                 attacker model's objective).
 
         Returns:
