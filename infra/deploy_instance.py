@@ -18,7 +18,7 @@ Usage:
     python infra/deploy_instance.py \\
         --instance-name partners-demo \\
         --env-file ./my-demo.env \\
-        --subscription "AI Red Team Tooling" \\
+        --subscription "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \\
         --location eastus2 \\
         --acr-name myacr \\
         --container-image myacr.azurecr.io/pyrit:abc1234 \\
