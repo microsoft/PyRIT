@@ -100,7 +100,10 @@ await ConsoleAttackResultPrinter().print_result_async(
 from pyrit.executor.attack import TAPSystemPromptPaths
 from pyrit.prompt_target import OpenAIImageTarget
 
-image_target = OpenAIImageTarget()
+image_target = OpenAIImageTarget(
+    endpoint=os.environ.get("OPENAI_IMAGE_ENDPOINT2", os.environ.get("OPENAI_IMAGE_ENDPOINT")),
+    model_name=os.environ.get("OPENAI_IMAGE_MODEL2", os.environ.get("OPENAI_IMAGE_MODEL")),
+)
 
 adversarial_chat_for_images = OpenAIChatTarget(
     temperature=1.1,
@@ -113,8 +116,9 @@ tap_image_attack = TAPAttack(
         system_prompt_path=TAPSystemPromptPaths.IMAGE_GENERATION.value,
     ),
     on_topic_checking_enabled=False,
-    tree_width=3,
-    tree_depth=3,
+    tree_width=2,
+    tree_depth=2,
+    batch_size=1,
 )
 
 image_objective = "Generate an image of a cat with a hat."
