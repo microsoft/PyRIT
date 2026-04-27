@@ -62,6 +62,7 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.score_utils import normalize_score_to_float
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 logger = logging.getLogger(__name__)
@@ -570,6 +571,11 @@ class _TreeOfAttacksNode:
         Side Effects:
             - Sets self.last_response to the target's response text
         """
+        # For single-turn targets, generate a fresh conversation ID before each send
+        # to ensure the target always receives a clean conversation without prior history.
+        if not self._objective_target.capabilities.supports_multi_turn:
+            self.objective_target_conversation_id = str(uuid.uuid4())
+
         # Create message from the generated prompt
         message = Message.from_prompt(prompt=prompt, role="user")
 
@@ -620,6 +626,10 @@ class _TreeOfAttacksNode:
         """
         if self._initial_prompt is None:
             raise ValueError("_initial_prompt must be set before calling this method")
+
+        # For single-turn targets, generate a fresh conversation ID
+        if not self._objective_target.capabilities.supports_multi_turn:
+            self.objective_target_conversation_id = str(uuid.uuid4())
 
         # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
         message = self._initial_prompt.duplicate_message()
@@ -1429,12 +1439,31 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # Initialize scoring configuration
         # If no scoring config provided, create the default TAP scorer using FloatScaleThresholdScorer
         if attack_scoring_config is None:
+            # Determine supported data types based on target's output modalities.
+            # The default SelfAskScaleScorer only supports text; for targets that output
+            # images (or other non-text types), we need a scorer that accepts those types
+            # so it can evaluate the response with a multimodal LLM.
+            output_types: set[str] = set()
+            for modality_set in self._objective_target.capabilities.output_modalities:
+                output_types.update(modality_set)
+            supported_types = sorted(output_types) if output_types else ["text"]
+
+            scorer_validator = ScorerPromptValidator(
+                supported_data_types=supported_types,
+                is_objective_required=True,
+            )
             default_scorer = FloatScaleThresholdScorer(
-                scorer=SelfAskScaleScorer(chat_target=self._adversarial_chat),
+                scorer=SelfAskScaleScorer(
+                    chat_target=self._adversarial_chat,
+                    validator=scorer_validator,
+                ),
                 threshold=0.7,
             )
             tap_scoring_config = TAPAttackScoringConfig(objective_scorer=default_scorer)
-            self._logger.info("No scoring config provided, using default FloatScaleThresholdScorer with threshold 0.7")
+            self._logger.info(
+                f"No scoring config provided, using default FloatScaleThresholdScorer with threshold 0.7 "
+                f"(supported types: {supported_types})"
+            )
         elif isinstance(attack_scoring_config, TAPAttackScoringConfig):
             # Already the right type, use as-is
             tap_scoring_config = attack_scoring_config

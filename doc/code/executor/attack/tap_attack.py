@@ -80,7 +80,7 @@ await ConsoleAttackResultPrinter().print_result_async(
 # ## Tree of Attacks with Image Generation Targets
 #
 # TAP can also be used against image generation targets (e.g., DALL-E).
-# Two key differences when targeting image generators:
+# Key differences when targeting image generators:
 #
 # 1. **System Prompt**: Use `TAPSystemPromptPaths.IMAGE_GENERATION` to provide
 #    an adversarial system prompt tailored for image generation models.
@@ -88,6 +88,13 @@ await ConsoleAttackResultPrinter().print_result_async(
 #    responses due to content filters. TAP's `error_score_map` (default:
 #    `{"blocked": 0.0}`) automatically assigns a score of 0.0 to these responses
 #    instead of failing the branch, preventing premature pruning of all branches.
+# 3. **Scoring**: The default TAP scorer automatically detects the target's output
+#    modalities. For image targets, it configures the scorer to accept `image_path`
+#    responses. The adversarial chat target (used for scoring) should be a multimodal
+#    model (e.g., GPT-4o) so it can evaluate the generated images.
+# 4. **Single-Turn Targets**: Image generation targets are typically single-turn.
+#    TAP automatically detects this via target capabilities and creates a fresh
+#    conversation ID for each prompt, so no special configuration is needed.
 
 # %%
 from pyrit.executor.attack import TAPSystemPromptPaths
