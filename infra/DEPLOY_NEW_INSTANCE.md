@@ -21,9 +21,10 @@ within an instance. The trust boundary is Entra group membership.
 |---|---|
 | [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) 2.84+ | Version 2.77 has a known `content-already-consumed` bug |
 | Python 3.10+ | For running the deployment script |
-| `az login` with Graph permissions | The script creates Entra app registrations, which requires Graph API access |
+| `az login` with Graph permissions | The script creates Entra app registrations, which requires Graph API access. Run `az login --scope https://graph.microsoft.com//.default` |
+| Azure permissions | **Owner** (or Contributor + User Access Administrator) on the subscription, and **Application Administrator** in Entra ID for app registrations and Graph API operations |
 | Container image pushed to ACR | Build and push before deploying (see [Building the Image](#building-the-image)) |
-| A `.env` file with target endpoints | Copy and fill in `infra/env.demo.template` |
+| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints, DB connection string, storage URL, and content safety config. Required for the default `target airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
 
 ### What the script creates (per-instance)
 
