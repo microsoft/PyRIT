@@ -111,6 +111,12 @@ from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
     VisualLeakBenchPIIType,
     _VisualLeakBenchDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
+    VLGuardCategory,
+    VLGuardSubcategory,
+    VLGuardSubset,
+    _VLGuardDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     _VLSUMultimodalDataset,
 )  # noqa: F401
@@ -121,6 +127,9 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 __all__ = [
     "PromptIntelCategory",
     "PromptIntelSeverity",
+    "VLGuardCategory",
+    "VLGuardSubcategory",
+    "VLGuardSubset",
     "_AegisContentSafetyDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
@@ -156,6 +165,7 @@ __all__ = [
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
+    "_VLGuardDataset",
     "_VLSUMultimodalDataset",
     "_VisualLeakBenchDataset",
     "VisualLeakBenchCategory",

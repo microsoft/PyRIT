@@ -1,19 +1,25 @@
+export type ConverterMatchMode = 'any' | 'all'
+
 export interface HistoryFilters {
-  attackClass: string
+  attackTypes: string[]
   outcome: string
-  converter: string
-  operator: string
-  operation: string
+  converter: string[]
+  converterMatchMode: ConverterMatchMode
+  hasConverters: boolean | undefined
+  operator: string[]
+  operation: string[]
   otherLabels: string[]
   labelSearchText: string
 }
 
 export const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
-  attackClass: '',
+  attackTypes: [],
   outcome: '',
-  converter: '',
-  operator: '',
-  operation: '',
+  converter: [],
+  converterMatchMode: 'any',
+  hasConverters: undefined,
+  operator: [],
+  operation: [],
   otherLabels: [],
   labelSearchText: '',
 }

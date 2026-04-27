@@ -388,12 +388,6 @@ az deployment group create \
 4. **Manage access** — Add or remove users via Entra security groups
    (`allowedGroupObjectIds`). Each group must also be assigned to the enterprise app.
 
-5. **Set CORS origins** for production (the Bicep template does not set this):
-   ```bash
-   az containerapp update -n <appName> -g <rg> \
-     --set-env-vars "PYRIT_CORS_ORIGINS=https://$FQDN"
-   ```
-
 ## Access the GUI
 
 ```bash

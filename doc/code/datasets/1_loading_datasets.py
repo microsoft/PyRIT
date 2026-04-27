@@ -42,6 +42,7 @@
 # TDC23 [@mazeika2023tdc],
 # ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
+# VLGuard [@zong2024vlguard],
 # XSTest [@rottger2023xstest],
 # AILuminate [@vidgen2024ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],

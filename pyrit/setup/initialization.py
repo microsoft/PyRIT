@@ -3,8 +3,6 @@
 import logging
 import pathlib
 from collections.abc import Sequence
-
-# Import PyRITInitializer for type checking (with TYPE_CHECKING to avoid circular imports)
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 import dotenv
@@ -287,6 +285,7 @@ async def initialize_pyrit_async(
         raise ValueError(
             f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
         )
+
     CentralMemory.set_memory_instance(memory)
 
     # Combine directly provided initializers with those loaded from scripts

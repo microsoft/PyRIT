@@ -152,8 +152,6 @@ class PromptNormalizer:
             # An empty list is valid for write-only targets (e.g., TextTarget)
             # that don't produce responses. Return the request as-is.
             if responses is not None and len(responses) == 0:
-                await self._calc_hash(request=request)
-                self.memory.add_message_to_memory(request=request)
                 return request
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],

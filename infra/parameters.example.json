@@ -27,7 +27,7 @@
       "value": "YOUR_DATABASE_NAME"
     },
     "pyritInitializer": {
-      "value": "targets airt"
+      "value": "target airt"
     },
     "envSecretName": {
       "value": "env-global"
