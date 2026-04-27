@@ -156,9 +156,8 @@ def test_format_image_content(markdown_printer):
     assert "image.png" in formatted[0]
 
 
-def test_format_image_content_relative_to_output_file(markdown_printer, markdown_printer_to_file, tmp_path):
-    """Test that image path is relative to output file dir when outputting to file,
-    and relative to cwd when outputting to console."""
+def test_format_image_content_relative_to_output_file(markdown_printer_to_file, tmp_path):
+    """Test that image path is relative to output file dir when outputting to file."""
     image_path = os.path.join(str(tmp_path), "images", "screenshot.png")
 
     # When outputting to file, path should be relative to the output file's directory
@@ -166,10 +165,25 @@ def test_format_image_content_relative_to_output_file(markdown_printer, markdown
     expected_file_rel = "../images/screenshot.png"
     assert f"![Image]({expected_file_rel})" in formatted_file[0]
 
-    # When outputting to console (no output_file_path), path should be relative to cwd
+
+def test_format_image_content_relative_to_cwd(markdown_printer):
+    """Test that image path is relative to cwd when outputting to console."""
+    # Use a path under the current working directory to avoid cross-drive issues
+    image_path = os.path.join(os.getcwd(), "images", "screenshot.png")
+
     formatted_console = markdown_printer._format_image_content(image_path=image_path)
     expected_console_rel = os.path.relpath(image_path).replace("\\", "/")
     assert f"![Image]({expected_console_rel})" in formatted_console[0]
+
+
+def test_format_image_content_relpath_error_fallback(markdown_printer_to_file):
+    """Test that image path falls back to absolute path when a relative path cannot be computed."""
+    image_path = "C:\\other_drive\\images\\screenshot.png"
+
+    with patch("pyrit.executor.attack.printer.markdown_printer.os.path.relpath", side_effect=ValueError):
+        formatted = markdown_printer_to_file._format_image_content(image_path=image_path)
+
+    assert "![Image](C:/other_drive/images/screenshot.png)" in formatted[0]
 
 
 def test_format_audio_content(markdown_printer):
