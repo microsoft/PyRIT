@@ -531,3 +531,25 @@ silent: true
             assert config.silent is True
         finally:
             config_path.unlink()
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_check_schema_from_default_config(self, mock_default_path):
+        """Test that check_schema is loaded from the default config file."""
+        mock_default_path.exists.return_value = True
+
+        with mock.patch.object(ConfigurationLoader, "from_yaml_file") as mock_from_yaml:
+            fake_config = ConfigurationLoader(memory_db_type="sqlite", check_schema=False)
+            mock_from_yaml.return_value = fake_config
+
+            config = ConfigurationLoader.load_with_overrides()
+
+            assert config.check_schema is False
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_check_schema_override(self, mock_default_path):
+        """Test that check_schema override takes precedence."""
+        mock_default_path.exists.return_value = False
+
+        config = ConfigurationLoader.load_with_overrides(check_schema=False)
+
+        assert config.check_schema is False

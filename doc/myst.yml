@@ -53,6 +53,7 @@ project:
         - file: contributing/8_pre_commit.md
         - file: contributing/9_exception.md
         - file: contributing/10_release_process.md
+        - file: contributing/11_memory_models.md
     - file: gui/0_gui.md
     - file: scanner/0_scanner.md
       children:

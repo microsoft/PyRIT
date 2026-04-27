@@ -95,6 +95,14 @@ operation: op_trash_panda
 #   - /path/to/.env
 #   - /path/to/.env.local
 
+# Schema Migration Check
+# ---------------------
+# If true, runs database schema migration on startup to ensure the database
+# is up to date with the latest PyRIT version.
+# Set to false to skip the check (e.g., for read-only access, testing, or
+# when managing migrations externally).
+check_schema: true
+
 # Silent Mode
 # -----------
 # If true, suppresses print statements during initialization.

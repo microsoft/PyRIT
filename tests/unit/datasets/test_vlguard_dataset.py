@@ -409,7 +409,7 @@ class TestVLGuardDataset:
 
         with (
             patch("pyrit.datasets.seed_datasets.remote.vlguard_dataset.DB_DATA_PATH", tmp_path),
-            patch("huggingface_hub.hf_hub_download", side_effect=mock_hf_download),
+            patch("pyrit.datasets.seed_datasets.remote.vlguard_dataset.hf_hub_download", side_effect=mock_hf_download),
         ):
             metadata, result_dir = await loader._download_dataset_files_async(cache=False)
 
