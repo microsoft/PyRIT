@@ -42,6 +42,10 @@ class TargetRequirements:
         """
         Validate that ``target`` can satisfy every declared requirement.
 
+        All violations across both tiers are collected and reported in a
+        single ``ValueError`` so callers see every missing capability at
+        once, not just the first one.
+
         Args:
             target (PromptTarget): The target to validate against.
 
@@ -50,14 +54,26 @@ class TargetRequirements:
                 supported, or if any ``required`` capability is not supported
                 natively and has no ``ADAPT`` entry in the target's policy.
         """
-        for capability in self.native_required:
+        errors: list[str] = []
+
+        for capability in sorted(self.native_required, key=lambda c: c.value):
             if not target.configuration.includes(capability=capability):
-                raise ValueError(
+                errors.append(
                     f"Target must natively support '{capability.value}'; "
                     "adaptation is not acceptable for this consumer."
                 )
-        for capability in self.required:
-            target.configuration.ensure_can_handle(capability=capability)
+
+        for capability in sorted(self.required, key=lambda c: c.value):
+            try:
+                target.configuration.ensure_can_handle(capability=capability)
+            except ValueError as exc:
+                errors.append(str(exc))
+
+        if errors:
+            raise ValueError(
+                f"Target does not satisfy {len(errors)} required capability(ies):\n"
+                + "\n".join(f"  - {e}" for e in errors)
+            )
 
 
 # Shared requirement used by scorers and converters that set a system prompt
