@@ -46,6 +46,7 @@ class AttackTechniqueFactory(Identifiable):
         *,
         attack_class: type[AttackStrategy[Any, Any]],
         attack_kwargs: dict[str, Any] | None = None,
+        adversarial_config: AttackAdversarialConfig | None = None,
         seed_technique: SeedAttackTechniqueGroup | None = None,
     ) -> None:
         """
@@ -54,16 +55,24 @@ class AttackTechniqueFactory(Identifiable):
         Args:
             attack_class: The AttackStrategy subclass to instantiate.
             attack_kwargs: Keyword arguments to pass to the attack constructor.
-                Must not include ``objective_target`` (provided at create time).
+                Must not include ``objective_target`` (provided at create time)
+                or ``attack_adversarial_config`` (use ``adversarial_config`` instead).
+            adversarial_config: Optional adversarial chat configuration. Stored
+                separately and injected into the attack at ``create()`` time if
+                the attack class accepts ``attack_adversarial_config``. Also
+                exposed via the ``adversarial_chat`` property for seed-technique
+                execution.
             seed_technique: Optional technique seed group to attach to created techniques.
 
         Raises:
             TypeError: If any kwarg name is not a valid constructor parameter,
                 or if the attack class constructor uses ``**kwargs``.
-            ValueError: If ``objective_target`` is included in attack_kwargs.
+            ValueError: If ``objective_target`` or ``attack_adversarial_config``
+                is included in attack_kwargs.
         """
         self._attack_class = attack_class
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
+        self._adversarial_config = adversarial_config
         self._seed_technique = seed_technique
 
         self._validate_kwargs()
@@ -79,10 +88,16 @@ class AttackTechniqueFactory(Identifiable):
             TypeError: If any kwarg name is not a valid constructor parameter,
                 or if the constructor uses ``**kwargs`` (all parameters must be
                 explicitly named).
-            ValueError: If ``objective_target`` is included in attack_kwargs.
+            ValueError: If ``objective_target`` or ``attack_adversarial_config``
+                is included in attack_kwargs.
         """
         if "objective_target" in self._attack_kwargs:
             raise ValueError("objective_target must not be in attack_kwargs — it is provided at create() time.")
+        if "attack_adversarial_config" in self._attack_kwargs:
+            raise ValueError(
+                "attack_adversarial_config must not be in attack_kwargs — "
+                "use the adversarial_config parameter instead."
+            )
 
         sig = inspect.signature(self._attack_class.__init__)
 
@@ -126,8 +141,7 @@ class AttackTechniqueFactory(Identifiable):
     @property
     def adversarial_chat(self) -> PromptChatTarget | None:
         """The adversarial chat target baked into this factory, or None."""
-        config: AttackAdversarialConfig | None = self._attack_kwargs.get("attack_adversarial_config")
-        return config.target if config else None
+        return self._adversarial_config.target if self._adversarial_config else None
 
     def create(
         self,
@@ -181,8 +195,11 @@ class AttackTechniqueFactory(Identifiable):
         accepted_params = self._get_accepted_params()
         if attack_scoring_config_override is not None and "attack_scoring_config" in accepted_params:
             kwargs["attack_scoring_config"] = attack_scoring_config_override
-        if attack_adversarial_config_override is not None and "attack_adversarial_config" in accepted_params:
-            kwargs["attack_adversarial_config"] = attack_adversarial_config_override
+        if "attack_adversarial_config" in accepted_params:
+            if attack_adversarial_config_override is not None:
+                kwargs["attack_adversarial_config"] = attack_adversarial_config_override
+            elif self._adversarial_config is not None:
+                kwargs["attack_adversarial_config"] = self._adversarial_config
         if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
             kwargs["attack_converter_config"] = attack_converter_config_override
 
@@ -236,10 +253,10 @@ class AttackTechniqueFactory(Identifiable):
             ComponentIdentifier: The frozen identity snapshot.
         """
         kwargs_for_id = {k: self._serialize_value(v) for k, v in sorted(self._attack_kwargs.items())}
-        return ComponentIdentifier.of(
-            self,
-            params={
-                "attack_class": self._attack_class.__name__,
-                "kwargs": kwargs_for_id,
-            },
-        )
+        params: dict[str, Any] = {
+            "attack_class": self._attack_class.__name__,
+            "kwargs": kwargs_for_id,
+        }
+        if self._adversarial_config is not None:
+            params["adversarial_config"] = self._serialize_value(self._adversarial_config)
+        return ComponentIdentifier.of(self, params=params)

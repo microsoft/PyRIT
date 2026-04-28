@@ -21,7 +21,9 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import logging
+from pathlib import Path
 
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     ManyShotJailbreakAttack,
     PromptSendingAttack,
@@ -29,6 +31,8 @@ from pyrit.executor.attack import (
     RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
+from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.registry import TargetRegistry
@@ -69,6 +73,22 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         attack_class=TreeOfAttacksWithPruningAttack,
         strategy_tags=["core", "multi_turn"],
         accepts_scorer_override=False,
+    ),
+    AttackTechniqueSpec(
+        name="single_turn_crescendo",
+        attack_class=PromptSendingAttack,
+        strategy_tags=["core", "single_turn"],
+        seed_technique=SeedAttackTechniqueGroup(
+            seeds=[
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt_path=(
+                        Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "crescendo_simulated.yaml"
+                    ),
+                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                    num_turns=3,
+                ),
+            ],
+        ),
     ),
 ]
 
@@ -115,7 +135,7 @@ def get_default_adversarial_target() -> PromptChatTarget:
 def build_scenario_techniques() -> list[AttackTechniqueSpec]:
     """
     Return a copy of ``SCENARIO_TECHNIQUES`` with ``adversarial_chat`` baked
-    into each spec whose attack class accepts ``attack_adversarial_config``.
+    into each spec that requires one.
 
     This is a mechanical transform of the static catalog.
 
@@ -123,7 +143,8 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
 
     1. If ``adversarial_chat_key`` is set, look it up in ``TargetRegistry``.
        Raises ``ValueError`` if the key is not found.
-    2. Otherwise, if the attack class accepts ``attack_adversarial_config``,
+    2. Otherwise, if the attack class accepts ``attack_adversarial_config``
+       or the spec's ``seed_technique`` has a simulated conversation,
        fill in the default from ``get_default_adversarial_target()``.
     3. Otherwise, pass through unchanged.
 
@@ -153,13 +174,26 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
                     adversarial_chat_key=None,
                 )
             )
-        elif "attack_adversarial_config" in inspect.signature(spec.attack_class.__init__).parameters:  # type: ignore[misc]
+        elif _spec_needs_adversarial(spec):
             if default_adversarial is None:
                 default_adversarial = get_default_adversarial_target()
             result.append(dataclasses.replace(spec, adversarial_chat=default_adversarial))
         else:
             result.append(spec)
     return result
+
+
+def _spec_needs_adversarial(spec: AttackTechniqueSpec) -> bool:
+    """Check if a spec requires an adversarial chat target.
+
+    Returns True if the attack class accepts ``attack_adversarial_config``
+    or the spec's seed technique has a simulated conversation.
+    """
+    if "attack_adversarial_config" in inspect.signature(spec.attack_class.__init__).parameters:  # type: ignore[misc]
+        return True
+    if spec.seed_technique is not None and spec.seed_technique.has_simulated_conversation:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
