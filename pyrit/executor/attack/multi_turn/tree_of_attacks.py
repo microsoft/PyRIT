@@ -50,7 +50,7 @@ from pyrit.models import (
     Score,
     SeedPrompt,
 )
-from pyrit.models.literals import PromptResponseError
+from pyrit.models.literals import PromptDataType, PromptResponseError
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score import (
@@ -90,13 +90,10 @@ def _validate_error_score_map(error_score_map: dict[str, float] | None) -> dict[
     for key, value in error_score_map.items():
         if key not in valid_errors:
             raise ValueError(
-                f"error_score_map key '{key}' is not a valid PromptResponseError. "
-                f"Valid values: {valid_errors}"
+                f"error_score_map key '{key}' is not a valid PromptResponseError. Valid values: {valid_errors}"
             )
         if not (0.0 <= value <= 1.0):
-            raise ValueError(
-                f"error_score_map value for '{key}' must be between 0.0 and 1.0, got {value}"
-            )
+            raise ValueError(f"error_score_map value for '{key}' must be between 0.0 and 1.0, got {value}")
     return dict(error_score_map)
 
 
@@ -707,9 +704,7 @@ class _TreeOfAttacksNode:
                     )
                     self.objective_score = Score(
                         score_value=str(assigned_score),
-                        score_value_description=(
-                            f"Assigned score {assigned_score} for '{error_type}' response error"
-                        ),
+                        score_value_description=(f"Assigned score {assigned_score} for '{error_type}' response error"),
                         score_type="float_scale",
                         score_category=["error_handling"],
                         score_rationale=(
@@ -1446,7 +1441,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             output_types: set[str] = set()
             for modality_set in self._objective_target.capabilities.output_modalities:
                 output_types.update(modality_set)
-            supported_types = sorted(output_types) if output_types else ["text"]
+            supported_types: list[PromptDataType] = cast(
+                "list[PromptDataType]", sorted(output_types) if output_types else ["text"]
+            )
 
             scorer_validator = ScorerPromptValidator(
                 supported_data_types=supported_types,

@@ -2186,6 +2186,7 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
 #   json_err  – True → node raises InvalidJsonException
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _ScenarioNodeBehavior:
     """Compact description of how a node should behave during send_prompt_async."""
@@ -2249,96 +2250,139 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
     return node
 
 
-# Each scenario is a tuple:
-#   (id, tree_width, tree_depth, branching_factor, threshold,
-#    error_score_map, behaviors_per_depth, expected_outcome,
-#    expected_best_score, expected_max_depth)
-#
-# behaviors_per_depth: dict[int, list[_ScenarioNodeBehavior]]
-#   depth 1 has tree_width entries; depth N has <= tree_width * branching_factor
+# Scenario parameters: tree_width, tree_depth, branching_factor, threshold,
+# error_score_map, behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth
 
 _B = _ScenarioNodeBehavior  # shorthand
 
 _SCENARIOS = [
     pytest.param(
         # Scenario: immediate success on depth 1
-        2, 4, 2, 0.7, {"blocked": 0.0},
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {1: [_B(score=0.9), _B(score=0.3)]},
-        AttackOutcome.SUCCESS, 0.9, 1,
+        AttackOutcome.SUCCESS,
+        0.9,
+        1,
         id="immediate_success_depth1",
     ),
     pytest.param(
         # Scenario: all nodes blocked on depth 1, branches survive, succeed on depth 2
-        2, 4, 2, 0.7, {"blocked": 0.0},
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {
             1: [_B(error="blocked"), _B(error="blocked")],
             2: [_B(score=0.8), _B(score=0.5), _B(score=0.2), _B(score=0.1)],
         },
-        AttackOutcome.SUCCESS, 0.8, 2,
+        AttackOutcome.SUCCESS,
+        0.8,
+        2,
         id="blocked_depth1_recovers_depth2",
     ),
     pytest.param(
         # Scenario: mixed — one blocked, one scores low; depth 2 one succeeds
-        2, 4, 2, 0.7, {"blocked": 0.0},
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {
             1: [_B(error="blocked"), _B(score=0.3)],
             2: [_B(score=0.75), _B(fail=True), _B(score=0.4), _B(off_topic=True)],
         },
-        AttackOutcome.SUCCESS, 0.75, 2,
+        AttackOutcome.SUCCESS,
+        0.75,
+        2,
         id="mixed_errors_and_success",
     ),
     pytest.param(
         # Scenario: all fail across all 4 depths → failure
-        2, 4, 2, 0.7, {"blocked": 0.0},
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {
             1: [_B(fail=True), _B(json_err=True)],
             # No surviving nodes → all pruned after depth 1
         },
-        AttackOutcome.FAILURE, 0.0, 1,
+        AttackOutcome.FAILURE,
+        0.0,
+        1,
         id="all_fail_all_depths",
     ),
     pytest.param(
         # Scenario: gradual improvement over 3 depths (width=2, branching=2 → 4 nodes/depth)
         # After pruning to width 2, only the top 2 survive.
         # Original survivors get re-executed + branching_factor-1 new duplicates.
-        2, 3, 2, 0.7, {"blocked": 0.0},
+        2,
+        3,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {
             1: [_B(score=0.2), _B(score=0.3)],
             2: [_B(score=0.5), _B(score=0.4), _B(error="blocked"), _B(score=0.35)],
             3: [_B(score=0.75), _B(score=0.6), _B(json_err=True), _B(off_topic=True)],
         },
-        AttackOutcome.SUCCESS, 0.75, 3,
+        AttackOutcome.SUCCESS,
+        0.75,
+        3,
         id="gradual_improvement_succeeds_depth3",
     ),
     pytest.param(
         # Scenario: close but never reaches threshold across 3 depths
-        2, 3, 2, 0.7, {"blocked": 0.0},
+        2,
+        3,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {
             1: [_B(score=0.2), _B(score=0.3)],
             2: [_B(score=0.4), _B(score=0.5), _B(score=0.45), _B(score=0.35)],
             3: [_B(score=0.6), _B(score=0.65), _B(score=0.55), _B(score=0.68)],
         },
-        AttackOutcome.FAILURE, 0.65, 3,
+        AttackOutcome.FAILURE,
+        0.65,
+        3,
         id="close_but_never_reaches_threshold",
     ),
     pytest.param(
         # Scenario: error_score_map disabled (empty), blocked = immediate prune
-        2, 4, 2, 0.7, {},
+        2,
+        4,
+        2,
+        0.7,
+        {},
         {
             1: [_B(error="blocked"), _B(error="blocked")],
             # With empty error_score_map, blocked nodes don't get scores → pruned
         },
-        AttackOutcome.FAILURE, 0.0, 2,
+        AttackOutcome.FAILURE,
+        0.0,
+        2,
         id="empty_error_map_blocked_prunes_all",
     ),
     pytest.param(
         # Scenario: off-topic nodes recovered by siblings
-        2, 4, 2, 0.7, {"blocked": 0.0},
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
         {
             1: [_B(off_topic=True), _B(score=0.4)],
             2: [_B(score=0.8), _B(score=0.5)],
         },
-        AttackOutcome.SUCCESS, 0.8, 2,
+        AttackOutcome.SUCCESS,
+        0.8,
+        2,
         id="off_topic_sibling_recovers",
     ),
 ]
@@ -2412,9 +2456,7 @@ class TestTAPScenarios:
                     cb = _get_next_behavior(d)
                     child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
                     child.parent_id = parent.node_id
-                    child.duplicate = MagicMock(
-                        side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd)
-                    )
+                    child.duplicate = MagicMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
                     return child
 
                 def _dup_child(parent_node, d):
@@ -2422,9 +2464,7 @@ class TestTAPScenarios:
                     cb = _get_next_behavior(d)
                     child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
                     child.parent_id = parent_node.node_id
-                    child.duplicate = MagicMock(
-                        side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd)
-                    )
+                    child.duplicate = MagicMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
                     return child
 
                 node.duplicate = MagicMock(side_effect=_dup_factory)
@@ -2459,6 +2499,5 @@ class TestTAPScenarios:
         if expected_best_score > 0:
             assert context.best_objective_score is not None
             assert abs(context.best_objective_score.get_value() - expected_best_score) < 0.01, (
-                f"Expected best score ~{expected_best_score}, "
-                f"got {context.best_objective_score.get_value()}"
+                f"Expected best score ~{expected_best_score}, got {context.best_objective_score.get_value()}"
             )
