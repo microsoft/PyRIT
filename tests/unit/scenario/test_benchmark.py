@@ -14,7 +14,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.scenarios.benchmark.benchmark import BENCHMARK_TECHNIQUES, Benchmark
+from pyrit.scenario.scenarios.benchmark.benchmark import Benchmark, _get_benchmarkable_specs
 from pyrit.score import TrueFalseScorer
 
 
@@ -180,14 +180,14 @@ class TestBenchmarkStrategy:
         s2 = _make_benchmark(two_models)
         assert s1._strategy_class is s2._strategy_class
 
-    def test_benchmark_techniques_have_no_adversarial_chat(self):
-        """BENCHMARK_TECHNIQUES specs must not have adversarial_chat set."""
-        for spec in BENCHMARK_TECHNIQUES:
+    def test_benchmarkable_specs_have_no_adversarial_chat(self):
+        """Filtered specs must not have adversarial_chat set — we inject our own."""
+        for spec in _get_benchmarkable_specs():
             assert spec.adversarial_chat is None
 
-    def test_benchmark_techniques_are_adversarial_capable(self):
-        """All BENCHMARK_TECHNIQUES attack classes must accept attack_adversarial_config."""
-        for spec in BENCHMARK_TECHNIQUES:
+    def test_benchmarkable_specs_are_adversarial_capable(self):
+        """All filtered specs must accept attack_adversarial_config."""
+        for spec in _get_benchmarkable_specs():
             assert AttackTechniqueRegistry._accepts_adversarial(spec.attack_class)
 
 

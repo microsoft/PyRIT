@@ -4,11 +4,15 @@
 """
 Benchmark scenario — compare adversarial-model ASR across attack techniques.
 
-Strategies select **attack techniques** that use an adversarial chat model
-(RolePlay, TAP).  The constructor takes a ``dict[str, PromptChatTarget]``
-mapping user-chosen labels to adversarial targets.  At attack-creation time
-each model is injected via ``attack_adversarial_config_override``, producing
-a technique × model × dataset cross-product for side-by-side comparison.
+Strategies are built dynamically by filtering ``SCENARIO_TECHNIQUES`` to those
+that accept an adversarial chat model but don't have one baked in.  The
+constructor takes a ``dict[str, PromptChatTarget]`` mapping user-chosen labels
+to adversarial targets.  At attack-creation time each model is injected via
+``attack_adversarial_config_override``, producing a technique × model × dataset
+cross-product for side-by-side comparison.
+
+New adversarial techniques added to ``SCENARIO_TECHNIQUES`` are automatically
+discovered — no changes to this module needed.
 """
 
 from __future__ import annotations
@@ -17,12 +21,12 @@ import logging
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import RolePlayAttack, RolePlayPaths, TreeOfAttacksWithPruningAttack
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptChatTarget
@@ -33,41 +37,44 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Benchmark technique catalog — adversarial-capable techniques only
+# Dynamic technique filter — auto-discover adversarial-capable techniques
 # ---------------------------------------------------------------------------
-# These specs intentionally have NO adversarial_chat set.  The adversarial
-# model is injected at create-time via attack_adversarial_config_override,
-# keeping the spec list static and registry-independent.
 
-BENCHMARK_TECHNIQUES: list[AttackTechniqueSpec] = [
-    AttackTechniqueSpec(
-        name="role_play",
-        attack_class=RolePlayAttack,
-        strategy_tags=["core", "single_turn"],
-        extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
-    ),
-    AttackTechniqueSpec(
-        name="tap",
-        attack_class=TreeOfAttacksWithPruningAttack,
-        strategy_tags=["core", "multi_turn"],
-        accepts_scorer_override=False,
-    ),
-]
+
+def _get_benchmarkable_specs() -> list[AttackTechniqueSpec]:
+    """
+    Return techniques from ``SCENARIO_TECHNIQUES`` that accept an adversarial
+    model but don't have one already baked in.
+
+    This is the dual guard: ``_accepts_adversarial`` ensures the technique
+    CAN use an adversarial model, and ``adversarial_chat is None`` ensures
+    it doesn't already have one set — we inject our own at create-time.
+
+    Returns:
+        list[AttackTechniqueSpec]: Filtered, adversarial-ready specs.
+    """
+    return [
+        spec
+        for spec in SCENARIO_TECHNIQUES
+        if AttackTechniqueRegistry._accepts_adversarial(spec.attack_class) and spec.adversarial_chat is None
+    ]
 
 
 def _build_benchmark_strategy() -> type[ScenarioStrategy]:
     """
-    Build the BenchmarkStrategy enum from ``BENCHMARK_TECHNIQUES``.
+    Build the BenchmarkStrategy enum from adversarial-capable ``SCENARIO_TECHNIQUES``.
 
     Returns a strategy class whose concrete members are adversarial-capable
-    techniques and whose aggregates allow selecting by turn style.
+    techniques (no baked-in adversarial chat) and whose aggregates allow
+    selecting by turn style.
 
     Returns:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
+    specs = _get_benchmarkable_specs()
     return AttackTechniqueRegistry.build_strategy_class_from_specs(
         class_name="BenchmarkStrategy",
-        specs=TagQuery.all("core").filter(BENCHMARK_TECHNIQUES),
+        specs=TagQuery.all("core").filter(specs),
         aggregate_tags={
             "all": TagQuery.any_of("core"),
             "single_turn": TagQuery.any_of("single_turn"),
@@ -165,8 +172,8 @@ class Benchmark(Scenario):
         """
         Build atomic attacks from the cross-product of techniques × models × datasets.
 
-        Factories are built locally from ``BENCHMARK_TECHNIQUES`` (not the
-        registry singleton).  Each model is injected at create-time via
+        Factories are built locally from adversarial-capable ``SCENARIO_TECHNIQUES``
+        (not the registry singleton).  Each model is injected at create-time via
         ``attack_adversarial_config_override``.
 
         Returns:
@@ -182,10 +189,11 @@ class Benchmark(Scenario):
 
         from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
 
+        benchmarkable_specs = _get_benchmarkable_specs()
         local_factories = {
-            spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in BENCHMARK_TECHNIQUES
+            spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in benchmarkable_specs
         }
-        scorer_override_map = {spec.name: spec.accepts_scorer_override for spec in BENCHMARK_TECHNIQUES}
+        scorer_override_map = {spec.name: spec.accepts_scorer_override for spec in benchmarkable_specs}
 
         selected_techniques = {s.value for s in self._scenario_strategies}
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
