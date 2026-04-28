@@ -30,6 +30,18 @@ repos:
         files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
         pass_filenames: false
         additional_dependencies: ['pyyaml']
+      - id: enforce_alembic_revision_immutability
+        name: Enforce Alembic Revision Immutability
+        entry: python ./build_scripts/enforce_alembic_revision_immutability.py
+        language: python
+        files: ^pyrit/memory/alembic/versions/.*\.py$
+        pass_filenames: false
+      - id: memory-migrations-check
+        name: Check Memory Migrations
+        entry: python ./build_scripts/memory_migrations.py check
+        language: system
+        pass_filenames: false
+        files: ^pyrit/memory/(memory_models\.py|alembic/.*|migration\.py)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

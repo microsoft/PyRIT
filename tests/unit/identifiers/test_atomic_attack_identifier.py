@@ -207,7 +207,8 @@ class TestAtomicAttackEvaluationIdentifier:
 
     def test_adversarial_chat_rule(self):
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["adversarial_chat"]
-        assert rule.included_params == frozenset({"model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
         assert not rule.exclude
 
     def test_scorer_only_keys_absent(self):

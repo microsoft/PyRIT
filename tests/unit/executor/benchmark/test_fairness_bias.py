@@ -24,7 +24,7 @@ def is_spacy_installed():
         import spacy  # noqa: F401
 
         return True
-    except ModuleNotFoundError:
+    except Exception:
         return False
 
 

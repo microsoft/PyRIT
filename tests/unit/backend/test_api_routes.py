@@ -87,13 +87,15 @@ class TestAttackRoutes:
 
             response = client.get(
                 "/api/attacks",
-                params={"attack_type": "CrescendoAttack", "outcome": "success", "limit": 10},
+                params={"attack_types": ["CrescendoAttack"], "outcome": "success", "limit": 10},
             )
 
             assert response.status_code == status.HTTP_200_OK
             mock_service.list_attacks_async.assert_called_once_with(
-                attack_type="CrescendoAttack",
+                attack_types=["CrescendoAttack"],
                 converter_types=None,
+                converter_types_match="all",
+                has_converters=None,
                 outcome="success",
                 labels=None,
                 min_turns=None,
@@ -101,6 +103,63 @@ class TestAttackRoutes:
                 limit=10,
                 cursor=None,
             )
+
+    def test_list_attacks_multi_attack_types(self, client: TestClient) -> None:
+        """Test that repeated attack_types query params are forwarded as a list."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[("attack_types", "CrescendoAttack"), ("attack_types", "ManualAttack")],
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args.kwargs
+            assert call_kwargs["attack_types"] == ["CrescendoAttack", "ManualAttack"]
+
+    def test_list_attacks_has_converters_true(self, client: TestClient) -> None:
+        """?has_converters=true is parsed as bool True and forwarded."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks", params={"has_converters": "true"})
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args.kwargs
+            assert call_kwargs["has_converters"] is True
+
+    def test_list_attacks_has_converters_false(self, client: TestClient) -> None:
+        """?has_converters=false is parsed as bool False and forwarded."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks", params={"has_converters": "false"})
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args.kwargs
+            assert call_kwargs["has_converters"] is False
 
     def test_create_attack_success(self, client: TestClient) -> None:
         """Test successful attack creation."""
@@ -422,7 +481,7 @@ class TestAttackRoutes:
             # Verify labels were parsed and passed to service
             mock_service.list_attacks_async.assert_called_once()
             call_kwargs = mock_service.list_attacks_async.call_args[1]
-            assert call_kwargs["labels"] == {"env": "prod", "team": "red"}
+            assert call_kwargs["labels"] == {"env": ["prod"], "team": ["red"]}
 
     def test_get_attack_options(self, client: TestClient) -> None:
         """Test getting attack type options from attack results."""
@@ -467,7 +526,7 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             # Only the valid label should be parsed
-            assert call_kwargs["labels"] == {"env": "prod"}
+            assert call_kwargs["labels"] == {"env": ["prod"]}
 
     def test_parse_labels_all_invalid_returns_none(self, client: TestClient) -> None:
         """Test that _parse_labels returns None when all params lack colons."""
@@ -503,7 +562,7 @@ class TestAttackRoutes:
 
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
-            assert call_kwargs["labels"] == {"url": "http://example.com:8080"}
+            assert call_kwargs["labels"] == {"url": ["http://example.com:8080"]}
 
     def test_parse_labels_passes_keys_through_without_normalization(self, client: TestClient) -> None:
         """Test that label keys are passed through as-is (DB stores canonical keys after migration)."""
@@ -521,7 +580,7 @@ class TestAttackRoutes:
 
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
-            assert call_kwargs["labels"] == {"operator": "alice", "operation": "redteam"}
+            assert call_kwargs["labels"] == {"operator": ["alice"], "operation": ["redteam"]}
 
     def test_list_attacks_forwards_converter_types_param(self, client: TestClient) -> None:
         """Test that converter_types query params are forwarded to service."""
@@ -558,6 +617,52 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             assert call_kwargs["converter_types"] == []
+
+    def test_list_attacks_groups_repeated_label_key_as_list(self, client: TestClient) -> None:
+        """Repeated label keys produce OR-within-key: value list is forwarded to service."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?label=operator:alice&label=operator:bob")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args[1]
+            assert call_kwargs["labels"] == {"operator": ["alice", "bob"]}
+
+    def test_list_attacks_forwards_converter_types_match(self, client: TestClient) -> None:
+        """converter_types_match query param is forwarded verbatim to service."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?converter_types=A&converter_types=B&converter_types_match=any")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args[1]
+            assert call_kwargs["converter_types_match"] == "any"
+
+    def test_list_attacks_rejects_invalid_converter_types_match(self, client: TestClient) -> None:
+        """Invalid converter_types_match value returns 422 per Literal contract."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?converter_types_match=garbage")
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     def test_get_conversations_success(self, client: TestClient) -> None:
         """Test getting attack conversations returns service response."""
