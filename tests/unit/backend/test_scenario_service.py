@@ -104,8 +104,7 @@ class TestScenarioServiceListScenarios:
     async def test_list_scenarios_paginates_with_limit(self) -> None:
         """Test that list respects the limit parameter."""
         metadata_list = [
-            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}")
-            for i in range(5)
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(5)
         ]
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -123,8 +122,7 @@ class TestScenarioServiceListScenarios:
     async def test_list_scenarios_paginates_with_cursor(self) -> None:
         """Test that list uses cursor for pagination."""
         metadata_list = [
-            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}")
-            for i in range(5)
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(5)
         ]
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -143,8 +141,7 @@ class TestScenarioServiceListScenarios:
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
         metadata_list = [
-            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}")
-            for i in range(3)
+            _make_scenario_metadata(registry_name=f"test.scenario_{i}", class_name=f"Scenario{i}") for i in range(3)
         ]
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
