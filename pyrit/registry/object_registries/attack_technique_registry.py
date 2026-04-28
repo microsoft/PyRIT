@@ -313,9 +313,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         kwargs: dict[str, Any] = dict(spec.extra_kwargs)
 
         adversarial_config = (
-            AttackAdversarialConfig(target=spec.adversarial_chat)
-            if spec.adversarial_chat is not None
-            else None
+            AttackAdversarialConfig(target=spec.adversarial_chat) if spec.adversarial_chat is not None else None
         )
 
         return AttackTechniqueFactory(

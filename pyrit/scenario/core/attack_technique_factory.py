@@ -95,8 +95,7 @@ class AttackTechniqueFactory(Identifiable):
             raise ValueError("objective_target must not be in attack_kwargs — it is provided at create() time.")
         if "attack_adversarial_config" in self._attack_kwargs:
             raise ValueError(
-                "attack_adversarial_config must not be in attack_kwargs — "
-                "use the adversarial_config parameter instead."
+                "attack_adversarial_config must not be in attack_kwargs — use the adversarial_config parameter instead."
             )
 
         sig = inspect.signature(self._attack_class.__init__)

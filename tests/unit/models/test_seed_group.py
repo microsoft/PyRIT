@@ -636,9 +636,7 @@ class TestSeedAttackGroupWithTechnique:
 
     def test_succeeds_when_technique_has_simulated_conversation_and_no_prompts(self):
         """Merging a technique with SeedSimulatedConversation into an objective-only group works."""
-        base = SeedAttackGroup(
-            seeds=[SeedObjective(value="objective")]
-        )
+        base = SeedAttackGroup(seeds=[SeedObjective(value="objective")])
         technique = SeedAttackTechniqueGroup(
             seeds=[
                 SeedSimulatedConversation(
@@ -674,9 +672,7 @@ class TestSeedAttackGroupWithTechnique:
 
     def test_is_compatible_returns_true_for_objective_only_with_simulated(self):
         """is_compatible_with_technique returns True for objective-only base + simulated technique."""
-        base = SeedAttackGroup(
-            seeds=[SeedObjective(value="objective")]
-        )
+        base = SeedAttackGroup(seeds=[SeedObjective(value="objective")])
         technique = SeedAttackTechniqueGroup(
             seeds=[
                 SeedSimulatedConversation(
@@ -701,6 +697,7 @@ class TestSeedAttackGroupWithTechnique:
         technique = self._make_technique()
 
         assert base.is_compatible_with_technique(technique=technique)
+
 
 # =============================================================================
 # SeedAttackGroup.filter_compatible Tests

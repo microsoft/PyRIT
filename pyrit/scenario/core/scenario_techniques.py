@@ -190,7 +190,8 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
 
 
 def _spec_needs_adversarial(spec: AttackTechniqueSpec) -> bool:
-    """Check if a spec requires an adversarial chat target.
+    """
+    Check if a spec requires an adversarial chat target.
 
     Returns True if the attack class accepts ``attack_adversarial_config``
     or the spec's seed technique has a simulated conversation.

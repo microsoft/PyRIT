@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, Union
 
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
-from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -165,6 +164,7 @@ class SeedAttackGroup(SeedGroup):
         # Pre-merge compatibility check with a clear error message
         if not self.is_compatible_with_technique(technique=technique):
             sim = technique.simulated_conversation_config
+            assert sim is not None  # guaranteed by is_compatible_with_technique
             prompt_sequences = sorted({p.sequence for p in self.prompts})
             raise ValueError(
                 f"Cannot merge technique containing a SeedSimulatedConversation "
