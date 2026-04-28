@@ -156,10 +156,11 @@ class AttackBuilder:
         self.successful_threshold: float = 0.8
         self.prompt_normalizer: Optional[PromptNormalizer] = None
         self.error_score_map: dict[str, float] | None = None
+        self._supports_multi_turn: bool = True
 
     def with_default_mocks(self) -> "AttackBuilder":
         """Set up default mocks for all required components."""
-        self.objective_target = self._create_mock_target()
+        self.objective_target = self._create_mock_target(supports_multi_turn=self._supports_multi_turn)
         self.adversarial_chat = self._create_mock_chat()
         self.objective_scorer = self._create_mock_scorer("MockScorer")
         return self
@@ -189,6 +190,11 @@ class AttackBuilder:
     def with_error_score_map(self, error_score_map: dict[str, float] | None) -> "AttackBuilder":
         """Set the error score mapping."""
         self.error_score_map = error_score_map
+        return self
+
+    def with_supports_multi_turn(self, supports_multi_turn: bool) -> "AttackBuilder":
+        """Set whether the objective target supports multi-turn conversations."""
+        self._supports_multi_turn = supports_multi_turn
         return self
 
     def build(self) -> TreeOfAttacksWithPruningAttack:
@@ -227,13 +233,15 @@ class AttackBuilder:
         return TreeOfAttacksWithPruningAttack(**kwargs)
 
     @staticmethod
-    def _create_mock_target() -> PromptTarget:
+    def _create_mock_target(supports_multi_turn: bool = True) -> PromptTarget:
         target = MagicMock(spec=PromptTarget)
         target.send_prompt_async = AsyncMock(return_value=None)
         target.get_identifier.return_value = ComponentIdentifier(
             class_name="MockTarget",
             class_module="test_module",
         )
+        target.capabilities.supports_multi_turn = supports_multi_turn
+        target.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
 
     @staticmethod
@@ -2338,9 +2346,13 @@ _SCENARIOS = [
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTAPScenarios:
-    """Scenario-driven tests exercising the full TAP execution loop with mocked nodes."""
+    """Scenario-driven tests exercising the full TAP execution loop with mocked nodes.
+
+    Each scenario is run twice: once with a multi-turn target and once with a single-turn target.
+    """
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("supports_multi_turn", [True, False], ids=["multi_turn", "single_turn"])
     @pytest.mark.parametrize(
         "tree_width, tree_depth, branching_factor, threshold, error_score_map, "
         "behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth",
@@ -2350,6 +2362,7 @@ class TestTAPScenarios:
         self,
         attack_builder,
         helpers,
+        supports_multi_turn,
         tree_width,
         tree_depth,
         branching_factor,
@@ -2361,7 +2374,8 @@ class TestTAPScenarios:
         expected_max_depth,
     ):
         attack = (
-            attack_builder.with_default_mocks()
+            attack_builder.with_supports_multi_turn(supports_multi_turn)
+            .with_default_mocks()
             .with_tree_params(
                 tree_width=tree_width,
                 tree_depth=tree_depth,
