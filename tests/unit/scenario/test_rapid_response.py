@@ -16,7 +16,8 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import SeedAttackGroup, SeedAttackTechniqueGroup, SeedObjective, SeedPrompt
+from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
@@ -491,6 +492,88 @@ class TestRapidResponseAttackGeneration:
         )
         for a in attacks:
             assert len(a.objectives) > 0
+
+    @pytest.mark.asyncio
+    async def test_crescendo_simulated_skips_overlapping_seed_groups(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        """crescendo_simulated filters out seed groups with prompts that overlap simulated range."""
+        overlapping_group = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="overlapping objective"),
+                SeedPrompt(value="user msg", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="assistant msg", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="user followup", data_type="text", role="user", sequence=2),
+            ]
+        )
+        objective_only_group = SeedAttackGroup(
+            seeds=[SeedObjective(value="objective-only")]
+        )
+        mixed_groups = {"hate": [objective_only_group, overlapping_group]}
+
+        attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            mock_objective_scorer=mock_objective_scorer,
+            strategies=[_strategy_class()("crescendo_simulated")],
+            seed_groups=mixed_groups,
+        )
+
+        assert len(attacks) == 1
+        # Only the objective-only group should remain
+        assert len(attacks[0].seed_groups) == 1
+        assert attacks[0].seed_groups[0].objective.value == "objective-only"
+
+    @pytest.mark.asyncio
+    async def test_crescendo_simulated_skips_entire_dataset_when_all_overlap(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        """crescendo_simulated skips a dataset entirely when all its seed groups overlap."""
+        overlapping_group = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="overlapping objective"),
+                SeedPrompt(value="user msg", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="assistant msg", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="user followup", data_type="text", role="user", sequence=2),
+            ]
+        )
+        all_overlapping = {"hate": [overlapping_group]}
+
+        attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            mock_objective_scorer=mock_objective_scorer,
+            strategies=[_strategy_class()("crescendo_simulated")],
+            seed_groups=all_overlapping,
+        )
+
+        assert len(attacks) == 0
+
+    @pytest.mark.asyncio
+    async def test_prompt_sending_keeps_all_seed_groups(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        """prompt_sending (no simulated conversation) keeps all seed groups including multi-turn."""
+        multi_turn_group = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="multi-turn objective"),
+                SeedPrompt(value="user msg", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="assistant msg", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="user followup", data_type="text", role="user", sequence=2),
+            ]
+        )
+        objective_only_group = SeedAttackGroup(
+            seeds=[SeedObjective(value="objective-only")]
+        )
+        mixed_groups = {"hate": [objective_only_group, multi_turn_group]}
+
+        attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            mock_objective_scorer=mock_objective_scorer,
+            strategies=[_strategy_class()("prompt_sending")],
+            seed_groups=mixed_groups,
+        )
+
+        assert len(attacks) == 1
+        assert len(attacks[0].seed_groups) == 2
 
 
 # ===========================================================================
