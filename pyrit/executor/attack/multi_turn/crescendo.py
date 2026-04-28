@@ -59,6 +59,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Crescendo sets a system prompt on its adversarial target and drives a multi-turn dialogue through it.
+# Both capabilities must be natively supported — adaptation would silently change the semantics
+# (e.g. history-squash normalization would collapse the escalation into a single turn).
+_ADVERSARIAL_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
+)
+
 
 @dataclass
 class CrescendoAttackContext(MultiTurnAttackContext[Any]):
@@ -201,6 +208,15 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
+        # Crescendo sets a system prompt on the adversarial target and drives a
+        # multi-turn dialogue through it; both capabilities must be native.
+        # (The class-level ``TARGET_REQUIREMENTS`` only covers ``objective_target``;
+        # this is a separate target.)
+        try:
+            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+        except ValueError as exc:
+            raise ValueError(f"CrescendoAttack {exc}") from exc
+
         system_prompt_template_path = (
             attack_adversarial_config.system_prompt_path
             or CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH
