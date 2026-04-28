@@ -193,14 +193,13 @@ def _spec_needs_adversarial(spec: AttackTechniqueSpec) -> bool:
     """
     Check if a spec requires an adversarial chat target.
 
-    Returns True if the attack class accepts ``attack_adversarial_config``
-    or the spec's seed technique has a simulated conversation.
+    Returns:
+        True if the attack class accepts ``attack_adversarial_config``
+        or the spec's seed technique has a simulated conversation.
     """
     if "attack_adversarial_config" in inspect.signature(spec.attack_class.__init__).parameters:  # type: ignore[misc]
         return True
-    if spec.seed_technique is not None and spec.seed_technique.has_simulated_conversation:
-        return True
-    return False
+    return spec.seed_technique is not None and spec.seed_technique.has_simulated_conversation
 
 
 # ---------------------------------------------------------------------------
