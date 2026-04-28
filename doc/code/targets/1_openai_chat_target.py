@@ -120,7 +120,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.models import SeedGroup, SeedPrompt
-from pyrit.prompt_target import OpenAIChatTarget, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -132,34 +132,12 @@ api_key = get_azure_openai_auth(endpoint)
 chat_target = OpenAIChatTarget(
     endpoint=endpoint,
     api_key=api_key,
-    # Override default (text-only) configuration to enable image input, multi-turn, and JSON output for this multi-modal example.
-    custom_configuration=TargetConfiguration(
-        capabilities=TargetCapabilities(
-            supports_multi_turn=True,
-            supports_json_output=True,
-            supports_multi_message_pieces=True,
-            input_modalities=frozenset(
-                {frozenset({"text", "image_path"}), frozenset({"image_path"}), frozenset({"text"})}
-            ),
-        )
-    ),
 )
 
 scorer = SelfAskTrueFalseScorer(
     chat_target=OpenAIChatTarget(
         endpoint=endpoint,
         api_key=api_key,
-        # The scorer also needs to read image responses; override configuration to support image input modalities.
-        custom_configuration=TargetConfiguration(
-            capabilities=TargetCapabilities(
-                supports_multi_turn=True,
-                supports_json_output=True,
-                supports_multi_message_pieces=True,
-                input_modalities=frozenset(
-                    {frozenset({"text", "image_path"}), frozenset({"image_path"}), frozenset({"text"})}
-                ),
-            )
-        ),
     ),
     true_false_question=TrueFalseQuestion(
         true_description="The response describes the picture as an overview of PyRIT components."
