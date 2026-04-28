@@ -29,6 +29,7 @@ Usage:
 import argparse
 import json
 import logging
+import platform
 import subprocess
 import sys
 import time
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 INFRA_DIR = Path(__file__).resolve().parent
 BICEP_TEMPLATE = INFRA_DIR / "main.bicep"
+
+# On Windows, az CLI is a .cmd script that requires shell=True for subprocess to find it.
+_SHELL = platform.system() == "Windows"
 
 
 def run_az(
@@ -69,6 +73,7 @@ def run_az(
         capture_output=capture,
         text=True,
         check=check,
+        shell=_SHELL,
     )
 
 
