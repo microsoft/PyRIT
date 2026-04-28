@@ -270,7 +270,7 @@ class TestBenchmarkRuntime:
             adversarial_models=two_models,
         )
         for a in attacks:
-            assert a.adversarial_chat in two_models.values()
+            assert a._adversarial_chat in two_models.values()
 
     @pytest.mark.asyncio
     async def test_technique_types_correct(self, mock_objective_target, single_model):
