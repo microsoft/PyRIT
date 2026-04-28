@@ -97,24 +97,29 @@ def set_subscription(subscription: str) -> None:
     run_az(args=["account", "set", "--subscription", subscription])
 
 
-def create_resource_group(*, name: str, location: str) -> None:
+def create_resource_group(*, name: str, location: str, tags: list[str] | None = None) -> None:
     """
     Create an Azure resource group.
 
     Args:
         name (str): The resource group name.
         location (str): The Azure region.
+        tags (list[str] | None): Tags in 'Key=Value' format.
     """
     logger.info("Creating resource group: %s in %s", name, location)
-    run_az(args=["group", "create", "--name", name, "--location", location])
+    cmd = ["group", "create", "--name", name, "--location", location]
+    if tags:
+        cmd += ["--tags"] + tags
+    run_az(args=cmd)
 
 
-def create_entra_app(*, display_name: str) -> dict:
+def create_entra_app(*, display_name: str, service_management_reference: str = "") -> dict:
     """
     Create an Entra app registration with API scope and group claims.
 
     Args:
         display_name (str): The display name for the app registration.
+        service_management_reference (str): Service Tree ID (required by some tenants).
 
     Returns:
         dict: A dict with keys 'app_id', 'app_object_id', 'tenant_id', 'sp_id'.
@@ -122,19 +127,22 @@ def create_entra_app(*, display_name: str) -> dict:
     logger.info("Creating Entra app registration: %s", display_name)
 
     # Create app registration and capture output directly (avoids fragile name-based lookup)
-    app_create_result = run_az_json(
-        args=[
-            "ad",
-            "app",
-            "create",
-            "--display-name",
-            display_name,
-            "--sign-in-audience",
-            "AzureADMyOrg",
-            "--query",
-            "{appId:appId, id:id}",
-        ]
-    )
+    create_args = [
+        "ad",
+        "app",
+        "create",
+        "--display-name",
+        display_name,
+        "--sign-in-audience",
+        "AzureADMyOrg",
+    ]
+    if service_management_reference:
+        create_args += ["--service-management-reference", service_management_reference]
+    create_args += [
+        "--query",
+        "{appId:appId, id:id}",
+    ]
+    app_create_result = run_az_json(args=create_args)
     app_id = app_create_result["appId"]
     app_object_id = app_create_result["id"]
 
@@ -281,6 +289,7 @@ def create_sql_server_and_db(
     location: str,
     server_name: str,
     database_name: str,
+    tags: list[str] | None = None,
 ) -> dict:
     """
     Create an Azure SQL server with Entra-only auth and a database.
@@ -290,6 +299,7 @@ def create_sql_server_and_db(
         location (str): The Azure region.
         server_name (str): The SQL server name.
         database_name (str): The database name.
+        tags (list[str] | None): Tags in 'Key=Value' format.
 
     Returns:
         dict: A dict with keys 'server_fqdn' and 'database_name'.
@@ -306,26 +316,27 @@ def create_sql_server_and_db(
     )
 
     logger.info("Creating SQL server: %s (Entra admin: %s)", server_name, current_user["displayName"])
-    run_az(
-        args=[
-            "sql",
-            "server",
-            "create",
-            "--name",
-            server_name,
-            "--resource-group",
-            resource_group,
-            "--location",
-            location,
-            "--enable-ad-only-auth",
-            "--external-admin-principal-type",
-            "User",
-            "--external-admin-name",
-            current_user["displayName"],
-            "--external-admin-sid",
-            current_user["id"],
-        ]
-    )
+    sql_server_cmd = [
+        "sql",
+        "server",
+        "create",
+        "--name",
+        server_name,
+        "--resource-group",
+        resource_group,
+        "--location",
+        location,
+        "--enable-ad-only-auth",
+        "--external-admin-principal-type",
+        "User",
+        "--external-admin-name",
+        current_user["displayName"],
+        "--external-admin-sid",
+        current_user["id"],
+    ]
+    if tags:
+        sql_server_cmd += ["--tags"] + tags
+    run_az(args=sql_server_cmd)
 
     server_fqdn = run_az_json(
         args=[
@@ -342,23 +353,24 @@ def create_sql_server_and_db(
     )
 
     logger.info("Creating database: %s on server %s", database_name, server_name)
-    run_az(
-        args=[
-            "sql",
-            "db",
-            "create",
-            "--name",
-            database_name,
-            "--resource-group",
-            resource_group,
-            "--server",
-            server_name,
-            "--edition",
-            "Basic",
-            "--capacity",
-            "5",
-        ]
-    )
+    sql_db_cmd = [
+        "sql",
+        "db",
+        "create",
+        "--name",
+        database_name,
+        "--resource-group",
+        resource_group,
+        "--server",
+        server_name,
+        "--edition",
+        "Basic",
+        "--capacity",
+        "5",
+    ]
+    if tags:
+        sql_db_cmd += ["--tags"] + tags
+    run_az(args=sql_db_cmd)
 
     # Allow Azure services to access the SQL server
     logger.info("Allowing Azure services to access SQL server")
@@ -390,6 +402,7 @@ def create_key_vault(
     location: str,
     vault_name: str,
     env_file: Path,
+    tags: list[str] | None = None,
 ) -> str:
     """
     Create a Key Vault and populate it with the .env secret.
@@ -399,27 +412,29 @@ def create_key_vault(
         location (str): The Azure region.
         vault_name (str): The Key Vault name.
         env_file (Path): Path to the .env file to upload.
+        tags (list[str] | None): Tags in 'Key=Value' format.
 
     Returns:
         str: The Key Vault resource ID.
     """
     logger.info("Creating Key Vault: %s", vault_name)
-    run_az(
-        args=[
-            "keyvault",
-            "create",
-            "--name",
-            vault_name,
-            "--resource-group",
-            resource_group,
-            "--location",
-            location,
-            "--enable-rbac-authorization",
-            "true",
-            "--enable-purge-protection",
-            "true",
-        ]
-    )
+    kv_cmd = [
+        "keyvault",
+        "create",
+        "--name",
+        vault_name,
+        "--resource-group",
+        resource_group,
+        "--location",
+        location,
+        "--enable-rbac-authorization",
+        "true",
+        "--enable-purge-protection",
+        "true",
+    ]
+    if tags:
+        kv_cmd += ["--tags"] + tags
+    run_az(args=kv_cmd)
 
     kv_id = run_az_json(
         args=[
@@ -508,6 +523,7 @@ def deploy_bicep(
     sql_database_name: str,
     kv_resource_id: str,
     acr_name: str,
+    owner_tag: str = "",
 ) -> dict:
     """
     Deploy the Bicep template.
@@ -523,35 +539,40 @@ def deploy_bicep(
         sql_database_name (str): The SQL database name.
         kv_resource_id (str): The Key Vault resource ID.
         acr_name (str): The ACR name.
+        owner_tag (str): Value for the Owner tag on Bicep-managed resources.
 
     Returns:
         dict: The deployment outputs.
     """
     logger.info("Deploying Bicep template to resource group: %s", resource_group)
-    return run_az_json(
-        args=[
-            "deployment",
-            "group",
-            "create",
-            "--resource-group",
-            resource_group,
-            "--template-file",
-            str(BICEP_TEMPLATE),
-            "--parameters",
-            f"appName={app_name}",
-            f"containerImage={container_image}",
-            f"entraTenantId={tenant_id}",
-            f"entraClientId={client_id}",
-            f"allowedGroupObjectIds={group_ids}",
-            f"sqlServerFqdn={sql_server_fqdn}",
-            f"sqlDatabaseName={sql_database_name}",
-            f"keyVaultResourceId={kv_resource_id}",
-            f"acrName={acr_name}",
-            "enablePrivateEndpoint=false",
-            "--query",
-            "properties.outputs",
-        ]
-    )
+    params = [
+        "deployment",
+        "group",
+        "create",
+        "--resource-group",
+        resource_group,
+        "--template-file",
+        str(BICEP_TEMPLATE),
+        "--parameters",
+        f"appName={app_name}",
+        f"containerImage={container_image}",
+        f"entraTenantId={tenant_id}",
+        f"entraClientId={client_id}",
+        f"allowedGroupObjectIds={group_ids}",
+        f"sqlServerFqdn={sql_server_fqdn}",
+        f"sqlDatabaseName={sql_database_name}",
+        f"keyVaultResourceId={kv_resource_id}",
+        f"acrName={acr_name}",
+        "enablePrivateEndpoint=false",
+    ]
+    if owner_tag:
+        bicep_tags = {"Service": "pyrit-gui", "Owner": owner_tag}
+        params.append(f"tags={json.dumps(bicep_tags)}")
+    params += [
+        "--query",
+        "properties.outputs",
+    ]
+    return run_az_json(args=params)
 
 
 def post_deploy(
@@ -687,6 +708,16 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated Entra group object IDs to grant access",
     )
     parser.add_argument(
+        "--owner-tag",
+        default="",
+        help="Value for the Owner tag on Azure resources (required by some subscriptions)",
+    )
+    parser.add_argument(
+        "--service-management-reference",
+        default="",
+        help="Service Tree ID for Entra app registration (required by some tenants)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would be done without executing",
@@ -761,14 +792,20 @@ def main(args: list[str] | None = None) -> int:
         return 0
 
     try:
+        # Build tags list from --owner-tag
+        resource_tags = [f"Owner={parsed.owner_tag}"] if parsed.owner_tag else None
+
         # Step 1: Set subscription
         set_subscription(parsed.subscription)
 
         # Step 2: Create resource group
-        create_resource_group(name=rg_name, location=parsed.location)
+        create_resource_group(name=rg_name, location=parsed.location, tags=resource_tags)
 
         # Step 3: Create Entra app registration
-        entra = create_entra_app(display_name=entra_app_name)
+        entra = create_entra_app(
+            display_name=entra_app_name,
+            service_management_reference=parsed.service_management_reference,
+        )
 
         # Step 4: Assign groups to enterprise app
         assign_groups_to_app(sp_id=entra["sp_id"], group_ids=group_ids)
@@ -779,6 +816,7 @@ def main(args: list[str] | None = None) -> int:
             location=parsed.location,
             server_name=sql_server_name,
             database_name=sql_db_name,
+            tags=resource_tags,
         )
 
         # Step 6: Create Key Vault + upload .env
@@ -787,6 +825,7 @@ def main(args: list[str] | None = None) -> int:
             location=parsed.location,
             vault_name=kv_name,
             env_file=env_file,
+            tags=resource_tags,
         )
 
         # Step 7: Deploy Bicep
@@ -801,6 +840,7 @@ def main(args: list[str] | None = None) -> int:
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
+            owner_tag=parsed.owner_tag,
         )
 
         fqdn = outputs["appFqdn"]["value"]
@@ -835,6 +875,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("       CREATE USER [%s-identity] FROM EXTERNAL PROVIDER;", app_name)
         logger.info("       ALTER ROLE db_datareader ADD MEMBER [%s-identity];", app_name)
         logger.info("       ALTER ROLE db_datawriter ADD MEMBER [%s-identity];", app_name)
+        logger.info("       ALTER ROLE db_ddladmin ADD MEMBER [%s-identity];", app_name)
         logger.info("  2. Add users to the Entra security group(s)")
         logger.info("  3. Grant Cognitive Services roles if using MI-auth for AOAI:")
         logger.info("     az role assignment create --assignee-object-id %s \\", mi_principal_id)
