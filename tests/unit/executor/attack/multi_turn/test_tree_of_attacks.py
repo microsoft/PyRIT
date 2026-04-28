@@ -564,6 +564,34 @@ class TestTreeOfAttacksInitialization:
                 next_message=next_message,
             )
 
+    def test_default_scorer_detects_text_output_modalities(self):
+        """Test that default scorer detects text output modalities from target capabilities."""
+        builder = AttackBuilder()
+        builder._supports_multi_turn = True
+        builder.objective_target = AttackBuilder._create_mock_target(supports_multi_turn=True)
+        builder.adversarial_chat = AttackBuilder._create_mock_chat()
+        # Don't set objective_scorer — let TAP create the default
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=builder.objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
+        )
+        scorer = attack._objective_scorer._scorer
+        assert "text" in scorer._validator._supported_data_types
+
+    def test_default_scorer_detects_image_target_modalities(self):
+        """Test that image target output modalities are passed to scorer validator."""
+        builder = AttackBuilder()
+        builder.objective_target = AttackBuilder._create_mock_target(supports_multi_turn=False)
+        builder.objective_target.capabilities.output_modalities = frozenset({frozenset(["image_path"])})
+        builder.adversarial_chat = AttackBuilder._create_mock_chat()
+
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=builder.objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
+        )
+        scorer = attack._objective_scorer._scorer
+        assert "image_path" in scorer._validator._supported_data_types
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPruningLogic:
@@ -1722,6 +1750,55 @@ class TestTreeOfAttacksNode:
         assert "AuxScorer2" in node.auxiliary_scores
         assert node.auxiliary_scores["AuxScorer1"].get_value() == 0.8
         assert node.auxiliary_scores["AuxScorer2"].get_value() == 0.6
+
+    @pytest.mark.asyncio
+    async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
+        """Test that single-turn targets get a fresh conversation_id before each send."""
+        node_components["objective_target"].capabilities.supports_multi_turn = False
+        node = _TreeOfAttacksNode(**node_components)
+
+        original_conv_id = node.objective_target_conversation_id
+
+        # Mock the adversarial chat to return valid JSON prompt
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="response",
+            converted_value="response",
+            conversation_id="resp_conv",
+        )
+        response_msg = Message(message_pieces=[response_piece])
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response_msg)
+        node._adversarial_chat.send_prompt_async = AsyncMock(return_value=response_msg)
+
+        with patch.object(node, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"):
+            with patch.object(node, "_score_response_async", new_callable=AsyncMock):
+                await node._send_prompt_to_target_async("test prompt")
+
+        # Conversation ID should have changed for single-turn target
+        assert node.objective_target_conversation_id != original_conv_id
+
+    @pytest.mark.asyncio
+    async def test_node_multi_turn_target_keeps_conv_id(self, node_components):
+        """Test that multi-turn targets keep the same conversation_id."""
+        node_components["objective_target"].capabilities.supports_multi_turn = True
+        node = _TreeOfAttacksNode(**node_components)
+
+        original_conv_id = node.objective_target_conversation_id
+
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="response",
+            converted_value="response",
+            conversation_id="resp_conv",
+        )
+        response_msg = Message(message_pieces=[response_piece])
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response_msg)
+
+        await node._send_prompt_to_target_async("test prompt")
+
+        assert node.objective_target_conversation_id == original_conv_id
 
 
 @pytest.mark.usefixtures("patch_central_database")
