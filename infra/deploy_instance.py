@@ -11,8 +11,9 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   3. Entra security group (optional — can use existing)
   4. Azure SQL server + database
   5. Key Vault + populate .env secret
-  6. Bicep deployment (Container App, MI, networking, logging)
-  7. Post-deploy: SPA redirect URI, RBAC role assignments
+  6. Managed identity + RBAC role assignments (AcrPull, KV Secrets User)
+  7. Bicep deployment (Container App, networking, logging)
+  8. Post-deploy: SPA redirect URI
 
 Usage:
     python infra/deploy_instance.py \\
@@ -582,23 +583,15 @@ def deploy_bicep(
 
 def post_deploy(
     *,
-    app_id: str,
     app_object_id: str,
     fqdn: str,
-    mi_principal_id: str,
-    acr_name: str,
-    kv_resource_id: str,
 ) -> None:
     """
-    Run post-deployment steps: SPA redirect URI, RBAC role assignments.
+    Run post-deployment steps: SPA redirect URI.
 
     Args:
-        app_id (str): The Entra app registration client ID.
         app_object_id (str): The Entra app registration object ID (for Graph API).
         fqdn (str): The deployed app FQDN.
-        mi_principal_id (str): The managed identity principal ID.
-        acr_name (str): The ACR name for AcrPull role.
-        kv_resource_id (str): The Key Vault resource ID for Secrets User role.
     """
     # Set SPA redirect URI via Graph REST API (more portable than --spa-redirect-uris flag)
     logger.info("Setting SPA redirect URI: https://%s", fqdn)
@@ -612,6 +605,83 @@ def post_deploy(
             f"https://graph.microsoft.com/v1.0/applications/{app_object_id}",
             "--body",
             json.dumps(spa_body),
+        ]
+    )
+
+
+def create_managed_identity_and_grant_roles(
+    *,
+    resource_group: str,
+    location: str,
+    identity_name: str,
+    kv_resource_id: str,
+    acr_name: str,
+    tags: list[str] | None = None,
+) -> str:
+    """
+    Create a user-assigned managed identity and grant it pre-deploy RBAC roles.
+
+    The MI must have KV Secrets User and AcrPull before the Bicep deployment
+    can provision the container (it needs to pull the image and read the KV secret).
+    Creating the MI here and granting roles before Bicep avoids the race condition
+    of Bicep creating the MI but the container needing roles that don't exist yet.
+
+    Bicep's MI resource declaration is idempotent — it will adopt the existing MI.
+
+    Args:
+        resource_group (str): The resource group name.
+        location (str): The Azure region.
+        identity_name (str): The managed identity name.
+        kv_resource_id (str): The Key Vault resource ID for Secrets User role.
+        acr_name (str): The ACR name for AcrPull role.
+        tags (list[str] | None): Tags in 'Key=Value' format.
+
+    Returns:
+        str: The managed identity principal ID.
+    """
+    logger.info("Creating managed identity: %s", identity_name)
+    mi_cmd = [
+        "identity",
+        "create",
+        "--name",
+        identity_name,
+        "--resource-group",
+        resource_group,
+        "--location",
+        location,
+    ]
+    if tags:
+        mi_cmd += ["--tags"] + tags
+    run_az(args=mi_cmd)
+
+    mi_principal_id = run_az_json(
+        args=[
+            "identity",
+            "show",
+            "--name",
+            identity_name,
+            "--resource-group",
+            resource_group,
+            "--query",
+            "principalId",
+        ]
+    )
+
+    # Grant KV Secrets User
+    logger.info("Granting Key Vault Secrets User to managed identity")
+    run_az(
+        args=[
+            "role",
+            "assignment",
+            "create",
+            "--assignee-object-id",
+            mi_principal_id,
+            "--assignee-principal-type",
+            "ServicePrincipal",
+            "--role",
+            "Key Vault Secrets User",
+            "--scope",
+            kv_resource_id,
         ]
     )
 
@@ -643,23 +713,7 @@ def post_deploy(
         ]
     )
 
-    # Grant Key Vault Secrets User
-    logger.info("Granting Key Vault Secrets User to managed identity")
-    run_az(
-        args=[
-            "role",
-            "assignment",
-            "create",
-            "--assignee-object-id",
-            mi_principal_id,
-            "--assignee-principal-type",
-            "ServicePrincipal",
-            "--role",
-            "Key Vault Secrets User",
-            "--scope",
-            kv_resource_id,
-        ]
-    )
+    return mi_principal_id
 
 
 def parse_args(args: list[str] | None = None) -> argparse.Namespace:
@@ -833,7 +887,18 @@ def main(args: list[str] | None = None) -> int:
             tags=resource_tags,
         )
 
-        # Step 7: Deploy Bicep
+        # Step 7: Create managed identity + grant pre-deploy RBAC
+        mi_name = f"{app_name}-identity"
+        mi_principal_id = create_managed_identity_and_grant_roles(
+            resource_group=rg_name,
+            location=parsed.location,
+            identity_name=mi_name,
+            kv_resource_id=kv_id,
+            acr_name=parsed.acr_name,
+            tags=resource_tags,
+        )
+
+        # Step 8: Deploy Bicep
         outputs = deploy_bicep(
             resource_group=rg_name,
             app_name=app_name,
@@ -849,16 +914,11 @@ def main(args: list[str] | None = None) -> int:
         )
 
         fqdn = outputs["appFqdn"]["value"]
-        mi_principal_id = outputs["managedIdentityPrincipalId"]["value"]
 
-        # Step 8: Post-deploy (SPA redirect, RBAC)
+        # Step 9: Post-deploy (SPA redirect)
         post_deploy(
-            app_id=entra["app_id"],
             app_object_id=entra["app_object_id"],
             fqdn=fqdn,
-            mi_principal_id=mi_principal_id,
-            acr_name=parsed.acr_name,
-            kv_resource_id=kv_id,
         )
 
         # Summary
