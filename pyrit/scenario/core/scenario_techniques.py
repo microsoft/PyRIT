@@ -75,14 +75,14 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         accepts_scorer_override=False,
     ),
     AttackTechniqueSpec(
-        name="single_turn_crescendo",
+        name="crescendo_simulated",
         attack_class=PromptSendingAttack,
         strategy_tags=["core", "single_turn"],
         seed_technique=SeedAttackTechniqueGroup(
             seeds=[
                 SeedSimulatedConversation(
                     adversarial_chat_system_prompt_path=(
-                        Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "crescendo_simulated.yaml"
+                        Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "crescendo_simulated.yaml"
                     ),
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                     num_turns=3,
