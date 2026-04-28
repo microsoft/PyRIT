@@ -25,6 +25,7 @@ import logging
 from pyrit.executor.attack import (
     ManyShotJailbreakAttack,
     PromptSendingAttack,
+    RedTeamingAttack,
     RolePlayAttack,
     RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
@@ -69,6 +70,11 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         attack_class=TreeOfAttacksWithPruningAttack,
         strategy_tags=["core", "multi_turn"],
         accepts_scorer_override=False,
+    ),
+    AttackTechniqueSpec(
+        name="red_teaming",
+        attack_class=RedTeamingAttack,
+        strategy_tags=["core", "multi_turn"],
     ),
 ]
 
