@@ -54,14 +54,11 @@ class TargetRequirements:
                 supported, or if any ``required`` capability is not supported
                 natively and has no ``ADAPT`` entry in the target's policy.
         """
-        errors: list[str] = []
-
-        for capability in sorted(self.native_required, key=lambda c: c.value):
-            if not target.configuration.includes(capability=capability):
-                errors.append(
-                    f"Target must natively support '{capability.value}'; "
-                    "adaptation is not acceptable for this consumer."
-                )
+        errors: list[str] = [
+            f"Target must natively support '{capability.value}'; adaptation is not acceptable for this consumer."
+            for capability in sorted(self.native_required, key=lambda c: c.value)
+            if not target.configuration.includes(capability=capability)
+        ]
 
         for capability in sorted(self.required, key=lambda c: c.value):
             try:
