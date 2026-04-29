@@ -836,26 +836,37 @@ class TestSupportedParameters:
 
 
 class TestInitializerParameterDeprecation:
-    """Tests for the deprecated InitializerParameter alias."""
+    """Tests for the deprecated InitializerParameter alias.
 
-    def test_initializer_parameter_alias_returns_parameter(self) -> None:
-        """Importing InitializerParameter returns the unified Parameter class."""
+    The alias is exposed from two import paths and both must emit the warning:
+      - ``from pyrit.setup.initializers import InitializerParameter`` (package level)
+      - ``from pyrit.setup.initializers.pyrit_initializer import InitializerParameter``
+        (canonical defining module — the path most likely seen in IDE "go to
+        definition" jumps and older sample notebooks)
+    """
+
+    def test_package_level_alias_returns_parameter(self) -> None:
+        """The package-level alias resolves to the unified Parameter class."""
         with pytest.warns(DeprecationWarning, match="InitializerParameter is deprecated"):
             from pyrit.setup.initializers import InitializerParameter
 
         assert InitializerParameter is Parameter
 
-    def test_initializer_parameter_alias_emits_deprecation_warning(self) -> None:
-        """Accessing InitializerParameter emits a DeprecationWarning pointing to Parameter."""
-        import importlib
-
+    def test_package_level_alias_emits_deprecation_warning(self) -> None:
+        """Accessing InitializerParameter on the package emits a DeprecationWarning."""
         import pyrit.setup.initializers as initializers_module
-
-        # Reload so __getattr__ fires fresh — Python caches first access otherwise
-        importlib.reload(initializers_module)
 
         with pytest.warns(DeprecationWarning, match="Use Parameter from pyrit.common"):
             _ = initializers_module.InitializerParameter
+
+    def test_canonical_module_alias_emits_deprecation_warning(self) -> None:
+        """Accessing InitializerParameter on pyrit_initializer also emits the warning."""
+        import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
+
+        with pytest.warns(DeprecationWarning, match="Use Parameter from pyrit.common"):
+            value = pyrit_initializer_module.InitializerParameter
+
+        assert value is Parameter
 
     def test_unknown_attribute_still_raises_attribute_error(self) -> None:
         """The __getattr__ shim must not swallow other missing attributes."""
@@ -863,3 +874,10 @@ class TestInitializerParameterDeprecation:
 
         with pytest.raises(AttributeError, match="has no attribute 'NonExistentSymbol'"):
             _ = initializers_module.NonExistentSymbol
+
+    def test_canonical_module_unknown_attribute_still_raises(self) -> None:
+        """The pyrit_initializer __getattr__ shim must not swallow missing attributes."""
+        import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
+
+        with pytest.raises(AttributeError, match="has no attribute 'NonExistentSymbol'"):
+            _ = pyrit_initializer_module.NonExistentSymbol
