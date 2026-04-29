@@ -14,7 +14,13 @@ from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import Optional
 
-from pyrit.cli import frontend_core
+from pyrit.cli._cli_args import (
+    ARG_HELP,
+    _parse_initializer_arg,
+    non_negative_int,
+    positive_int,
+    validate_log_level_argparse,
+)
 
 
 def parse_args(args: Optional[list[str]] = None) -> Namespace:
@@ -53,12 +59,12 @@ Examples:
     parser.add_argument(
         "--config-file",
         type=Path,
-        help=frontend_core.ARG_HELP["config_file"],
+        help=ARG_HELP["config_file"],
     )
 
     parser.add_argument(
         "--log-level",
-        type=frontend_core.validate_log_level_argparse,
+        type=validate_log_level_argparse,
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
     )
@@ -91,16 +97,16 @@ Examples:
 
     parser.add_argument(
         "--initializers",
-        type=frontend_core._parse_initializer_arg,
+        type=_parse_initializer_arg,
         nargs="+",
-        help=frontend_core.ARG_HELP["initializers"],
+        help=ARG_HELP["initializers"],
     )
 
     parser.add_argument(
         "--initialization-scripts",
         type=str,
         nargs="+",
-        help=frontend_core.ARG_HELP["initialization_scripts"],
+        help=ARG_HELP["initialization_scripts"],
     )
 
     parser.add_argument(
@@ -109,44 +115,44 @@ Examples:
         type=str,
         nargs="+",
         dest="scenario_strategies",
-        help=frontend_core.ARG_HELP["scenario_strategies"],
+        help=ARG_HELP["scenario_strategies"],
     )
 
     parser.add_argument(
         "--max-concurrency",
-        type=frontend_core.positive_int,
-        help=frontend_core.ARG_HELP["max_concurrency"],
+        type=positive_int,
+        help=ARG_HELP["max_concurrency"],
     )
 
     parser.add_argument(
         "--max-retries",
-        type=frontend_core.non_negative_int,
-        help=frontend_core.ARG_HELP["max_retries"],
+        type=non_negative_int,
+        help=ARG_HELP["max_retries"],
     )
 
     parser.add_argument(
         "--memory-labels",
         type=str,
-        help=frontend_core.ARG_HELP["memory_labels"],
+        help=ARG_HELP["memory_labels"],
     )
 
     parser.add_argument(
         "--dataset-names",
         type=str,
         nargs="+",
-        help=frontend_core.ARG_HELP["dataset_names"],
+        help=ARG_HELP["dataset_names"],
     )
 
     parser.add_argument(
         "--max-dataset-size",
-        type=frontend_core.positive_int,
-        help=frontend_core.ARG_HELP["max_dataset_size"],
+        type=positive_int,
+        help=ARG_HELP["max_dataset_size"],
     )
 
     parser.add_argument(
         "--target",
         type=str,
-        help=frontend_core.ARG_HELP["target"],
+        help=ARG_HELP["target"],
     )
 
     return parser.parse_args(args)
@@ -159,13 +165,16 @@ def main(args: Optional[list[str]] = None) -> int:
     Returns:
         int: Exit code (0 for success, 1 for error).
     """
-    print("Starting PyRIT...")
-    sys.stdout.flush()
-
     try:
         parsed_args = parse_args(args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
+
+    print("Starting PyRIT...")
+    sys.stdout.flush()
+
+    # Defer the heavy import until after arg parsing so --help is instant.
+    from pyrit.cli import frontend_core
 
     # Handle list commands (don't need full context)
     if parsed_args.list_scenarios:
