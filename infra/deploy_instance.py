@@ -10,7 +10,7 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   2. Entra app registration + API scope + group claims
   3. Entra security group (optional — can use existing)
   4. Azure SQL server + database
-  5. Key Vault + populate .env secret
+  5. Key Vault + populate .env secret (auto-injects SQL connection string)
   6. Managed identity + RBAC role assignments (AcrPull, KV Secrets User)
   7. Bicep deployment (Container App, networking, logging)
   8. Post-deploy: SPA redirect URI
@@ -31,8 +31,10 @@ import argparse
 import json
 import logging
 import platform
+import re
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -402,12 +404,70 @@ def create_sql_server_and_db(
     return {"server_fqdn": server_fqdn, "database_name": database_name}
 
 
+# Matches AZURE_SQL_DB_CONNECTION_STRING=... (with or without quotes, whole line)
+_SQL_CONN_RE = re.compile(r"^AZURE_SQL_DB_CONNECTION_STRING\s*=\s*.*$", re.MULTILINE)
+
+# Connection string format expected by AzureSQLMemory (pyodbc + Entra MI auth)
+_SQL_CONN_TEMPLATE = "mssql+pyodbc://@{server_fqdn}/{database_name}?driver=ODBC+Driver+18+for+SQL+Server"
+
+
+def _prepare_env_content(
+    *,
+    env_file: Path,
+    sql_server_fqdn: str,
+    sql_database_name: str,
+) -> str:
+    """
+    Read the user-provided .env file and inject the correct SQL connection string.
+
+    The deploy script creates the SQL server and database, so the connection string
+    must match. If the .env already contains an AZURE_SQL_DB_CONNECTION_STRING that
+    differs, it is overwritten with a warning.
+
+    Args:
+        env_file (Path): Path to the user-provided .env file.
+        sql_server_fqdn (str): The SQL server FQDN (e.g., myserver.database.windows.net).
+        sql_database_name (str): The SQL database name.
+
+    Returns:
+        str: The .env content with the correct SQL connection string injected.
+    """
+    content = env_file.read_text(encoding="utf-8")
+    correct_value = _SQL_CONN_TEMPLATE.format(
+        server_fqdn=sql_server_fqdn,
+        database_name=sql_database_name,
+    )
+    new_line = f"AZURE_SQL_DB_CONNECTION_STRING={correct_value}"
+
+    match = _SQL_CONN_RE.search(content)
+    if match:
+        existing_line = match.group(0).strip()
+        existing_value = existing_line.split("=", 1)[1].strip().strip("\"'")
+        if existing_value == correct_value:
+            logger.info("AZURE_SQL_DB_CONNECTION_STRING already correct in .env")
+        else:
+            # Log only server/database, not the full connection string (may contain credentials).
+            logger.warning(
+                "Overwriting AZURE_SQL_DB_CONNECTION_STRING in .env to point at %s/%s",
+                sql_server_fqdn,
+                sql_database_name,
+            )
+        content = _SQL_CONN_RE.sub(new_line, content)
+    else:
+        logger.info("Appending AZURE_SQL_DB_CONNECTION_STRING to .env")
+        if not content.endswith("\n"):
+            content += "\n"
+        content += f"\n# ─── Database (auto-injected by deploy script) ───\n{new_line}\n"
+
+    return content
+
+
 def create_key_vault(
     *,
     resource_group: str,
     location: str,
     vault_name: str,
-    env_file: Path,
+    env_content: str,
     tags: list[str] | None = None,
 ) -> str:
     """
@@ -417,7 +477,7 @@ def create_key_vault(
         resource_group (str): The resource group name.
         location (str): The Azure region.
         vault_name (str): The Key Vault name.
-        env_file (Path): Path to the .env file to upload.
+        env_content (str): The prepared .env content to upload (with SQL connection string injected).
         tags (list[str] | None): Tags in 'Key=Value' format.
 
     Returns:
@@ -481,38 +541,49 @@ def create_key_vault(
     )
 
     logger.info("Uploading .env to Key Vault secret: env-global")
-    # RBAC propagation can take up to a few minutes on a fresh vault.
-    # Retry with backoff to handle the race condition.
-    max_retries = 6
-    for attempt in range(1, max_retries + 1):
-        result = run_az(
-            args=[
-                "keyvault",
-                "secret",
-                "set",
-                "--vault-name",
-                vault_name,
-                "--name",
-                "env-global",
-                "--file",
-                str(env_file),
-            ],
-            check=False,
-        )
-        if result.returncode == 0:
-            break
-        if attempt < max_retries:
-            wait = 10 * attempt
-            logger.warning(
-                "KV secret write failed (attempt %d/%d) — RBAC may still be propagating. Retrying in %ds...",
-                attempt,
-                max_retries,
-                wait,
+    # Write prepared content to a temp file for upload (avoids shell escaping issues
+    # with --value and keeps the user's original .env untouched).
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False, encoding="utf-8") as tmp:
+            tmp_path = tmp.name
+            tmp.write(env_content)
+
+        # RBAC propagation can take up to a few minutes on a fresh vault.
+        # Retry with backoff to handle the race condition.
+        max_retries = 6
+        for attempt in range(1, max_retries + 1):
+            result = run_az(
+                args=[
+                    "keyvault",
+                    "secret",
+                    "set",
+                    "--vault-name",
+                    vault_name,
+                    "--name",
+                    "env-global",
+                    "--file",
+                    tmp_path,
+                ],
+                check=False,
             )
-            time.sleep(wait)
-        else:
-            logger.error("KV secret write failed after %d attempts. stderr: %s", max_retries, result.stderr)
-            raise subprocess.CalledProcessError(result.returncode, result.args)
+            if result.returncode == 0:
+                break
+            if attempt < max_retries:
+                wait = 10 * attempt
+                logger.warning(
+                    "KV secret write failed (attempt %d/%d) — RBAC may still be propagating. Retrying in %ds...",
+                    attempt,
+                    max_retries,
+                    wait,
+                )
+                time.sleep(wait)
+            else:
+                logger.error("KV secret write failed after %d attempts. stderr: %s", max_retries, result.stderr)
+                raise subprocess.CalledProcessError(result.returncode, result.args)
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
     return kv_id
 
@@ -878,12 +949,19 @@ def main(args: list[str] | None = None) -> int:
             tags=resource_tags,
         )
 
+        # Step 5b: Prepare .env content with correct SQL connection string
+        env_content = _prepare_env_content(
+            env_file=env_file,
+            sql_server_fqdn=sql["server_fqdn"],
+            sql_database_name=sql["database_name"],
+        )
+
         # Step 6: Create Key Vault + upload .env
         kv_id = create_key_vault(
             resource_group=rg_name,
             location=parsed.location,
             vault_name=kv_name,
-            env_file=env_file,
+            env_content=env_content,
             tags=resource_tags,
         )
 
