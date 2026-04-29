@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -27,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 class Benchmark(Scenario):
     """
-    Benchmarking scenario that compares the ASR of several different adversarial models.
+    Benchmarking scenario that compares the attack success rate (ASR)
+    of several different adversarial models.
     """
 
     VERSION: int = 1
@@ -185,8 +187,6 @@ class Benchmark(Scenario):
             raise ValueError(
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
-
-        from pyrit.executor.attack import AttackScoringConfig
 
         local_factories = {
             spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in self._benchmark_specs
