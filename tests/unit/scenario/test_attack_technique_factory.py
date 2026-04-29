@@ -363,3 +363,34 @@ class TestFactoryIdentifier:
         second = factory.get_identifier()
 
         assert first is second
+
+    def test_seed_technique_included_in_identifier(self):
+        """A factory with seed_technique should have technique_seeds children."""
+        seed_technique = _make_seed_technique()
+        factory = AttackTechniqueFactory(attack_class=_StubAttack, seed_technique=seed_technique)
+
+        identifier = factory.get_identifier()
+
+        assert "technique_seeds" in identifier.children
+        assert len(identifier.children["technique_seeds"]) == 1
+
+    def test_no_seed_technique_means_no_children(self):
+        """A factory without seed_technique should have no technique_seeds children."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+
+        identifier = factory.get_identifier()
+
+        assert "technique_seeds" not in identifier.children
+
+    def test_different_seed_techniques_produce_different_hashes(self):
+        """Two factories differing only by seed_technique must have different hashes."""
+        seed1 = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="technique_a", data_type="text", is_general_technique=True)],
+        )
+        seed2 = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="technique_b", data_type="text", is_general_technique=True)],
+        )
+        factory1 = AttackTechniqueFactory(attack_class=_StubAttack, seed_technique=seed1)
+        factory2 = AttackTechniqueFactory(attack_class=_StubAttack, seed_technique=seed2)
+
+        assert factory1.get_identifier().hash != factory2.get_identifier().hash
