@@ -22,11 +22,15 @@ Usage:
 import argparse
 import json
 import logging
+import platform
 import subprocess
 import sys
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# On Windows, az CLI is a .cmd script that requires shell=True for subprocess to find it.
+_SHELL = platform.system() == "Windows"
 
 
 def run_az(
@@ -56,6 +60,7 @@ def run_az(
         capture_output=capture,
         text=True,
         check=check,
+        shell=_SHELL,
     )
 
 
