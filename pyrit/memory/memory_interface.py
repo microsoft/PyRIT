@@ -18,13 +18,12 @@ from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
+if TYPE_CHECKING:
+    from pyrit.memory.memory_embedding import MemoryEmbedding
+
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
-from pyrit.memory.memory_embedding import (
-    MemoryEmbedding,
-    default_memory_embedding_factory,
-)
 from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -35,7 +34,6 @@ from pyrit.memory.memory_models import (
     ScoreEntry,
     SeedEntry,
 )
-from pyrit.memory.migration import check_schema_migrations, reset_database, run_schema_migrations
 from pyrit.models import (
     AttackResult,
     ConversationStats,
@@ -84,7 +82,7 @@ class MemoryInterface(abc.ABC):
     # for backends with higher limits (e.g., Azure SQL supports 2100).
     _MAX_BIND_VARS: int = 500
 
-    memory_embedding: MemoryEmbedding | None = None
+    memory_embedding: "MemoryEmbedding | None" = None
     results_storage_io: StorageIO | None = None
     results_path: str | None = None
     engine: Engine | None = None
@@ -123,6 +121,8 @@ class MemoryInterface(abc.ABC):
             ValueError: If no embedding model is provided and required environment
             variables are not set.
         """
+        from pyrit.memory.memory_embedding import default_memory_embedding_factory
+
         self.memory_embedding = default_memory_embedding_factory(embedding_model=embedding_model)
 
     def disable_embedding(self) -> None:
@@ -1153,6 +1153,8 @@ class MemoryInterface(abc.ABC):
             RuntimeError: If the engine is not initialized when required.
             Exception: If there is an error during schema validation or migration.
         """
+        from pyrit.memory.migration import check_schema_migrations, run_schema_migrations
+
         logger.info("Running schema migration.")
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
@@ -1166,6 +1168,8 @@ class MemoryInterface(abc.ABC):
         Raises:
             RuntimeError: If the engine is not initialized.
         """
+        from pyrit.memory.migration import reset_database
+
         if self.engine is None:
             raise RuntimeError("Engine is not initialized")
         reset_database(engine=self.engine)

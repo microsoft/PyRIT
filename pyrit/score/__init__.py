@@ -26,6 +26,17 @@ from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer
 from pyrit.score.printer import ConsoleScorerPrinter, ScorerPrinter
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
+from pyrit.score.scorer_evaluation.scorer_metrics import (
+    HarmScorerMetrics,
+    ObjectiveScorerMetrics,
+    ScorerMetrics,
+    ScorerMetricsWithIdentity,
+)
+from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+    find_objective_metrics_by_eval_hash,
+    get_all_harm_metrics,
+    get_all_objective_metrics,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
@@ -63,22 +74,12 @@ if TYPE_CHECKING:
         ScorerEvalDatasetFiles,
         ScorerEvaluator,
     )
-    from pyrit.score.scorer_evaluation.scorer_metrics import (
-        HarmScorerMetrics,
-        ObjectiveScorerMetrics,
-        ScorerMetrics,
-        ScorerMetricsWithIdentity,
-    )
-    from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-        find_objective_metrics_by_eval_hash,
-        get_all_harm_metrics,
-        get_all_objective_metrics,
-    )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
 
 # Lazy imports for modules with heavy third-party dependencies (PEP 562).
-# Audio/video scorers import `av` (~1.9s), scorer_evaluation imports `pandas` (~1.6s) and `scipy.stats`.
+# Audio/video scorers import `av` (~1.9s), human_labeled_dataset imports `pandas` (~1.6s),
+# scorer_evaluator imports `scipy.stats` (~1s).
 _LAZY_IMPORTS: dict[str, str] = {
     "AudioFloatScaleScorer": "pyrit.score.float_scale.audio_float_scale_scorer",
     "AudioTrueFalseScorer": "pyrit.score.true_false.audio_true_false_scorer",
@@ -92,13 +93,6 @@ _LAZY_IMPORTS: dict[str, str] = {
     "ObjectiveScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "ScorerEvalDatasetFiles": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "ScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
-    "HarmScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
-    "ObjectiveScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
-    "ScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
-    "ScorerMetricsWithIdentity": "pyrit.score.scorer_evaluation.scorer_metrics",
-    "find_objective_metrics_by_eval_hash": "pyrit.score.scorer_evaluation.scorer_metrics_io",
-    "get_all_harm_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",
-    "get_all_objective_metrics": "pyrit.score.scorer_evaluation.scorer_metrics_io",
 }
 
 
