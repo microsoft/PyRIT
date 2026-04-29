@@ -86,6 +86,10 @@ class ImageFilterConverter(PromptConverter):
         self._variation_map: dict[str, str] = {}
         for v in self._variations:
             name = v.split(":", 1)[0].strip().lower()
+            if name in self._variation_map:
+                logger.warning(
+                    f"Duplicate variation prefix '{name}' in filter '{filter_name}', overwriting previous entry."
+                )
             self._variation_map[name] = v
 
         if variation is not None:
