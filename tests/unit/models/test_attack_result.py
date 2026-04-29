@@ -140,16 +140,45 @@ class TestAttackResultDeprecation:
 class TestAttackResultTimestamp:
     """Tests for the AttackResult.timestamp field and its round-trip through AttackResultEntry."""
 
-    def test_timestamp_defaults_to_none_when_not_set(self) -> None:
-        """AttackResult constructed without a timestamp exposes the field as None."""
+    def test_timestamp_defaults_to_now_utc_when_not_set(self) -> None:
+        """AttackResult constructed without a timestamp gets a tz-aware UTC default."""
+        before = datetime.now(timezone.utc)
         result = AttackResult(conversation_id="c1", objective="test")
-        assert result.timestamp is None
+        after = datetime.now(timezone.utc)
+
+        assert result.timestamp is not None
+        assert result.timestamp.tzinfo is timezone.utc
+        assert before <= result.timestamp <= after
 
     def test_timestamp_accepts_and_preserves_aware_datetime(self) -> None:
         """A tz-aware datetime passed to the constructor is stored as-is."""
         ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
         result = AttackResult(conversation_id="c1", objective="test", timestamp=ts)
         assert result.timestamp == ts
+
+    def test_entry_preserves_timestamp_from_attack_result(self) -> None:
+        """Constructing AttackResultEntry from an AttackResult preserves its timestamp."""
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            timestamp=persisted_ts,
+        )
+        entry = AttackResultEntry(entry=original)
+        assert entry.timestamp == persisted_ts
+
+    def test_entry_falls_back_to_now_when_attack_result_timestamp_missing(self) -> None:
+        """If AttackResult.timestamp is explicitly None, entry stamps datetime.now()."""
+        original = AttackResult(conversation_id="c1", objective="test")
+        original.timestamp = None  # type: ignore[assignment]
+
+        before = datetime.now(timezone.utc)
+        entry = AttackResultEntry(entry=original)
+        after = datetime.now(timezone.utc)
+
+        assert entry.timestamp is not None
+        assert entry.timestamp.tzinfo is timezone.utc
+        assert before <= entry.timestamp <= after
 
     def test_timestamp_roundtrips_through_attack_result_entry(self) -> None:
         """AttackResultEntry.timestamp is surfaced on the hydrated AttackResult."""
@@ -170,8 +199,6 @@ class TestAttackResultTimestamp:
         """SQLite returns naive datetimes; hydration must attach UTC tzinfo."""
         original = AttackResult(conversation_id="c1", objective="test")
         entry = AttackResultEntry(entry=original)
-        # Simulate a SQLite-backed row: naive datetime, no tzinfo. The whole
-        # point of this test is to exercise that path, so DTZ001 is suppressed.
         entry.timestamp = datetime(2026, 4, 17, 12, 0, 0)  # noqa: DTZ001
 
         hydrated = entry.get_attack_result()

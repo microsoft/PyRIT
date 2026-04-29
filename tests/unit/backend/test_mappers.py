@@ -338,6 +338,8 @@ class TestAttackResultToSummary:
             objective="test",
             outcome=AttackOutcome.SUCCESS,
         )
+        ar.timestamp = None  # type: ignore[assignment]
+
         before = datetime.now(timezone.utc)
         summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
         after = datetime.now(timezone.utc)
