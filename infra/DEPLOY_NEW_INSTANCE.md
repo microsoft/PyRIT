@@ -24,7 +24,7 @@ within an instance. The trust boundary is Entra group membership.
 | `az login` with Graph permissions | The script creates Entra app registrations, which requires Graph API access. Run `az login --scope https://graph.microsoft.com//.default` |
 | Azure permissions | **Owner** (or Contributor + User Access Administrator) on the subscription, and **Application Administrator** in Entra ID for app registrations and Graph API operations |
 | Container image pushed to ACR | Build and push before deploying (see [Building the Image](#building-the-image)) |
-| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints, DB connection string, storage URL, and content safety config. Required for the default `target airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
+| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints, storage URL, and content safety config. `AZURE_SQL_DB_CONNECTION_STRING` is auto-injected by the script — you can omit it. Required for the default `target airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
 
 ### What the script creates (per-instance)
 
@@ -58,8 +58,10 @@ within an instance. The trust boundary is Entra group membership.
 cp infra/env.demo.template my-demo.env
 # Edit my-demo.env — fill in real endpoint URLs, API keys, and models.
 # Required: chat target, unsafe chat targets (for converters), content safety,
-#           SQL connection string, storage account URL.
+#           storage account URL.
 # Optional: image, TTS, video, realtime, responses targets.
+# Note: AZURE_SQL_DB_CONNECTION_STRING is auto-injected by the deploy script —
+#       you can omit it from the .env file.
 ```
 
 See `infra/env.demo.template` for the full list of variables with comments.
@@ -74,8 +76,25 @@ python infra/deploy_instance.py \
     --location eastus2 \
     --acr-name <shared-acr-name> \
     --container-image <acr>.azurecr.io/pyrit:<commit-sha> \
-    --allowed-groups "group-oid-1,group-oid-2"
+    --allowed-groups "group-oid-1,group-oid-2" \
+    --owner-tag "<your-alias>" \
+    --service-management-reference "<service-tree-id>" \
+    --aoai-resource-names "aoai-resource-1,aoai-resource-2"
 ```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--instance-name` | Yes | Short name for this instance (max 13 chars) |
+| `--env-file` | Yes | Path to the `.env` file with target endpoints |
+| `--subscription` | Yes | Azure subscription ID |
+| `--location` | No | Azure region (default: `eastus2`) |
+| `--acr-name` | Yes | Shared ACR name |
+| `--container-image` | Yes | Full image reference (ACR + tag) |
+| `--allowed-groups` | Yes | Comma-separated Entra group OIDs |
+| `--owner-tag` | No | `Owner` tag value (required by some subscriptions) |
+| `--service-management-reference` | No | Service Tree ID (required by some tenants for Entra app creation) |
+| `--aoai-resource-names` | No | Comma-separated Cognitive Services account names for automatic AOAI RBAC. Grants `Cognitive Services OpenAI User` to the MI on each resource. Does **not** cover Content Safety — see step 3 for that. If omitted, all AOAI roles must be granted manually |
+| `--dry-run` | No | Preview what will be created without executing |
 
 > **Instance name constraints:** Max 13 characters (lowercase letters, numbers,
 > hyphens). The Key Vault name `copyrit-{name}-kv` has a 24-character limit.
@@ -101,18 +120,42 @@ The script prints these at the end. The following steps require manual action:
 CREATE USER [copyrit-{instance-name}-identity] FROM EXTERNAL PROVIDER;
 ALTER ROLE db_datareader ADD MEMBER [copyrit-{instance-name}-identity];
 ALTER ROLE db_datawriter ADD MEMBER [copyrit-{instance-name}-identity];
+ALTER ROLE db_ddladmin ADD MEMBER [copyrit-{instance-name}-identity];
 ```
 
 **Grant Cognitive Services roles** (if using managed identity auth for Azure OpenAI):
+
+If you passed `--aoai-resource-names` during deployment, the script granted
+`Cognitive Services OpenAI User` on each specified AOAI resource. Check the
+deploy output for the `AOAI RBAC: X/Y resources granted` line. Verify all
+requested resources were granted (X should equal Y).
+
+**Content Safety requires a separate role** (`Cognitive Services User`, not
+`OpenAI User`). The `--aoai-resource-names` flag does not cover this. If your
+`.env` uses managed identity auth for Content Safety (blank API key), grant
+the role manually:
 
 ```bash
 MI_ID=<managed-identity-principal-id-from-script-output>
 
 az role assignment create --assignee-object-id $MI_ID \
     --assignee-principal-type ServicePrincipal \
+    --role "Cognitive Services User" \
+    --scope <content-safety-resource-id>
+```
+
+If you did **not** pass `--aoai-resource-names`, grant all roles manually:
+
+```bash
+MI_ID=<managed-identity-principal-id-from-script-output>
+
+# For each Azure OpenAI resource:
+az role assignment create --assignee-object-id $MI_ID \
+    --assignee-principal-type ServicePrincipal \
     --role "Cognitive Services OpenAI User" \
     --scope <aoai-resource-id>
 
+# For Content Safety:
 az role assignment create --assignee-object-id $MI_ID \
     --assignee-principal-type ServicePrincipal \
     --role "Cognitive Services User" \
@@ -167,8 +210,10 @@ Azure OpenAI or OpenAI endpoints — they don't need to match the AIRT instance.
 - `AZURE_OPENAI_GPT4O_UNSAFE_CHAT_*` — converter target
 - `AZURE_OPENAI_GPT4O_UNSAFE_CHAT_*2` — scorer target
 - `AZURE_CONTENT_SAFETY_*` — harm detection
-- `AZURE_SQL_DB_CONNECTION_STRING` — database
 - `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` — blob storage
+
+> **Note:** `AZURE_SQL_DB_CONNECTION_STRING` is auto-injected by the deploy
+> script from the SQL server it creates. You do not need to set it manually.
 
 **Full modality demo** (uncomment optional sections in the template):
 - Image (DALL-E 3)
@@ -181,6 +226,15 @@ Azure OpenAI or OpenAI endpoints — they don't need to match the AIRT instance.
 
 To update the `.env` contents after deployment:
 
+> **Important:** The deploy script auto-injects `AZURE_SQL_DB_CONNECTION_STRING`
+> into the `.env` during initial deployment. When updating secrets manually, your
+> `updated.env` file **must include** this variable. If omitted, the container
+> will fail to connect to SQL on restart. Check the current value with:
+> ```bash
+> az keyvault secret show --vault-name copyrit-{instance-name}-kv \
+>     --name env-global --query value -o tsv | grep AZURE_SQL_DB
+> ```
+
 ```bash
 az keyvault secret set \
     --vault-name copyrit-{instance-name}-kv \
@@ -188,7 +242,18 @@ az keyvault secret set \
     --file ./updated.env
 ```
 
-Then restart the container app (see step 4 above).
+Then force a new revision so the container picks up the updated secret:
+
+```bash
+az containerapp update \
+    -n copyrit-{instance-name} \
+    -g copyrit-{instance-name} \
+    --set-env-vars "SECRET_UPDATED=$(date +%s)"
+```
+
+> **Note:** Simple restarts may not refresh Key Vault–backed secrets. Creating a
+> new revision (via `az containerapp update`) is the most reliable way to force
+> the container to read the latest secret value.
 
 ## Adding or Removing Users
 
@@ -294,9 +359,17 @@ Common causes:
 
 ### Database connection errors
 
-- Verify the SQL contained user was created (step 3).
-- Verify `AZURE_SQL_DB_CONNECTION_STRING` in the `.env` matches the actual
-  server FQDN and database name created by the script.
+- Verify the SQL contained user was created (step 3) with all three roles
+  (`db_datareader`, `db_datawriter`, `db_ddladmin`).
+- The deploy script auto-injects `AZURE_SQL_DB_CONNECTION_STRING` into the
+  `.env` before uploading to Key Vault. If you see a connection string mismatch,
+  verify the Key Vault secret contents:
+  ```bash
+  az keyvault secret show \
+      --vault-name copyrit-{instance-name}-kv \
+      --name env-global \
+      --query value -o tsv | grep AZURE_SQL_DB
+  ```
 - Verify the Azure SQL firewall allows Azure services (the script configures
   this, but verify with `az sql server firewall-rule list`).
 
@@ -307,3 +380,29 @@ If `az ad` commands fail with `AADSTS530084`, re-login with Graph scope:
 ```bash
 az login --scope https://graph.microsoft.com//.default
 ```
+
+This commonly happens in codespaces or non-corp-joined devices due to
+conditional access policies. Run Entra-related commands from a local machine
+with `az login`.
+
+### AOAI returns 401 PermissionDenied
+
+If chat returns `The principal <id> lacks the required data action`, the
+managed identity doesn't have `Cognitive Services OpenAI User` on the AOAI
+resource. Either:
+- Re-run deployment with `--aoai-resource-names` to automate the grants, or
+- Grant manually:
+  ```bash
+  az role assignment create --assignee-object-id <mi-principal-id> \
+      --assignee-principal-type ServicePrincipal \
+      --role "Cognitive Services OpenAI User" \
+      --scope <aoai-resource-id>
+  ```
+  RBAC propagation takes ~60 seconds. No container restart needed.
+
+### Windows: `FileNotFoundError` when running scripts
+
+The Azure CLI is installed as `az.cmd` on Windows. Both `deploy_instance.py`
+and `teardown_instance.py` handle this automatically with `shell=True` when
+running on Windows. If you encounter this error, ensure you are using the
+latest version of the scripts.
