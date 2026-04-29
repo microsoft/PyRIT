@@ -7,16 +7,10 @@ on:
   push:
     branches:
       - "main"
-    paths:
-      - "frontend/**"
-      - ".github/workflows/frontend_tests.yml"
   pull_request:
     branches:
       - "main"
       - "release/**"
-    paths:
-      - "frontend/**"
-      - ".github/workflows/frontend_tests.yml"
   merge_group:
   workflow_dispatch:
 
