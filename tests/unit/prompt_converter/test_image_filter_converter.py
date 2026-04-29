@@ -109,8 +109,8 @@ async def test_convert_async_with_random_variation(mock_target) -> None:
 
     mock_target.set_system_prompt.assert_called_once()
     system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
-    # Should contain one of the variations
-    assert any(v.split(":")[0].strip() in system_arg for v in converter._variations)
+    # Should contain one of the variation names
+    assert any(name in system_arg for name in converter._variations)
 
     assert result.output_text == "A blurry bodycam shot of a figure in a dark alley"
 
@@ -127,27 +127,32 @@ async def test_convert_async_unsupported_input_type_raises(mock_target) -> None:
 
 def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
     """Duplicate prefixes should log a warning but not raise."""
-    import logging
+    from unittest.mock import mock_open, patch
 
-    converter = ImageFilterConverter(
-        converter_target=mock_target,
-        filter_name="gritty_documentary",
-    )
-    # Manually rebuild the map with duplicate prefixes to exercise the warning path
-    converter._variations = [
-        "Bodycam Footage: first version",
-        "Bodycam Footage: second version",
-    ]
-    converter._variation_map = {}
-    log = logging.getLogger("pyrit.prompt_converter.image_filter_converter")
-    with caplog.at_level("WARNING", logger="pyrit.prompt_converter.image_filter_converter"):
-        for v in converter._variations:
-            name = v.split(":", 1)[0].strip().lower()
-            if name in converter._variation_map:
-                log.warning(
-                    f"Duplicate variation prefix '{name}' in filter 'gritty_documentary', overwriting previous entry."
-                )
-            converter._variation_map[name] = v
+    duplicate_yaml = {
+        "style_instructions": "test style",
+        "variations": {
+            "Bodycam Footage": "first version",
+            "bodycam footage": "second version",
+        },
+    }
+
+    with (
+        caplog.at_level("WARNING", logger="pyrit.prompt_converter.image_filter_converter"),
+        patch("yaml.safe_load", return_value=duplicate_yaml),
+        patch("builtins.open", mock_open()),
+        patch(
+            "pyrit.prompt_converter.image_filter_converter.ImageFilterConverter.list_available_filters",
+            return_value=["gritty_documentary"],
+        ),
+    ):
+        converter = ImageFilterConverter(
+            converter_target=mock_target,
+            filter_name="gritty_documentary",
+        )
+
+    assert "Duplicate variation key" in caplog.text
+    assert converter._variation_map["bodycam footage"] == "bodycam footage"
 
     assert "Duplicate variation prefix" in caplog.text
     assert converter._variation_map["bodycam footage"] == "Bodycam Footage: second version"

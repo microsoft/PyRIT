@@ -5,7 +5,6 @@ import logging
 import pathlib
 import random
 import uuid
-from typing import Optional
 
 import yaml
 
@@ -45,7 +44,7 @@ class ImageFilterConverter(PromptConverter):
         *,
         converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         filter_name: str,
-        variation: Optional[str] = None,
+        variation: str | None = None,
     ) -> None:
         """
         Initialize the converter with a target LLM, filter name, and optional variation.
@@ -55,7 +54,7 @@ class ImageFilterConverter(PromptConverter):
                 Can be omitted if a default has been configured via PyRIT initialization.
             filter_name: Name of the filter YAML file (without extension) in the image_filter directory.
             variation: Name of the variation to use (matched by prefix before the colon in the YAML,
-                e.g. "Bodycam Footage"). Case-insensitive. If None, a random variation is selected
+                e.g. "Bodycam Footage"). This is case-insensitive. If None, a random variation is selected
                 on each call to convert_async.
 
         Raises:
@@ -80,22 +79,22 @@ class ImageFilterConverter(PromptConverter):
             filter_data = yaml.safe_load(f)
 
         self._style_instructions: str = filter_data["style_instructions"]
-        self._variations: list[str] = filter_data["variations"]
+        self._variations: dict[str, str] = filter_data["variations"]
 
-        # Build a lookup map from variation name prefix (before ":") to full variation string
+        # Build a lookup map with lowercased keys for case-insensitive matching
         self._variation_map: dict[str, str] = {}
-        for v in self._variations:
-            name = v.split(":", 1)[0].strip().lower()
-            if name in self._variation_map:
+        for name in self._variations:
+            key = name.strip().lower()
+            if key in self._variation_map:
                 logger.warning(
-                    f"Duplicate variation prefix '{name}' in filter '{filter_name}', overwriting previous entry."
+                    f"Duplicate variation key '{name}' in filter '{filter_name}', overwriting previous entry."
                 )
-            self._variation_map[name] = v
+            self._variation_map[key] = name
 
         if variation is not None:
             key = variation.strip().lower()
             if key not in self._variation_map:
-                available_names = [v.split(":", 1)[0].strip() for v in self._variations]
+                available_names = list(self._variations.keys())
                 raise ValueError(
                     f"Variation '{variation}' not found in filter '{filter_name}'. "
                     f"Available variations: {available_names}"
@@ -135,14 +134,16 @@ class ImageFilterConverter(PromptConverter):
 
         # Select variation
         if self._variation is not None:
-            variation = self._variation_map[self._variation.strip().lower()]
+            name = self._variation_map[self._variation.strip().lower()]
         else:
-            variation = random.choice(self._variations)
+            name = random.choice(list(self._variations.keys()))
+
+        variation_text = f"{name}: {self._variations[name]}"
 
         # Render the system prompt with style instructions and selected variation
         system_prompt = self._system_prompt_template.render_template_value(
             style_instructions=self._style_instructions,
-            variation=variation,
+            variation=variation_text,
         )
 
         conversation_id = str(uuid.uuid4())
@@ -164,6 +165,7 @@ class ImageFilterConverter(PromptConverter):
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
                     converter_identifiers=[self.get_identifier()],
+                    converted_value=prompt,
                 )
             ]
         )

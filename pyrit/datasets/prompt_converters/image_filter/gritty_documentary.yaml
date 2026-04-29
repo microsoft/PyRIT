@@ -16,13 +16,13 @@ style_instructions: |
   - Ban list: NO concept art, NO cinematic lighting, NO 3D renders, NO digital painting,
     NO polished CGI. It must look 10x real.
 variations:
-  - "Smartphone Low-Light: Grainy smartphone camera in dim indoor lighting. Heavy digital noise, slightly out of focus."
-  - "CCTV Night Vision: Green-tinted CCTV security camera footage. Timestamp overlay in the corner, fish-eye lens distortion."
-  - "Bodycam Footage: Blurry chest-mounted bodycam perspective. Extreme motion blur, tilted frame, harsh flashlight glare."
-  - "Dashcam Capture: Wide-angle dashcam through a dirty windshield. Lens flare from oncoming lights, timestamp in corner."
-  - "Leaked Phone Video Still: A single frame extracted from shaky phone video. Compression artifacts, motion blur, bad framing."
-  - "Doorbell Camera: Fish-eye doorbell camera perspective at night. IR illumination, high contrast, pixelated shadows."
-  - "Paparazzi Telephoto: Long telephoto lens through a car window or fence. Shallow depth of field, foreground obstruction."
-  - "Protest Documentation: Handheld smartphone in a crowd. Harsh overhead lights, smoke or tear gas haze, chaotic framing."
-  - "Surveillance Drone: High-angle aerial drone footage. Slight motion blur from wind, flat midday lighting."
-  - "Hidden Camera: Partially obstructed view from a concealed angle. Vignetting at edges, low resolution, dim lighting."
+  Smartphone Low-Light: "Grainy smartphone camera in dim indoor lighting. Heavy digital noise, slightly out of focus."
+  CCTV Night Vision: "Green-tinted CCTV security camera footage. Timestamp overlay in the corner, fish-eye lens distortion."
+  Bodycam Footage: "Blurry chest-mounted bodycam perspective. Extreme motion blur, tilted frame, harsh flashlight glare."
+  Dashcam Capture: "Wide-angle dashcam through a dirty windshield. Lens flare from oncoming lights, timestamp in corner."
+  Leaked Phone Video Still: "A single frame extracted from shaky phone video. Compression artifacts, motion blur, bad framing."
+  Doorbell Camera: "Fish-eye doorbell camera perspective at night. IR illumination, high contrast, pixelated shadows."
+  Paparazzi Telephoto: "Long telephoto lens through a car window or fence. Shallow depth of field, foreground obstruction."
+  Protest Documentation: "Handheld smartphone in a crowd. Harsh overhead lights, smoke or tear gas haze, chaotic framing."
+  Surveillance Drone: "High-angle aerial drone footage. Slight motion blur from wind, flat midday lighting."
+  Hidden Camera: "Partially obstructed view from a concealed angle. Vignetting at edges, low resolution, dim lighting."

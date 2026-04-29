@@ -17,7 +17,7 @@
 #
 # This notebook covers three categories of image converters:
 #
-# - **[Text to Text](#text-to-text)**: Convert (obective) text into text prompt for image generation
+# - **[Text to Text](#text-to-text)**: Convert (objective) text into text prompt for image generation
 # - **[Text to Image](#text-to-image)**: Convert text into images (QR codes, text overlays)
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
@@ -27,15 +27,14 @@
 #
 # ### ImageFilterConverter
 #
-# The `ImageFilter` converts a short, simple text prompt into an image stylistic prompt for an model that can then generate this image
+# The `ImageFilterConverter` converts a short, simple text prompt into an image stylistic prompt for a model that can then generate this image.
 
 # %%
 from pyrit.prompt_converter import ImageFilterConverter
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
-
-from pyrit.prompt_target import OpenAIChatTarget
 
 target = OpenAIChatTarget()
 converter = ImageFilterConverter(converter_target=target, filter_name="gritty_documentary", variation="Bodycam Footage")
