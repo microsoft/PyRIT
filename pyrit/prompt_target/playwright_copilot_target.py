@@ -243,7 +243,7 @@ class PlaywrightCopilotTarget(PromptTarget):
                     role="assistant",
                     original_value=piece_data,
                     conversation_id=request_piece.conversation_id,
-                    labels=request_piece.labels,
+                    labels=request_piece.labels,  # deprecated
                     prompt_target_identifier=request_piece.prompt_target_identifier,
                     attack_identifier=request_piece.attack_identifier,
                     original_value_data_type=piece_type,

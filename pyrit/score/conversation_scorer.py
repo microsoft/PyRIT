@@ -84,7 +84,7 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,
+                    labels=original_piece.labels,  # deprecated
                     prompt_target_identifier=original_piece.prompt_target_identifier,
                     attack_identifier=original_piece.attack_identifier,
                     original_value_data_type=original_piece.original_value_data_type,
