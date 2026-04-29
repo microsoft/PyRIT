@@ -19,7 +19,7 @@ Helper functions include:
 
 import uuid
 from typing import Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from unit.mocks import get_mock_scorer_identifier
@@ -370,6 +370,24 @@ class TestGetAdversarialChatMessages:
 
         assert result[0].get_piece().labels == labels
 
+    def test_labels_emit_deprecation_warning(self) -> None:
+        """Test that passing labels emits deprecation warning."""
+        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
+        messages = [Message(message_pieces=[piece])]
+
+        with patch(
+            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
+        ) as mock_deprecation:
+            get_adversarial_chat_messages(
+                messages,
+                adversarial_chat_conversation_id="adversarial_conv",
+                attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+                adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
+                labels={"env": "prod"},
+            )
+
+        mock_deprecation.assert_called_once()
+
 
 class TestBuildConversationContextStringAsync:
     """Tests for the build_conversation_context_string_async helper function."""
@@ -641,6 +659,24 @@ class TestSystemPromptHandling:
         mock_chat_target.set_system_prompt.assert_called_once()
         call_args = mock_chat_target.set_system_prompt.call_args
         assert call_args.kwargs["labels"] is None
+
+    def test_set_system_prompt_labels_emit_deprecation_warning(
+        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
+    ) -> None:
+        """Test that passing labels emits deprecation warning."""
+        manager = ConversationManager(attack_identifier=attack_identifier)
+
+        with patch(
+            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
+        ) as mock_deprecation:
+            manager.set_system_prompt(
+                target=mock_chat_target,
+                conversation_id=str(uuid.uuid4()),
+                system_prompt="You are a helpful assistant",
+                labels={"type": "system"},
+            )
+
+        mock_deprecation.assert_called_once()
 
 
 # =============================================================================
