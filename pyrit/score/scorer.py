@@ -23,7 +23,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -70,21 +70,21 @@ class Scorer(Identifiable, abc.ABC):
         """
         self._validator = validator
 
-    def get_eval_hash(self) -> str:
+    def get_identifier(self) -> ComponentIdentifier:
         """
-        Compute a behavioral equivalence hash for evaluation grouping.
+        Get the scorer's identifier with eval_hash always attached.
 
-        Delegates to ``ScorerEvaluationIdentifier`` which filters target children
-        (prompt_target, converter_target) to behavioral params only, so the same
-        scorer configuration on different deployments produces the same eval hash.
+        Overrides the base ``Identifiable.get_identifier()`` so that
+        ``to_dict()`` always emits the ``eval_hash`` key.
 
         Returns:
-            str: A hex-encoded SHA256 hash suitable for eval registry keying.
+            ComponentIdentifier: The identity with ``eval_hash`` set.
         """
-        # Deferred import to avoid circular dependency (evaluation_identifier → identifiers → …)
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
-        return ScorerEvaluationIdentifier(self.get_identifier()).eval_hash
+        identifier = super().get_identifier()
+        if identifier.eval_hash is None:
+            identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
+            self._identifier = identifier
+        return identifier
 
     @property
     def scorer_type(self) -> ScoreType:
@@ -268,7 +268,7 @@ class Scorer(Identifiable, abc.ABC):
         file_mapping: Optional[ScorerEvalDatasetFiles] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: RegistryUpdateBehavior = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
     ) -> Optional[ScorerMetrics]:
         """
@@ -355,7 +355,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None
+        request.message_pieces[0].id = None  # type: ignore[assignment]
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -379,7 +379,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None
+        request.message_pieces[0].id = None  # type: ignore[assignment]
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(
@@ -410,14 +410,13 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: A flattened list of Score objects from all scored prompts.
 
         Raises:
-            ValueError: If objectives is empty or if the number of objectives doesn't match
+            ValueError: If objectives is not None and the number of objectives doesn't match
                 the number of messages.
         """
-        if not objectives:
+        if objectives is None:
             objectives = [""] * len(messages)
-
         elif len(objectives) != len(messages):
-            raise ValueError("The number of tasks must match the number of messages.")
+            raise ValueError("The number of objectives must match the number of messages.")
 
         if len(messages) == 0:
             return []
@@ -456,7 +455,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             ValueError: If the number of objectives does not match the number of image_paths.
         """
-        if objectives and len(objectives) != len(image_paths):
+        if objectives is not None and len(objectives) != len(image_paths):
             raise ValueError("The number of objectives must match the number of image_paths.")
 
         if len(image_paths) == 0:
@@ -465,10 +464,10 @@ class Scorer(Identifiable, abc.ABC):
         prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
-            task_arguments=["image_path", "objective"] if objectives else ["image_path"],
+            task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
             prompt_target=prompt_target,
             batch_size=batch_size,
-            items_to_batch=[image_paths, objectives] if objectives else [image_paths],
+            items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )
 
         return [score for sublist in results for score in sublist]

@@ -21,7 +21,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
     designed to identify stereotypes, discrimination, hate speech, and other
     representation harms in text-based Large Language Models (LLMs).
 
-    Reference: https://svannie678.github.io/svannie678-red_team_repo_social_bias
+    Reference: [@vantaylor2024socialbias]
     """
 
     def __init__(
@@ -128,7 +128,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                 # Clean up single turn prompts that contain unwanted lines of text
                 cleaned_value = prompt_value.replace("### Response:", "").replace("### Instruction:", "").strip()
                 # some entries have contents that trip up jinja2, so we escape them
-                escaped_cleaned_value = f"{{% raw %}}{cleaned_value}{{% endraw %}}"
+                escaped_cleaned_value = cleaned_value
                 seed_prompts.append(
                     SeedPrompt(
                         value=escaped_cleaned_value,

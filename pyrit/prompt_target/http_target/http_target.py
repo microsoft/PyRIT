@@ -5,7 +5,7 @@
 import json
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any, Optional
 
 import httpx
@@ -17,6 +17,8 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -29,15 +31,6 @@ class HTTPTarget(PromptTarget):
     """
     HTTP_Target is for endpoints that do not have an API and instead require HTTP request(s) to send a prompt.
 
-    Parameters:
-        http_request (str): the header parameters as a request (i.e., from Burp)
-        prompt_regex_string (str): the placeholder for the prompt
-            (default is {PROMPT}) which will be replaced by the actual prompt.
-            make sure to modify the http request to have this included, otherwise it will not be properly replaced!
-        use_tls: (bool): whether to use TLS or not. Default is True
-        callback_function (function): function to parse HTTP response.
-            These are the customizable functions which determine how to parse the output
-        httpx_client_kwargs: (dict): additional keyword arguments to pass to the HTTP client
     """
 
     def __init__(
@@ -49,19 +42,27 @@ class HTTPTarget(PromptTarget):
         max_requests_per_minute: Optional[int] = None,
         client: Optional[httpx.AsyncClient] = None,
         model_name: str = "",
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
         **httpx_client_kwargs: Any,
     ) -> None:
         """
         Initialize the HTTPTarget.
 
         Args:
-            http_request (str): The raw HTTP request string.
-            prompt_regex_string (str): Regex string to match prompt location. Defaults to "{PROMPT}".
+            http_request (str): the header parameters as a request (i.e., from Burp)
+            prompt_regex_string (str): the placeholder for the prompt
+                (default is {PROMPT}) which will be replaced by the actual prompt.
+                make sure to modify the http request to have this included, otherwise it will not be properly replaced!
             use_tls (bool): Whether to use TLS. Defaults to True.
             callback_function (Callable, Optional): Function to parse HTTP response.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             client (httpx.AsyncClient, Optional): Pre-configured httpx client.
             model_name (str): The model name. Defaults to empty string.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **httpx_client_kwargs: Additional keyword arguments for httpx.AsyncClient.
 
         Raises:
@@ -75,7 +76,13 @@ class HTTPTarget(PromptTarget):
         # This will fail early if the http_request is malformed
         _, _, endpoint, _, _ = self.parse_raw_http_request(http_request)
 
-        super().__init__(max_requests_per_minute=max_requests_per_minute, endpoint=endpoint, model_name=model_name)
+        super().__init__(
+            max_requests_per_minute=max_requests_per_minute,
+            endpoint=endpoint,
+            model_name=model_name,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
         self.http_request = http_request
         self.callback_function = callback_function
         self.prompt_regex_string = prompt_regex_string
@@ -148,17 +155,19 @@ class HTTPTarget(PromptTarget):
         return http_request_w_prompt
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the HTTP target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
 
         http_request_w_prompt = self._inject_prompt_into_request(request)
@@ -237,8 +246,11 @@ class HTTPTarget(PromptTarget):
 
         body = ""
 
-        # Split the request into headers and body by finding the double newlines (\n\n)
-        request_parts = http_request.strip().split("\n\n", 1)
+        # Split the request into headers and body by finding the double newlines (\n\n).
+        # Preserve body whitespace exactly as provided in the raw request.
+        # Support both LF and CRLF raw HTTP requests (e.g. copied from Burp).
+        normalized = http_request.replace("\r\n", "\n")
+        request_parts = normalized.split("\n\n", 1)
 
         # Parse out the header components
         header_lines = request_parts[0].strip().split("\n")
@@ -280,7 +292,6 @@ class HTTPTarget(PromptTarget):
         headers_dict: dict[str, str],
     ) -> str:
         # If path is already a full URL, return it as is
-        path = path.lower()
         if path.startswith(("http://", "https://")):
             return path
 
@@ -290,10 +301,3 @@ class HTTPTarget(PromptTarget):
 
         host = headers_dict["host"]
         return f"{http_protocol}{host}{path}"
-
-    def _validate_request(self, *, message: Message) -> None:
-        message_pieces: Sequence[MessagePiece] = message.message_pieces
-
-        n_pieces = len(message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")

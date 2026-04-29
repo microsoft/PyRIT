@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import json
 import logging
 import re
@@ -23,7 +22,7 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import get_azure_openai_auth
+from pyrit.auth import ensure_async_token_provider, get_azure_openai_auth
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
@@ -32,6 +31,7 @@ from pyrit.exceptions.exception_classes import (
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai.openai_error_handling import (
     _extract_error_payload,
     _extract_request_id_from_exception,
@@ -39,46 +39,6 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_async_token_provider(
-    api_key: Optional[str | Callable[[], str | Awaitable[str]]],
-) -> Optional[str | Callable[[], Awaitable[str]]]:
-    """
-    Ensure the api_key is either a string or an async callable.
-
-    If a synchronous callable token provider is provided, it's automatically wrapped
-    in an async function to make it compatible with AsyncOpenAI.
-
-    Args:
-        api_key: Either a string API key or a callable that returns a token (sync or async).
-
-    Returns:
-        Either a string API key or an async callable that returns a token.
-    """
-    if api_key is None or isinstance(api_key, str) or not callable(api_key):
-        return api_key
-
-    # Check if the callable is already async
-    if asyncio.iscoroutinefunction(api_key):
-        return api_key
-
-    # Wrap synchronous token provider in async function
-    logger.info(
-        "Detected synchronous token provider."
-        " Automatically wrapping in async function for compatibility with AsyncOpenAI."
-    )
-
-    async def async_token_provider() -> str:
-        """
-        Async wrapper for synchronous token provider.
-
-        Returns:
-            str: The token string from the synchronous provider.
-        """
-        return api_key()  # type: ignore[return-value]
-
-    return async_token_provider
 
 
 class OpenAITarget(PromptTarget):
@@ -93,13 +53,27 @@ class OpenAITarget(PromptTarget):
     """
 
     ADDITIONAL_REQUEST_HEADERS: str = "OPENAI_ADDITIONAL_REQUEST_HEADERS"
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_multi_message_pieces=True)
+    )
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
     api_key_environment_variable: str
-    underlying_model_environment_variable: str
 
     _async_client: Optional[AsyncOpenAI] = None
+
+    @property
+    def _client(self) -> AsyncOpenAI:
+        """
+        Non-None accessor for the async client, used by subclasses.
+
+        Raises:
+            RuntimeError: If the AsyncOpenAI client is not initialized.
+        """
+        if self._async_client is None:
+            raise RuntimeError("AsyncOpenAI client is not initialized")
+        return self._async_client
 
     def __init__(
         self,
@@ -111,7 +85,8 @@ class OpenAITarget(PromptTarget):
         max_requests_per_minute: Optional[int] = None,
         httpx_client_kwargs: Optional[dict[str, Any]] = None,
         underlying_model: Optional[str] = None,
-        capabilities: Optional[TargetCapabilities] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -136,11 +111,12 @@ class OpenAITarget(PromptTarget):
                 `httpx.AsyncClient()` constructor.
             underlying_model (str, Optional): The underlying model name (e.g., "gpt-4o") used solely for
                 target identifier purposes. This is useful when the deployment name in Azure differs
-                from the actual model. If not provided, will attempt to fetch from environment variable.
-                If it is not there either, the identifier "model_name" attribute will use the model_name.
+                from the actual model. If not provided, the identifier will use the model_name.
                 Defaults to None.
-            capabilities (TargetCapabilities, Optional): Override the default capabilities for
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If no API key is provided and the endpoint is not an Azure endpoint.
@@ -164,19 +140,15 @@ class OpenAITarget(PromptTarget):
             env_var_name=self.endpoint_environment_variable, passed_value=endpoint
         )
 
-        # Get underlying_model from passed value or environment variable
-        underlying_model_value = default_values.get_non_required_value(
-            env_var_name=self.underlying_model_environment_variable, passed_value=underlying_model
-        )
-
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
             self,
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint_value,
             model_name=self._model_name,
-            underlying_model=underlying_model_value,
-            capabilities=capabilities,
+            underlying_model=underlying_model,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
         )
 
         # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
@@ -198,7 +170,7 @@ class OpenAITarget(PromptTarget):
                 )
 
         # Ensure api_key is async-compatible (wrap sync token providers if needed)
-        self._api_key = _ensure_async_token_provider(resolved_api_key)
+        self._api_key = ensure_async_token_provider(resolved_api_key)
 
         self._initialize_openai_client()
 
@@ -459,6 +431,7 @@ class OpenAITarget(PromptTarget):
             APITimeoutError: For transient infrastructure errors.
             APIConnectionError: For transient infrastructure errors.
             AuthenticationError: For authentication failures.
+            ValueError: If there are no message pieces in the request.
         """
         try:
             # Execute the API call
@@ -466,6 +439,8 @@ class OpenAITarget(PromptTarget):
 
             # Extract MessagePiece for validation and construction (most targets use single piece)
             request_piece = request.message_pieces[0] if request.message_pieces else None
+            if request_piece is None:
+                raise ValueError("No message pieces in request")
 
             # Check for content filter via subclass implementation
             if self._check_content_filter(response):
@@ -492,6 +467,8 @@ class OpenAITarget(PromptTarget):
                     return error_str
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
+            if request_piece is None:
+                raise ValueError("No message pieces in request") from e
             return self._handle_content_filter_response(_ErrorResponse(), request_piece)
         except BadRequestError as e:
             # Handle 400 errors - includes input policy filters and some Azure output-filter 400s
@@ -510,6 +487,8 @@ class OpenAITarget(PromptTarget):
             )
 
             request_piece = request.message_pieces[0] if request.message_pieces else None
+            if request_piece is None:
+                raise ValueError("No message pieces in request") from e
             return handle_bad_request_exception(
                 response_text=str(payload),
                 request=request_piece,
@@ -623,7 +602,7 @@ class OpenAITarget(PromptTarget):
         raise NotImplementedError
 
     def _warn_url_with_api_path(
-        self, endpoint_url: str, api_path: str, provider_examples: dict[str, str] = None
+        self, endpoint_url: str, api_path: str, provider_examples: dict[str, str] | None = None
     ) -> None:
         """
         Warn if URL includes API-specific path that should be handled by the SDK.
@@ -708,11 +687,11 @@ class OpenAITarget(PromptTarget):
             f"For more details and guidance, please see the .env_example file in the repository."
         )
 
-    @abstractmethod
     def is_json_response_supported(self) -> bool:
         """
-        Abstract method to determine if JSON response format is supported by the target.
+        Determine if JSON response format is supported by the target.
 
         Returns:
             bool: True if JSON response is supported, False otherwise.
         """
+        return self.capabilities.supports_json_output

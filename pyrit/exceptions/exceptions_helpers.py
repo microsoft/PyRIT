@@ -46,22 +46,25 @@ def log_exception(retry_state: RetryCallState) -> None:
 
     # Build the "for X" part of the message based on execution context
     for_clause = fn_name
+    endpoint_clause = ""
     try:
         exec_context = get_execution_context()
         if exec_context:
-            # Format: "objective scorer; TrueFalseScorer::_score_value_with_llm"  # noqa: ERA001
+            # e.g. "objective scorer. TrueFalseScorer::_score_value_with_llm"
             role_display = exec_context.component_role.value.replace("_", " ")
             if exec_context.component_name:
                 for_clause = f"{role_display}. {exec_context.component_name}::{fn_name}"
             else:
                 for_clause = f"{role_display}. {fn_name}"
+            if exec_context.endpoint:
+                endpoint_clause = f" Endpoint: {exec_context.endpoint}."
     except Exception:
         # Don't let context retrieval errors break retry logging
         pass
 
     logger.error(
         f"Retry attempt {call_count} for {for_clause} "
-        f"failed with exception: {exception}. "
+        f"failed with exception: {exception}.{endpoint_clause} "
         f"Elapsed time: {elapsed_time} seconds. Total calls: {call_count}"
     )
 
@@ -115,10 +118,16 @@ def extract_json_from_string(response_msg: str) -> str:
         str: The extracted JSON string if found, otherwise the original string.
 
     """
-    json_pattern = re.compile(r"\{.*\}|\[.*\]")
-    match = json_pattern.search(response_msg)
-    if match:
-        return match.group(0)
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(response_msg):
+        if char not in "[{":
+            continue
+
+        try:
+            _, end_index = decoder.raw_decode(response_msg, idx=index)
+            return response_msg[index:end_index]
+        except json.JSONDecodeError:
+            continue
 
     return response_msg
 

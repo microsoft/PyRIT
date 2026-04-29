@@ -519,7 +519,7 @@ class FuzzerGenerator(
 
     Paper Reference:
         GPTFUZZER - Red Teaming Large Language Models with Auto-Generated Jailbreak Prompts
-        Link: https://arxiv.org/pdf/2309.10253
+        Link: [@yu2023gptfuzzer]
         Authors: Jiahao Yu, Xingwei Lin, Zheng Yu, Xinyu Xing
         GitHub: https://github.com/sherdencooper/GPTFuzz
     """
@@ -832,7 +832,7 @@ class FuzzerGenerator(
             raise
 
         # Create template node for tracking
-        target_template = SeedPrompt(value=target_seed, data_type="text", parameters=["prompt"])
+        target_template = SeedPrompt(value=target_seed, data_type="text", parameters=["prompt"], is_jinja_template=True)
         target_template_node = _PromptNode(template=target_seed, parent=None)
 
         # Generate prompts from template
@@ -1015,13 +1015,19 @@ class FuzzerGenerator(
 
         Returns:
             List of normalizer requests.
+
+        Raises:
+            ValueError: If a seed group contains no message.
         """
         requests: list[NormalizerRequest] = []
 
         for prompt in prompts:
             seed_group = SeedGroup(seeds=[SeedPrompt(value=prompt, data_type="text")])
+            _msg = seed_group.next_message
+            if _msg is None:
+                raise ValueError("No message in seed group")
             request = NormalizerRequest(
-                message=seed_group.next_message,
+                message=_msg,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
             )

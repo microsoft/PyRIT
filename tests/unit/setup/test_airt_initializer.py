@@ -1,14 +1,25 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import os
 import sys
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.setup.initializers import AIRTInitializer
+
+
+@pytest.fixture
+def patch_pyrit_conf(tmp_path):
+    """Create a temporary .pyrit_conf file and patch DEFAULT_CONFIG_PATH to point to it."""
+    conf_file = tmp_path / ".pyrit_conf"
+    conf_file.write_text(yaml.dump({"operator": "test_user", "operation": "test_op"}))
+    with patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file):
+        yield
 
 
 class TestAIRTInitializer:
@@ -41,6 +52,11 @@ class TestAIRTInitializerInitialize:
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2"] = "https://test-scorer.openai.azure.com"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2"] = "gpt-4"
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test-safety.cognitiveservices.azure.com"
+        os.environ["AZURE_SQL_DB_CONNECTION_STRING"] = "Server=test.database.windows.net;Database=testdb"
+        os.environ["AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL"] = "https://teststorage.blob.core.windows.net/data"
+        os.environ["GLOBAL_MEMORY_LABELS"] = (
+            '{"operation": "test_op", "operator": "test_user", "email": "test@test.com"}'
+        )
         # Clean up globals
         for attr in [
             "default_converter_target",
@@ -61,6 +77,9 @@ class TestAIRTInitializerInitialize:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
             "AZURE_CONTENT_SAFETY_API_ENDPOINT",
+            "AZURE_SQL_DB_CONNECTION_STRING",
+            "AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL",
+            "GLOBAL_MEMORY_LABELS",
         ]:
             if var in os.environ:
                 del os.environ[var]
@@ -75,7 +94,7 @@ class TestAIRTInitializerInitialize:
                 delattr(sys.modules["__main__"], attr)
 
     @pytest.mark.asyncio
-    async def test_initialize_runs_without_error(self):
+    async def test_initialize_runs_without_error(self, patch_pyrit_conf):
         """Test that initialize runs without errors when no API keys are set (Entra auth fallback)."""
         init = AIRTInitializer()
         with (
@@ -85,7 +104,7 @@ class TestAIRTInitializerInitialize:
             await init.initialize_async()
 
     @pytest.mark.asyncio
-    async def test_initialize_uses_api_keys_when_set(self):
+    async def test_initialize_uses_api_keys_when_set(self, patch_pyrit_conf):
         """Test that initialize uses API keys from env vars when they are set."""
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "converter-key"
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2"] = "scorer-key"
@@ -110,7 +129,7 @@ class TestAIRTInitializerInitialize:
                     del os.environ[var]
 
     @pytest.mark.asyncio
-    async def test_get_info_after_initialize_has_populated_data(self):
+    async def test_get_info_after_initialize_has_populated_data(self, patch_pyrit_conf):
         """Test that get_info_async() returns populated data after initialization."""
         init = AIRTInitializer()
         with (
@@ -174,6 +193,97 @@ class TestAIRTInitializerInitialize:
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in error_message
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL" in error_message
 
+    def test_validate_missing_operator_raises_error(self, tmp_path):
+        """Test that _validate_operation_fields raises error when operator is missing from .pyrit_conf."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operation": "test_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            pytest.raises(ValueError, match="operator"),
+        ):
+            init._validate_operation_fields()
+
+    def test_validate_missing_operation_raises_error(self, tmp_path):
+        """Test that _validate_operation_fields raises error when operation is missing from .pyrit_conf."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "test_user"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            pytest.raises(ValueError, match="operation"),
+        ):
+            init._validate_operation_fields()
+
+    def test_validate_operation_fields_skips_when_pyrit_conf_missing(self, tmp_path):
+        """Test that _validate_operation_fields does not crash when .pyrit_conf is missing.
+
+        In container/GUI deployments, .pyrit_conf does not exist. The method should
+        skip validation gracefully instead of raising FileNotFoundError.
+        """
+        nonexistent_path = tmp_path / "nonexistent" / ".pyrit_conf"
+        init = AIRTInitializer()
+        with patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", nonexistent_path):
+            # Should not raise
+            init._validate_operation_fields()
+
+    def test_validate_operation_fields_preserves_existing_labels_when_pyrit_conf_missing(self, tmp_path):
+        """Test that existing GLOBAL_MEMORY_LABELS are preserved when .pyrit_conf is missing."""
+        nonexistent_path = tmp_path / "nonexistent" / ".pyrit_conf"
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", nonexistent_path),
+            patch.dict("os.environ", {"GLOBAL_MEMORY_LABELS": '{"operator": "gui_user", "operation": "gui_op"}'}),
+        ):
+            init._validate_operation_fields()
+            # Existing labels should remain untouched
+            labels = json.loads(os.environ["GLOBAL_MEMORY_LABELS"])
+            assert labels["operator"] == "gui_user"
+            assert labels["operation"] == "gui_op"
+
+    def test_validate_operation_fields_merges_conf_into_labels(self, tmp_path):
+        """Test that .pyrit_conf values are merged into GLOBAL_MEMORY_LABELS when labels are missing."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "conf_user", "operation": "conf_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            # Remove GLOBAL_MEMORY_LABELS if present
+            os.environ.pop("GLOBAL_MEMORY_LABELS", None)
+            init._validate_operation_fields()
+            labels = json.loads(os.environ["GLOBAL_MEMORY_LABELS"])
+            assert labels["operator"] == "conf_user"
+            assert labels["operation"] == "conf_op"
+
+    def test_validate_operation_fields_does_not_overwrite_existing_labels(self, tmp_path):
+        """Test that .pyrit_conf values do not overwrite existing GLOBAL_MEMORY_LABELS entries."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "conf_user", "operation": "conf_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            patch.dict(
+                "os.environ",
+                {"GLOBAL_MEMORY_LABELS": '{"operator": "existing_user", "operation": "existing_op"}'},
+            ),
+        ):
+            init._validate_operation_fields()
+            labels = json.loads(os.environ["GLOBAL_MEMORY_LABELS"])
+            assert labels["operator"] == "existing_user"
+            assert labels["operation"] == "existing_op"
+
+    def test_validate_db_connection_raises_error(self):
+        """Test that validate raises error when AZURE_SQL_DB_CONNECTION_STRING is missing."""
+        del os.environ["AZURE_SQL_DB_CONNECTION_STRING"]
+        init = AIRTInitializer()
+        with pytest.raises(ValueError) as exc_info:
+            init.validate()
+
+        error_message = str(exc_info.value)
+        assert "AZURE_SQL_DB_CONNECTION_STRING" in error_message
+
 
 class TestAIRTInitializerGetInfo:
     """Tests for AIRTInitializer.get_info method - basic functionality."""
@@ -197,3 +307,45 @@ class TestAIRTInitializerGetInfo:
         assert "description" in info
         assert isinstance(info["description"], str)
         assert len(info["description"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_initialize_async_raises_when_converter_endpoint_is_none():
+    """Test that initialize_async raises ValueError when converter_endpoint env var is None."""
+    init = AIRTInitializer()
+    with (
+        patch.object(init, "_validate_operation_fields"),
+        patch.dict(
+            "os.environ",
+            {
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2": "https://test.openai.azure.com",
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2": "gpt-4",
+            },
+            clear=False,
+        ),
+        patch.dict("os.environ", {"AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": ""}, clear=False),
+    ):
+        # Remove the key to force None
+        os.environ.pop("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT", None)
+        with pytest.raises(ValueError, match="converter_endpoint is not initialized"):
+            await init.initialize_async()
+
+
+@pytest.mark.asyncio
+async def test_initialize_async_raises_when_scorer_endpoint_is_none():
+    """Test that initialize_async raises ValueError when scorer_endpoint env var is None."""
+    init = AIRTInitializer()
+    with (
+        patch.object(init, "_validate_operation_fields"),
+        patch.dict(
+            "os.environ",
+            {
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com",
+                "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+            },
+            clear=False,
+        ),
+    ):
+        os.environ.pop("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2", None)
+        with pytest.raises(ValueError, match="scorer_endpoint is not initialized"):
+            await init.initialize_async()

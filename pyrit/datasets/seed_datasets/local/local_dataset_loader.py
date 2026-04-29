@@ -3,10 +3,16 @@
 
 import logging
 from collections.abc import Callable
+from dataclasses import fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import yaml
 
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.seed_metadata import (
+    SeedDatasetMetadata,
+)
 from pyrit.models import SeedDataset
 
 logger = logging.getLogger(__name__)
@@ -69,6 +75,41 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         except Exception as e:
             logger.error(f"Failed to load local dataset from {self.file_path}: {e}")
             raise
+
+    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+        """
+        Extract metadata from a local YAML file and coerce raw values into typed schema fields.
+
+        YAML produces raw Python primitives (str, list) that must be converted to the
+        enum and set types expected by SeedDatasetMetadata before _match_filter can work.
+
+        Returns:
+            Optional[SeedDatasetMetadata]: Parsed metadata if available, otherwise None.
+
+        Raises:
+            Exception: If the dataset file cannot be read.
+        """
+        valid_fields = [f.name for f in fields(SeedDatasetMetadata)]
+        try:
+            with open(self.file_path, encoding="utf-8") as f:
+                dataset = yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Failed to load local dataset from {self.file_path}: {e}")
+            raise
+
+        if not isinstance(dataset, dict):
+            return None
+
+        raw = {k: v for k, v in dataset.items() if k in valid_fields}
+        if not raw:
+            return None
+
+        coerced = SeedDatasetMetadata._coerce_metadata_values(raw_metadata=raw)
+        result = SeedDatasetMetadata(**coerced)
+        # Validation after coercion: raw values are strings/lists, not sets.
+        # _validate_singular_fields needs sets to check cardinality.
+        SeedDatasetMetadata._validate_singular_fields(metadata=result)
+        return result
 
 
 def _register_local_datasets() -> None:

@@ -222,3 +222,227 @@ class TestEvaluationIdentifier:
             },
         )
         assert identity.eval_hash == expected
+
+    def test_uses_eval_hash_when_available(self):
+        """Test that EvaluationIdentifier uses eval_hash instead of recomputing."""
+        stored_hash = "stored_eval_hash_value_" + "0" * 42  # 64 chars
+        cid = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"system_prompt": "truncated..."},
+        ).with_eval_hash(stored_hash)
+
+        identity = _StubEvaluationIdentifier(cid)
+        assert identity.eval_hash == stored_hash
+
+    def test_computes_eval_hash_when_not_set(self):
+        """Test that eval_hash is computed normally when eval_hash is None."""
+        cid = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            params={"threshold": 0.5},
+        )
+        assert cid.eval_hash is None
+
+        identity = _StubEvaluationIdentifier(cid)
+        expected = compute_eval_hash(cid, child_eval_rules=_StubEvaluationIdentifier.CHILD_EVAL_RULES)
+        assert identity.eval_hash == expected
+
+    def test_truncation_roundtrip_preserves_eval_hash(self):
+        """Regression test: eval_hash survives DB round-trip with param truncation.
+
+        This is the core scenario for the bug fix. A scorer with a long system_prompt
+        gets stored to the DB with truncation. The eval_hash computed from the untruncated
+        identifier is included in to_dict(). After from_dict() reconstruction, the
+        EvaluationIdentifier should use the stored eval_hash (not recompute from truncated params).
+        """
+        # Build a scorer identifier with a long system_prompt and a target child
+        long_prompt = "Evaluate whether the response achieves the objective. " * 10
+        target_child = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "endpoint": "https://api.openai.com", "temperature": 0.0},
+        )
+        scorer_id = ComponentIdentifier(
+            class_name="SelfAskTrueFalseScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": long_prompt},
+            children={"prompt_target": target_child},
+        )
+
+        # Compute eval_hash from the untruncated identifier (the correct hash)
+        correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
+        scorer_id = scorer_id.with_eval_hash(correct_eval_hash)
+
+        # Simulate DB storage: serialize with truncation
+        truncated_dict = scorer_id.to_dict(max_value_length=80)
+
+        # Verify params are actually truncated
+        assert truncated_dict["system_prompt_template"].endswith("...")
+
+        # Reconstruct from truncated dict (simulates DB read)
+        reconstructed = ComponentIdentifier.from_dict(truncated_dict)
+
+        # The reconstructed identifier has truncated params, so recomputing would give wrong hash
+        recomputed = compute_eval_hash(reconstructed, child_eval_rules=_CHILD_EVAL_RULES)
+        assert recomputed != correct_eval_hash, "Truncated params should produce different eval_hash"
+
+        # But EvaluationIdentifier uses the preserved eval_hash, giving the correct result
+        identity = _StubEvaluationIdentifier(reconstructed)
+        assert identity.eval_hash == correct_eval_hash
+
+    def test_eval_hash_preserved_through_double_roundtrip(self):
+        """Test that eval_hash is preserved when retrieved from DB and re-stored.
+
+        Simulates: fresh save → DB retrieve → re-store → DB retrieve.
+        The eval_hash computed at first save should survive all round-trips.
+        """
+        long_prompt = "Evaluate whether the response achieves the objective. " * 10
+        scorer_id = ComponentIdentifier(
+            class_name="SelfAskTrueFalseScorer",
+            class_module="pyrit.score",
+            params={"system_prompt_template": long_prompt},
+        )
+
+        # First save: compute eval_hash from untruncated identifier
+        correct_eval_hash = compute_eval_hash(scorer_id, child_eval_rules=_CHILD_EVAL_RULES)
+        scorer_id = scorer_id.with_eval_hash(correct_eval_hash)
+        d1 = scorer_id.to_dict(max_value_length=80)
+
+        # First retrieve
+        r1 = ComponentIdentifier.from_dict(d1)
+        assert _StubEvaluationIdentifier(r1).eval_hash == correct_eval_hash
+
+        # Re-store: EvaluationIdentifier should use stored value, not recompute
+        d2 = r1.to_dict(max_value_length=80)
+
+        # Second retrieve
+        r2 = ComponentIdentifier.from_dict(d2)
+        assert _StubEvaluationIdentifier(r2).eval_hash == correct_eval_hash
+
+
+class TestParamFallbacks:
+    """Tests for ChildEvalRule.param_fallbacks in _build_eval_dict."""
+
+    _RULES_WITH_FALLBACK: dict[str, ChildEvalRule] = {
+        "prompt_target": ChildEvalRule(
+            included_params=frozenset({"underlying_model_name", "temperature"}),
+            param_fallbacks={"underlying_model_name": "model_name"},
+        ),
+    }
+
+    def test_primary_param_used_when_present(self):
+        """Test that the primary param value is used when it is non-empty."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "model_name": "deploy-1", "temperature": 0.7},
+        )
+        identifier = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+
+        result = _build_eval_dict(identifier, child_eval_rules=self._RULES_WITH_FALLBACK)
+        # The child hash should be based on underlying_model_name="gpt-4o", not model_name
+        assert "children" in result
+
+    def test_fallback_used_when_primary_empty(self):
+        """Test that fallback param used when primary is empty string."""
+        child_with_underlying = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "model_name": "deploy-1", "temperature": 0.7},
+        )
+        child_with_fallback = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "", "model_name": "gpt-4o", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_underlying},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_fallback},
+        )
+
+        result1 = _build_eval_dict(id1, child_eval_rules=self._RULES_WITH_FALLBACK)
+        result2 = _build_eval_dict(id2, child_eval_rules=self._RULES_WITH_FALLBACK)
+
+        assert result1["children"]["prompt_target"] == result2["children"]["prompt_target"]
+
+    def test_fallback_used_when_primary_missing(self):
+        """Test that fallback param used when primary key is absent."""
+        child_with_underlying = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        child_with_model_name_only = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4o", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_underlying},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_model_name_only},
+        )
+
+        result1 = _build_eval_dict(id1, child_eval_rules=self._RULES_WITH_FALLBACK)
+        result2 = _build_eval_dict(id2, child_eval_rules=self._RULES_WITH_FALLBACK)
+
+        assert result1["children"]["prompt_target"] == result2["children"]["prompt_target"]
+
+    def test_no_fallback_when_no_rules(self):
+        """Test that param_fallbacks=None means no fallback applied."""
+        rules_without_fallback: dict[str, ChildEvalRule] = {
+            "prompt_target": ChildEvalRule(
+                included_params=frozenset({"underlying_model_name", "temperature"}),
+            ),
+        }
+        child_with = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        child_without = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4o", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_without},
+        )
+
+        result1 = _build_eval_dict(id1, child_eval_rules=rules_without_fallback)
+        result2 = _build_eval_dict(id2, child_eval_rules=rules_without_fallback)
+
+        # Without fallback, these should produce different hashes
+        assert result1["children"]["prompt_target"] != result2["children"]["prompt_target"]
+
+
+def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
+    identifier = ComponentIdentifier.__new__(ComponentIdentifier)
+    object.__setattr__(identifier, "hash", None)
+    object.__setattr__(identifier, "class_name", "Test")
+    object.__setattr__(identifier, "class_module", "test.module")
+    with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
+        compute_eval_hash(identifier, child_eval_rules={})

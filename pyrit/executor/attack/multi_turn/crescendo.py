@@ -109,8 +109,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     4. Scoring responses to determine if the objective has been achieved.
     5. Continuing until the objective is met or maximum turns/backtracks are reached.
 
-    You can learn more about the Crescendo attack at:
-    https://crescendo-the-multiturn-jailbreak.github.io/
+    You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
     # Default system prompt template path for Crescendo attack
@@ -262,7 +261,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Raises:
             ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.supports_multi_turn:
+        if not self._objective_target.capabilities.supports_multi_turn:
             raise ValueError(
                 "CrescendoAttack requires a multi-turn target. Crescendo fundamentally relies on "
                 "multi-turn conversation history to gradually escalate prompts. "

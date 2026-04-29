@@ -5,14 +5,17 @@
 Shared base types for PyRIT registries.
 
 This module contains types shared between class registries (which store Type[T])
-and instance registries (which store T instances).
+and object registries (which store T instances).
 """
 
-from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import Any, Optional, Protocol, TypeVar, runtime_checkable
+from __future__ import annotations
 
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Optional, Protocol, TypeVar, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import Self
 
 # Type variable for metadata (invariant for Protocol compatibility)
 MetadataT = TypeVar("MetadataT")
@@ -30,20 +33,14 @@ class ClassRegistryEntry:
         class_name (str): Python class name (e.g., "ContentHarmsScenario").
         class_module (str): Full module path (e.g., "pyrit.scenario.scenarios.content_harms").
         class_description (str): Human-readable description, typically from the class docstring.
+        registry_name (str): The suffix-stripped snake_case key used in the registry
+            (e.g., "content_harms" for ContentHarmsScenario).
     """
 
     class_name: str
     class_module: str
     class_description: str = ""
-
-    @property
-    def snake_class_name(self) -> str:
-        """
-        Snake_case version of class_name (e.g., "content_harms_scenario").
-
-        Used by CLI formatting and as registry display keys.
-        """
-        return class_name_to_snake_case(self.class_name)
+    registry_name: str = ""
 
 
 @runtime_checkable
@@ -51,7 +48,7 @@ class RegistryProtocol(Protocol[MetadataT]):
     """
     Protocol defining the common interface for all registries.
 
-    Both class registries (BaseClassRegistry) and instance registries
+    Both class registries (BaseClassRegistry) and object registries
     (BaseInstanceRegistry) implement this interface, enabling code that
     works with either registry type.
 
@@ -60,7 +57,7 @@ class RegistryProtocol(Protocol[MetadataT]):
     """
 
     @classmethod
-    def get_registry_singleton(cls) -> "RegistryProtocol[MetadataT]":
+    def get_registry_singleton(cls) -> Self:
         """Get the singleton instance of this registry."""
         ...
 

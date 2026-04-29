@@ -82,10 +82,12 @@ class AttackService:
     async def list_attacks_async(
         self,
         *,
-        attack_type: Optional[str] = None,
-        converter_types: Optional[list[str]] = None,
+        attack_types: Optional[Sequence[str]] = None,
+        converter_types: Optional[Sequence[str]] = None,
+        converter_types_match: Literal["any", "all"] = "all",
+        has_converters: Optional[bool] = None,
         outcome: Optional[Literal["undetermined", "success", "failure"]] = None,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str | Sequence[str]]] = None,
         min_turns: Optional[int] = None,
         max_turns: Optional[int] = None,
         limit: int = 20,
@@ -97,12 +99,24 @@ class AttackService:
         Queries AttackResult entries from the database.
 
         Args:
-            attack_type: Filter by exact attack type name (case-sensitive).
-            converter_types: Filter by converter usage.
-                None = no filter, [] = only attacks with no converters,
-                ["A", "B"] = only attacks using ALL specified converters (AND logic, case-insensitive).
+            attack_types: Filter by attack type names (case-insensitive). May be specified
+                multiple times to OR-match across types. None or empty list applies no filter.
+            converter_types: Filter by converter class names (case-insensitive).
+                ``None`` or an empty list applies no filter at this layer. Combination
+                semantics for multiple entries are controlled by ``converter_types_match``.
+                To restrict results to attacks with no converters, pass
+                ``has_converters=False`` instead.
+            converter_types_match: How to combine multiple entries in ``converter_types``.
+                ``"all"`` (default) matches attacks that used every listed converter.
+                ``"any"`` matches attacks that used at least one of the listed converters.
+                Ignored when ``converter_types`` is None or has fewer than 2 entries.
+            has_converters: Filter by converter presence. ``True`` returns only attacks that
+                used at least one converter. ``False`` returns only attacks that used no
+                converters. ``None`` applies no filter.
             outcome: Filter by attack outcome.
-            labels: Filter by labels (all must match).
+            labels: Filter by labels. See ``MemoryInterface.get_attack_results`` for
+                semantics (AND across label names; string equality or sequence OR within
+                each name).
             min_turns: Filter by minimum executed turns.
             max_turns: Filter by maximum executed turns.
             limit: Maximum items to return.
@@ -112,11 +126,19 @@ class AttackService:
             AttackListResponse with filtered and paginated attack summaries.
         """
         # Phase 1: Query + lightweight filtering (no pieces needed)
+        # Coerce an empty converter_types list to None so it behaves as "no filter" at
+        # this layer — the "attacks with no converters" case is expressed through
+        # has_converters=False, which keeps the three layers (route/service/memory)
+        # consistent.
+        effective_converter_types = converter_types if converter_types else None
+
         attack_results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
-            attack_class=attack_type,
-            converter_classes=converter_types,
+            attack_classes=attack_types if attack_types else None,
+            converter_classes=effective_converter_types,
+            converter_classes_match=converter_types_match,
+            has_converters=has_converters,
         )
 
         filtered: list[AttackResult] = []
@@ -390,6 +412,9 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
+            # SQLite returns naive datetimes — normalize to UTC (same pattern as _ensure_utc)
+            if created_at is not None and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,
@@ -399,10 +424,12 @@ class AttackService:
                 )
             )
 
-        # Sort all conversations by created_at (earliest first, None last)
-        conversations.sort(
-            key=lambda c: (c.created_at is None, c.created_at or datetime.min.replace(tzinfo=timezone.utc))
-        )
+        # Sort conversations by created_at (earliest first). In-flight conversations
+        # have no stored messages yet so created_at is None — treat them as the most
+        # recent (they were just created) so they sort after older conversations
+        # instead of jumping to an arbitrary position.
+        now = datetime.now(timezone.utc)
+        conversations.sort(key=lambda c: c.created_at or now)
 
         return AttackConversationsResponse(
             attack_result_id=attack_result_id,
@@ -553,7 +580,7 @@ class AttackService:
         ar = results[0]
         main_conversation_id = ar.conversation_id
 
-        self._validate_target_match(attack_identifier=ar.attack_identifier, request=request)
+        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
         self._validate_operator_match(conversation_id=main_conversation_id, request=request)
 
         msg_conversation_id = request.target_conversation_id
@@ -714,7 +741,7 @@ class AttackService:
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
             new_converter_ids = [c.get_identifier() for c in converter_objs]
-            aid = ar.attack_identifier
+            aid = ar.get_attack_strategy_identifier()
             if aid:
                 existing_converters: list[ComponentIdentifier] = list(aid.get_child_list("request_converters"))
                 existing_hashes = {c.hash for c in existing_converters}
@@ -728,7 +755,30 @@ class AttackService:
                     params=dict(aid.params),
                     children=new_children,
                 )
-                update_fields["attack_identifier"] = new_aid.to_dict()
+                if ar.atomic_attack_identifier:
+                    atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
+                    atomic_children = dict(atomic.children)
+                    # Navigate into attack_technique child to update the nested attack child.
+                    technique = atomic_children.get("attack_technique")
+                    if isinstance(technique, ComponentIdentifier):
+                        tech_children = dict(technique.children)
+                        tech_children["attack"] = new_aid
+                        atomic_children["attack_technique"] = ComponentIdentifier(
+                            class_name=technique.class_name,
+                            class_module=technique.class_module,
+                            params=dict(technique.params),
+                            children=tech_children,
+                        )
+                    else:
+                        # Fallback for pre-nesting rows with children["attack"] directly.
+                        atomic_children["attack"] = new_aid
+                    new_atomic = ComponentIdentifier(
+                        class_name=atomic.class_name,
+                        class_module=atomic.class_module,
+                        params=dict(atomic.params),
+                        children=atomic_children,
+                    )
+                    update_fields["atomic_attack_identifier"] = new_atomic.to_dict()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -803,8 +853,8 @@ class AttackService:
         for piece in all_pieces:
             if labels_override is not None:
                 piece.labels = dict(labels_override)
-            if remap_assistant_to_simulated and piece.role == "assistant":
-                piece.role = "simulated_assistant"
+            if remap_assistant_to_simulated and piece.api_role == "assistant":
+                piece._role = "simulated_assistant"
 
         if all_pieces:
             self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
@@ -853,11 +903,14 @@ class AttackService:
                         piece.converted_value = file_path
                 continue
 
-            # Already an existing file on disk — keep as-is
-            if Path(piece.original_value).is_file():
-                if piece.converted_value is None:
-                    piece.converted_value = piece.original_value
-                continue
+            # Already an existing file on disk — keep as-is.
+            try:
+                if Path(piece.original_value).is_file():
+                    if piece.converted_value is None:
+                        piece.converted_value = piece.original_value
+                    continue
+            except (OSError, ValueError):
+                pass
 
             # Derive file extension from the MIME type sent by the frontend
             ext = None

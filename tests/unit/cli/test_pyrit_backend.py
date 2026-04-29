@@ -16,7 +16,7 @@ class TestParseArgs:
         """Should parse backend defaults correctly."""
         args = pyrit_backend.parse_args(args=[])
 
-        assert args.host == "0.0.0.0"
+        assert args.host == "localhost"
         assert args.port == 8000
         assert args.config_file is None
 
@@ -42,7 +42,7 @@ class TestInitializeAndRun:
         ):
             mock_core = MagicMock()
             mock_core.initialize_async = AsyncMock()
-            mock_core._initializer_names = None
+            mock_core._initializer_configs = None
             mock_core_class.return_value = mock_core
 
             mock_server = MagicMock()

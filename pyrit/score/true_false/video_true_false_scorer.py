@@ -8,10 +8,10 @@ from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
-from pyrit.score.video_scorer import _BaseVideoScorer
+from pyrit.score.video_scorer import VideoHelper
 
 
-class VideoTrueFalseScorer(TrueFalseScorer, _BaseVideoScorer):
+class VideoTrueFalseScorer(TrueFalseScorer):
     """
     A scorer that processes videos by extracting frames and scoring them using a true/false image scorer.
 
@@ -34,7 +34,7 @@ class VideoTrueFalseScorer(TrueFalseScorer, _BaseVideoScorer):
         audio_scorer: Optional[TrueFalseScorer] = None,
         num_sampled_frames: Optional[int] = None,
         validator: Optional[ScorerPromptValidator] = None,
-        image_objective_template: Optional[str] = _BaseVideoScorer._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
+        image_objective_template: Optional[str] = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
         audio_objective_template: Optional[str] = None,
     ) -> None:
         """
@@ -59,18 +59,17 @@ class VideoTrueFalseScorer(TrueFalseScorer, _BaseVideoScorer):
         Raises:
             ValueError: If audio_scorer is provided and does not support audio_path data type.
         """
-        _BaseVideoScorer.__init__(
-            self,
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+
+        self._video_helper = VideoHelper(
             image_capable_scorer=image_capable_scorer,
             num_sampled_frames=num_sampled_frames,
             image_objective_template=image_objective_template,
             audio_objective_template=audio_objective_template,
         )
 
-        TrueFalseScorer.__init__(self, validator=validator or self._DEFAULT_VALIDATOR)
-
         if audio_scorer is not None:
-            self._validate_audio_scorer(audio_scorer)
+            VideoHelper._validate_audio_scorer(audio_scorer)
         self.audio_scorer = audio_scorer
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -80,16 +79,16 @@ class VideoTrueFalseScorer(TrueFalseScorer, _BaseVideoScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
-        sub_scorer_ids = [self.image_scorer.get_identifier()]
+        sub_scorer_ids = [self._video_helper.image_scorer.get_identifier()]
         if self.audio_scorer:
             sub_scorer_ids.append(self.audio_scorer.get_identifier())
 
         return self._create_identifier(
             params={
-                "num_sampled_frames": self.num_sampled_frames,
+                "num_sampled_frames": self._video_helper.num_sampled_frames,
                 "has_audio_scorer": self.audio_scorer is not None,
-                "image_objective_template": self.image_objective_template,
-                "audio_objective_template": self.audio_objective_template,
+                "image_objective_template": self._video_helper.image_objective_template,
+                "audio_objective_template": self._video_helper.audio_objective_template,
             },
             children={
                 "sub_scorers": sub_scorer_ids,
@@ -114,7 +113,7 @@ class VideoTrueFalseScorer(TrueFalseScorer, _BaseVideoScorer):
         piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
-        frame_scores = await self._score_frames_async(message_piece=message_piece, objective=objective)
+        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
         frame_result = TrueFalseScoreAggregator.OR(frame_scores)
 
         # Create a Score from the frame aggregation result
@@ -132,7 +131,7 @@ class VideoTrueFalseScorer(TrueFalseScorer, _BaseVideoScorer):
 
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
-            audio_scores = await self._score_video_audio_async(
+            audio_scores = await self._video_helper._score_video_audio_async(
                 message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
             )
             if audio_scores:

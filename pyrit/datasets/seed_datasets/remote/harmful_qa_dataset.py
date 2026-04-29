@@ -20,7 +20,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/declare-lab/HarmfulQA
-        - https://arxiv.org/abs/2310.18469
+        - [@chu2023harmfulqa]
     License: Apache 2.0
 
     Warning: This dataset contains harmful questions designed to test LLM safety.
@@ -79,7 +79,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['question']}{{% endraw %}}",
+                value=item["question"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["topic"]] if item.get("topic") else [],

@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "0.11.1.dev0"
+version = "0.14.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
@@ -23,12 +23,15 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.10, <3.14"
+requires-python = ">=3.10, <3.15"
 dependencies = [
     "aiofiles>=24,<25",
+    "alembic>=1.16.0",
     "appdirs>=1.4.0",
     "art>=6.5.0",
+    "av>=14.0.0",
     "azure-core>=1.38.0",
     "azure-identity>=1.19.0",
     "azure-ai-contentsafety>=1.0.0",
@@ -42,13 +45,15 @@ dependencies = [
     "fastapi>=0.115.0",
     "httpx[http2]>=0.27.2",
     "jinja2>=3.1.6",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0; python_version < '3.14'",
+    "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
-    "pillow>=12.1.1",
+    "pillow>=12.2.0",
     "pydantic>=2.11.5",
+    "PyJWT[crypto]>=2.8.0",
     "pyodbc>=5.1.0",
-    "pypdf>=6.8.0",
+    "pypdf>=6.10.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.0.1",
     "reportlab>=4.4.4",
@@ -57,9 +62,9 @@ dependencies = [
     "SQLAlchemy>=2.0.41",
     "termcolor>=2.4.0",
     "tenacity>=9.1.2",
-    "tinytag>=2.1.1",
+    "tinytag>=2.2.1",
     "tqdm>=4.67.1",
-    "transformers>=4.52.4",
+    "transformers>=4.55.0",
     "treelib>=1.7.1",
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
@@ -79,8 +84,9 @@ dev = [
     "mock-alchemy>=0.2.6",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
+    "diff-cover>=9.0.0",
     "pytest-cov>=6.1.1",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.6.1",
@@ -106,7 +112,7 @@ gcg = [
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.27.1",
     "azureml-mlflow>=1.60.0",
-    "mlflow>=2.22.0",
+    "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "sentencepiece>=0.2.0",
     "torch>=2.7.0",
@@ -116,13 +122,8 @@ playwright = [
     "ollama>=0.5.1",
     "playwright>=1.49.0",
 ]
-gradio = [
-    "gradio>=6.7.0",
-    "rpyc>=6.0.1",
-    "pywebview>=5.4"
-]
 fairness_bias = [
-    "spacy>=3.8.7",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
 ]
 opencv = [
     "opencv-python>=4.11.0.86",
@@ -135,21 +136,19 @@ speech = [
 # all includes all functional dependencies excluding the ones from the "dev" extra
 all = [
     "accelerate>=1.7.0",
+    "av>=14.0.0",
     "azure-ai-ml>=1.27.1",
     "azure-cognitiveservices-speech>=1.44.0",
     "azureml-mlflow>=1.60.0",
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "gradio>=6.7.0",
-    "mlflow>=2.22.0",
+    "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
-    "pywebview>=5.4",
-    "spacy>=3.8.7",
-    "rpyc>=6.0.1",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
     "torch>=2.7.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
@@ -171,16 +170,24 @@ asyncio_mode = "auto"
 [tool.mypy]
 plugins = []
 ignore_missing_imports = true
-strict = false
+strict = true
 follow_imports = "silent"
-strict_optional = false
 disable_error_code = ["empty-body"]
 exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
 
+[[tool.mypy.overrides]]
+module = "pyrit.prompt_target.hugging_face.*"
+disallow_untyped_calls = false
+
 [tool.uv]
 constraint-dependencies = [
-    "cryptography>=46.0.5",
+    "aiohttp>=3.13.4",
+    "pyasn1>=0.6.3",
+    "cryptography>=46.0.7",
     "orjson>=3.11.6",
+    "Pygments>=2.20.0",
+    "PyJWT>=2.12.0",
+    "requests>=2.33.0",
     "tornado>=6.5.5",
     "werkzeug>=3.1.6",
 ]
@@ -195,6 +202,8 @@ include = ["pyrit", "pyrit.*"]
 [tool.setuptools.package-data]
 pyrit = [
     "backend/frontend/**/*",
+    "memory/alembic/**/*",
+    "memory/alembic.ini",
     "py.typed"
 ]
 

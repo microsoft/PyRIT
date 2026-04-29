@@ -6,8 +6,10 @@ import uuid
 from collections.abc import Generator, MutableSequence, Sequence
 from datetime import timezone
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import inspect, text
 
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.models import MessagePiece
@@ -133,6 +135,28 @@ def test_default_embedding_raises(memory_interface: AzureSQLMemory):
 
     with pytest.raises(ValueError):
         memory_interface.enable_embedding()
+
+
+def test_reset_database_recreates_versioned_schema(memory_interface: AzureSQLMemory):
+    memory_interface.reset_database()
+
+    inspector = inspect(memory_interface.engine)
+    table_names = set(inspector.get_table_names())
+
+    assert {
+        "AttackResultEntries",
+        "EmbeddingData",
+        "PromptMemoryEntries",
+        "ScenarioResultEntries",
+        "ScoreEntries",
+        "SeedPromptEntries",
+        "pyrit_memory_alembic_version",
+    }.issubset(table_names)
+
+    with memory_interface.engine.connect() as connection:
+        version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+
+    assert version
 
 
 def test_query_entries(
@@ -326,6 +350,166 @@ def test_update_labels_by_conversation_id(memory_interface: AzureSQLMemory):
         assert updated_entry.labels["test1"] == "change"
 
 
+@pytest.mark.parametrize(
+    "partial_match, expected_value",
+    [
+        (False, "testvalue"),
+        (True, "%testvalue%"),
+    ],
+    ids=["exact_match", "partial_match"],
+)
+def test_get_condition_json_property_match_bind_params(
+    memory_interface: AzureSQLMemory, partial_match: bool, expected_value: str
+):
+    condition = memory_interface._get_condition_json_property_match(
+        json_column=PromptMemoryEntry.labels,
+        property_path="$.key",
+        value="TestValue",
+        partial_match=partial_match,
+    )
+    # Extract the compiled bind parameters (param names include a random uid suffix)
+    params = condition.compile().params
+    pp_params = {k: v for k, v in params.items() if k.startswith("pp_")}
+    mv_params = {k: v for k, v in params.items() if k.startswith("mv_")}
+    assert len(pp_params) == 1
+    assert list(pp_params.values())[0] == "$.key"
+    assert len(mv_params) == 1
+    assert list(mv_params.values())[0] == expected_value
+
+
+def test_get_attack_result_label_condition_with_string_value(memory_interface: AzureSQLMemory):
+    """String values produce a single-placeholder IN clause with the stringified value."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
+    params = condition.compile().params
+    assert params.get("label_operator_0") == "roakey"
+
+
+def test_get_attack_result_label_condition_with_sequence_value(memory_interface: AzureSQLMemory):
+    """Sequence values produce one placeholder per element."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operation": ["op_a", "op_b", "op_c"]})
+    params = condition.compile().params
+    assert params.get("label_operation_0") == "op_a"
+    assert params.get("label_operation_1") == "op_b"
+    assert params.get("label_operation_2") == "op_c"
+
+
+def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface: AzureSQLMemory):
+    """Empty sequence values are skipped (no filter applied for that key)."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey", "operation": []})
+    params = condition.compile().params
+    # operator gets a bind param; operation (empty) does not.
+    assert params.get("label_operator_0") == "roakey"
+    assert not any(k.startswith("label_operation_") for k in params)
+
+
+def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: AzureSQLMemory):
+    """An empty labels dict produces a condition with no label filters bound."""
+    condition = memory_interface._get_attack_result_label_condition(labels={})
+    params = condition.compile().params
+    assert not any(k.startswith("label_") for k in params)
+
+
+@pytest.mark.parametrize(
+    "case_sensitive, partial_match, expected_sql_fragment",
+    [
+        (False, False, "LOWER(JSON_VALUE("),
+        (True, False, "JSON_VALUE("),
+        (False, True, "LOWER(JSON_VALUE("),
+    ],
+    ids=["case_insensitive_exact", "case_sensitive_exact", "case_insensitive_partial"],
+)
+def test_get_condition_json_property_match_sql_text(
+    memory_interface: AzureSQLMemory,
+    case_sensitive: bool,
+    partial_match: bool,
+    expected_sql_fragment: str,
+):
+    condition = memory_interface._get_condition_json_property_match(
+        json_column=PromptMemoryEntry.labels,
+        property_path="$.key",
+        value="TestValue",
+        partial_match=partial_match,
+        case_sensitive=case_sensitive,
+    )
+    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    assert expected_sql_fragment in sql_text
+    # When case_sensitive=False, LOWER must wrap the entire JSON_VALUE(...) call
+    if not case_sensitive:
+        assert "LOWER(JSON_VALUE)" not in sql_text.replace("LOWER(JSON_VALUE(", "")
+
+
+def test_get_condition_json_array_match_all_mode_joins_with_and(memory_interface: AzureSQLMemory):
+    """match_mode='all' (default) produces per-element EXISTS clauses joined by AND."""
+    from pyrit.memory.memory_models import AttackResultEntry
+
+    condition = memory_interface._get_condition_json_array_match(
+        json_column=AttackResultEntry.atomic_attack_identifier,
+        property_path="$.children.attack_technique.children.attack.children.request_converters",
+        array_element_path="$.class_name",
+        array_to_match=["Base64Converter", "ROT13Converter"],
+    )
+    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    # Two EXISTS clauses joined by AND inside the outer parens, wrapped by ISJSON AND (...)
+    assert sql_text.count("EXISTS(SELECT 1 FROM OPENJSON") == 2
+    assert " AND " in sql_text
+    assert " OR " not in sql_text
+
+
+def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface: AzureSQLMemory):
+    """match_mode='any' produces per-element EXISTS clauses joined by OR and wrapped in parens.
+
+    The outer parens are essential: without them, operator precedence would bind the outer
+    ``ISJSON(...) = 1 AND`` tighter than the inner ``OR``, corrupting the predicate.
+    """
+    from pyrit.memory.memory_models import AttackResultEntry
+
+    condition = memory_interface._get_condition_json_array_match(
+        json_column=AttackResultEntry.atomic_attack_identifier,
+        property_path="$.children.attack_technique.children.attack.children.request_converters",
+        array_element_path="$.class_name",
+        array_to_match=["Base64Converter", "ROT13Converter"],
+        match_mode="any",
+    )
+    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    assert sql_text.count("EXISTS(SELECT 1 FROM OPENJSON") == 2
+    assert " OR " in sql_text
+    # The only "AND" in the statement should be the outer ISJSON(...) = 1 AND (...)
+    # wrapper — none of the per-element EXISTS clauses should be AND-joined.
+    assert sql_text.count(" AND ") == 1
+
+
+def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overload(
+    memory_interface: AzureSQLMemory,
+):
+    """match_mode is ignored when array_to_match is empty — always returns the 'no converters' predicate."""
+    import re
+
+    from pyrit.memory.memory_models import AttackResultEntry
+
+    def _normalize(condition) -> str:
+        # _uid() generates a random per-call suffix on param names; strip it for equality.
+        return re.sub(r":pp_[0-9a-f]+", ":pp_X", str(condition.compile(compile_kwargs={"literal_binds": False})))
+
+    condition_any = memory_interface._get_condition_json_array_match(
+        json_column=AttackResultEntry.atomic_attack_identifier,
+        property_path="$.children.attack_technique.children.attack.children.request_converters",
+        array_element_path="$.class_name",
+        array_to_match=[],
+        match_mode="any",
+    )
+    condition_all = memory_interface._get_condition_json_array_match(
+        json_column=AttackResultEntry.atomic_attack_identifier,
+        property_path="$.children.attack_technique.children.attack.children.request_converters",
+        array_element_path="$.class_name",
+        array_to_match=[],
+        match_mode="all",
+    )
+    # Both modes generate identical "IS NULL OR JSON_QUERY(...) = '[]'" absence predicates.
+    assert _normalize(condition_any) == _normalize(condition_all)
+    # Neither EXISTS nor OR should appear in the absence predicate.
+    assert "EXISTS" not in _normalize(condition_any)
+
+
 def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
@@ -349,3 +533,41 @@ def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMem
     with memory_interface.get_session() as session:  # type: ignore[arg-type]
         updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
         assert updated_entry.prompt_metadata == {"updated": "updated"}
+
+
+def test_refresh_token_if_needed_raises_when_expiry_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj._auth_token_expiry = None
+    with pytest.raises(RuntimeError, match="Auth token expiry not initialized"):
+        obj._refresh_token_if_needed()
+
+
+def test_provide_token_raises_when_auth_token_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj._auth_token = None
+    obj._auth_token_expiry = 9999999999.0
+    obj.engine = MagicMock()
+
+    captured_fn = None
+
+    def fake_listens_for(*args, **kwargs):
+        def decorator(fn):
+            nonlocal captured_fn
+            captured_fn = fn
+            return fn
+
+        return decorator
+
+    with patch("pyrit.memory.azure_sql_memory.event.listens_for", side_effect=fake_listens_for):
+        obj._enable_azure_authorization()
+
+    assert captured_fn is not None
+    with pytest.raises(RuntimeError, match="Azure auth token is not initialized"):
+        captured_fn(None, None, ["some_connection_string"], {})
+
+
+def test_reset_database_raises_when_engine_none():
+    obj = AzureSQLMemory.__new__(AzureSQLMemory)
+    obj.engine = None
+    with pytest.raises(RuntimeError, match="Engine is not initialized"):
+        obj.reset_database()

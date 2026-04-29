@@ -43,8 +43,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
     2. Sending the actual objective prompt to the primed target.
     3. Evaluating the response using configured scorers to determine success.
 
-    Learn more about attack at the link below:
-    https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/
+    Learn more about the attack [@microsoft2024skeletonkey].
     """
 
     # Default skeleton key prompt path

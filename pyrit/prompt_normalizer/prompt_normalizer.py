@@ -32,7 +32,19 @@ class PromptNormalizer:
     Handles normalization and processing of prompts before they are sent to targets.
     """
 
-    _memory: MemoryInterface = None
+    _memory: MemoryInterface | None = None
+
+    @property
+    def memory(self) -> MemoryInterface:
+        """
+        Get the memory instance.
+
+        Raises:
+            RuntimeError: If memory is not initialized.
+        """
+        if self._memory is None:
+            raise RuntimeError("Memory is not initialized")
+        return self._memory
 
     def __init__(self, start_token: str = "⟪", end_token: str = "⟫") -> None:
         """
@@ -71,12 +83,12 @@ class PromptNormalizer:
             attack_identifier (Optional[ComponentIdentifier], optional): Identifier for the attack. Defaults to
                 None.
 
+        Returns:
+            Message: The response received from the target.
+
         Raises:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
-
-        Returns:
-            Message: The response received from the target.
         """
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
@@ -105,10 +117,10 @@ class PromptNormalizer:
 
         try:
             responses = await target.send_prompt_async(message=request)
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
         except EmptyResponseException:
             # Empty responses are retried, but we don't want them to stop execution
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
 
             responses = [
                 construct_response_from_request(
@@ -121,7 +133,7 @@ class PromptNormalizer:
 
         except Exception as ex:
             # Ensure request to memory before processing exception
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
 
             error_response = construct_response_from_request(
                 request=request.message_pieces[0],
@@ -131,13 +143,25 @@ class PromptNormalizer:
             )
 
             await self._calc_hash(request=error_response)
-            self._memory.add_message_to_memory(request=error_response)
+            self.memory.add_message_to_memory(request=error_response)
             cid = request.message_pieces[0].conversation_id if request and request.message_pieces else None
             raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            return None
+            # An empty list is valid for write-only targets (e.g., TextTarget)
+            # that don't produce responses. Return the request as-is.
+            if responses is not None and len(responses) == 0:
+                return request
+            empty_response = construct_response_from_request(
+                request=request.message_pieces[0],
+                response_text_pieces=[""],
+                response_type="text",
+                error="empty",
+            )
+            await self._calc_hash(request=empty_response)
+            self.memory.add_message_to_memory(request=empty_response)
+            return empty_response
 
         # Process all response messages (targets return list[Message])
         # Only apply response converters to the last message (final response)
@@ -147,7 +171,7 @@ class PromptNormalizer:
             if is_last:
                 await self.convert_values(converter_configurations=response_converter_configurations, message=resp)
             await self._calc_hash(request=resp)
-            self._memory.add_message_to_memory(request=resp)
+            self.memory.add_message_to_memory(request=resp)
 
         # Return the last response for backward compatibility
         return responses[-1]
@@ -191,7 +215,7 @@ class PromptNormalizer:
             "conversation_id",
         ]
 
-        responses = await batch_task_async(
+        return await batch_task_async(
             prompt_target=target,
             batch_size=batch_size,
             items_to_batch=batch_items,
@@ -201,9 +225,6 @@ class PromptNormalizer:
             labels=labels,
             attack_identifier=attack_identifier,
         )
-
-        # Filter out None responses (e.g., from empty responses)
-        return [response for response in responses if response is not None]
 
     async def convert_values(
         self,
@@ -312,6 +333,6 @@ class PromptNormalizer:
                 # and if not, this won't hurt anything
                 piece.id = uuid4()
 
-            self._memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request)
 
         return prepended_conversation

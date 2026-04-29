@@ -18,7 +18,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
     This dataset contains questions across multiple risk areas and harm types
     to test LLM safety and refusal behaviors.
 
-    Reference: https://arxiv.org/abs/2308.13387
+    Reference: [@wang2023donotanswer]
     GitHub: https://github.com/libr-ai/do-not-answer
     """
 

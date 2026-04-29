@@ -615,3 +615,79 @@ class TestXPIAResult:
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=None)
 
         assert result.status == XPIAStatus.UNKNOWN
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestXPIAGuards:
+    """Tests for type-narrowing guards in XPIA workflow."""
+
+    @pytest.mark.asyncio
+    async def test_execute_processing_raises_when_callback_is_none(
+        self,
+    ) -> None:
+        """Test that _execute_processing_async raises ValueError when processing_callback is None."""
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        workflow = XPIAWorkflow(attack_setup_target=mock_target)
+
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
+        context = XPIAContext(attack_content=attack_msg, processing_callback=None)
+
+        with pytest.raises(ValueError, match="processing_callback is not set"):
+            await workflow._execute_processing_async(context=context)
+
+    @pytest.mark.asyncio
+    async def test_execute_processing_raises_when_memory_is_none(
+        self,
+    ) -> None:
+        """Test that _execute_processing_async raises RuntimeError when memory is None."""
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        workflow = XPIAWorkflow(attack_setup_target=mock_target)
+        workflow._memory = None
+
+        mock_callback = AsyncMock(return_value="response")
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
+        context = XPIAContext(attack_content=attack_msg, processing_callback=mock_callback)
+
+        with pytest.raises(RuntimeError, match="Memory not initialized"):
+            await workflow._execute_processing_async(context=context)
+
+    @pytest.mark.asyncio
+    async def test_xpia_test_setup_raises_when_processing_prompt_is_none(
+        self,
+    ) -> None:
+        """Test that the process_async closure raises RuntimeError when processing_prompt is None."""
+        from pyrit.executor.workflow.xpia import XPIATestWorkflow
+
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        mock_processing_target = MagicMock(spec=PromptTarget)
+        mock_processing_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockProcessingTarget", class_module="test_module"
+        )
+        mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockScorer", class_module="test_module"
+        )
+        workflow = XPIATestWorkflow(
+            attack_setup_target=mock_target,
+            processing_target=mock_processing_target,
+            scorer=mock_scorer,
+        )
+
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
+        context = XPIAContext(attack_content=attack_msg, processing_prompt=None)
+
+        await workflow._setup_async(context=context)
+
+        # The processing_callback should be set after _setup_async
+        assert context.processing_callback is not None
+        with pytest.raises(RuntimeError, match="context.processing_prompt is not initialized"):
+            await context.processing_callback()

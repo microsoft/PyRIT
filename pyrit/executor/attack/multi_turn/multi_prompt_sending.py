@@ -208,7 +208,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         Raises:
             ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.supports_multi_turn:
+        if not self._objective_target.capabilities.supports_multi_turn:
             raise ValueError(
                 "MultiPromptSendingAttack requires a multi-turn target. "
                 "The objective target does not support multi-turn conversations."

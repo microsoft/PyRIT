@@ -123,7 +123,8 @@ class AttackParameters:
         seed_group.validate()
 
         # SeedAttackGroup validates in __init__ that objective is set
-        assert seed_group.objective is not None
+        if seed_group.objective is None:
+            raise ValueError("seed_group.objective is not initialized")
 
         # Build params dict, only including fields this class accepts
         params: dict[str, Any] = {}

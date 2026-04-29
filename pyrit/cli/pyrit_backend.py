@@ -40,6 +40,9 @@ Examples:
   # Start with custom port and host
   pyrit_backend --host 0.0.0.0 --port 8080
 
+  # Expose to network (listen on all interfaces)
+  pyrit_backend --host 0.0.0.0
+
   # List available initializers
   pyrit_backend --list-initializers
 """,
@@ -49,8 +52,8 @@ Examples:
     parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
-        help="Host to bind the server to (default: 0.0.0.0)",
+        default="localhost",
+        help="Host to bind the server to (default: localhost)",
     )
 
     parser.add_argument(
@@ -92,7 +95,7 @@ Examples:
 
     parser.add_argument(
         "--initializers",
-        type=str,
+        type=frontend_core._parse_initializer_arg,
         nargs="+",
         help=frontend_core.ARG_HELP["initializers"],
     )
@@ -165,12 +168,15 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
 
     # Run initializers up-front (backend runs them once at startup, not per-scenario)
     initializer_instances = None
-    if context._initializer_names:
-        print(f"Running {len(context._initializer_names)} initializer(s)...")
+    if context._initializer_configs:
+        print(f"Running {len(context._initializer_configs)} initializer(s)...")
         initializer_instances = []
-        for name in context._initializer_names:
-            initializer_class = context.initializer_registry.get_class(name)
-            initializer_instances.append(initializer_class())
+        for config in context._initializer_configs:
+            initializer_class = context.initializer_registry.get_class(config.name)
+            instance = initializer_class()
+            if config.args:
+                instance.set_params_from_args(args=config.args)
+            initializer_instances.append(instance)
 
         # Re-initialize with initializers applied
         await initialize_pyrit_async(
@@ -193,17 +199,20 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
         default_labels["operation"] = context._operation
     app.state.default_labels = default_labels
 
-    print(f"🚀 Starting PyRIT backend on http://{parsed_args.host}:{parsed_args.port}")
-    print(f"   API Docs: http://{parsed_args.host}:{parsed_args.port}/docs")
+    display_host = parsed_args.host
+    print(f"🚀 Starting PyRIT backend on http://{display_host}:{parsed_args.port}")
+    print(f"   API Docs: http://{display_host}:{parsed_args.port}/docs")
+    if parsed_args.host == "0.0.0.0":
+        print(f"   Open in browser: http://localhost:{parsed_args.port}")
 
-    config = uvicorn.Config(
+    uvicorn_config = uvicorn.Config(
         "pyrit.backend.main:app",
         host=parsed_args.host,
         port=parsed_args.port,
         log_level=parsed_args.log_level,
         reload=parsed_args.reload,
     )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(uvicorn_config)
     await server.serve()
 
     return 0
@@ -229,8 +238,7 @@ def main(*, args: Optional[list[str]] = None) -> int:
     # Handle list-initializers command
     if parsed_args.list_initializers:
         context = frontend_core.FrontendCore(config_file=parsed_args.config_file, log_level=parsed_args.log_level)
-        scenarios_path = frontend_core.get_default_initializer_discovery_path()
-        return asyncio.run(frontend_core.print_initializers_list_async(context=context, discovery_path=scenarios_path))
+        return asyncio.run(frontend_core.print_initializers_list_async(context=context))
 
     # Run the server
     try:

@@ -23,7 +23,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/walledai/SaladBench
-        - https://arxiv.org/abs/2402.05044
+        - [@li2024saladbench]
         - https://github.com/OpenSafetyLab/SALAD-BENCH
     License: Apache 2.0
 
@@ -113,7 +113,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
+                value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[self._parse_category(c) for c in item["categories"]],

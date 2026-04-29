@@ -19,7 +19,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/bench-llm/OR-Bench
-        - https://arxiv.org/abs/2405.20947
+        - [@cui2024orbench]
     License: CC BY 4.0
 
     Warning: This dataset contains prompts designed to test over-refusal behavior in LLMs,
@@ -69,7 +69,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
+                value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["category"]] if item.get("category") else [],
