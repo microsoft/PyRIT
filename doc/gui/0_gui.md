@@ -24,7 +24,7 @@ CoPyRIT is also available as a Docker container. See the [Docker setup](https://
 
 CoPyRIT can be deployed to Azure Container Apps with Entra authentication and managed identity. See the [Azure deployment guide](https://github.com/microsoft/PyRIT/blob/main/infra/README.md) for the full setup.
 
-To deploy an isolated instance for an external team, see [Deploy a New Instance](https://github.com/microsoft/PyRIT/blob/main/infra/DEPLOY_NEW_INSTANCE.md).
+To deploy an isolated instance for an external team, see [Deploy a New Instance](../../infra/DEPLOY_NEW_INSTANCE.md).
 
 ---
 
