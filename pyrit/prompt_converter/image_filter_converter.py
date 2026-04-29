@@ -53,7 +53,7 @@ class ImageFilterConverter(PromptConverter):
             converter_target: The LLM endpoint that generates the expanded prompt.
                 Can be omitted if a default has been configured via PyRIT initialization.
             filter_name: Name of the filter YAML file (without extension) in the image_filter directory.
-            variation: Name of the variation to use (matched by prefix before the colon in the YAML,
+            variation: Name of the variation to use (matched by key name in the YAML variations mapping,
                 e.g. "Bodycam Footage"). This is case-insensitive. If None, a random variation is selected
                 on each call to convert_async.
 
@@ -61,7 +61,7 @@ class ImageFilterConverter(PromptConverter):
             ValueError: If filter_name does not correspond to an existing YAML file.
             ValueError: If variation does not match any entry in the filter.
         """
-        self._converter_target = converter_target
+        self.converter_target = converter_target
         self._filter_name = filter_name
         self._variation = variation
 
@@ -112,7 +112,7 @@ class ImageFilterConverter(PromptConverter):
                 "filter_name": self._filter_name,
                 "variation": self._variation,
             },
-            children={"converter_target": self._converter_target.get_identifier()},
+            children={"converter_target": self.converter_target.get_identifier()},
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
@@ -148,7 +148,7 @@ class ImageFilterConverter(PromptConverter):
 
         conversation_id = str(uuid.uuid4())
 
-        self._converter_target.set_system_prompt(
+        self.converter_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
             attack_identifier=None,
@@ -161,7 +161,7 @@ class ImageFilterConverter(PromptConverter):
                     original_value=prompt,
                     conversation_id=conversation_id,
                     sequence=1,
-                    prompt_target_identifier=self._converter_target.get_identifier(),
+                    prompt_target_identifier=self.converter_target.get_identifier(),
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
                     converter_identifiers=[self.get_identifier()],
@@ -170,7 +170,7 @@ class ImageFilterConverter(PromptConverter):
             ]
         )
 
-        response = await self._converter_target.send_prompt_async(message=request)
+        response = await self.converter_target.send_prompt_async(message=request)
         return ConverterResult(output_text=response[0].get_value(), output_type="text")
 
     @classmethod

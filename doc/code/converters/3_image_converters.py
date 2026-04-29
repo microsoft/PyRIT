@@ -28,6 +28,7 @@
 # ### ImageFilterConverter
 #
 # The `ImageFilterConverter` converts a short, simple text prompt into an image stylistic prompt for a model that can then generate this image.
+#
 
 # %%
 from pyrit.prompt_converter import ImageFilterConverter
@@ -59,7 +60,6 @@ from PIL import Image
 
 from pyrit.prompt_converter import QRCodeConverter
 from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 

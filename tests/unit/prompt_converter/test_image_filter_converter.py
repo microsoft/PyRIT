@@ -126,8 +126,8 @@ async def test_convert_async_unsupported_input_type_raises(mock_target) -> None:
 
 
 def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
-    """Duplicate prefixes should log a warning but not raise."""
-    from unittest.mock import mock_open, patch
+    """Duplicate variation keys (case-insensitive) should log a warning but not raise."""
+    from unittest.mock import MagicMock, mock_open, patch
 
     duplicate_yaml = {
         "style_instructions": "test style",
@@ -137,14 +137,17 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
         },
     }
 
+    mock_seed_prompt = MagicMock()
+
     with (
         caplog.at_level("WARNING", logger="pyrit.prompt_converter.image_filter_converter"),
-        patch("yaml.safe_load", return_value=duplicate_yaml),
-        patch("builtins.open", mock_open()),
         patch(
-            "pyrit.prompt_converter.image_filter_converter.ImageFilterConverter.list_available_filters",
-            return_value=["gritty_documentary"],
+            "pyrit.prompt_converter.image_filter_converter.SeedPrompt.from_yaml_file",
+            return_value=mock_seed_prompt,
         ),
+        patch("pathlib.Path.exists", return_value=True),
+        patch("builtins.open", mock_open()),
+        patch("yaml.safe_load", return_value=duplicate_yaml),
     ):
         converter = ImageFilterConverter(
             converter_target=mock_target,
@@ -153,6 +156,3 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
 
     assert "Duplicate variation key" in caplog.text
     assert converter._variation_map["bodycam footage"] == "bodycam footage"
-
-    assert "Duplicate variation prefix" in caplog.text
-    assert converter._variation_map["bodycam footage"] == "Bodycam Footage: second version"
