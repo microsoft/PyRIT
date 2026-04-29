@@ -12,6 +12,7 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   4. Azure SQL server + database
   5. Key Vault + populate .env secret (auto-injects SQL connection string)
   6. Managed identity + RBAC role assignments (AcrPull, KV Secrets User)
+  6b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
   7. Bicep deployment (Container App, networking, logging)
   8. Post-deploy: SPA redirect URI
 
@@ -787,6 +788,64 @@ def create_managed_identity_and_grant_roles(
     return mi_principal_id
 
 
+def _grant_aoai_roles(
+    *,
+    mi_principal_id: str,
+    subscription: str,
+    aoai_resource_names: list[str],
+) -> int:
+    """
+    Grant Cognitive Services OpenAI User to the managed identity on AOAI resources.
+
+    Looks up each resource by name in the subscription and grants the role.
+    Skips resources that cannot be found with a warning.
+
+    Args:
+        mi_principal_id (str): The managed identity principal ID.
+        subscription (str): The Azure subscription ID.
+        aoai_resource_names (list[str]): Cognitive Services account names.
+
+    Returns:
+        int: The number of successful role assignments.
+    """
+    granted = 0
+    for name in aoai_resource_names:
+        resource_id = run_az_json(
+            args=[
+                "cognitiveservices",
+                "account",
+                "list",
+                "--subscription",
+                subscription,
+                "--query",
+                f"[?name=='{name}'].id | [0]",
+            ]
+        )
+        if not resource_id:
+            logger.warning("AOAI resource '%s' not found in subscription — skipping", name)
+            continue
+
+        logger.info("Granting Cognitive Services OpenAI User on: %s", name)
+        run_az(
+            args=[
+                "role",
+                "assignment",
+                "create",
+                "--assignee-object-id",
+                mi_principal_id,
+                "--assignee-principal-type",
+                "ServicePrincipal",
+                "--role",
+                "Cognitive Services OpenAI User",
+                "--scope",
+                resource_id,
+            ]
+        )
+        granted += 1
+
+    return granted
+
+
 def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     """
     Parse command-line arguments.
@@ -846,6 +905,15 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "--service-management-reference",
         default="",
         help="Service Tree ID for Entra app registration (required by some tenants)",
+    )
+    parser.add_argument(
+        "--aoai-resource-names",
+        default="",
+        help=(
+            "Comma-separated Cognitive Services account names to grant "
+            "Cognitive Services OpenAI User to the managed identity. "
+            "Optional — if omitted, AOAI RBAC must be granted manually."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -919,6 +987,10 @@ def main(args: list[str] | None = None) -> int:
         logger.info("ACR: %s", parsed.acr_name)
         logger.info("Location: %s", parsed.location)
         logger.info("Subscription: %s", parsed.subscription)
+        if parsed.aoai_resource_names:
+            logger.info("AOAI resources: %s", parsed.aoai_resource_names)
+        else:
+            logger.info("AOAI resources: (none — RBAC must be granted manually)")
         return 0
 
     try:
@@ -976,6 +1048,17 @@ def main(args: list[str] | None = None) -> int:
             tags=resource_tags,
         )
 
+        # Step 7b: Grant AOAI roles (optional — only if --aoai-resource-names provided)
+        aoai_names = [n.strip() for n in parsed.aoai_resource_names.split(",") if n.strip()]
+        aoai_granted = 0
+        if aoai_names:
+            aoai_granted = _grant_aoai_roles(
+                mi_principal_id=mi_principal_id,
+                subscription=parsed.subscription,
+                aoai_resource_names=aoai_names,
+            )
+            logger.info("Granted Cognitive Services OpenAI User on %d/%d AOAI resources", aoai_granted, len(aoai_names))
+
         # Step 8: Deploy Bicep
         outputs = deploy_bicep(
             resource_group=rg_name,
@@ -1020,10 +1103,15 @@ def main(args: list[str] | None = None) -> int:
         logger.info("       ALTER ROLE db_datawriter ADD MEMBER [%s-identity];", app_name)
         logger.info("       ALTER ROLE db_ddladmin ADD MEMBER [%s-identity];", app_name)
         logger.info("  2. Add users to the Entra security group(s)")
-        logger.info("  3. Grant Cognitive Services roles if using MI-auth for AOAI:")
-        logger.info("     az role assignment create --assignee-object-id %s \\", mi_principal_id)
-        logger.info("       --assignee-principal-type ServicePrincipal \\")
-        logger.info("       --role 'Cognitive Services OpenAI User' --scope <aoai-resource-id>")
+        if not aoai_names:
+            logger.info("  3. Grant Cognitive Services roles if using MI-auth for AOAI:")
+            logger.info("     az role assignment create --assignee-object-id %s \\", mi_principal_id)
+            logger.info("       --assignee-principal-type ServicePrincipal \\")
+            logger.info("       --role 'Cognitive Services OpenAI User' --scope <aoai-resource-id>")
+        else:
+            logger.info(
+                "  3. AOAI RBAC: %d/%d resources granted (via --aoai-resource-names)", aoai_granted, len(aoai_names)
+            )
         logger.info("")
         logger.info("Restart the container app after completing step 1:")
         logger.info("  az containerapp revision restart -n %s -g %s \\", app_name, rg_name)
