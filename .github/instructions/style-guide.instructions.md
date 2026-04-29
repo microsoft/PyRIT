@@ -95,28 +95,110 @@ def process(self, data: str) -> str:
     ...
 ```
 
-## Documentation Standards
+## Imports
 
-### Import Placement
-- **MANDATORY**: All import statements MUST be at the top of the file
-- Do NOT use inline/local imports inside functions or methods
-- The only exception is breaking circular import dependencies, which should be rare and documented
+### Placement and Organization
+
+Import statements go at the top of the file, grouped in this order:
 
 ```python
-# CORRECT — imports at the top of the file
-from contextlib import closing
-from sqlalchemy.exc import SQLAlchemyError
+# Standard library imports
+import asyncio
+import json
+import logging
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any
 
-def update_entry(self, entry: Base) -> None:
-    with closing(self.get_session()) as session:
-        ...
+# Third-party imports
+import numpy as np
+from tqdm import tqdm
 
-# INCORRECT — inline import inside a function
-def update_entry(self, entry: Base) -> None:
-    from contextlib import closing          # ← WRONG, must be at top of file
-    with closing(self.get_session()) as session:
-        ...
+# Local application imports
+from pyrit.attacks.base import AttackStrategy
+from pyrit.models import AttackResult
+from pyrit.prompt_target import PromptTarget
 ```
+
+Do not place imports inside functions or methods. The two cases where imports
+belong somewhere other than the file header are **lazy imports in `__init__.py`**
+and **deferred imports in CLI entry points**, both described below.
+
+### Import Paths
+
+When importing from a different pyrit module, import from the package root if
+the symbol is exported from `__init__.py`:
+
+```python
+# CORRECT — import from the package root
+from pyrit.prompt_target import PromptChatTarget, OpenAIChatTarget
+
+# INCORRECT — reaching into internal files from outside the module
+from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+```
+
+Within the same module, importing from the specific file is usually necessary
+to prevent circular imports.
+
+- Always check `__init__.py` exports first before using a deep file path
+- Group related imports from the same root module together
+- Use multi-line formatting when importing 3+ items from the same module
+
+### Lazy Imports in `__init__.py` (for performance)
+
+Package `__init__.py` files use PEP 562 `__getattr__`-based lazy loading to
+defer imports of modules with heavy third-party dependencies (e.g.,
+`transformers`, `scipy`, `openai`, `PIL`). This keeps CLI startup fast.
+
+```python
+# In __init__.py — lazy-load symbols with heavy deps
+import importlib
+from typing import TYPE_CHECKING
+
+from mypackage.lightweight_module import LightweightClass  # eager: fast
+
+if TYPE_CHECKING:
+    from mypackage.heavy_module import HeavyClass  # IDE support only
+
+_LAZY_IMPORTS: dict[str, str] = {
+    "HeavyClass": "mypackage.heavy_module",
+}
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_IMPORTS:
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        attr = getattr(module, name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+```
+
+Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE
+support. When adding a new module that imports heavy third-party packages,
+check whether it is re-exported from a package `__init__.py` on the CLI startup
+path. If so, add it to `_LAZY_IMPORTS` instead of as an eager import. The key
+files are `pyrit/common/__init__.py`, `pyrit/prompt_target/__init__.py`,
+`pyrit/prompt_converter/__init__.py`, and `pyrit/score/__init__.py`.
+
+### Deferred Imports in CLI Entry Points
+
+CLI entry point modules (e.g., `pyrit_scan.py`) defer heavy imports to inside
+`main()` so that `--help` and argument validation are near-instant:
+
+```python
+# Top level — lightweight arg-parsing helpers only
+from pyrit.cli._cli_args import ARG_HELP, positive_int
+
+def main() -> int:
+    parsed_args = parse_args()  # instant
+
+    # Heavy import deferred until actually needed
+    from pyrit.cli import frontend_core
+    ...
+```
+
+## Documentation Standards
 
 ### Docstring Format
 - Use Google-style docstrings
@@ -210,63 +292,6 @@ async def execute_attack_async(self, *, context: AttackContext) -> AttackResult:
 4. Protected methods (subclass API)
 5. Private methods (internal implementation)
 6. Static methods and class methods at the end
-
-### Import Organization
-```python
-# Standard library imports
-import asyncio
-import json
-import logging
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-from typing import Any
-
-# Third-party imports
-import numpy as np
-from tqdm import tqdm
-
-# Local application imports
-from pyrit.attacks.base import AttackStrategy
-from pyrit.models import AttackResult
-from pyrit.prompt_target import PromptTarget
-```
-
-Unless necessary, always import at the top of the file. Don't import inside a function or method.
-
-
-### Import paths
-
-Often, pyrit has specific files that can be imported. However IF you are importing from a different module than your namespace,
-import from the root pyrit module if it's exposed from init.
-
-In the same module, importing from the specific path is usually necessary to prevent circular imports.
-
-- Always check __init__.py exports first - Before using a specific file path, verify if the class/function is exposed at a higher level
-- Group related imports - Put all imports from the same root module together
-- Use multi-line formatting for readability - When importing 3+ items from the same module, use parentheses
-
-
-```python
-# Correct
-from pyrit.prompt_target import PromptChatTarget, OpenAIChatTarget
-
-# Correct
-from pyrit.score import (
-    AzureContentFilterScorer,
-    FloatScaleThresholdScorer,
-    SelfAskRefusalScorer,
-    TrueFalseCompositeScorer,
-    TrueFalseInverterScorer,
-    TrueFalseScoreAggregator,
-    TrueFalseScorer,
-)
-
-# Incorrect (if importing from a non-target module)
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
-
-```
 
 ## Error Handling
 
@@ -449,6 +474,7 @@ Before committing code, ensure:
 - [ ] Functions are focused and under 20 lines
 - [ ] Error messages are helpful and specific
 - [ ] Code follows the import organization pattern
+- [ ] New modules with heavy deps use lazy imports in `__init__.py`
 - [ ] No hard-coded dependencies
 - [ ] Complex logic is extracted to helper methods
 
