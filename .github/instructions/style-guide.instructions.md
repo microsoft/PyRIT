@@ -99,172 +99,58 @@ def process(self, data: str) -> str:
 
 ### Placement and Organization
 
-Import statements go at the top of the file, grouped in this order:
+Top of file, grouped: stdlib → third-party → local.
 
-**Exception — Lazy imports in `__init__.py` for performance:**
+### Deferred Imports for Performance
 
-Package `__init__.py` files may use PEP 562 `__getattr__`-based lazy loading to defer
-imports of modules with heavy third-party dependencies (e.g., `transformers`, `scipy`,
-`openai`, `PIL`). This keeps `import pyrit` fast for CLI entry points and other
-lightweight consumers.
+Imports may be placed inside functions/methods when they pull in expensive
+third-party packages (`transformers`, `azure.storage.blob`, `alembic`, `openai`,
+`scipy`, `pandas`, `av`). Two cases:
 
-```python
-# In __init__.py — lazy-load symbols with heavy deps
-import importlib
-from typing import TYPE_CHECKING
-
-from mypackage.lightweight_module import LightweightClass  # eager: fast
-
-if TYPE_CHECKING:
-    from mypackage.heavy_module import HeavyClass  # IDE support only
-
-_LAZY_IMPORTS: dict[str, str] = {
-    "HeavyClass": "mypackage.heavy_module",
-}
-
-def __getattr__(name: str) -> object:
-    if name in _LAZY_IMPORTS:
-        module = importlib.import_module(_LAZY_IMPORTS[name])
-        attr = getattr(module, name)
-        globals()[name] = attr
-        return attr
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-```
-
-Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE support.
-Use this pattern only in `__init__.py` files to defer genuinely expensive imports —
-do not use it in regular modules.
-
-**Exception — Deferred imports in CLI entry points:**
-
-CLI entry point modules (e.g., `pyrit_scan.py`) may defer heavy imports to inside
-`main()` so that `--help` and argument validation are near-instant. Import lightweight
-argument-parsing helpers at the top level and defer the full framework import:
+1. **CLI entry points** — defer heavy imports to after arg parsing so `--help` is instant.
+2. **Internal modules** — when a method is the only consumer of a heavy package.
 
 ```python
-# At top level — lightweight only
-from pyrit.cli._cli_args import ARG_HELP, positive_int
-
 def main() -> int:
-    parsed_args = parse_args()  # instant: uses only _cli_args
+    parsed_args = parse_args()
+    from pyrit.cli import frontend_core  # deferred: heavy
+    ...
 
-    # Defer heavy import until actually needed
-    from pyrit.cli import frontend_core
+async def _create_container_client_async(self):
+    from azure.storage.blob.aio import ContainerClient  # deferred: heavy
     ...
 ```
 
-```python
-# Standard library imports
-import asyncio
-import json
-import logging
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-from typing import Any
+Guard tests in `tests/unit/cli/test_import_guards.py` enforce that key import
+paths stay fast.
 
-# Third-party imports
-import numpy as np
-from tqdm import tqdm
+### Lazy `__init__.py` Exports (PEP 562)
 
-# Local application imports
-from pyrit.attacks.base import AttackStrategy
-from pyrit.models import AttackResult
-from pyrit.prompt_target import PromptTarget
-```
+Public API packages (`pyrit.prompt_target`, `pyrit.prompt_converter`, `pyrit.score`)
+use `__getattr__`-based lazy loading so heavy symbols can be imported from the
+package without paying the cost at package load time. See
+`pyrit/prompt_target/__init__.py` for the canonical example. Rules:
 
-Do not place imports inside functions or methods. The one exception is
-**deferred imports in CLI entry points**, described below.
+- Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE support.
+- Internal utility packages (e.g., `pyrit.common`) simply omit heavy submodules
+  from `__init__.py` — consumers import directly from the specific file.
 
 ### Import Paths
 
-When importing from a different pyrit module, import from the package root if
-the symbol is exported from `__init__.py`:
+Import from the package root when the symbol is exported from `__init__.py`:
 
 ```python
-# CORRECT — import from the package root
-from pyrit.prompt_target import PromptChatTarget, OpenAIChatTarget
-
-# INCORRECT — reaching into internal files from outside the module
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target import PromptChatTarget  # CORRECT
+from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget  # WRONG
 ```
 
-Some submodules with heavy third-party dependencies are intentionally **not**
-re-exported from their package `__init__.py` to keep `import pyrit` fast.
-Import those directly from the specific file:
+Heavy submodules not re-exported from `__init__.py` are imported directly:
 
 ```python
-# CORRECT — heavy submodule not re-exported from __init__.py
 from pyrit.common.net_utility import get_httpx_client
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
 ```
 
-Within the same module, importing from the specific file is usually necessary
-to prevent circular imports.
-
-- Always check `__init__.py` exports first before using a deep file path
-- Group related imports from the same root module together
-- Use multi-line formatting when importing 3+ items from the same module
-
-### Keeping `__init__.py` Startup Fast
-
-Package `__init__.py` files must not eagerly import modules that pull in heavy
-third-party dependencies (e.g., `transformers`, `scipy`, `openai`, `PIL`).
-This keeps CLI startup fast. Two patterns are used depending on context:
-
-**Internal utility packages** (e.g., `pyrit.common`): Simply omit heavy
-submodules from `__init__.py` entirely. Consumers import from the specific file.
-See `pyrit/common/__init__.py` for an example.
-
-**Public API packages** (e.g., `pyrit.prompt_target`, `pyrit.prompt_converter`,
-`pyrit.score`): Use PEP 562 `__getattr__`-based lazy loading so that
-`from pyrit.prompt_target import HeavyClass` still works without paying the
-import cost at package load time:
-
-```python
-# In __init__.py — lazy-load symbols with heavy deps
-import importlib
-from typing import TYPE_CHECKING
-
-from mypackage.lightweight_module import LightweightClass  # eager: fast
-
-if TYPE_CHECKING:
-    from mypackage.heavy_module import HeavyClass  # IDE support only
-
-_LAZY_IMPORTS: dict[str, str] = {
-    "HeavyClass": "mypackage.heavy_module",
-}
-
-def __getattr__(name: str) -> object:
-    if name in _LAZY_IMPORTS:
-        module = importlib.import_module(_LAZY_IMPORTS[name])
-        attr = getattr(module, name)
-        globals()[name] = attr
-        return attr
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-```
-
-Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE
-support. When adding a new class that imports heavy third-party packages,
-check whether it is re-exported from a package `__init__.py` on the CLI startup
-path. If so, add it to `_LAZY_IMPORTS` instead of as an eager import.
-
-### Deferred Imports in CLI Entry Points
-
-CLI entry point modules (e.g., `pyrit_scan.py`) defer heavy imports to inside
-`main()` so that `--help` and argument validation are near-instant:
-
-```python
-# Top level — lightweight arg-parsing helpers only
-from pyrit.cli._cli_args import ARG_HELP, positive_int
-
-def main() -> int:
-    parsed_args = parse_args()  # instant
-
-    # Heavy import deferred until actually needed
-    from pyrit.cli import frontend_core
-    ...
-```
+Within the same package, import from the specific file to avoid circular imports.
 
 ## Documentation Standards
 
