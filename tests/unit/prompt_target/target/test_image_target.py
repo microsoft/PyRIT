@@ -554,7 +554,7 @@ def test_style_param_emits_deprecation_warning(patch_central_database):
     assert target.style == "vivid"
 
 
-def test_style_none_does_not_emit_deprecation_warning(patch_central_database):
+def test_no_style_does_not_emit_deprecation_warning(patch_central_database):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         OpenAIImageTarget(
