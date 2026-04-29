@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import copy
-
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import Message, MessagePiece
 
@@ -58,21 +56,14 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         user_content = user_piece.converted_value
 
         combined_content = f"### Instructions ###\n\n{system_content}\n\n######\n\n{user_content}"
-        squashed_message = copy.deepcopy(messages[user_message_index])
+        combined_piece = MessagePiece(
+            role="user",
+            original_value=combined_content,
+            conversation_id=user_piece.conversation_id,
+            sequence=user_piece.sequence,
+        )
+        remaining_pieces = list(messages[user_message_index].message_pieces[1:])
+        squashed_message = Message(message_pieces=[combined_piece] + remaining_pieces)
 
-        if squashed_message.message_pieces[0].converted_value_data_type == "text":
-            squashed_message.message_pieces[0].original_value = combined_content
-            squashed_message.message_pieces[0].converted_value = combined_content
-        else:
-            squashed_message.message_pieces.insert(
-                0,
-                MessagePiece(
-                    role="user",
-                    original_value=combined_content,
-                    conversation_id=user_piece.conversation_id,
-                    sequence=user_piece.sequence,
-                ),
-            )
-
-        # Return the squashed message followed by remaining messages (skip first two)
+        # Remove system (index 0), replace the first user message with the squashed version, preserve all others
         return list(messages[1:user_message_index]) + [squashed_message] + list(messages[user_message_index + 1 :])

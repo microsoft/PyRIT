@@ -123,3 +123,20 @@ async def test_generic_squash_uses_first_user_message_instead_of_rewriting_assis
     assert result[0].get_value() == "Assistant message"
     assert result[1].api_role == "user"
     assert result[1].get_value() == "### Instructions ###\n\nSystem message\n\n######\n\nUser message"
+
+
+@pytest.mark.asyncio
+async def test_generic_squash_no_user_message_converts_system_to_user():
+    """Test that system is converted to user when no user messages exist."""
+    messages = [
+        _make_message("system", "System message"),
+        _make_message("assistant", "Assistant message"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 2
+    assert result[0].api_role == "user"
+    assert result[0].get_value() == "System message"
+    assert result[1].api_role == "assistant"
+    assert result[1].get_value() == "Assistant message"
