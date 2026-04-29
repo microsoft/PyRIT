@@ -84,3 +84,58 @@ def test_valid_temperature_and_top_p(patch_central_database):
     )
     assert target._temperature == 1.5
     assert target._top_p == 0.9
+
+
+def test_identifier_includes_generation_params():
+    """New generation params (top_k, do_sample, repetition_penalty) appear in the identifier."""
+    target = HuggingFaceEndpointTarget(
+        hf_token="test_token",
+        endpoint="https://api-inference.huggingface.co/models/test-model",
+        model_id="test-model",
+        top_k=40,
+        do_sample=True,
+        repetition_penalty=1.2,
+    )
+    identifier = target.get_identifier()
+    assert identifier.params["top_k"] == 40
+    assert identifier.params["do_sample"] is True
+    assert identifier.params["repetition_penalty"] == 1.2
+
+
+def test_identifier_excludes_none_generation_params():
+    """None-valued generation params are excluded from the identifier."""
+    target = HuggingFaceEndpointTarget(
+        hf_token="test_token",
+        endpoint="https://api-inference.huggingface.co/models/test-model",
+        model_id="test-model",
+    )
+    identifier = target.get_identifier()
+    assert "top_k" not in identifier.params
+    assert "do_sample" not in identifier.params
+    assert "repetition_penalty" not in identifier.params
+
+
+def test_sampling_params_without_do_sample_warns():
+    """Setting temperature != 1.0 without do_sample=True emits a warning."""
+    with pytest.warns(UserWarning, match="do_sample is not True"):
+        HuggingFaceEndpointTarget(
+            hf_token="test_token",
+            endpoint="https://api-inference.huggingface.co/models/test-model",
+            model_id="test-model",
+            temperature=0.7,
+        )
+
+
+def test_sampling_params_with_do_sample_no_warning():
+    """Setting temperature != 1.0 with do_sample=True does not warn."""
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", UserWarning)
+        HuggingFaceEndpointTarget(
+            hf_token="test_token",
+            endpoint="https://api-inference.huggingface.co/models/test-model",
+            model_id="test-model",
+            temperature=0.7,
+            do_sample=True,
+        )
