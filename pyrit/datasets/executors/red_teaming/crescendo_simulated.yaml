@@ -1,7 +1,8 @@
 name: crescendo_simulated
 description: |
-  A variant of the crescendo attack technique for use with simulated conversations.
-  Adapted from crescendo_variant_1 for RedTeamingAttack compatibility (objective/max_turns only).
+  A single-turn variant of the crescendo attack technique for use with simulated conversations.
+  Based on the Crescendo multi-turn jailbreak (Russinovich et al., 2024) and adapted by AI Red Team
+  to condense the escalation into a single prompt interaction.
 authors:
   - Mark Russinovich
   - Ahmed Salem
