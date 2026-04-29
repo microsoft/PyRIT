@@ -8,7 +8,7 @@ from collections.abc import MutableSequence
 from dataclasses import replace
 from typing import Any, Optional
 
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,

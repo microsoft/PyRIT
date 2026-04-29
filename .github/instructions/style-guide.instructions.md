@@ -121,9 +121,8 @@ from pyrit.models import AttackResult
 from pyrit.prompt_target import PromptTarget
 ```
 
-Do not place imports inside functions or methods. The two cases where imports
-belong somewhere other than the file header are **lazy imports in `__init__.py`**
-and **deferred imports in CLI entry points**, both described below.
+Do not place imports inside functions or methods. The one exception is
+**deferred imports in CLI entry points**, described below.
 
 ### Import Paths
 
@@ -138,6 +137,16 @@ from pyrit.prompt_target import PromptChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 ```
 
+Some submodules with heavy third-party dependencies are intentionally **not**
+re-exported from their package `__init__.py` to keep `import pyrit` fast.
+Import those directly from the specific file:
+
+```python
+# CORRECT — heavy submodule not re-exported from __init__.py
+from pyrit.common.net_utility import get_httpx_client
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
+```
+
 Within the same module, importing from the specific file is usually necessary
 to prevent circular imports.
 
@@ -145,11 +154,20 @@ to prevent circular imports.
 - Group related imports from the same root module together
 - Use multi-line formatting when importing 3+ items from the same module
 
-### Lazy Imports in `__init__.py` (for performance)
+### Keeping `__init__.py` Startup Fast
 
-Package `__init__.py` files use PEP 562 `__getattr__`-based lazy loading to
-defer imports of modules with heavy third-party dependencies (e.g.,
-`transformers`, `scipy`, `openai`, `PIL`). This keeps CLI startup fast.
+Package `__init__.py` files must not eagerly import modules that pull in heavy
+third-party dependencies (e.g., `transformers`, `scipy`, `openai`, `PIL`).
+This keeps CLI startup fast. Two patterns are used depending on context:
+
+**Internal utility packages** (e.g., `pyrit.common`): Simply omit heavy
+submodules from `__init__.py` entirely. Consumers import from the specific file.
+See `pyrit/common/__init__.py` for an example.
+
+**Public API packages** (e.g., `pyrit.prompt_target`, `pyrit.prompt_converter`,
+`pyrit.score`): Use PEP 562 `__getattr__`-based lazy loading so that
+`from pyrit.prompt_target import HeavyClass` still works without paying the
+import cost at package load time:
 
 ```python
 # In __init__.py — lazy-load symbols with heavy deps
@@ -175,11 +193,9 @@ def __getattr__(name: str) -> object:
 ```
 
 Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE
-support. When adding a new module that imports heavy third-party packages,
+support. When adding a new class that imports heavy third-party packages,
 check whether it is re-exported from a package `__init__.py` on the CLI startup
-path. If so, add it to `_LAZY_IMPORTS` instead of as an eager import. The key
-files are `pyrit/common/__init__.py`, `pyrit/prompt_target/__init__.py`,
-`pyrit/prompt_converter/__init__.py`, and `pyrit/score/__init__.py`.
+path. If so, add it to `_LAZY_IMPORTS` instead of as an eager import.
 
 ### Deferred Imports in CLI Entry Points
 
@@ -474,7 +490,7 @@ Before committing code, ensure:
 - [ ] Functions are focused and under 20 lines
 - [ ] Error messages are helpful and specific
 - [ ] Code follows the import organization pattern
-- [ ] New modules with heavy deps use lazy imports in `__init__.py`
+- [ ] New modules with heavy deps follow `__init__.py` startup guidance
 - [ ] No hard-coded dependencies
 - [ ] Complex logic is extracted to helper methods
 
