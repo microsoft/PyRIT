@@ -29,7 +29,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   const [error, setError] = useState<string | null>(null)
 
   // Filter options
-  const [attackClassOptions, setAttackClassOptions] = useState<string[]>([])
+  const [attackTypeOptions, setAttackTypeOptions] = useState<string[]>([])
   const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<string[]>([])
@@ -47,18 +47,22 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
     setError(null)
     try {
       const labelParams: string[] = []
-      if (filters.operator) { labelParams.push(`operator:${filters.operator}`) }
-      if (filters.operation) { labelParams.push(`operation:${filters.operation}`) }
+      for (const op of filters.operator) { labelParams.push(`operator:${op}`) }
+      for (const op of filters.operation) { labelParams.push(`operation:${op}`) }
       labelParams.push(...filters.otherLabels)
 
-      const response = await attacksApi.listAttacks({
-        limit: PAGE_SIZE,
-        ...(pageCursor && { cursor: pageCursor }),
-        ...(filters.attackClass && { attack_type: filters.attackClass }),
-        ...(filters.outcome && { outcome: filters.outcome }),
-        ...(filters.converter && { converter_types: [filters.converter] }),
-        ...(labelParams.length > 0 && { label: labelParams }),
-      })
+      // Build request params; set each field only when the filter is active.
+      const params: Parameters<typeof attacksApi.listAttacks>[0] = { limit: PAGE_SIZE }
+      if (pageCursor) params.cursor = pageCursor
+      if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
+      if (filters.outcome) params.outcome = filters.outcome
+      if (filters.converter.length > 0) params.converter_types = filters.converter
+      // Match mode is only meaningful with >=2 converters selected.
+      if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
+      if (filters.hasConverters !== undefined) params.has_converters = filters.hasConverters
+      if (labelParams.length > 0) params.label = labelParams
+
+      const response = await attacksApi.listAttacks(params)
       setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
       setIsLastPage(!response.pagination.has_more)
       setCursor(response.pagination.next_cursor ?? undefined)
@@ -68,12 +72,21 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
     } finally {
       setLoading(false)
     }
-  }, [filters.attackClass, filters.outcome, filters.converter, filters.operator, filters.operation, filters.otherLabels])
+  }, [
+    filters.attackTypes,
+    filters.outcome,
+    filters.converter,
+    filters.converterMatchMode,
+    filters.hasConverters,
+    filters.operator,
+    filters.operation,
+    filters.otherLabels,
+  ])
 
   // Load filter options on mount
   useEffect(() => {
     attacksApi.getAttackOptions()
-      .then(resp => setAttackClassOptions(resp.attack_types))
+      .then(resp => setAttackTypeOptions(resp.attack_types))
       .catch(() => { /* ignore */ })
     attacksApi.getConverterOptions()
       .then(resp => setConverterOptions(resp.converter_types))
@@ -132,8 +145,9 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   }
 
   const hasActiveFilters =
-    filters.attackClass || filters.outcome || filters.converter ||
-    filters.operator || filters.operation || filters.otherLabels.length > 0
+    filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
+    filters.hasConverters !== undefined ||
+    filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
 
   return (
     <div className={styles.root}>
@@ -153,7 +167,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
         <HistoryFiltersBar
           filters={filters}
           onFiltersChange={onFiltersChange}
-          attackClassOptions={attackClassOptions}
+          attackTypeOptions={attackTypeOptions}
           converterOptions={converterOptions}
           operatorOptions={operatorOptions}
           operationOptions={operationOptions}

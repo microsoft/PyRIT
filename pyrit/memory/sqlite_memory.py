@@ -8,7 +8,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union, cast
+from typing import Any, Literal, Optional, TypeVar, Union, cast
 
 from sqlalchemy import and_, create_engine, func, or_, text
 from sqlalchemy.engine.base import Engine
@@ -228,6 +228,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         property_path: str,
         array_element_path: str | None = None,
         array_to_match: Sequence[str],
+        match_mode: Literal["all", "any"] = "all",
     ) -> Any:
         """
         Return a SQLite DB condition for matching an array at a given path within a JSON object.
@@ -237,8 +238,12 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             property_path (str): The JSON path for the target array.
             array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
-                For a match, ALL values in this array must be present in the JSON array.
-                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+                Combination semantics for multiple entries are controlled by ``match_mode``.
+                If ``array_to_match`` is empty, the condition matches only if the target is also an
+                empty array or None (overloaded "absence" semantics, regardless of ``match_mode``).
+            match_mode (Literal["all", "any"]): How to combine multiple entries in ``array_to_match``.
+                ``"all"`` (default) requires every listed value to be present in the JSON array.
+                ``"any"`` requires at least one listed value to be present.
 
         Returns:
             Any: A database-specific SQLAlchemy condition.
@@ -272,8 +277,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             )
             bindparams_dict[mv_param] = match_value.lower()
 
-        combined = " AND ".join(conditions)
-        return text(combined).bindparams(**bindparams_dict)
+        joiner = " OR " if match_mode == "any" else " AND "
+        combined = joiner.join(conditions)
+        return text(f"({combined})").bindparams(**bindparams_dict)
 
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
@@ -594,10 +600,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         )
         return targeted_harm_categories_subquery  # noqa: RET504
 
-    def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         SQLite implementation for filtering AttackResults by labels.
         Uses json_extract() function specific to SQLite.
+
+        Keys are AND-combined. For each key, a string value is an equality match;
+        a sequence value is an OR-within-key match (any listed value matches).
+        Empty sequences are no-ops (no constraint on that key).
 
         Returns:
             Any: A SQLAlchemy subquery for filtering by labels.
@@ -606,16 +616,21 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         from pyrit.memory.memory_models import AttackResultEntry, PromptMemoryEntry
 
-        labels_subquery = exists().where(
+        per_key_conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            col = func.json_extract(PromptMemoryEntry.labels, f"$.{key}")
+            per_key_conditions.append(col.in_(values))
+
+        return exists().where(
             and_(
                 PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
                 PromptMemoryEntry.labels.isnot(None),
-                and_(
-                    *[func.json_extract(PromptMemoryEntry.labels, f"$.{key}") == value for key, value in labels.items()]
-                ),
+                and_(*per_key_conditions),
             )
         )
-        return labels_subquery  # noqa: RET504
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
