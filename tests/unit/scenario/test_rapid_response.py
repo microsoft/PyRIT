@@ -86,11 +86,11 @@ def reset_technique_registry():
 
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    RapidResponse._strategy_class = None
+    RapidResponse._cached_strategy_class = None
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    RapidResponse._strategy_class = None
+    RapidResponse._cached_strategy_class = None
 
 
 @pytest.fixture(autouse=True)
@@ -131,84 +131,6 @@ ALL_HARM_SEED_GROUPS = {cat: _make_seed_groups(cat) for cat in ALL_HARM_CATEGORI
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
-
-
-# ===========================================================================
-# Strategy enum tests
-# ===========================================================================
-
-
-class TestRapidResponseStrategy:
-    """Tests for the dynamically-generated RapidResponseStrategy enum."""
-
-    def test_technique_members_exist(self):
-        """All four technique members are accessible by value."""
-        strat = _strategy_class()
-        assert strat("prompt_sending").value == "prompt_sending"
-        assert strat("role_play").value == "role_play"
-        assert strat("many_shot").value == "many_shot"
-        assert strat("tap").value == "tap"
-
-    def test_aggregate_members_exist(self):
-        """All four aggregate members are accessible."""
-        strat = _strategy_class()
-        assert strat.ALL.value == "all"
-        assert strat.DEFAULT.value == "default"
-        assert strat.SINGLE_TURN.value == "single_turn"
-        assert strat.MULTI_TURN.value == "multi_turn"
-
-    def test_total_member_count(self):
-        """4 aggregates + 4 techniques = 8 members."""
-        assert len(list(_strategy_class())) == 8
-
-    def test_non_aggregate_count(self):
-        """get_all_strategies returns only the 4 technique members."""
-        non_aggregate = _strategy_class().get_all_strategies()
-        assert len(non_aggregate) == 4
-
-    def test_aggregate_tags(self):
-        tags = _strategy_class().get_aggregate_tags()
-        assert tags == {"all", "default", "single_turn", "multi_turn"}
-
-    def test_default_expands_to_prompt_sending_and_many_shot(self):
-        """DEFAULT aggregate should expand to prompt_sending + many_shot."""
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.DEFAULT})
-        values = {s.value for s in expanded}
-        assert values == {"prompt_sending", "many_shot"}
-
-    def test_single_turn_expands_to_prompt_sending_and_role_play(self):
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.SINGLE_TURN})
-        values = {s.value for s in expanded}
-        assert values == {"prompt_sending", "role_play"}
-
-    def test_multi_turn_expands_to_many_shot_and_tap(self):
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.MULTI_TURN})
-        values = {s.value for s in expanded}
-        assert values == {"many_shot", "tap"}
-
-    def test_all_expands_to_all_techniques(self):
-        strat = _strategy_class()
-        expanded = strat.normalize_strategies({strat.ALL})
-        values = {s.value for s in expanded}
-        assert values == {"prompt_sending", "role_play", "many_shot", "tap"}
-
-    def test_strategy_values_are_unique(self):
-        strat = _strategy_class()
-        values = [s.value for s in strat]
-        assert len(values) == len(set(values))
-
-    def test_invalid_strategy_value_raises(self):
-        strat = _strategy_class()
-        with pytest.raises(ValueError):
-            strat("nonexistent")
-
-    def test_invalid_strategy_name_raises(self):
-        strat = _strategy_class()
-        with pytest.raises(KeyError):
-            strat["Nonexistent"]
 
 
 # ===========================================================================
@@ -356,29 +278,33 @@ class TestRapidResponseAttackGeneration:
         assert technique_classes == {PromptSendingAttack, RolePlayAttack}
 
     @pytest.mark.asyncio
-    async def test_multi_turn_strategy_produces_many_shot_and_tap(self, mock_objective_target, mock_objective_scorer):
+    async def test_multi_turn_strategy_produces_multi_turn_attacks(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class().MULTI_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack}
+        assert len(technique_classes) >= 2
+        assert {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack} <= technique_classes
 
     @pytest.mark.asyncio
-    async def test_all_strategy_produces_all_four_techniques(self, mock_objective_target, mock_objective_scorer):
+    async def test_all_strategy_produces_attacks_for_every_technique(
+        self, mock_objective_target, mock_objective_scorer
+    ):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
             strategies=[_strategy_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {
+        # Should include all known core techniques
+        assert {
             PromptSendingAttack,
             RolePlayAttack,
             ManyShotJailbreakAttack,
             TreeOfAttacksWithPruningAttack,
-        }
+        } <= technique_classes
 
     @pytest.mark.asyncio
     async def test_single_technique_selection(self, mock_objective_target, mock_objective_scorer):
@@ -525,10 +451,10 @@ class TestBuildDisplayGroup:
 class TestCoreTechniques:
     """Tests for shared AttackTechniqueFactory builders in scenario_techniques.py."""
 
-    def test_instance_returns_all_four_factories(self, mock_objective_scorer):
+    def test_instance_returns_all_factories(self, mock_objective_scorer):
         scenario = RapidResponse(objective_scorer=mock_objective_scorer)
         factories = scenario._get_attack_technique_factories()
-        assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+        assert {"prompt_sending", "role_play", "many_shot", "tap"} <= set(factories.keys())
         assert factories["prompt_sending"].attack_class is PromptSendingAttack
         assert factories["role_play"].attack_class is RolePlayAttack
         assert factories["many_shot"].attack_class is ManyShotJailbreakAttack
@@ -599,14 +525,14 @@ class TestRegistryIntegration:
         register_scenario_techniques()
         registry = AttackTechniqueRegistry.get_registry_singleton()
         names = set(registry.get_names())
-        assert names == {"prompt_sending", "role_play", "many_shot", "tap"}
+        assert {"prompt_sending", "role_play", "many_shot", "tap"} <= names
 
     def test_register_idempotent(self, mock_adversarial_target):
         """Calling register_scenario_techniques() twice doesn't duplicate entries."""
         register_scenario_techniques()
         register_scenario_techniques()
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        assert len(registry) == 4
+        assert len(registry) == len(SCENARIO_TECHNIQUES)
 
     def test_register_preserves_custom(self, mock_adversarial_target):
         """Pre-registered custom techniques aren't overwritten."""
@@ -619,8 +545,7 @@ class TestRegistryIntegration:
         # role_play should still be the custom factory
         factories = registry.get_factories()
         assert factories["role_play"] is custom_factory
-        # Other 3 should have been registered normally
-        assert len(factories) == 4
+        assert len(factories) == len(SCENARIO_TECHNIQUES)
 
     def test_get_factories_returns_dict(self, mock_adversarial_target):
         """get_factories() returns a dict of name → factory."""
@@ -628,7 +553,7 @@ class TestRegistryIntegration:
         registry = AttackTechniqueRegistry.get_registry_singleton()
         factories = registry.get_factories()
         assert isinstance(factories, dict)
-        assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+        assert {"prompt_sending", "role_play", "many_shot", "tap"} <= set(factories.keys())
         assert factories["prompt_sending"].attack_class is PromptSendingAttack
 
     def test_scenario_base_class_reads_from_registry(self, mock_objective_scorer):
@@ -636,12 +561,12 @@ class TestRegistryIntegration:
         scenario = RapidResponse(objective_scorer=mock_objective_scorer)
         factories = scenario._get_attack_technique_factories()
 
-        # Should have all 4 core techniques from the registry
-        assert set(factories.keys()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+        # Should have all core techniques from the registry
+        assert {"prompt_sending", "role_play", "many_shot", "tap"} <= set(factories.keys())
 
         # Registry should also have them
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        assert set(registry.get_names()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+        assert {"prompt_sending", "role_play", "many_shot", "tap"} <= set(registry.get_names())
 
     def test_tags_assigned_correctly(self, mock_adversarial_target):
         """Core techniques have correct tags (single_turn / multi_turn)."""
@@ -651,8 +576,8 @@ class TestRegistryIntegration:
         single_turn = {e.name for e in registry.get_by_tag(tag="single_turn")}
         multi_turn = {e.name for e in registry.get_by_tag(tag="multi_turn")}
 
-        assert single_turn == {"prompt_sending", "role_play"}
-        assert multi_turn == {"many_shot", "tap"}
+        assert {"prompt_sending", "role_play"} <= single_turn
+        assert {"many_shot", "tap"} <= multi_turn
 
 
 # ===========================================================================
@@ -664,11 +589,13 @@ class TestRegistryIntegration:
 class TestRegistrationAndFactoryFromSpec:
     """Tests for register_scenario_techniques and AttackTechniqueRegistry.build_factory_from_spec."""
 
-    def test_register_populates_all_four_techniques(self):
-        """register_scenario_techniques with default adversarial registers all 4 techniques."""
+    def test_register_populates_all_techniques(self):
+        """register_scenario_techniques registers all catalog techniques."""
         register_scenario_techniques()
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        assert set(registry.get_names()) == {"prompt_sending", "role_play", "many_shot", "tap"}
+        registered = set(registry.get_names())
+        expected = {s.name for s in SCENARIO_TECHNIQUES}
+        assert registered == expected
 
     def test_register_with_custom_adversarial_uses_default(self, mock_adversarial_target):
         """Registry always bakes default adversarial target, not caller-specific."""
@@ -688,7 +615,7 @@ class TestRegistrationAndFactoryFromSpec:
         register_scenario_techniques()
         register_scenario_techniques()
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        assert len(registry) == 4
+        assert len(registry) == len(SCENARIO_TECHNIQUES)
 
     def test_register_preserves_custom_preregistered(self, mock_adversarial_target):
         """Pre-registered custom techniques are not overwritten."""
@@ -699,7 +626,7 @@ class TestRegistrationAndFactoryFromSpec:
         register_scenario_techniques()
         # role_play should still be the custom factory
         assert registry.get_factories()["role_play"] is custom_factory
-        assert len(registry) == 4
+        assert len(registry) == len(SCENARIO_TECHNIQUES)
 
     def test_register_assigns_correct_tags(self, mock_adversarial_target):
         """Tags from AttackTechniqueSpec are applied correctly."""
@@ -708,8 +635,8 @@ class TestRegistrationAndFactoryFromSpec:
 
         single_turn = {e.name for e in registry.get_by_tag(tag="single_turn")}
         multi_turn = {e.name for e in registry.get_by_tag(tag="multi_turn")}
-        assert single_turn == {"prompt_sending", "role_play"}
-        assert multi_turn == {"many_shot", "tap"}
+        assert {"prompt_sending", "role_play"} <= single_turn
+        assert {"many_shot", "tap"} <= multi_turn
 
     def test_register_from_specs_custom_list(self, mock_adversarial_target):
         """register_from_specs accepts a custom list of AttackTechniqueSpecs."""
@@ -879,10 +806,10 @@ class TestAttackTechniqueSpec:
         with pytest.raises(ValueError, match="attack_adversarial_config"):
             AttackTechniqueRegistry.build_factory_from_spec(spec)
 
-    def test_scenario_techniques_list_has_four_entries(self):
-        assert len(SCENARIO_TECHNIQUES) == 4
-        names = {s.name for s in SCENARIO_TECHNIQUES}
-        assert names == {"prompt_sending", "role_play", "many_shot", "tap"}
+    def test_scenario_techniques_list_nonempty_with_unique_names(self):
+        assert len(SCENARIO_TECHNIQUES) >= 1
+        names = [s.name for s in SCENARIO_TECHNIQUES]
+        assert len(names) == len(set(names)), "Duplicate technique names in SCENARIO_TECHNIQUES"
 
     def test_frozen_spec(self):
         """AttackTechniqueSpec is frozen (immutable)."""

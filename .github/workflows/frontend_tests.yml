@@ -17,6 +17,7 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend_tests.yml"
+  merge_group:
   workflow_dispatch:
 
 concurrency:
