@@ -321,6 +321,124 @@ class TestEvaluationIdentifier:
         assert _StubEvaluationIdentifier(r2).eval_hash == correct_eval_hash
 
 
+class TestParamFallbacks:
+    """Tests for ChildEvalRule.param_fallbacks in _build_eval_dict."""
+
+    _RULES_WITH_FALLBACK: dict[str, ChildEvalRule] = {
+        "prompt_target": ChildEvalRule(
+            included_params=frozenset({"underlying_model_name", "temperature"}),
+            param_fallbacks={"underlying_model_name": "model_name"},
+        ),
+    }
+
+    def test_primary_param_used_when_present(self):
+        """Test that the primary param value is used when it is non-empty."""
+        child = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "model_name": "deploy-1", "temperature": 0.7},
+        )
+        identifier = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child},
+        )
+
+        result = _build_eval_dict(identifier, child_eval_rules=self._RULES_WITH_FALLBACK)
+        # The child hash should be based on underlying_model_name="gpt-4o", not model_name
+        assert "children" in result
+
+    def test_fallback_used_when_primary_empty(self):
+        """Test that fallback param used when primary is empty string."""
+        child_with_underlying = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "model_name": "deploy-1", "temperature": 0.7},
+        )
+        child_with_fallback = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "", "model_name": "gpt-4o", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_underlying},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_fallback},
+        )
+
+        result1 = _build_eval_dict(id1, child_eval_rules=self._RULES_WITH_FALLBACK)
+        result2 = _build_eval_dict(id2, child_eval_rules=self._RULES_WITH_FALLBACK)
+
+        assert result1["children"]["prompt_target"] == result2["children"]["prompt_target"]
+
+    def test_fallback_used_when_primary_missing(self):
+        """Test that fallback param used when primary key is absent."""
+        child_with_underlying = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        child_with_model_name_only = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4o", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_underlying},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with_model_name_only},
+        )
+
+        result1 = _build_eval_dict(id1, child_eval_rules=self._RULES_WITH_FALLBACK)
+        result2 = _build_eval_dict(id2, child_eval_rules=self._RULES_WITH_FALLBACK)
+
+        assert result1["children"]["prompt_target"] == result2["children"]["prompt_target"]
+
+    def test_no_fallback_when_no_rules(self):
+        """Test that param_fallbacks=None means no fallback applied."""
+        rules_without_fallback: dict[str, ChildEvalRule] = {
+            "prompt_target": ChildEvalRule(
+                included_params=frozenset({"underlying_model_name", "temperature"}),
+            ),
+        }
+        child_with = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        child_without = ComponentIdentifier(
+            class_name="Target",
+            class_module="pyrit.target",
+            params={"model_name": "gpt-4o", "temperature": 0.7},
+        )
+        id1 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_with},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": child_without},
+        )
+
+        result1 = _build_eval_dict(id1, child_eval_rules=rules_without_fallback)
+        result2 = _build_eval_dict(id2, child_eval_rules=rules_without_fallback)
+
+        # Without fallback, these should produce different hashes
+        assert result1["children"]["prompt_target"] != result2["children"]["prompt_target"]
+
+
 def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
     identifier = ComponentIdentifier.__new__(ComponentIdentifier)
     object.__setattr__(identifier, "hash", None)

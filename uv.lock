@@ -5620,6 +5620,7 @@ version = "0.14.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
+    { name = "alembic" },
     { name = "appdirs" },
     { name = "art" },
     { name = "av" },
@@ -5747,6 +5748,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'all'", specifier = ">=1.7.0" },
     { name = "accelerate", marker = "extra == 'gcg'", specifier = ">=1.7.0" },
     { name = "aiofiles", specifier = ">=24,<25" },
+    { name = "alembic", specifier = ">=1.16.0" },
     { name = "appdirs", specifier = ">=1.4.0" },
     { name = "art", specifier = ">=6.5.0" },
     { name = "av", specifier = ">=14.0.0" },
