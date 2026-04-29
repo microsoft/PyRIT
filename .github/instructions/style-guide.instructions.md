@@ -102,6 +102,58 @@ def process(self, data: str) -> str:
 - Do NOT use inline/local imports inside functions or methods
 - The only exception is breaking circular import dependencies, which should be rare and documented
 
+**Exception — Lazy imports in `__init__.py` for performance:**
+
+Package `__init__.py` files may use PEP 562 `__getattr__`-based lazy loading to defer
+imports of modules with heavy third-party dependencies (e.g., `transformers`, `scipy`,
+`openai`, `PIL`). This keeps `import pyrit` fast for CLI entry points and other
+lightweight consumers.
+
+```python
+# In __init__.py — lazy-load symbols with heavy deps
+import importlib
+from typing import TYPE_CHECKING
+
+from mypackage.lightweight_module import LightweightClass  # eager: fast
+
+if TYPE_CHECKING:
+    from mypackage.heavy_module import HeavyClass  # IDE support only
+
+_LAZY_IMPORTS: dict[str, str] = {
+    "HeavyClass": "mypackage.heavy_module",
+}
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_IMPORTS:
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        attr = getattr(module, name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+```
+
+Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE support.
+Use this pattern only in `__init__.py` files to defer genuinely expensive imports —
+do not use it in regular modules.
+
+**Exception — Deferred imports in CLI entry points:**
+
+CLI entry point modules (e.g., `pyrit_scan.py`) may defer heavy imports to inside
+`main()` so that `--help` and argument validation are near-instant. Import lightweight
+argument-parsing helpers at the top level and defer the full framework import:
+
+```python
+# At top level — lightweight only
+from pyrit.cli._cli_args import ARG_HELP, positive_int
+
+def main() -> int:
+    parsed_args = parse_args()  # instant: uses only _cli_args
+
+    # Defer heavy import until actually needed
+    from pyrit.cli import frontend_core
+    ...
+```
+
 ```python
 # CORRECT — imports at the top of the file
 from contextlib import closing
@@ -437,6 +489,16 @@ def process_large_dataset(self, *, file_path: Path) -> list[Result]:
         lines = f.readlines()  # Loads entire file into memory
     return [self._process_line(line) for line in lines]
 ```
+
+### Lazy Imports for Startup Performance
+- When adding a new module that imports heavy third-party packages (e.g., `transformers`,
+  `scipy`, `PIL`, `datasets`, `av`), consider whether it is re-exported from a package
+  `__init__.py` that is on the CLI startup path
+- If so, add it to the `_LAZY_IMPORTS` dict in that `__init__.py` instead of as an
+  eager top-level import (see the Import Placement section for the pattern)
+- This is especially important for `pyrit/common/__init__.py`, `pyrit/prompt_target/__init__.py`,
+  `pyrit/prompt_converter/__init__.py`, and `pyrit/score/__init__.py` which are all on the
+  import path for CLI startup
 
 ## Final Checklist
 
