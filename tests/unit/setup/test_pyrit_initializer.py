@@ -5,12 +5,13 @@ import sys
 
 import pytest
 
+from pyrit.common import Parameter
 from pyrit.common.apply_defaults import (
     reset_default_values,
     set_default_value,
     set_global_variable,
 )
-from pyrit.setup.initializers import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers import PyRITInitializer
 
 
 class TestPyRITInitializerBase:
@@ -702,8 +703,8 @@ class TestSupportedParameters:
             @property
             def supported_parameters(self) -> list:
                 return [
-                    InitializerParameter(name="mode", description="Operation mode", default="fast"),
-                    InitializerParameter(name="count", description="Item count", required=True),
+                    Parameter(name="mode", description="Operation mode", default="fast"),
+                    Parameter(name="count", description="Item count", required=True),
                 ]
 
             async def initialize_async(self) -> None:
@@ -724,7 +725,7 @@ class TestSupportedParameters:
 
             @property
             def supported_parameters(self) -> list:
-                return [InitializerParameter(name="level", description="Level")]
+                return [Parameter(name="level", description="Level")]
 
             async def initialize_async(self) -> None:
                 pass
@@ -743,7 +744,7 @@ class TestSupportedParameters:
 
             @property
             def supported_parameters(self) -> list:
-                return [InitializerParameter(name="key", description="API key", required=True)]
+                return [Parameter(name="key", description="API key", required=True)]
 
             async def initialize_async(self) -> None:
                 pass
@@ -763,8 +764,8 @@ class TestSupportedParameters:
             @property
             def supported_parameters(self) -> list:
                 return [
-                    InitializerParameter(name="mode", description="Mode", default="fast"),
-                    InitializerParameter(name="key", description="Key", required=True),
+                    Parameter(name="mode", description="Mode", default="fast"),
+                    Parameter(name="key", description="Key", required=True),
                 ]
 
             async def initialize_async(self) -> None:
@@ -784,7 +785,7 @@ class TestSupportedParameters:
 
             @property
             def supported_parameters(self) -> list:
-                return [InitializerParameter(name="x", description="X")]
+                return [Parameter(name="x", description="X")]
 
             async def initialize_async(self) -> None:
                 pass
@@ -832,3 +833,33 @@ class TestSupportedParameters:
         await init.initialize_with_tracking_async()
 
         assert received["params"] == {}
+
+
+class TestInitializerParameterDeprecation:
+    """Tests for the deprecated InitializerParameter alias."""
+
+    def test_initializer_parameter_alias_returns_parameter(self) -> None:
+        """Importing InitializerParameter returns the unified Parameter class."""
+        with pytest.warns(DeprecationWarning, match="InitializerParameter is deprecated"):
+            from pyrit.setup.initializers import InitializerParameter
+
+        assert InitializerParameter is Parameter
+
+    def test_initializer_parameter_alias_emits_deprecation_warning(self) -> None:
+        """Accessing InitializerParameter emits a DeprecationWarning pointing to Parameter."""
+        import importlib
+
+        import pyrit.setup.initializers as initializers_module
+
+        # Reload so __getattr__ fires fresh — Python caches first access otherwise
+        importlib.reload(initializers_module)
+
+        with pytest.warns(DeprecationWarning, match="Use Parameter from pyrit.common"):
+            _ = initializers_module.InitializerParameter
+
+    def test_unknown_attribute_still_raises_attribute_error(self) -> None:
+        """The __getattr__ shim must not swallow other missing attributes."""
+        import pyrit.setup.initializers as initializers_module
+
+        with pytest.raises(AttributeError, match="has no attribute 'NonExistentSymbol'"):
+            _ = initializers_module.NonExistentSymbol

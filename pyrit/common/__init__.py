@@ -25,6 +25,7 @@ from pyrit.common.download_hf_model import (
 )
 from pyrit.common.net_utility import get_httpx_client, make_request_and_raise_if_error_async
 from pyrit.common.notebook_utils import is_in_ipython_session
+from pyrit.common.parameter import Parameter
 from pyrit.common.singleton import Singleton
 from pyrit.common.utils import (
     combine_dict,
@@ -58,6 +59,7 @@ __all__ = [
     "verify_and_resolve_path",
     "is_in_ipython_session",
     "make_request_and_raise_if_error_async",
+    "Parameter",
     "REQUIRED_VALUE",
     "reset_default_values",
     "set_default_value",

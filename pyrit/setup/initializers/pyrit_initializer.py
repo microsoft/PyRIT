@@ -12,31 +12,13 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import get_global_default_values
+from pyrit.common.parameter import Parameter
 
-
-@dataclass(frozen=True)
-class InitializerParameter:
-    """
-    Describes a parameter that an initializer accepts.
-
-    Each parameter value is a list of strings, which works naturally with
-    CLI (comma-separated), YAML (lists), and programmatic APIs.
-
-    Args:
-        name: The parameter name (used as key in the params dict).
-        description: Human-readable description of the parameter.
-        required: Whether the parameter must be provided. Defaults to False.
-        default: Default value if not provided. Defaults to None.
-    """
-
-    name: str
-    description: str
-    required: bool = False
-    default: Optional[list[str]] = None
+# Deprecated alias — use Parameter from pyrit.common instead.
+InitializerParameter = Parameter
 
 
 class PyRITInitializer(ABC):
@@ -125,7 +107,7 @@ class PyRITInitializer(ABC):
         return 1
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """
         Get the list of parameters this initializer accepts.
 
@@ -133,7 +115,7 @@ class PyRITInitializer(ABC):
         supports. Parameters are set on self.params before initialize_async() is called.
 
         Returns:
-            list[InitializerParameter]: List of supported parameters. Defaults to empty list.
+            list[Parameter]: List of supported parameters. Defaults to empty list.
         """
         return []
 

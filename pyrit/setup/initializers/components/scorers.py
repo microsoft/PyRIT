@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.common.parameter import Parameter
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
     AzureContentFilterScorer,
@@ -41,7 +42,7 @@ from pyrit.score import (
     TrueFalseScorer,
     find_objective_metrics_by_eval_hash,
 )
-from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 if TYPE_CHECKING:
     from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
@@ -134,10 +135,10 @@ class ScorerInitializer(PyRITInitializer):
     """
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """Get the list of parameters this initializer accepts."""
         return [
-            InitializerParameter(
+            Parameter(
                 name="tags",
                 description="Tags for filtering (e.g., ['default'])",
                 default=["default"],
