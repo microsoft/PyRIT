@@ -74,6 +74,7 @@ class MockNodeFactory:
         # Set all attributes
         node.node_id = config.node_id
         node.parent_id = config.parent_id
+        node._vis_node_id = "root"
         node.prompt_sent = config.prompt_sent
         node.completed = config.completed
         node.off_topic = config.off_topic
@@ -106,7 +107,9 @@ class MockNodeFactory:
 
         # Set up duplicate method to return a new mock node
         def duplicate_side_effect():
-            return MockNodeFactory.create_node(NodeMockConfig(parent_id=node.node_id))
+            dup = MockNodeFactory.create_node(NodeMockConfig(parent_id=node.node_id))
+            dup._vis_node_id = node._vis_node_id
+            return dup
 
         node.duplicate = MagicMock(side_effect=duplicate_side_effect)
 
@@ -396,12 +399,14 @@ class TestHelpers:
 
     @staticmethod
     def add_nodes_to_tree(context: TAPAttackContext, nodes: list[_TreeOfAttacksNode], parent: str = "root"):
-        """Add nodes to the context's tree visualization."""
+        """Add nodes to the context's tree visualization and set their _vis_node_id."""
         for _i, node in enumerate(nodes):
             score_str = ""
             if node.objective_score:
                 score_str = f": Score {node.objective_score.get_value()}"
-            context.tree_visualization.create_node(f"{context.executed_turns}{score_str}", node.node_id, parent=parent)
+            vis_id = f"{node.node_id}_d{context.executed_turns}"
+            context.tree_visualization.create_node(f"{context.executed_turns}{score_str}", vis_id, parent=parent)
+            node._vis_node_id = vis_id
 
     @staticmethod
     def mock_prompt_loading(attack: TreeOfAttacksWithPruningAttack):
@@ -670,9 +675,9 @@ class TestPruningLogic:
         )
 
         context.nodes = [off_topic_node, incomplete_node, valid_node]
-        helpers.add_nodes_to_tree(context, context.nodes)
+        context.executed_turns = 1
 
-        # Execute sending prompts (which updates visualization and tracks pruned nodes)
+        # Execute sending prompts (which creates visualization nodes and tracks pruned nodes)
         await attack._send_prompts_to_all_nodes_async(context=context)
 
         # Verify off-topic node's conversation is tracked as PRUNED
@@ -885,7 +890,7 @@ class TestPruningLogic:
 
         pruned_nodes = [node for node in nodes if node not in context.nodes]
         assert len(pruned_nodes) == 1
-        assert "Pruned (width)" in context.tree_visualization[pruned_nodes[0].node_id].tag
+        assert "Pruned (width)" in context.tree_visualization[pruned_nodes[0]._vis_node_id].tag
 
     def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
         """Test that blocked nodes are not pruned when completed list is below tree_width."""
@@ -922,7 +927,7 @@ class TestPruningLogic:
         # No pruning: 3 nodes < tree_width=5
         assert len(context.nodes) == 3
         for node in nodes:
-            assert "Pruned" not in context.tree_visualization[node.node_id].tag
+            assert "Pruned" not in context.tree_visualization[node._vis_node_id].tag
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1265,10 +1270,10 @@ class TestExecutionPhase:
         )
 
         context = helpers.create_basic_context()
+        context.executed_turns = 1
 
-        # Create 15 mock nodes
+        # Create 15 mock nodes (vis nodes will be created by _send_prompts_to_all_nodes_async)
         nodes = node_factory.create_nodes_with_scores([0.5] * 15)
-        helpers.add_nodes_to_tree(context, nodes)
         context.nodes = nodes
 
         await attack._send_prompts_to_all_nodes_async(context=context)
@@ -1977,56 +1982,92 @@ class TestTreeOfAttacksVisualization:
         assert "7/10" in result
 
     def test_tree_visualization_structure(self, basic_attack, node_factory, helpers):
-        """Test that tree visualization maintains proper structure."""
+        """Test that tree visualization maintains proper depth-as-children structure."""
         context = helpers.create_basic_context()
 
-        # Create a tree structure:
+        # Create a tree structure where each depth is a child of the previous:
         # root
-        # |---node_0 (iteration 1)
-        # │   |--- node_0_child_0 (iteration 2)
-        # │   |--- node_0_child_1 (iteration 2)
-        # |-- node_1 (iteration 1)
-        #     |--- node_1_child_0 (iteration 2)
+        # ├── node_0_d1 (depth 1)
+        # │   ├── node_0_child_0_d2 (depth 2, branched from node_0)
+        # │   └── node_0_child_1_d2 (depth 2, branched from node_0)
+        # └── node_1_d1 (depth 1)
+        #     └── node_1_child_0_d2 (depth 2, branched from node_1)
 
         # First level nodes
         node_0 = node_factory.create_node(NodeMockConfig(node_id="node_0"))
         node_1 = node_factory.create_node(NodeMockConfig(node_id="node_1"))
 
-        # Add first level to tree
+        # Add first level to tree (simulates _send_prompts creating vis nodes)
         context.executed_turns = 1
         helpers.add_nodes_to_tree(context, [node_0, node_1])
 
-        # Second level nodes
+        # Second level nodes (branched from first level)
         node_0_child_0 = node_factory.create_node(NodeMockConfig(node_id="node_0_child_0", parent_id="node_0"))
         node_0_child_1 = node_factory.create_node(NodeMockConfig(node_id="node_0_child_1", parent_id="node_0"))
         node_1_child_0 = node_factory.create_node(NodeMockConfig(node_id="node_1_child_0", parent_id="node_1"))
 
-        # Add second level to tree using the helper with proper parent relationships
+        # Add second level as children of the first level's vis nodes
         context.executed_turns = 2
-        # Add children under node_0
-        for child in [node_0_child_0, node_0_child_1]:
-            context.tree_visualization.create_node(
-                f"2: Score {child.objective_score.get_value() if child.objective_score else 'N/A'}",
-                child.node_id,
-                parent=child.parent_id,
-            )
-        # Add child under node_1
-        context.tree_visualization.create_node(
-            f"2: Score {node_1_child_0.objective_score.get_value() if node_1_child_0.objective_score else 'N/A'}",
-            node_1_child_0.node_id,
-            parent=node_1_child_0.parent_id,
-        )
+        helpers.add_nodes_to_tree(context, [node_0_child_0, node_0_child_1], parent=node_0._vis_node_id)
+        helpers.add_nodes_to_tree(context, [node_1_child_0], parent=node_1._vis_node_id)
 
         # Verify tree structure
         assert len(context.tree_visualization.all_nodes()) == 6  # root + 5 nodes
         assert len(context.tree_visualization.children("root")) == 2
-        assert len(context.tree_visualization.children("node_0")) == 2
-        assert len(context.tree_visualization.children("node_1")) == 1
+        assert len(context.tree_visualization.children(node_0._vis_node_id)) == 2
+        assert len(context.tree_visualization.children(node_1._vis_node_id)) == 1
 
-        # Also verify the parent relationships are correct
-        assert context.tree_visualization.parent("node_0_child_0").identifier == "node_0"
-        assert context.tree_visualization.parent("node_0_child_1").identifier == "node_0"
-        assert context.tree_visualization.parent("node_1_child_0").identifier == "node_1"
+        # Verify the parent relationships: depth-2 nodes are children of depth-1 vis nodes
+        assert context.tree_visualization.parent(node_0_child_0._vis_node_id).identifier == node_0._vis_node_id
+        assert context.tree_visualization.parent(node_0_child_1._vis_node_id).identifier == node_0._vis_node_id
+        assert context.tree_visualization.parent(node_1_child_0._vis_node_id).identifier == node_1._vis_node_id
+
+    @pytest.mark.asyncio
+    async def test_surviving_node_gets_child_vis_nodes_per_depth(self, attack_builder, node_factory, helpers):
+        """Test that a surviving node gets a new child vis node at each depth (not appended scores)."""
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(tree_width=1, tree_depth=3, branching_factor=1)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        context = helpers.create_basic_context()
+        context.executed_turns = 1
+
+        # Create one node that survives all depths
+        node = node_factory.create_node(NodeMockConfig(node_id="survivor", objective_score_value=0.5))
+        context.nodes = [node]
+
+        # Depth 1: send_prompts creates vis node under root
+        await attack._send_prompts_to_all_nodes_async(context=context)
+        depth1_vis = node._vis_node_id
+        assert depth1_vis == "survivor_d1"
+        assert context.tree_visualization.parent(depth1_vis).identifier == "root"
+        assert "Score:" in context.tree_visualization[depth1_vis].tag
+        # No appended scores — just one score
+        assert context.tree_visualization[depth1_vis].tag.count("Score:") == 1
+
+        # Depth 2: surviving node gets a NEW child vis node
+        context.executed_turns = 2
+        await attack._send_prompts_to_all_nodes_async(context=context)
+        depth2_vis = node._vis_node_id
+        assert depth2_vis == "survivor_d2"
+        assert context.tree_visualization.parent(depth2_vis).identifier == depth1_vis
+        # Each vis node still has exactly one score
+        assert context.tree_visualization[depth1_vis].tag.count("Score:") == 1
+        assert context.tree_visualization[depth2_vis].tag.count("Score:") == 1
+
+        # Depth 3: another new child vis node
+        context.executed_turns = 3
+        await attack._send_prompts_to_all_nodes_async(context=context)
+        depth3_vis = node._vis_node_id
+        assert depth3_vis == "survivor_d3"
+        assert context.tree_visualization.parent(depth3_vis).identifier == depth2_vis
+
+        # No node has "Score: ... || Score:" pattern (the old appended format)
+        for tree_node in context.tree_visualization.all_nodes():
+            assert "|| Score:" not in tree_node.tag
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2058,9 +2099,9 @@ class TestTreeOfAttacksConversationTracking:
         nodes = node_factory.create_nodes_with_scores([0.8, 0.9])
         context.nodes = nodes
 
-        # Add the initial nodes to the tree visualization to avoid parent node issues
-        for node in nodes:
-            context.tree_visualization.create_node("1: ", node.node_id, parent="root")
+        # Add the initial nodes to the tree visualization and set their _vis_node_id
+        context.executed_turns = 1
+        helpers.add_nodes_to_tree(context, nodes)
 
         # Set up branching factor to create additional nodes
         basic_attack._branching_factor = 3
@@ -2312,6 +2353,7 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
     node = MagicMock()
     node.node_id = node_id
     node.parent_id = None
+    node._vis_node_id = "root"
     node.completed = False
     node.off_topic = False
     node.objective_score = None
@@ -2533,6 +2575,7 @@ class TestTAPScenarios:
                     cb = _get_next_behavior(d)
                     child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
                     child.parent_id = parent.node_id
+                    child._vis_node_id = parent._vis_node_id
                     child.duplicate = MagicMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
                     return child
 
@@ -2541,6 +2584,7 @@ class TestTAPScenarios:
                     cb = _get_next_behavior(d)
                     child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
                     child.parent_id = parent_node.node_id
+                    child._vis_node_id = parent_node._vis_node_id
                     child.duplicate = MagicMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
                     return child
 

@@ -121,7 +121,7 @@ tap_image_attack = TAPAttack(
     batch_size=1,
 )
 
-image_objective = "Generate an image of a cat with a hat."
+image_objective = "Generate an image of a raccoon getting ready for a heist."
 
 result = await tap_image_attack.execute_async(objective=image_objective)  # type: ignore
 await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore

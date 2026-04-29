@@ -367,6 +367,9 @@ class _TreeOfAttacksNode:
         # Node identity
         self.parent_id = parent_id
         self.node_id = str(uuid.uuid4())
+        # Tracks the node's current position in the visualization tree.
+        # Updated each depth iteration when a new child vis node is created.
+        self._vis_node_id: str = "root"
 
         # Conversation tracking
         self.objective_target_conversation_id = str(uuid.uuid4())
@@ -884,6 +887,9 @@ class _TreeOfAttacksNode:
 
         # Copy conversation context for adversarial chat system prompt
         duplicate_node._conversation_context = self._conversation_context
+
+        # Copy visualization position so the clone starts from the same tree position
+        duplicate_node._vis_node_id = self._vis_node_id
 
         logger.debug(f"Node {self.node_id}: Created duplicate node {duplicate_node.node_id}")
 
@@ -1405,6 +1411,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._tree_width = tree_width
         self._tree_depth = tree_depth
         self._branching_factor = branching_factor
+        self._vis_root_id = "root"
 
         # Store execution configuration
         self._on_topic_checking_enabled = on_topic_checking_enabled
@@ -1584,10 +1591,15 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 f"Reduce prepended turns or increase tree_depth."
             )
 
-        # Add visualization nodes for prepended conversation turns
-        # These are shown as "1: (prepended)", "2: (prepended)", etc.
+        # Add visualization nodes for prepended conversation turns as a chain:
+        # root → prepended_1 → prepended_2 → ... so the tree depth is visually accurate.
+        # Track the last prepended node so attack nodes can branch from it.
+        vis_parent = "root"
         for turn in range(1, context.executed_turns + 1):
-            context.tree_visualization.create_node(f"{turn}: (prepended)", f"prepended_{turn}", parent="root")
+            node_id = f"prepended_{turn}"
+            context.tree_visualization.create_node(f"{turn}: (prepended)", node_id, parent=vis_parent)
+            vis_parent = node_id
+        self._vis_root_id = vis_parent
 
     async def _perform_async(self, *, context: TAPAttackContext) -> TAPAttackResult:
         """
@@ -1782,7 +1794,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 )
 
             context.nodes.append(node)
-            context.tree_visualization.create_node(f"{context.executed_turns}: ", node.node_id, parent="root")
+            node._vis_node_id = self._vis_root_id
 
         # Clear next_message after initialization (it's been used by the first node)
         context.next_message = None
@@ -1804,9 +1816,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         for node in context.nodes:
             for _ in range(self._branching_factor - 1):
                 cloned_node = node.duplicate()
-                context.tree_visualization.create_node(
-                    f"{context.executed_turns}: ", cloned_node.node_id, parent=cloned_node.parent_id
-                )
                 # Add the adversarial chat conversation ID of the duplicated node to the context's tracking
                 context.related_conversations.add(
                     ConversationReference(
@@ -1835,6 +1844,14 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             Within each batch, all nodes execute in parallel. The tree visualization is
             updated with score results or pruning status after each batch completes.
         """
+        # Create a new visualization child node for each node at this depth.
+        # This ensures each depth level is a separate row in the tree rather than
+        # appending scores to the same node.
+        for node in context.nodes:
+            vis_id = f"{node.node_id}_d{context.executed_turns}"
+            context.tree_visualization.create_node(f"{context.executed_turns}: ", vis_id, parent=node._vis_node_id)
+            node._vis_node_id = vis_id
+
         # Process nodes in batches
         for batch_start in range(0, len(context.nodes), self._batch_size):
             batch_end = min(batch_start + self._batch_size, len(context.nodes))
@@ -1857,7 +1874,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             # Update visualization with results after batch completes
             for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
                 result_string = self._format_node_result(node)
-                context.tree_visualization[node.node_id].tag += result_string
+                context.tree_visualization[node._vis_node_id].tag += result_string
                 self._logger.debug(f"Node {node_index}/{len(context.nodes)} completed: {result_string}")
 
                 # Track off-topic or incomplete nodes as pruned conversations
@@ -1896,7 +1913,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         # Mark pruned nodes in visualization and track their conversation IDs
         for node in nodes_to_prune:
-            context.tree_visualization[node.node_id].tag += " Pruned (width)"
+            context.tree_visualization[node._vis_node_id].tag += " Pruned (width)"
             # Add the conversation ID to the pruned set
             context.related_conversations.add(
                 ConversationReference(
@@ -2049,7 +2066,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             str: A formatted string describing the node's result:
                 - "Pruned (off-topic)" if node was marked off-topic
                 - "Pruned (no score available)" if node is incomplete or lacks a score
-                - "Score: X/10 || " if node completed with a valid score, where X is
+                - "Score: X/10" if node completed with a valid score, where X is
                 the score converted from 0-1 range to 1-10 human-readable scale
         """
         if node.off_topic:
@@ -2060,7 +2077,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # Convert normalized score (0-1) to human-readable format (1-10)
         normalized_score = normalize_score_to_float(node.objective_score)
         unnormalized_score = round(1 + normalized_score * 9)
-        return f"Score: {unnormalized_score}/10 || "
+        return f"Score: {unnormalized_score}/10"
 
     def _create_on_topic_scorer(self, objective: str) -> Optional[Scorer]:
         """
