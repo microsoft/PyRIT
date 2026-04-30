@@ -282,11 +282,11 @@ class Leakage(Scenario):
 
         attack_strategy = await factory()
 
-        # The factory functions return specific AttackStrategy subclasses, but mypy infers ABC
-        # due to the heterogeneous dict values. The types are verified by unit tests.
+        # The factory functions return specific AttackStrategy subclasses, but the type checker
+        # infers ABC due to the heterogeneous dict values. The types are verified by unit tests.
         return AtomicAttack(
             atomic_attack_name=f"leakage_{strategy}",
-            attack_technique=AttackTechnique(attack=attack_strategy),  # type: ignore[arg-type]
+            attack_technique=AttackTechnique(attack=attack_strategy),
             seed_groups=self._seed_groups,
             memory_labels=self._memory_labels,
         )

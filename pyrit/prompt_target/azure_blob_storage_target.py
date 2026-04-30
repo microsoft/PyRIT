@@ -155,7 +155,7 @@ class AzureBlobStorageTarget(PromptTarget):
         Raises:
             RuntimeError: If blob storage client is not initialized.
         """
-        content_settings = ContentSettings(content_type=f"{content_type}")  # type: ignore[no-untyped-call, unused-ignore]
+        content_settings = ContentSettings(content_type=f"{content_type}")
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         if not self._client_async:

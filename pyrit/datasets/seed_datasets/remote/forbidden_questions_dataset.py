@@ -30,7 +30,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         *,
         source: str = "TrustAIRLab/forbidden_question_set",
         split: str = "default",
-    ):
+    ) -> None:
         """
         Initialize the Forbidden Questions dataset loader.
 

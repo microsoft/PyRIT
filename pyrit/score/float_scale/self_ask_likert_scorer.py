@@ -156,12 +156,12 @@ class LikertScalePaths(enum.Enum):
     @property
     def path(self) -> Path:
         """Get the path to the Likert scale YAML file."""
-        return self.value[0]  # type: ignore[no-any-return]
+        return self.value[0]
 
     @property
     def evaluation_files(self) -> Optional[LikertScaleEvalFiles]:
         """Get the evaluation file configuration, or None if no evaluation dataset exists."""
-        return self.value[1]  # type: ignore[no-any-return]
+        return self.value[1]
 
 
 class SelfAskLikertScorer(FloatScaleScorer):
@@ -454,7 +454,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             system_prompt=self._system_prompt,
             message_value=message_piece.converted_value,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
+            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
             category=self._score_category,
             attack_identifier=message_piece.attack_identifier,
             objective=objective,

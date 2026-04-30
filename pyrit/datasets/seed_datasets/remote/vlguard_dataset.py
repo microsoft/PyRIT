@@ -157,7 +157,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         for example in metadata:
             image_filename = example.get("image")
-            is_safe = example.get("safe")
+            is_safe = example.get("safe", True)
             category = example.get("harmful_category", "")
             subcategory = example.get("harmful_subcategory", "")
             instr_resp_raw = example.get("instr-resp")

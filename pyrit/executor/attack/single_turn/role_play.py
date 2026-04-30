@@ -65,7 +65,7 @@ class RolePlayAttack(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         role_play_definition_path: pathlib.Path,
         attack_converter_config: Optional[AttackConverterConfig] = None,
