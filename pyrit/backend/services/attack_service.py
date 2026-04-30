@@ -340,7 +340,7 @@ class AttackService:
             await self._store_prepended_messages(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
-                labels=labels,
+                labels=labels,  # deprecated
             )
 
         return CreateAttackResponse(
@@ -614,14 +614,14 @@ class AttackService:
                 target_registry_name=target_registry_name,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,
+                labels=attack_labels,  # deprecated
             )
         else:
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,
+                labels=attack_labels,  # deprecated
             )
 
         await self._update_attack_after_message_async(attack_result_id=attack_result_id, ar=ar, request=request)
@@ -852,7 +852,7 @@ class AttackService:
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
             if labels_override is not None:
-                piece.labels = dict(labels_override)
+                piece.labels = dict(labels_override)  # deprecated
             if remap_assistant_to_simulated and piece.api_role == "assistant":
                 piece._role = "simulated_assistant"
 
@@ -943,7 +943,7 @@ class AttackService:
         self,
         conversation_id: str,
         prepended: list[Any],
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """Store prepended conversation messages in memory."""
         for seq, msg in enumerate(prepended):
@@ -953,7 +953,7 @@ class AttackService:
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
-                    labels=labels,
+                    labels=labels,  # deprecated
                 )
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -964,7 +964,7 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -979,7 +979,7 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,
+            labels=labels,  # deprecated
         )
 
         converter_configs = self._get_converter_configs(request)
@@ -1000,7 +1000,7 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
@@ -1010,7 +1010,7 @@ class AttackService:
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
-                labels=labels,
+                labels=labels,  # deprecated
             )
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 

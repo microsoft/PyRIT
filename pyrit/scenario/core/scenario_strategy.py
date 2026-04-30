@@ -272,7 +272,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             if not isinstance(item, cls):
                 continue
             if item.value in aggregate_tags:
-                for s in cls.expand({item}):
+                for s in cls.expand({item}):  # type: ignore[ty:invalid-argument-type]
                     if s not in seen:
                         seen.add(s)
                         result.append(s)

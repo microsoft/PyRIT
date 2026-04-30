@@ -38,7 +38,7 @@ class _DefaultWorkflowEventHandler(StrategyEventHandler[WorkflowContextT, Workfl
     Handles events during the execution of a workflow strategy.
     """
 
-    def __init__(self, logger: logging.Logger = logger):
+    def __init__(self, logger: logging.Logger = logger) -> None:
         """
         Initialize the default event handler with a logger.
 
@@ -111,7 +111,7 @@ class WorkflowStrategy(Strategy[WorkflowContextT, WorkflowResultT], ABC):
         context_type: type[WorkflowContextT],
         logger: logging.Logger = logger,
         event_handler: Optional[StrategyEventHandler[WorkflowContextT, WorkflowResultT]] = None,
-    ):
+    ) -> None:
         """
         Initialize the workflow strategy with a specific context type and logger.
 

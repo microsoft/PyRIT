@@ -16,7 +16,7 @@ class MemoryEmbedding:
         embedding_model (EmbeddingSupport): An instance of a class that supports embedding generation.
     """
 
-    def __init__(self, *, embedding_model: Optional[EmbeddingSupport] = None):
+    def __init__(self, *, embedding_model: Optional[EmbeddingSupport] = None) -> None:
         """
         Initialize the memory embedding helper with a backing embedding model.
 

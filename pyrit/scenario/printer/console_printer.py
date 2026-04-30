@@ -28,7 +28,7 @@ class ConsoleScenarioResultPrinter(ScenarioResultPrinter):
         indent_size: int = 2,
         enable_colors: bool = True,
         scorer_printer: Optional[ScorerPrinter] = None,
-    ):
+    ) -> None:
         """
         Initialize the console printer.
 

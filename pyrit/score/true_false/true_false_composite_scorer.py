@@ -62,7 +62,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "sub_scorers": [s.get_identifier() for s in self._scorers],

@@ -1347,7 +1347,7 @@ class MemoryInterface(abc.ABC):
 
             # Only SeedPrompt has set_encoding_metadata for audio/video/image files
             if hasattr(prompt, "set_encoding_metadata"):
-                prompt.set_encoding_metadata()
+                prompt.set_encoding_metadata()  # type: ignore[ty:call-non-callable]
 
             # Handle serialization for image, audio & video SeedPrompts
             if prompt.data_type in ["image_path", "audio_path", "video_path"]:
@@ -2018,7 +2018,7 @@ class MemoryInterface(abc.ABC):
             scenario_result = scenario_results[0]
 
             # Update the scenario run state
-            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[assignment]
+            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
             # Save updated result back to memory using update
             entry = ScenarioResultEntry(entry=scenario_result)

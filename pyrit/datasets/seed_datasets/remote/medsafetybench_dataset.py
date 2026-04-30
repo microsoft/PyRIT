@@ -27,7 +27,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
         self,
         *,
         subset_name: Literal["train", "test", "generated", "all"] = "all",
-    ):
+    ) -> None:
         """
         Initialize the MedSafetyBench dataset loader.
 

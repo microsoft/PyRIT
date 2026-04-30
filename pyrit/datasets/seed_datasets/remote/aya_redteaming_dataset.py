@@ -61,7 +61,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
             ]
         ] = None,
         harm_scope: Optional[Literal["global", "local"]] = None,
-    ):
+    ) -> None:
         """
         Initialize the Aya Red-teaming dataset loader.
 
