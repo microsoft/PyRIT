@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
 from pyrit.memory.sqlite_memory import SQLiteMemory
 
 
