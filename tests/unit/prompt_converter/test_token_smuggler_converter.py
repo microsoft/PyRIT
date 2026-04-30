@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import pytest
 
 from pyrit.prompt_converter import ConverterResult
 from pyrit.prompt_converter.token_smuggling import (
@@ -11,7 +10,6 @@ from pyrit.prompt_converter.token_smuggling import (
 )
 
 
-@pytest.mark.asyncio
 async def test_convert_async_encode_unicode_tags_control():
     # Test encoding using the Unicode Tags mode with control tags enabled.
     converter = AsciiSmugglerConverter(action="encode", unicode_tags=True)
@@ -24,7 +22,6 @@ async def test_convert_async_encode_unicode_tags_control():
     assert result.output_text.endswith(chr(0xE007F))
 
 
-@pytest.mark.asyncio
 async def test_convert_async_encode_unicode_tags():
     # Test encoding using the Unicode Tags mode without control tags.
     converter = AsciiSmugglerConverter(action="encode", unicode_tags=False)
@@ -36,7 +33,6 @@ async def test_convert_async_encode_unicode_tags():
     assert not result.output_text.endswith(chr(0xE007F))
 
 
-@pytest.mark.asyncio
 async def test_convert_async_decode_unicode_tags():
     # The following encoded message is "Hi" with control tags
     encoded_message = chr(0xE0001) + chr(0xE0000) + chr(0xE0048) + chr(0xE0000) + chr(0xE0069) + chr(0xE007F)
@@ -47,7 +43,6 @@ async def test_convert_async_decode_unicode_tags():
     assert result.output_text == "Hi"
 
 
-@pytest.mark.asyncio
 async def test_encode_decode_unicode_tags_control():
     # Test round-trip encoding/decoding with Unicode Tags control mode.
     base_string = "Hello, World!"
@@ -62,7 +57,6 @@ async def test_encode_decode_unicode_tags_control():
     assert decoded_result.output_text == base_string
 
 
-@pytest.mark.asyncio
 async def test_encode_decode_unicode_tags():
     # Test encoding and decoding without unicode tags to ensure input integrity.
     base_string = "Hello, World!"
@@ -77,7 +71,6 @@ async def test_encode_decode_unicode_tags():
     assert decoded_result.output_text == base_string
 
 
-@pytest.mark.asyncio
 async def test_convert_async_encode_sneaky_bits():
     # Test encoding using the Sneaky Bits mode.
     converter = SneakyBitsSmugglerConverter(action="encode")
@@ -90,7 +83,6 @@ async def test_convert_async_encode_sneaky_bits():
     assert all(ch in valid_chars for ch in result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_decode_sneaky_bits():
     # Test decoding using the Sneaky Bits mode.
     original_text = "Test Sneaky Bits"
@@ -104,7 +96,6 @@ async def test_convert_async_decode_sneaky_bits():
     assert decoded_result.output_text == original_text
 
 
-@pytest.mark.asyncio
 async def test_convert_async_encode_only_modes():
     prompt = "Test"
 
@@ -133,7 +124,6 @@ async def test_convert_async_encode_only_modes():
     assert len(result_sneaky.output_text) == len(prompt.encode("utf-8")) * 8  # Explicit length check
 
 
-@pytest.mark.asyncio
 async def test_convert_async_encode_variation_selector_smuggler():
     # Test encoding using the variation_selector_smuggler mode.
     converter = VariationSelectorSmugglerConverter(action="encode", embed_in_base=True)
@@ -153,7 +143,6 @@ async def test_convert_async_encode_variation_selector_smuggler():
         assert valid, f"Character {ch} with code U+{code:X} is not a valid variation selector."
 
 
-@pytest.mark.asyncio
 async def test_convert_async_decode_variation_selector_smuggler():
     # Test decoding using the variation_selector_smuggler mode.
     # First encode a known string.
@@ -169,7 +158,6 @@ async def test_convert_async_decode_variation_selector_smuggler():
     assert decoded_result.output_text == original_text
 
 
-@pytest.mark.asyncio
 async def test_encode_decode_variation_selector_smuggler_multibyte():
     # Test round-trip encoding/decoding with multibyte characters.
     base_string = "Ciao, mondo! 😊"
@@ -184,7 +172,6 @@ async def test_encode_decode_variation_selector_smuggler_multibyte():
     assert decoded_result.output_text == base_string
 
 
-@pytest.mark.asyncio
 async def test_encode_decode_visible_hidden():
     # Test mixing visible + hidden text
     converter = VariationSelectorSmugglerConverter(embed_in_base=True)
@@ -205,7 +192,6 @@ async def test_encode_decode_visible_hidden():
     assert decoded_hidden == hidden_text
 
 
-@pytest.mark.asyncio
 async def test_embed_in_base_false_inserts_separator():
     # Test that when embed_in_base is False, space is inserted after base char.
     converter = VariationSelectorSmugglerConverter(action="encode", embed_in_base=False)

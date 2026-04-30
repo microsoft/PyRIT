@@ -6,9 +6,9 @@ Set up a PyRIT development environment on your local machine.
 **Development Version:** Contributor installations use the **latest development code** from the `main` branch, not a stable release. The notebooks in your cloned repository will match your code version.
 ```
 
-## Option 1: uv (Recommended)
+## Setup with uv
 
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. We recommend it for PyRIT development.
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver that we use for PyRIT development.
 
 **Why uv?**
 - **Much faster** than pip (10-100x faster dependency resolution)
@@ -77,11 +77,7 @@ VS Code should automatically detect the `.venv` virtual environment. If not:
 3. Choose `.venv\Scripts\python.exe`
 
 #### Running Jupyter Notebooks
-You can create a Jupyter kernel by first installing ipykernel:
-```bash
-uv add --dev ipykernel
-```
-then, create the kernel using:
+You can create a Jupyter kernel using:
 ```bash
 uv run ipython kernel install --user --env VIRTUAL_ENV $(pwd)/.venv --name=pyrit-dev
 ```
@@ -162,7 +158,7 @@ uv sync
 #### Running Code Formatters
 
 ```bash
-uv run black .
+uv run ruff format .
 uv run ruff check --fix .
 ```
 

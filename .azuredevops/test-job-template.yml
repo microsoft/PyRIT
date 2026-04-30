@@ -79,7 +79,7 @@ jobs:
 
       echo "Microsoft ODBC Driver 18 installed successfully."
     displayName: 'Install ODBC Driver 18 for SQL Server'
-  - bash: uv sync --extra dev --extra all
+  - bash: uv sync --extra all
     name: install_PyRIT
   - bash: df -all -h
     name: disk_space_check

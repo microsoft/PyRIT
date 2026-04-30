@@ -57,7 +57,6 @@ def test_initialization_with_no_container_url_raises():
 
 
 @patch("azure.storage.blob.aio.ContainerClient.upload_blob")
-@pytest.mark.asyncio
 async def test_azure_blob_storage_validate_request_length(
     mock_upload_async,
     azure_blob_storage_target: AzureBlobStorageTarget,
@@ -78,7 +77,6 @@ async def test_azure_blob_storage_validate_request_length(
 
 
 @patch("azure.storage.blob.aio.ContainerClient.upload_blob")
-@pytest.mark.asyncio
 async def test_azure_blob_storage_validate_prompt_type(
     mock_upload_async,
     azure_blob_storage_target: AzureBlobStorageTarget,
@@ -94,7 +92,6 @@ async def test_azure_blob_storage_validate_prompt_type(
 
 
 @patch("azure.storage.blob.aio.ContainerClient.upload_blob")
-@pytest.mark.asyncio
 async def test_azure_blob_storage_validate_prev_convs(
     mock_upload_async,
     azure_blob_storage_target: AzureBlobStorageTarget,
@@ -113,7 +110,6 @@ async def test_azure_blob_storage_validate_prev_convs(
         await azure_blob_storage_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 @patch.object(AzureBlobStorageTarget, "_create_container_client_async", new_callable=AsyncMock)
 @patch.object(AsyncBlobClient, "upload_blob", new_callable=AsyncMock)
 @patch.object(AsyncContainerClient, "get_blob_client", new_callable=MagicMock)
@@ -148,7 +144,6 @@ async def test_send_prompt_async(
     mock_upload_blob.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_upload_blob_async_raises_when_client_async_none(azure_blob_storage_target: AzureBlobStorageTarget):
     """Guard at line 169: _client_async is None after _create_container_client_async still leaves it None."""
     azure_blob_storage_target._client_async = None

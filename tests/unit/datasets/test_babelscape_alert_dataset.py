@@ -38,7 +38,6 @@ def mock_alert_data():
 class TestBabelscapeAlertDataset:
     """Test the Babelscape ALERT dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_returns_seed_dataset(self, mock_alert_data):
         """Test that fetch_dataset returns a SeedDataset with correct prompts."""
         loader = _BabelscapeAlertDataset()
@@ -50,7 +49,6 @@ class TestBabelscapeAlertDataset:
             assert len(dataset.seeds) == 2
             assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_includes_harm_categories(self, mock_alert_data):
         """Test that harm_categories are correctly populated from the category field."""
         loader = _BabelscapeAlertDataset()

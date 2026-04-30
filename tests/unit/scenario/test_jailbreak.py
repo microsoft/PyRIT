@@ -193,7 +193,6 @@ class TestJailbreakInitialization:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, jailbreak_names=[subdir_name])
             assert scenario._jailbreaks == [subdir_name]
 
-    @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
@@ -208,7 +207,6 @@ class TestJailbreakInitialization:
 class TestJailbreakAttackGeneration:
     """Tests for Jailbreak attack generation."""
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_all(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
@@ -222,7 +220,6 @@ class TestJailbreakAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_simple(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, simple_jailbreak_strategy
     ):
@@ -237,7 +234,6 @@ class TestJailbreakAttackGeneration:
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_complex(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, complex_jailbreak_strategy
     ):
@@ -254,7 +250,6 @@ class TestJailbreakAttackGeneration:
                     run.attack_technique.attack, (RolePlayAttack, ManyShotJailbreakAttack, SkeletonKeyAttack)
                 )
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_manyshot(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, manyshot_jailbreak_strategy
     ):
@@ -269,7 +264,6 @@ class TestJailbreakAttackGeneration:
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, ManyShotJailbreakAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_promptsending(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, promptsending_jailbreak_strategy
     ):
@@ -284,7 +278,6 @@ class TestJailbreakAttackGeneration:
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_skeleton(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, skeleton_jailbreak_attack
     ):
@@ -299,7 +292,6 @@ class TestJailbreakAttackGeneration:
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, SkeletonKeyAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_roleplay(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, roleplay_jailbreak_strategy
     ):
@@ -314,7 +306,6 @@ class TestJailbreakAttackGeneration:
             for run in atomic_attacks:
                 assert isinstance(run.attack_technique.attack, RolePlayAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_runs_include_objectives(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
@@ -331,7 +322,6 @@ class TestJailbreakAttackGeneration:
             for run in atomic_attacks:
                 assert len(run.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_get_atomic_attacks_async_returns_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
@@ -346,7 +336,6 @@ class TestJailbreakAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_get_all_jailbreak_templates(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
@@ -358,7 +347,6 @@ class TestJailbreakAttackGeneration:
             await scenario.initialize_async(objective_target=mock_objective_target)
             assert len(scenario._jailbreaks) > 0
 
-    @pytest.mark.asyncio
     async def test_get_some_jailbreak_templates(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_random_num_templates
     ):
@@ -368,7 +356,6 @@ class TestJailbreakAttackGeneration:
             await scenario.initialize_async(objective_target=mock_objective_target)
             assert len(scenario._jailbreaks) == mock_random_num_templates
 
-    @pytest.mark.asyncio
     async def test_custom_num_attempts(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_random_num_attempts
     ):
@@ -389,7 +376,6 @@ class TestJailbreakAttackGeneration:
 class TestJailbreakLifecycle:
     """Tests for Jailbreak lifecycle."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_max_concurrency(
         self,
         *,
@@ -403,7 +389,6 @@ class TestJailbreakLifecycle:
             await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=20)
             assert scenario._max_concurrency == 20
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_memory_labels(
         self,
         *,
@@ -444,7 +429,6 @@ class TestJailbreakProperties:
 
         assert Jailbreak.required_datasets() == ["airt_harms"]
 
-    @pytest.mark.asyncio
     async def test_no_target_duplication_async(
         self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[SeedGroup]
     ) -> None:
@@ -483,7 +467,6 @@ class TestJailbreakAdversarialTarget:
         target = scenario._get_or_create_adversarial_target()
         assert scenario._adversarial_target is target
 
-    @pytest.mark.asyncio
     async def test_roleplay_attacks_share_adversarial_target(
         self,
         *,

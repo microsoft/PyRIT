@@ -178,7 +178,6 @@ class TestRapidResponseBasic:
         )
         assert scenario._objective_scorer == mock_objective_scorer
 
-    @pytest.mark.asyncio
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=ALL_HARM_SEED_GROUPS)
     async def test_initialization_defaults_to_default_strategy(
@@ -194,7 +193,6 @@ class TestRapidResponseBasic:
         # DEFAULT expands to PromptSending + ManyShot → 2 composites
         assert len(scenario._scenario_strategies) == 2
 
-    @pytest.mark.asyncio
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
         scenario = RapidResponse(
@@ -203,7 +201,6 @@ class TestRapidResponseBasic:
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
-    @pytest.mark.asyncio
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=ALL_HARM_SEED_GROUPS)
     async def test_memory_labels_stored(
@@ -254,7 +251,6 @@ class TestRapidResponseAttackGeneration:
             await scenario.initialize_async(**init_kwargs)
             return await scenario._get_atomic_attacks_async()
 
-    @pytest.mark.asyncio
     async def test_default_strategy_produces_prompt_sending_and_many_shot(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -265,7 +261,6 @@ class TestRapidResponseAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, ManyShotJailbreakAttack}
 
-    @pytest.mark.asyncio
     async def test_single_turn_strategy_produces_prompt_sending_and_role_play(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -277,7 +272,6 @@ class TestRapidResponseAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, RolePlayAttack}
 
-    @pytest.mark.asyncio
     async def test_multi_turn_strategy_produces_multi_turn_attacks(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -288,7 +282,6 @@ class TestRapidResponseAttackGeneration:
         assert len(technique_classes) >= 2
         assert {ManyShotJailbreakAttack, TreeOfAttacksWithPruningAttack} <= technique_classes
 
-    @pytest.mark.asyncio
     async def test_all_strategy_produces_attacks_for_every_technique(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -306,7 +299,6 @@ class TestRapidResponseAttackGeneration:
             TreeOfAttacksWithPruningAttack,
         } <= technique_classes
 
-    @pytest.mark.asyncio
     async def test_single_technique_selection(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -317,7 +309,6 @@ class TestRapidResponseAttackGeneration:
         for a in attacks:
             assert isinstance(a.attack_technique.attack, PromptSendingAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_count_is_techniques_times_datasets(self, mock_objective_target, mock_objective_scorer):
         """With 2 datasets and DEFAULT (2 techniques), expect 4 atomic attacks."""
         two_datasets = {
@@ -332,7 +323,6 @@ class TestRapidResponseAttackGeneration:
         # DEFAULT = PromptSending + ManyShot = 2 techniques, 2 datasets → 4
         assert len(attacks) == 4
 
-    @pytest.mark.asyncio
     async def test_atomic_attack_names_are_unique_compound_keys(self, mock_objective_target, mock_objective_scorer):
         """Each AtomicAttack has a unique compound atomic_attack_name for resume correctness."""
         two_datasets = {
@@ -351,7 +341,6 @@ class TestRapidResponseAttackGeneration:
         for name in names:
             assert "_" in name
 
-    @pytest.mark.asyncio
     async def test_display_groups_by_harm_category(self, mock_objective_target, mock_objective_scorer):
         """display_group groups by dataset (harm category), not technique."""
         two_datasets = {
@@ -366,7 +355,6 @@ class TestRapidResponseAttackGeneration:
         display_groups = {a.display_group for a in attacks}
         assert display_groups == {"hate", "violence"}
 
-    @pytest.mark.asyncio
     async def test_raises_when_not_initialized(self, mock_objective_scorer):
         scenario = RapidResponse(
             objective_scorer=mock_objective_scorer,
@@ -374,7 +362,6 @@ class TestRapidResponseAttackGeneration:
         with pytest.raises(ValueError, match="Scenario not properly initialized"):
             await scenario._get_atomic_attacks_async()
 
-    @pytest.mark.asyncio
     async def test_unknown_technique_skipped_with_warning(self, mock_objective_target, mock_objective_scorer):
         """If a technique name has no factory, it's skipped (not an error)."""
         groups = {"hate": _make_seed_groups("hate")}
@@ -407,7 +394,6 @@ class TestRapidResponseAttackGeneration:
             assert len(attacks) == 1
             assert isinstance(attacks[0].attack_technique.attack, PromptSendingAttack)
 
-    @pytest.mark.asyncio
     async def test_attacks_include_seed_groups(self, mock_objective_target, mock_objective_scorer):
         """Each atomic attack carries the correct seed groups."""
         attacks = await self._init_and_get_attacks(

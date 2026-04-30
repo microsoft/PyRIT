@@ -241,7 +241,6 @@ class TestParseRawMessage:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBuildWebsocketUrl:
-    @pytest.mark.asyncio
     async def test_build_websocket_url_with_valid_token(self, mock_authenticator, mock_copilot_target):
         target = mock_copilot_target
 
@@ -261,7 +260,6 @@ class TestBuildWebsocketUrl:
         assert "source=%22officeweb%22" in url
         assert "scenario=OfficeWebIncludedCopilot" in url
 
-    @pytest.mark.asyncio
     async def test_build_websocket_url_with_missing_ids(self, mock_authenticator, mock_copilot_target):
         for missing_id in ["tid", "oid"]:
             token_payload = {"tid": "test_tenant_id", "oid": "test_object_id", "exp": 9999999999}
@@ -277,7 +275,6 @@ class TestBuildWebsocketUrl:
             with pytest.raises(ValueError, match="Failed to extract tenant_id \\(tid\\) or object_id \\(oid\\)"):
                 await target._build_websocket_url_async(session_id="test", copilot_conversation_id="test")
 
-    @pytest.mark.asyncio
     async def test_build_websocket_url_with_invalid_token(self, mock_authenticator, mock_copilot_target):
         mock_authenticator.get_token = AsyncMock(return_value="invalid_token")
         mock_authenticator.get_claims = AsyncMock(side_effect=ValueError("Failed to decode access token"))
@@ -289,7 +286,6 @@ class TestBuildWebsocketUrl:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestUploadImageAsync:
-    @pytest.mark.asyncio
     async def test_upload_image_async_successful(self, mock_authenticator, mock_copilot_target):
         target = mock_copilot_target
         image_path = "/path/to/image.png"
@@ -317,7 +313,6 @@ class TestUploadImageAsync:
             assert call_args.kwargs["data"]["conversationId"] == conversation_id
             assert call_args.kwargs["data"]["FileBase64"] == data_url
 
-    @pytest.mark.asyncio
     async def test_upload_image_async_non_200_status(self, mock_authenticator, mock_copilot_target):
         target = mock_copilot_target
 
@@ -333,7 +328,6 @@ class TestUploadImageAsync:
                     image_path="/path/to/image.png", data_url="data:image/png;base64,abc", conversation_id="conv_123"
                 )
 
-    @pytest.mark.asyncio
     async def test_upload_image_async_missing_doc_id(self, mock_authenticator, mock_copilot_target):
         target = mock_copilot_target
 
@@ -349,7 +343,6 @@ class TestUploadImageAsync:
                     image_path="/path/to/image.png", data_url="data:image/png;base64,abc", conversation_id="conv_123"
                 )
 
-    @pytest.mark.asyncio
     async def test_upload_image_async_uses_correct_headers(self, mock_authenticator, mock_copilot_target):
         target = mock_copilot_target
         expected_token = await mock_authenticator.get_token_async()
@@ -377,7 +370,6 @@ class TestUploadImageAsync:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestProcessImagePieceAsync:
-    @pytest.mark.asyncio
     async def test_process_image_piece_async_successful(
         self, mock_authenticator, mock_copilot_target, patch_convert_local_image_to_data_url
     ):
@@ -398,7 +390,6 @@ class TestProcessImagePieceAsync:
             assert annotation["messageAnnotationMetadata"]["fileName"] == "image.png"
             assert annotation["messageAnnotationMetadata"]["fileType"] == "png"
 
-    @pytest.mark.asyncio
     async def test_process_image_piece_async_extracts_filename_correctly(
         self, mock_authenticator, mock_copilot_target, patch_convert_local_image_to_data_url
     ):
@@ -420,7 +411,6 @@ class TestProcessImagePieceAsync:
                 assert annotation["messageAnnotationMetadata"]["fileName"] == expected_name
                 assert annotation["messageAnnotationMetadata"]["fileType"] == expected_type
 
-    @pytest.mark.asyncio
     async def test_process_image_piece_async_propagates_upload_error(
         self, mock_authenticator, mock_copilot_target, patch_convert_local_image_to_data_url
     ):
@@ -435,7 +425,6 @@ class TestProcessImagePieceAsync:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBuildPromptMessage:
-    @pytest.mark.asyncio
     async def test_build_prompt_message_structure(self, mock_authenticator, sample_text_pieces, mock_copilot_target):
         target = mock_copilot_target
 
@@ -463,7 +452,6 @@ class TestBuildPromptMessage:
         assert msg["messageType"] == "Chat"
         assert msg["locale"] == "en-us"
 
-    @pytest.mark.asyncio
     async def test_build_prompt_message_with_different_session_states(
         self, mock_authenticator, sample_text_pieces, mock_copilot_target
     ):
@@ -478,7 +466,6 @@ class TestBuildPromptMessage:
 
         assert message["arguments"][0]["isStartOfSession"] is False
 
-    @pytest.mark.asyncio
     async def test_build_prompt_message_with_image(
         self,
         mock_authenticator,
@@ -521,7 +508,6 @@ class TestBuildPromptMessage:
             assert annotation["messageAnnotationMetadata"]["fileType"] == "png"
             assert annotation["messageAnnotationMetadata"]["fileName"] == "image.png"
 
-    @pytest.mark.asyncio
     async def test_build_prompt_message_with_mixed_content(
         self,
         mock_authenticator,
@@ -567,7 +553,6 @@ class TestBuildPromptMessage:
 
             assert mock_process.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_build_prompt_message_with_multiple_text_pieces(
         self, mock_authenticator, mock_copilot_target, make_message_piece
     ):
@@ -590,7 +575,6 @@ class TestBuildPromptMessage:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConnectAndSend:
-    @pytest.mark.asyncio
     async def test_connect_and_send_successful_response(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         mock_websocket.recv = AsyncMock(
@@ -612,7 +596,6 @@ class TestConnectAndSend:
         assert response == "Hello from Copilot"
         assert mock_websocket.send.call_count == 2  # handshake + user prompt
 
-    @pytest.mark.asyncio
     async def test_connect_and_send_timeout(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=1)
         mock_websocket.recv = AsyncMock(side_effect=asyncio.TimeoutError())
@@ -626,7 +609,6 @@ class TestConnectAndSend:
                     is_start_of_session=True,
                 )
 
-    @pytest.mark.asyncio
     async def test_connect_and_send_none_response(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         mock_websocket.recv = AsyncMock(return_value=None)
@@ -640,7 +622,6 @@ class TestConnectAndSend:
                     is_start_of_session=True,
                 )
 
-    @pytest.mark.asyncio
     async def test_connect_and_send_stream_end_without_final_content(
         self, mock_authenticator, sample_text_pieces, mock_websocket
     ):
@@ -657,7 +638,6 @@ class TestConnectAndSend:
 
         assert response == ""
 
-    @pytest.mark.asyncio
     async def test_connect_and_send_exceeds_max_iterations(
         self, mock_authenticator, sample_text_pieces, mock_websocket
     ):
@@ -673,7 +653,6 @@ class TestConnectAndSend:
                     is_start_of_session=True,
                 )
 
-    @pytest.mark.asyncio
     async def test_connect_and_send_with_image_pieces(self, mock_authenticator, sample_image_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
@@ -700,7 +679,6 @@ class TestConnectAndSend:
                 assert response == "Image analyzed"
                 assert mock_websocket.send.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_connect_and_send_with_mixed_content(self, mock_authenticator, sample_mixed_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         mock_websocket.recv = AsyncMock(
@@ -837,7 +815,6 @@ class TestGenerateConsistentCopilotIds:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSendPromptAsync:
-    @pytest.mark.asyncio
     async def test_send_prompt_async_successful(self, mock_authenticator, make_message_piece, mock_memory):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         target._memory = mock_memory
@@ -850,7 +827,6 @@ class TestSendPromptAsync:
         assert responses[0].message_pieces[0].converted_value == "Response from Copilot"
         assert responses[0].message_pieces[0].api_role == "assistant"
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_with_exceptions(self, mock_authenticator, make_message_piece, mock_memory):
         from pyrit.exceptions import EmptyResponseException
 
@@ -869,7 +845,6 @@ class TestSendPromptAsync:
             with pytest.raises(RuntimeError, match="An error occurred during WebSocket communication"):
                 await target.send_prompt_async(message=message)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_with_image(self, mock_authenticator, make_message_piece, mock_memory):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         target._memory = mock_memory
@@ -886,7 +861,6 @@ class TestSendPromptAsync:
             assert responses[0].message_pieces[0].converted_value == "Image description response"
             assert responses[0].message_pieces[0].api_role == "assistant"
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_with_mixed_content(self, mock_authenticator, make_message_piece, mock_memory):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         target._memory = mock_memory
@@ -904,7 +878,6 @@ class TestSendPromptAsync:
             assert len(responses) == 1
             assert responses[0].message_pieces[0].converted_value == "This image shows a beautiful landscape"
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_calls_validation(self, mock_authenticator, make_message_piece, mock_memory):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
         target._memory = mock_memory

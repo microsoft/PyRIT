@@ -45,7 +45,6 @@ class TestLoadDefaultDatasets:
         initializer = LoadDefaultDatasets()
         assert initializer.required_env_vars == []
 
-    @pytest.mark.asyncio
     async def test_initialize_async_no_scenarios(self) -> None:
         """Test initialization when no scenarios are registered."""
         initializer = LoadDefaultDatasets()
@@ -63,7 +62,6 @@ class TestLoadDefaultDatasets:
                     mock_fetch.assert_not_called()
                     mock_memory_instance.add_seed_datasets_to_memory_async.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_scenarios(self) -> None:
         """Test initialization with scenarios that require datasets."""
         initializer = LoadDefaultDatasets()
@@ -98,7 +96,6 @@ class TestLoadDefaultDatasets:
                             datasets=[mock_dataset1, mock_dataset2], added_by="LoadDefaultDatasets"
                         )
 
-    @pytest.mark.asyncio
     async def test_initialize_async_deduplicates_datasets(self) -> None:
         """Test that duplicate datasets from multiple scenarios are deduplicated."""
         initializer = LoadDefaultDatasets()
@@ -140,7 +137,6 @@ class TestLoadDefaultDatasets:
                         # Verify order is preserved (dict.fromkeys maintains insertion order)
                         assert len(call_kwargs["dataset_names"]) == 3
 
-    @pytest.mark.asyncio
     async def test_initialize_async_handles_scenario_errors(self) -> None:
         """Test that initialization continues when a scenario raises an error."""
         initializer = LoadDefaultDatasets()
@@ -178,7 +174,6 @@ class TestLoadDefaultDatasets:
                         call_kwargs = mock_fetch.call_args.kwargs
                         assert "dataset1" in call_kwargs["dataset_names"]
 
-    @pytest.mark.asyncio
     async def test_all_required_datasets_available_in_seed_provider(self) -> None:
         """
         Test that all datasets required by scenarios are available in SeedDatasetProvider.
@@ -219,7 +214,6 @@ class TestLoadDefaultDatasets:
             + "\n".join(missing_datasets)
         )
 
-    @pytest.mark.asyncio
     async def test_initialize_async_empty_dataset_list(self) -> None:
         """Test initialization when scenarios return empty dataset lists."""
         initializer = LoadDefaultDatasets()
@@ -243,7 +237,6 @@ class TestLoadDefaultDatasets:
                         mock_fetch.assert_not_called()
                         mock_memory_instance.add_seed_datasets_to_memory_async.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_initialize_async_none_scenario_class(self) -> None:
         """Test initialization when get_scenario returns None for a scenario."""
         initializer = LoadDefaultDatasets()

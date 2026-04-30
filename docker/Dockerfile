@@ -50,10 +50,10 @@ COPY --chown=vscode:vscode doc/ /app/doc/
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
 RUN if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
-        uv pip install --python /opt/venv/bin/python pyrit[dev,speech,opencv,fairness_bias,fastapi,playwright]==$PYRIT_VERSION; \
+        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright]==$PYRIT_VERSION; \
     elif [ "$PYRIT_SOURCE" = "local" ]; then \
         echo "Installing PyRIT from local source"; \
-        uv pip install --python /opt/venv/bin/python -e .[dev,speech,opencv,fairness_bias,fastapi,playwright]; \
+        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright]; \
         echo "Building frontend..."; \
         /opt/venv/bin/python build_scripts/prepare_package.py; \
     fi && \

@@ -216,7 +216,6 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
     assert db_score[0].message_piece_id == prompt_id
 
 
-@pytest.mark.asyncio
 async def test_get_seeds_no_filters(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="prompt1", dataset_name="dataset1", data_type="text"),

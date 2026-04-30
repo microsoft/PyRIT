@@ -32,7 +32,6 @@ def sample_message_pieces():
 
 
 class TestDecodingScorer:
-    @pytest.mark.asyncio
     async def test_decoding_scorer_original_value_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
 
@@ -50,7 +49,6 @@ class TestDecodingScorer:
             assert score[0].score_type == "true_false"
             assert score[0].score_category == ["decoding"]
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_converted_value_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Response with encoded_secret in it"
@@ -66,7 +64,6 @@ class TestDecodingScorer:
             assert len(score) == 1
             assert score[0].get_value() is True  # "encoded_secret" is in the response
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_metadata_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Response with decoded_secret in it"
@@ -82,7 +79,6 @@ class TestDecodingScorer:
             assert len(score) == 1
             assert score[0].get_value() is True  # "decoded_secret" from metadata is in response
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_no_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Response with nothing matching"
@@ -98,7 +94,6 @@ class TestDecodingScorer:
             assert len(score) == 1
             assert score[0].get_value() is False
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_case_insensitive(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Response with SECRET in it"
@@ -115,7 +110,6 @@ class TestDecodingScorer:
             assert len(score) == 1
             assert score[0].get_value() is True  # Case insensitive match
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_case_sensitive(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Response with SECRET in it"
@@ -132,7 +126,6 @@ class TestDecodingScorer:
             assert len(score) == 1
             assert score[0].get_value() is False  # Case sensitive, no match
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_approximate_matching(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         # Partial match - has some n-grams in common
@@ -151,7 +144,6 @@ class TestDecodingScorer:
             assert len(score) == 1
             # Should detect partial match with low threshold
 
-    @pytest.mark.asyncio
     async def test_decoding_scorer_approximate_no_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Completely different text with no overlap"

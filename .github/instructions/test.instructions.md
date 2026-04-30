@@ -20,7 +20,7 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 - File naming: `test_[component].py`
 - Group tests in classes prefixed with `Test`
 - Use `@pytest.mark.usefixtures("patch_central_database")` on classes touching Central Memory
-- Use `@pytest.mark.asyncio` and `AsyncMock` for async methods
+- Use `AsyncMock` for async methods (do NOT add `@pytest.mark.asyncio` — `asyncio_mode = "auto"` handles it)
 - Reuse `tests/unit/mocks.py` helpers: `MockPromptTarget`, `get_sample_conversations`, `get_mock_target_identifier`, `openai_chat_response_json_dict`
 - Key fixtures from `tests/unit/conftest.py`: `patch_central_database`, `sqlite_instance`
 - No network calls should ever happen in unit tests, but file access is okay

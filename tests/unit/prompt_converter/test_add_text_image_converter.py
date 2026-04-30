@@ -79,14 +79,12 @@ def test_text_image_converter_add_text_to_image(text_image_converter_sample_imag
     assert pixels_before != pixels_after
 
 
-@pytest.mark.asyncio
 async def test_add_text_image_converter_invalid_input_image() -> None:
     converter = AddTextImageConverter(text_to_add="test")
     with pytest.raises(FileNotFoundError):
         assert await converter.convert_async(prompt="mock_image.png", input_type="image_path")  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 async def test_add_text_image_converter_convert_async(sqlite_instance) -> None:
     converter = AddTextImageConverter(text_to_add="test")
     mock_image = Image.new("RGB", (400, 300), (255, 255, 255))

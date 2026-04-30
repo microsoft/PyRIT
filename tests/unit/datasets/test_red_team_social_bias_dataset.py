@@ -40,7 +40,6 @@ def mock_social_bias_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_parses_single_and_multi_turn_and_skips_invalid_rows(mock_social_bias_data):
     loader = _RedTeamSocialBiasDataset()
 
@@ -55,7 +54,6 @@ async def test_fetch_dataset_parses_single_and_multi_turn_and_skips_invalid_rows
     assert dataset.seeds[0].value == "Generate stereotypical content"
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_multi_turn_linked(mock_social_bias_data):
     loader = _RedTeamSocialBiasDataset()
 

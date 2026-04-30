@@ -53,7 +53,6 @@ def test_promptshield_init(promptshield_target: PromptShieldTarget):
     assert promptshield_target
 
 
-@pytest.mark.asyncio
 async def test_prompt_shield_validate_request_length(promptshield_target: PromptShieldTarget):
     request = Message(
         message_pieces=[
@@ -69,7 +68,6 @@ async def test_prompt_shield_validate_request_length(promptshield_target: Prompt
         await promptshield_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_prompt_shield_reject_non_text(
     promptshield_target: PromptShieldTarget, audio_message_piece: MessagePiece
 ):
@@ -77,7 +75,6 @@ async def test_prompt_shield_reject_non_text(
         await promptshield_target.send_prompt_async(message=Message([audio_message_piece]))
 
 
-@pytest.mark.asyncio
 async def test_prompt_shield_document_parsing(
     promptshield_target: PromptShieldTarget, sample_delineated_prompt_as_str: str, sample_delineated_prompt_as_dict
 ):
@@ -86,7 +83,6 @@ async def test_prompt_shield_document_parsing(
     assert result == sample_delineated_prompt_as_dict
 
 
-@pytest.mark.asyncio
 async def test_prompt_shield_response_validation(promptshield_target: PromptShieldTarget):
     # This tests handling both an empty request and an empty response
     promptshield_target._validate_response(request_body={}, response_body={})

@@ -185,7 +185,6 @@ def test_format_text_content_without_conversion(markdown_printer, sample_message
     assert sample_message_piece.original_value + "\n" in formatted
 
 
-@pytest.mark.asyncio
 async def test_format_piece_content_image(markdown_printer, sample_message_piece):
     """Test piece content formatting for images."""
     sample_message_piece.converted_value_data_type = "image_path"
@@ -194,7 +193,6 @@ async def test_format_piece_content_image(markdown_printer, sample_message_piece
     assert any("![Image]" in line for line in formatted)
 
 
-@pytest.mark.asyncio
 async def test_format_piece_content_audio(markdown_printer, sample_message_piece):
     """Test piece content formatting for audio."""
     sample_message_piece.converted_value_data_type = "audio_path"
@@ -203,7 +201,6 @@ async def test_format_piece_content_audio(markdown_printer, sample_message_piece
     assert any("<audio controls>" in line for line in formatted)
 
 
-@pytest.mark.asyncio
 async def test_format_piece_content_error(markdown_printer, sample_message_piece):
     """Test piece content formatting for errors."""
     sample_message_piece.response_error = "TestError"
@@ -211,7 +208,6 @@ async def test_format_piece_content_error(markdown_printer, sample_message_piece
     assert any("**Error Response:**" in line for line in formatted)
 
 
-@pytest.mark.asyncio
 async def test_print_result_async(markdown_printer, sample_attack_result, mock_memory, capsys):
     """Test full attack result printing."""
 
@@ -228,7 +224,6 @@ async def test_print_result_async(markdown_printer, sample_attack_result, mock_m
     assert "## Conversation History" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_conversation_async(markdown_printer, sample_attack_result, mock_memory, capsys):
     """Test conversation history printing."""
     await markdown_printer.print_conversation_async(sample_attack_result)
@@ -237,7 +232,6 @@ async def test_print_conversation_async(markdown_printer, sample_attack_result, 
     assert "*No conversation found for ID: test-conv-123*" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_summary_async(markdown_printer, sample_attack_result, capsys):
     """Test attack summary printing."""
     await markdown_printer.print_summary_async(sample_attack_result)

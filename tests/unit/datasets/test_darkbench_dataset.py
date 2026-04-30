@@ -17,7 +17,6 @@ def mock_darkbench_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset(mock_darkbench_data):
     loader = _DarkBenchDataset()
 
@@ -32,7 +31,6 @@ async def test_fetch_dataset(mock_darkbench_data):
     assert dataset.seeds[1].harm_categories == ["Hidden Subscription"]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_passes_config(mock_darkbench_data):
     loader = _DarkBenchDataset(config="custom", split="test")
 

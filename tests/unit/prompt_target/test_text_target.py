@@ -34,7 +34,6 @@ def test_init_with_custom_stream():
     assert target._text_stream is stream
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_async_writes_to_stream(sample_entries: MutableSequence[MessagePiece]):
     output_stream = io.StringIO()
@@ -49,7 +48,6 @@ async def test_send_prompt_async_writes_to_stream(sample_entries: MutableSequenc
     assert "test prompt content" in captured
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_async_returns_empty_list(sample_entries: MutableSequence[MessagePiece]):
     output_stream = io.StringIO()
@@ -61,7 +59,6 @@ async def test_send_prompt_async_returns_empty_list(sample_entries: MutableSeque
     assert result == []
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_async_writes_to_file(sample_entries: MutableSequence[MessagePiece]):
     with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt") as tmp_file:
@@ -78,7 +75,6 @@ async def test_send_prompt_async_writes_to_file(sample_entries: MutableSequence[
     assert "file write test" in content
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_async_appends_newline(sample_entries: MutableSequence[MessagePiece]):
     output_stream = io.StringIO()
@@ -93,7 +89,6 @@ async def test_send_prompt_async_appends_newline(sample_entries: MutableSequence
     assert captured.endswith("\n")
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_cleanup_target_does_nothing():
     target = TextTarget(text_stream=io.StringIO())

@@ -23,7 +23,6 @@ def gpt5_args():
     }
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -55,7 +54,6 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     assert "Paris" in result[0].message_pieces[1].converted_value
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -107,7 +105,6 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
     jsonschema.validate(instance=response_json, schema=cat_schema)
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -143,7 +140,6 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
     # Can't assert more, since the failure could be due to a bad generation by the model
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_reasoning_effort(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args, reasoning_effort="low")
 
@@ -162,7 +158,6 @@ async def test_openai_responses_gpt5_reasoning_effort(sqlite_instance, gpt5_args
     assert any(p.converted_value_data_type == "text" for p in result[0].message_pieces)
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_reasoning_summary(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args, reasoning_effort="low", reasoning_summary="auto")
 

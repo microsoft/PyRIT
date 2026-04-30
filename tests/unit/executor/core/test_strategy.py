@@ -53,7 +53,6 @@ class TestStrategyExecutionContext:
         """Clear context after each test."""
         clear_execution_context()
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_success_clears_context(self):
         """Test that successful execution clears execution context."""
         strategy = MockStrategy(perform_result="success")
@@ -70,7 +69,6 @@ class TestStrategyExecutionContext:
         # Context should be cleared after successful execution
         # (cleared by the context manager on successful exit)
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_exception_includes_context(self):
         """Test that exceptions include execution context details."""
         strategy = MockStrategy(perform_exception=ValueError("Test error"))
@@ -94,7 +92,6 @@ class TestStrategyExecutionContext:
         # Should include strategy name
         assert "MockStrategy" in error_message
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_exception_without_context(self):
         """Test that exceptions work even without execution context."""
         strategy = MockStrategy(perform_exception=RuntimeError("Something went wrong"))
@@ -107,7 +104,6 @@ class TestStrategyExecutionContext:
         assert "MockStrategy" in error_message
         assert "Something went wrong" in error_message
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_preserves_root_cause(self):
         """Test that the original exception is preserved as __cause__."""
         original_error = ValueError("Original error")
@@ -120,7 +116,6 @@ class TestStrategyExecutionContext:
         # The __cause__ should be the original exception
         assert exc_info.value.__cause__ is original_error
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_extracts_root_cause(self):
         """Test that chained exceptions show root cause in error message."""
         # Create a chain of exceptions
@@ -155,7 +150,6 @@ class TestStrategyExecutionContextDetails:
         """Clear context after each test."""
         clear_execution_context()
 
-    @pytest.mark.asyncio
     async def test_error_includes_attack_identifier(self):
         """Test that error message includes attack identifier."""
         strategy = MockStrategy(perform_exception=ValueError("Error"))
@@ -177,7 +171,6 @@ class TestStrategyExecutionContextDetails:
         assert "Attack identifier:" in error_message
         assert "TestAttack" in error_message
 
-    @pytest.mark.asyncio
     async def test_error_includes_conversation_id(self):
         """Test that error message includes objective target conversation ID."""
         strategy = MockStrategy(perform_exception=ValueError("Error"))
@@ -196,7 +189,6 @@ class TestStrategyExecutionContextDetails:
         error_message = str(exc_info.value)
         assert "Objective target conversation ID: conv-xyz-789" in error_message
 
-    @pytest.mark.asyncio
     async def test_error_includes_component_identifier(self):
         """Test that error message includes component identifier."""
         strategy = MockStrategy(perform_exception=ValueError("Error"))

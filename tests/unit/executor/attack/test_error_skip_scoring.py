@@ -141,7 +141,6 @@ ATTACK_TEST_PARAMS = [
     ATTACK_TEST_PARAMS,
     ids=["PromptSending", "MultiPromptSending", "RedTeaming", "Crescendo", "TreeOfAttacks"],
 )
-@pytest.mark.asyncio
 @patch("pyrit.memory.CentralMemory.get_memory_instance")
 async def test_attack_executor_skips_scoring_on_error(
     mock_memory_instance,

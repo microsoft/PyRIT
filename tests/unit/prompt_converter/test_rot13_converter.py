@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, ROT13Converter
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_basic():
     converter = ROT13Converter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_rot13_converter_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_roundtrip():
     converter = ROT13Converter()
     first = await converter.convert_async(prompt="hello", input_type="text")
@@ -23,7 +21,6 @@ async def test_rot13_converter_roundtrip():
     assert second.output_text == "hello"
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_uppercase():
     converter = ROT13Converter()
     result = await converter.convert_async(prompt="ABC", input_type="text")
@@ -32,7 +29,6 @@ async def test_rot13_converter_uppercase():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_with_numbers():
     converter = ROT13Converter()
     result = await converter.convert_async(prompt="hello123", input_type="text")
@@ -41,7 +37,6 @@ async def test_rot13_converter_with_numbers():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_empty():
     converter = ROT13Converter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -50,7 +45,6 @@ async def test_rot13_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_input_not_supported():
     converter = ROT13Converter()
     with pytest.raises(ValueError):

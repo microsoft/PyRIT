@@ -59,7 +59,6 @@ class TestComicJailbreakDataset:
         with pytest.raises(ValueError, match="Invalid template names"):
             _ComicJailbreakDataset(templates=["article", "bogus"])
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_creates_image_text_pairs(self):
         """Each goal×template with non-empty text produces an image+text pair."""
         mock_data = [_make_example()]
@@ -86,7 +85,6 @@ class TestComicJailbreakDataset:
         assert text_prompt.value == _COMIC_JAILBREAK_QUERY_PROMPT
         assert image_prompt.value == "/fake/rendered.png"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_skips_empty_template_text(self):
         """Templates with empty text for a goal are skipped."""
         # Article has text, Instruction is empty
@@ -103,7 +101,6 @@ class TestComicJailbreakDataset:
         # Only article group (instruction text is empty): 1 objective + 1 image + 1 text
         assert len(dataset.seeds) == 3
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_multiple_templates(self):
         """Multiple templates produce multiple pairs per goal."""
         mock_data = [_make_example()]
@@ -119,7 +116,6 @@ class TestComicJailbreakDataset:
         # 3 templates with text × 1 goal = 3 groups × 3 seeds = 9
         assert len(dataset.seeds) == 9
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_max_examples(self):
         """max_examples limits the number of pairs produced."""
         mock_data = [_make_example(), _make_example(Goal="Another harmful goal")]
@@ -135,7 +131,6 @@ class TestComicJailbreakDataset:
         # max_examples=2 → at most 2 groups × 3 seeds = 6
         assert len(dataset.seeds) <= 6
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_metadata(self):
         """Metadata contains goal, template, and behavior."""
         mock_data = [_make_example()]
@@ -155,7 +150,6 @@ class TestComicJailbreakDataset:
                 assert "goal" in seed.metadata
             assert seed.harm_categories == ["Harassment/Discrimination"]
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_authors(self):
         mock_data = [_make_example()]
         loader = _ComicJailbreakDataset(templates=["article"])
@@ -171,7 +165,6 @@ class TestComicJailbreakDataset:
             assert "Zhiyuan Yu" in seed.authors
             assert len(seed.authors) == 5
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_missing_goal_raises(self):
         mock_data = [{"Target": "Sure", "Behavior": "Test", "Category": "Test"}]
         loader = _ComicJailbreakDataset(templates=["article"])
@@ -180,7 +173,6 @@ class TestComicJailbreakDataset:
             with pytest.raises(ValueError, match="Missing keys"):
                 await loader.fetch_dataset()
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_empty_goal_skipped(self):
         mock_data = [_make_example(Goal="  ")]
         loader = _ComicJailbreakDataset(templates=["article"])
