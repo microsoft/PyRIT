@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import warnings
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from unit.mocks import MockPromptTarget, get_mock_attack_identifier
@@ -50,6 +50,21 @@ def test_set_system_prompt_raises_if_conversation_exists():
     # but MockPromptTarget overrides it. Test the base class directly via a concrete subclass.
     # We test using the real PromptChatTarget.set_system_prompt by calling it on a
     # target that uses the real implementation.
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_base_set_system_prompt_labels_emit_deprecation_warning():
+    target = MockPromptTarget()
+
+    with patch("pyrit.prompt_target.common.prompt_chat_target.print_deprecation_message") as mock_deprecation:
+        PromptChatTarget.set_system_prompt(
+            target,
+            system_prompt="You are a helpful assistant.",
+            conversation_id="conv-base-1",
+            labels={"key": "value"},
+        )
+
+    mock_deprecation.assert_called_once()
 
 
 @pytest.mark.usefixtures("patch_central_database")
