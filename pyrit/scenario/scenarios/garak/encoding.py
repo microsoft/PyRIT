@@ -175,7 +175,7 @@ class Encoding(Scenario):
         encoding_templates: Optional[Sequence[str]] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize the Encoding Scenario.
 

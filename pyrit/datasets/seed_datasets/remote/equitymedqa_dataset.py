@@ -81,7 +81,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         *,
         source: str = "katielink/EquityMedQA",
         subset_name: Literal["all"] | str | Sequence[str] = "all",
-    ):
+    ) -> None:
         """
         Initialize the EquityMedQA dataset loader.
 

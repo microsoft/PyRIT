@@ -26,7 +26,7 @@ class FuzzerExpandConverter(FuzzerConverter):
         *,
         converter_target: Optional[PromptChatTarget] = None,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """Initialize the expand converter with optional chat target and prompt template."""
         prompt_template = (
             prompt_template

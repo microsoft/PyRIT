@@ -9,6 +9,7 @@ simple configuration including converters, scorers, and targets using basic Open
 """
 
 import os
+from collections.abc import Awaitable, Callable
 
 from pyrit.common.apply_defaults import set_default_value, set_global_variable
 from pyrit.executor.attack import (
@@ -83,7 +84,7 @@ class SimpleInitializer(PyRITInitializer):
             "OPENAI_CHAT_MODEL",
         ]
 
-    def _get_api_key(self):  # type: ignore[no-untyped-def]
+    def _get_api_key(self) -> str | Callable[[], Awaitable[str]]:
         """
         Get the API key or Entra auth token provider.
 
@@ -122,16 +123,16 @@ class SimpleInitializer(PyRITInitializer):
         3. Adversarial target configurations
         4. Default values for attack types
         """
-        api_key = self._get_api_key()  # type: ignore[no-untyped-call]
+        api_key = self._get_api_key()
 
         # 1. Setup converter target
-        self._setup_converter_target(api_key=api_key)
+        self._setup_converter_target(api_key=api_key)  # type: ignore[ty:invalid-argument-type]
 
         # 2. Setup scorers
-        self._setup_scorers(api_key=api_key)
+        self._setup_scorers(api_key=api_key)  # type: ignore[ty:invalid-argument-type]
 
         # 3. Setup adversarial targets
-        self._setup_adversarial_targets(api_key=api_key)
+        self._setup_adversarial_targets(api_key=api_key)  # type: ignore[ty:invalid-argument-type]
 
     def _setup_converter_target(self, *, api_key: str) -> None:
         """Set up the default converter target configuration."""

@@ -26,7 +26,7 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "walledai/TDC23-RedTeaming",
-    ):
+    ) -> None:
         """
         Initialize the TDC23-RedTeaming dataset loader.
 

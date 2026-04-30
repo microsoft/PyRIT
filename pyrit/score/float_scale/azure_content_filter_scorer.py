@@ -148,8 +148,8 @@ class AzureContentFilterScorer(FloatScaleScorer):
         if self._endpoint is not None:
             if callable(self._api_key):
                 # Token provider - create an AsyncTokenCredential wrapper
-                credential = AsyncTokenProviderCredential(self._api_key)
-                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
+                credential = AsyncTokenProviderCredential(self._api_key)  # type: ignore[ty:invalid-argument-type]
+                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)  # type: ignore[ty:invalid-argument-type]
             else:
                 # String API key
                 if not isinstance(self._api_key, str):
@@ -316,7 +316,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     score_metadata=metadata,
                     score_rationale="",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,
+                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                     objective=objective,
                 )
                 all_scores.append(score_obj)
@@ -336,7 +336,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 score_metadata=result.metadata,
                 score_rationale=result.rationale,
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
+                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                 objective=objective,
             )
             for result in aggregated_results

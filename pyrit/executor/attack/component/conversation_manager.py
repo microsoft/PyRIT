@@ -194,7 +194,7 @@ class ConversationManager:
         *,
         attack_identifier: ComponentIdentifier,
         prompt_normalizer: Optional[PromptNormalizer] = None,
-    ):
+    ) -> None:
         """
         Initialize the conversation manager.
 
@@ -558,7 +558,7 @@ class ConversationManager:
         if is_multi_turn and final_prepended_message.api_role == "assistant":
             # Update executed_turns
             if hasattr(context, "executed_turns"):
-                context.executed_turns = state.turn_count
+                context.executed_turns = state.turn_count  # type: ignore[ty:invalid-assignment]
 
             # Extract scores on final prepended assistant message if it exists and are relavent
             # Multi-part messages (e.g., text + image) may have scores on multiple pieces
@@ -570,7 +570,7 @@ class ConversationManager:
                         state.last_assistant_message_scores.append(score)
                         # context.last_score gets the first matching score for single-score use cases.
                         if hasattr(context, "last_score") and context.last_score is None:
-                            context.last_score = score
+                            context.last_score = score  # type: ignore[ty:invalid-assignment]
 
         return state
 

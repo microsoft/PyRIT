@@ -387,7 +387,7 @@ class ScorerInitializer(PyRITInitializer):
                 scorer_name = f"likert_{scale.name.lower().removesuffix('_scale')}_gpt4o"
                 self._try_register(
                     name=scorer_name,
-                    factory=lambda s=scale: SelfAskLikertScorer(  # type: ignore[misc]
+                    factory=lambda s=scale: SelfAskLikertScorer(
                         chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
                         likert_scale=s,
                     ),
@@ -491,13 +491,10 @@ class ScorerInitializer(PyRITInitializer):
             name=ACS_WITH_REFUSAL,
             factory=lambda: TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=cast(
-                    "list[TrueFalseScorer]",
-                    [
-                        self._require_dependency(acs, name="acs_threshold"),
-                        TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
-                    ],
-                ),
+                scorers=[
+                    self._require_dependency(acs, name="acs_threshold"),
+                    TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
+                ],
             ),
             required_targets=[acs, refusal],
             tags=composite_tag,
@@ -506,13 +503,10 @@ class ScorerInitializer(PyRITInitializer):
             name=SCALE_AND_REFUSAL,
             factory=lambda: TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=cast(
-                    "list[TrueFalseScorer]",
-                    [
-                        self._require_dependency(scale, name="scale"),
-                        TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
-                    ],
-                ),
+                scorers=[
+                    self._require_dependency(scale, name="scale"),
+                    TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
+                ],
             ),
             required_targets=[scale, refusal],
             tags=composite_tag,
@@ -608,7 +602,7 @@ class ScorerInitializer(PyRITInitializer):
             PromptChatTarget | None: The chat target instance if found, otherwise None.
         """
         target_registry = TargetRegistry.get_registry_singleton()
-        return target_registry.get_instance_by_name(target_name)  # type: ignore[return-value]
+        return target_registry.get_instance_by_name(target_name)
 
     def _require_dependency(self, value: RequiredDependencyT | None, *, name: str) -> RequiredDependencyT:
         """

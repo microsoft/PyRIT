@@ -42,7 +42,7 @@ class AddImageVideoConverter(PromptConverter):
         output_path: Optional[str] = None,
         img_position: tuple[int, int] = (10, 10),
         img_resize_size: tuple[int, int] = (500, 500),
-    ):
+    ) -> None:
         """
         Initialize the converter with the video path and image properties.
 
@@ -133,7 +133,7 @@ class AddImageVideoConverter(PromptConverter):
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             file_extension = video_path.split(".")[-1].lower()
             if file_extension in video_encoding_map:
-                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])  # type: ignore[attr-defined, misc, unused-ignore]
+                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])
                 output_video = cv2.VideoWriter(output_path, video_char_code, fps, (width, height))
             else:
                 raise ValueError(f"Unsupported video format: {file_extension}")
@@ -183,7 +183,7 @@ class AddImageVideoConverter(PromptConverter):
             with contextlib.suppress(cv2.error):
                 cv2.destroyAllWindows()  # Not available in headless OpenCV builds
             if azure_storage_flag:
-                os.remove(local_temp_path)
+                os.remove(local_temp_path)  # type: ignore[ty:possibly-unresolved-reference]
 
         logger.info(f"Video saved as {output_path}")
 
