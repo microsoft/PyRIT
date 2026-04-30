@@ -8,6 +8,9 @@ Target implementations for interacting with different services and APIs,
 for example sending prompts or transferring content (uploads).
 """
 
+import importlib
+from typing import TYPE_CHECKING
+
 from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
 from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
@@ -29,7 +32,6 @@ from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_regex_matching_callback_function,
 )
 from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
-from pyrit.prompt_target.hugging_face.hugging_face_chat_target import HuggingFaceChatTarget
 from pyrit.prompt_target.hugging_face.hugging_face_endpoint_target import HuggingFaceEndpointTarget
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
@@ -45,6 +47,25 @@ from pyrit.prompt_target.playwright_target import PlaywrightTarget
 from pyrit.prompt_target.prompt_shield_target import PromptShieldTarget
 from pyrit.prompt_target.text_target import TextTarget
 from pyrit.prompt_target.websocket_copilot_target import WebSocketCopilotTarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target.hugging_face.hugging_face_chat_target import HuggingFaceChatTarget
+
+# Lazy imports for modules with heavy third-party dependencies (PEP 562).
+# HuggingFaceChatTarget imports `transformers` which adds ~4s to startup.
+_LAZY_IMPORTS: dict[str, str] = {
+    "HuggingFaceChatTarget": "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_IMPORTS:
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        attr = getattr(module, name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AzureBlobStorageTarget",

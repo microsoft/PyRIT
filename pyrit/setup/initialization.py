@@ -274,13 +274,13 @@ async def initialize_pyrit_async(
 
     if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
-        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)
+        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == SQLITE:
         logger.info("Using persistent SQLite database.")
-        memory = SQLiteMemory(**memory_instance_kwargs)
+        memory = SQLiteMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == AZURE_SQL:
         logger.info("Using AzureSQL database.")
-        memory = AzureSQLMemory(**memory_instance_kwargs)
+        memory = AzureSQLMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     else:
         raise ValueError(
             f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"

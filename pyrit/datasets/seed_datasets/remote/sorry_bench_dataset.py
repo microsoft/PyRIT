@@ -101,7 +101,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         categories: Optional[list[str]] = None,
         prompt_style: Optional[str] = None,
         token: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize the Sorry-Bench dataset loader.
 
@@ -205,7 +205,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },
-                    **common_metadata,  # type: ignore[arg-type]
+                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

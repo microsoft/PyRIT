@@ -50,7 +50,7 @@ class _PromptNode:
         self,
         template: str,
         parent: Optional[_PromptNode] = None,
-    ):
+    ) -> None:
         """
         Create the PromptNode instance.
 
@@ -93,7 +93,7 @@ class _MCTSExplorer:
         reward_penalty: float,
         minimum_reward: float,
         non_leaf_node_probability: float,
-    ):
+    ) -> None:
         """
         Initialize the MCTS explorer.
 
@@ -295,7 +295,7 @@ class FuzzerResultPrinter:
     similar to the original FuzzerAttack result display.
     """
 
-    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True):
+    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True) -> None:
         """
         Initialize the fuzzer result printer.
 

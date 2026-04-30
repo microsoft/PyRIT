@@ -94,7 +94,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         self._azure_speech_resource_id: str | None = None
 
         if azure_speech_key is not None and callable(azure_speech_key):
-            self._token_provider = azure_speech_key
+            self._token_provider = azure_speech_key  # type: ignore[ty:invalid-assignment]
             self._azure_speech_resource_id = default_values.get_required_value(
                 env_var_name=self.AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE,
                 passed_value=azure_speech_resource_id,

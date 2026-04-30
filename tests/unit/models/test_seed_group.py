@@ -611,3 +611,147 @@ class TestSeedAttackGroupWithTechnique:
 
         assert isinstance(merged, SeedAttackGroup)
         merged.validate()  # should not raise
+
+    def test_raises_when_technique_has_simulated_conversation_and_prompts_overlap(self):
+        """Merging a technique with SeedSimulatedConversation into a group with overlapping prompts raises."""
+        base = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn_user", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="turn_assistant", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="turn_user_2", data_type="text", role="user", sequence=2),
+            ]
+        )
+        technique = SeedAttackTechniqueGroup(
+            seeds=[
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    num_turns=3,
+                ),
+            ],
+        )
+
+        with pytest.raises(ValueError, match="Cannot merge technique containing a SeedSimulatedConversation"):
+            base.with_technique(technique=technique)
+
+    def test_succeeds_when_technique_has_simulated_conversation_and_no_prompts(self):
+        """Merging a technique with SeedSimulatedConversation into an objective-only group works."""
+        base = SeedAttackGroup(seeds=[SeedObjective(value="objective")])
+        technique = SeedAttackTechniqueGroup(
+            seeds=[
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    num_turns=3,
+                ),
+            ],
+        )
+
+        merged = base.with_technique(technique=technique)
+        assert isinstance(merged, SeedAttackGroup)
+
+    def test_is_compatible_returns_false_when_prompts_overlap_simulated_range(self):
+        """is_compatible_with_technique returns False when prompt sequences overlap simulated range."""
+        base = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn_user", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="turn_assistant", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="turn_user_2", data_type="text", role="user", sequence=2),
+            ]
+        )
+        technique = SeedAttackTechniqueGroup(
+            seeds=[
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    num_turns=3,
+                ),
+            ],
+        )
+
+        assert not base.is_compatible_with_technique(technique=technique)
+
+    def test_is_compatible_returns_true_for_objective_only_with_simulated(self):
+        """is_compatible_with_technique returns True for objective-only base + simulated technique."""
+        base = SeedAttackGroup(seeds=[SeedObjective(value="objective")])
+        technique = SeedAttackTechniqueGroup(
+            seeds=[
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    num_turns=3,
+                ),
+            ],
+        )
+
+        assert base.is_compatible_with_technique(technique=technique)
+
+    def test_is_compatible_returns_true_when_no_simulated_conversation(self):
+        """is_compatible_with_technique returns True when technique has no simulated conversation."""
+        base = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn_user", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="turn_assistant", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="turn_user_2", data_type="text", role="user", sequence=2),
+            ]
+        )
+        technique = self._make_technique()
+
+        assert base.is_compatible_with_technique(technique=technique)
+
+
+# =============================================================================
+# SeedAttackGroup.filter_compatible Tests
+# =============================================================================
+
+
+class TestSeedAttackGroupFilterCompatible:
+    """Tests for SeedAttackGroup.filter_compatible() static method."""
+
+    def test_filters_out_incompatible_groups(self):
+        """filter_compatible removes groups whose prompts overlap with simulated conversation."""
+        compatible = SeedAttackGroup(
+            seeds=[SeedObjective(value="obj1")],
+        )
+        incompatible = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="obj2"),
+                SeedPrompt(value="u", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="a", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="u2", data_type="text", role="user", sequence=2),
+            ],
+        )
+        technique = SeedAttackTechniqueGroup(
+            seeds=[
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt_path="fake.yaml",
+                    num_turns=3,
+                ),
+            ],
+        )
+
+        result = SeedAttackGroup.filter_compatible(
+            seed_groups=[compatible, incompatible],
+            technique=technique,
+        )
+
+        assert len(result) == 1
+        assert result[0].objective.value == "obj1"
+
+    def test_returns_all_when_no_simulated_conversation(self):
+        """filter_compatible returns all groups when technique has no simulated conversation."""
+        groups = [
+            SeedAttackGroup(
+                seeds=[
+                    SeedObjective(value="obj"),
+                    SeedPrompt(value="u", data_type="text", role="user", sequence=0),
+                    SeedPrompt(value="a", data_type="text", role="assistant", sequence=1),
+                    SeedPrompt(value="u2", data_type="text", role="user", sequence=2),
+                ],
+            ),
+        ]
+        technique = SeedAttackTechniqueGroup(
+            seeds=[SeedPrompt(value="tech", data_type="text", is_general_technique=True)],
+        )
+
+        result = SeedAttackGroup.filter_compatible(seed_groups=groups, technique=technique)
+        assert len(result) == 1

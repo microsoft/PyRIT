@@ -26,7 +26,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "SOSBench/SOSBench",
-    ):
+    ) -> None:
         """
         Initialize the SOSBench dataset loader.
 

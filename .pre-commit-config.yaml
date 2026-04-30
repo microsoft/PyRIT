@@ -79,14 +79,11 @@ repos:
       additional_dependencies: ['requests']
       exclude: (release_process.md|git.md|^doc/deployment/|tests|pyrit/prompt_converter/morse_converter.py|.github|pyrit/prompt_converter/emoji_converter.py|pyrit/score/markdown_injection.py|^pyrit/datasets/|^pyrit/auxiliary_attacks/gcg/)
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+  - repo: https://github.com/allganize/ty-pre-commit
+    rev: v0.0.32
     hooks:
-      - id: mypy
-        name: mypy (strict)
-        files: &strict_modules ^pyrit/
+      - id: ty-check
+        name: ty (type check)
+        files: ^pyrit/
         exclude: ^pyrit/auxiliary_attacks/
-        args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache, --strict]
-        entry: mypy
-        language: system
-        types: [ python ]
+        types: [python]

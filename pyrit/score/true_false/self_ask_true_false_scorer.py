@@ -44,7 +44,14 @@ class TrueFalseQuestion:
     This is sent to an LLM and can be used as an alternative to a yaml file from TrueFalseQuestionPaths.
     """
 
-    def __init__(self, *, true_description: str, false_description: str = "", category: str = "", metadata: str = ""):
+    def __init__(
+        self,
+        *,
+        true_description: str,
+        false_description: str = "",
+        category: str = "",
+        metadata: str = "",
+    ) -> None:
         """
         Initialize a TrueFalseQuestion instance.
 
@@ -170,7 +177,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),
