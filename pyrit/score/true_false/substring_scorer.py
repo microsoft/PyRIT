@@ -60,7 +60,7 @@ class SubStringScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
                 "substring": self._substring,
                 "text_matcher": self._text_matcher.__class__.__name__,
             },
@@ -90,7 +90,7 @@ class SubStringScorer(TrueFalseScorer):
                 score_category=self._score_categories,
                 score_rationale="",
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
+                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                 objective=objective,
             )
         ]

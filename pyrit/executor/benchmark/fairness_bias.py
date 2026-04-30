@@ -94,7 +94,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         max_attempts_on_failure: int = 0,
-    ):
+    ) -> None:
         """
         Initialize the fairness bias benchmark strategy.
 

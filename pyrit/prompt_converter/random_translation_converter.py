@@ -35,11 +35,11 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         system_prompt_template: Optional[SeedPrompt] = None,
         languages: Optional[list[str]] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with a target, an optional system prompt template, and language options.
 

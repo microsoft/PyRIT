@@ -35,7 +35,7 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None  # type: ignore[assignment]
+    data_type: Optional[PromptDataType] = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: Optional[ChatMessageRole] = None

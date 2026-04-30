@@ -36,7 +36,7 @@ class SeedAttackGroup(SeedGroup):
         self,
         *,
         seeds: Sequence[Union[Seed, dict[str, Any]]],
-    ):
+    ) -> None:
         """
         Initialize a SeedAttackGroup.
 

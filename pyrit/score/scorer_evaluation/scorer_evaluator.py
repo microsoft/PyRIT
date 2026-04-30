@@ -82,7 +82,7 @@ class ScorerEvaluator(abc.ABC):
     # Subclasses must define the expected metrics type
     expected_metrics_type: MetricsType
 
-    def __init__(self, scorer: Scorer):
+    def __init__(self, scorer: Scorer) -> None:
         """
         Initialize the ScorerEvaluator with a scorer.
 
@@ -468,8 +468,8 @@ class ScorerEvaluator(abc.ABC):
     def _compute_metrics(
         self,
         *,
-        all_human_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
-        all_model_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+        all_human_scores: np.ndarray,
+        all_model_scores: np.ndarray,
         num_scorer_trials: int,
         dataset_name: Optional[str] = None,
         dataset_version: Optional[str] = None,
@@ -566,8 +566,8 @@ class HarmScorerEvaluator(ScorerEvaluator):
     def _compute_metrics(
         self,
         *,
-        all_human_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
-        all_model_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+        all_human_scores: np.ndarray,
+        all_model_scores: np.ndarray,
         num_scorer_trials: int,
         dataset_name: Optional[str] = None,
         dataset_version: Optional[str] = None,
@@ -668,8 +668,8 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
     def _compute_metrics(
         self,
         *,
-        all_human_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
-        all_model_scores: np.ndarray,  # type: ignore[type-arg, unused-ignore]
+        all_human_scores: np.ndarray,
+        all_model_scores: np.ndarray,
         num_scorer_trials: int,
         dataset_name: Optional[str] = None,
         dataset_version: Optional[str] = None,

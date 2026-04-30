@@ -27,11 +27,11 @@ class NoiseConverter(LLMGenericTextConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         noise: Optional[str] = None,
         number_errors: int = 5,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified parameters.
 

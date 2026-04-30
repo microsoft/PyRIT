@@ -62,7 +62,7 @@ class QuestionAnswerScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
                 "correct_answer_matching_patterns": self._correct_answer_matching_patterns,
             },
         )
@@ -106,7 +106,7 @@ class QuestionAnswerScorer(TrueFalseScorer):
                     else "No matching text found in response"
                 ),
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
+                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                 objective=objective,
             )
         ]

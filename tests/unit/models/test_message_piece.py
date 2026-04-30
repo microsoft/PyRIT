@@ -1121,6 +1121,13 @@ class TestMessagePieceDeprecationWarnings:
         deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert not any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)
 
+    def test_labels_emits_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="Hello", labels={"env": "prod"})
+        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert any("labels" in str(m.message) for m in deprecation_msgs)
+
 
 class TestCopyLineageFrom:
     """Tests for MessagePiece.copy_lineage_from."""

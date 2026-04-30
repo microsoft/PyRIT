@@ -149,7 +149,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         converter_config: Optional[StrategyConverterConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Initialize the XPIA workflow.
 

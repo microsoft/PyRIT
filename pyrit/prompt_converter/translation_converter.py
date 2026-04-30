@@ -41,7 +41,7 @@ class TranslationConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         language: str,
         prompt_template: Optional[SeedPrompt] = None,
         max_retries: int = 3,

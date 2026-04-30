@@ -39,7 +39,7 @@ class AnsiAttackConverter(PromptConverter):
         include_repeats: bool = True,
         include_unescape: bool = True,
         incorporate_user_prompt: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the converter with various options to control the scenarios generated.
 
