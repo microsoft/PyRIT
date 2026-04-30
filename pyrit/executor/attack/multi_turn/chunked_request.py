@@ -86,7 +86,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         chunk_size: int = 50,
         total_length: int = 200,
         chunk_type: str = "characters",

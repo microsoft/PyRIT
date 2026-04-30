@@ -32,7 +32,7 @@ class LLMGenericTextConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         system_prompt_template: Optional[SeedPrompt] = None,
         user_prompt_template_with_objective: Optional[SeedPrompt] = None,
         **kwargs: Any,

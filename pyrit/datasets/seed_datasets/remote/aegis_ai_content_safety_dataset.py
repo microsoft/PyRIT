@@ -92,7 +92,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                 ]
             ]
         ] = None,
-    ):
+    ) -> None:
         """
         Initialize the NVIDIA Aegis AI Content Safety Dataset loader.
 

@@ -247,7 +247,7 @@ class PromptShieldTarget(PromptTarget):
         if self._api_key:
             # If callable, call it to get the token
             if callable(self._api_key):
-                token = self._api_key()
+                token = self._api_key()  # type: ignore[ty:call-top-callable]
                 headers["Authorization"] = f"Bearer {token}"
             else:
                 # String API key

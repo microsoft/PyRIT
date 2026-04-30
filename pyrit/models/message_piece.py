@@ -55,7 +55,7 @@ class MessagePiece:
         timestamp: Optional[datetime] = None,
         scores: Optional[list[Score]] = None,
         targeted_harm_categories: Optional[list[str]] = None,
-    ):
+    ) -> None:
         """
         Initialize a MessagePiece.
 
@@ -96,7 +96,7 @@ class MessagePiece:
         """
         self.id = id if id else uuid4()
 
-        if role not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
+        if role not in ChatMessageRole.__args__:
             raise ValueError(f"Role {role} is not a valid role.")
 
         self._role: ChatMessageRole = role
@@ -319,7 +319,7 @@ class MessagePiece:
 
         This is needed when we're scoring prompts or other things that have not been sent by PyRIT
         """
-        self.id = None  # type: ignore[assignment]
+        self.id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
     def to_dict(self) -> dict[str, object]:
         """

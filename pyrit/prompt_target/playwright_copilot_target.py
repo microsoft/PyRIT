@@ -525,7 +525,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         # Return latest new message groups (re-slice to exclude historical groups)
         all_groups = await self._page.query_selector_all(selectors.ai_messages_group_selector)
-        return all_groups[initial_group_count:]  # type: ignore[no-any-return, unused-ignore]
+        return all_groups[initial_group_count:]
 
     async def _extract_images_from_iframes(self, ai_message_groups: list[Any]) -> list[Any]:
         """

@@ -116,7 +116,7 @@ def _create_binary_aggregator(
     """
     return _create_aggregator(
         name,
-        result_func=lambda bs, _op=op: functools.reduce(_op, bs),  # type: ignore[misc]
+        result_func=lambda bs, _op=op: functools.reduce(_op, bs),
         true_msg=true_msg,
         false_msg=false_msg,
     )

@@ -16,9 +16,6 @@
         "python.analysis.extraPaths": [
           "/workspace"
         ],
-        "python.linting.mypyArgs": [
-          "--cache-dir=.mypy_cache"
-        ],
         "python.analysis.typeCheckingMode": "basic",
         "python.analysis.diagnosticMode": "openFilesOnly",
         "python.analysis.autoSearchPaths": false,
@@ -52,7 +49,7 @@
           "**/dist/**": true,
           "**/pyrit/auxiliary_attacks/gcg/attack/**": true,
           "**/doc/**": true,
-          "**/.mypy_cache/**": true,
+          "**/.ty_cache/**": true,
           "**/frontend/node_modules/**": true,
           "**/frontend/dist/**": true,
           "**/dbdata/**": true

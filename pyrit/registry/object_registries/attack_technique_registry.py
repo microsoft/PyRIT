@@ -263,16 +263,16 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             members[spec.name] = (spec.name, spec_tags | matched_agg_tags)
 
         # Build the enum class dynamically
-        strategy_cls = ScenarioStrategy(class_name, members)  # type: ignore[arg-type]
+        strategy_cls = ScenarioStrategy(class_name, members)
 
         # Override get_aggregate_tags on the generated class
-        @classmethod  # type: ignore[misc]
+        @classmethod
         def _get_aggregate_tags(cls: type) -> set[str]:
             return set(all_aggregate_tag_names)
 
-        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[method-assign, assignment]
+        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
-        return strategy_cls  # type: ignore[return-value]
+        return strategy_cls  # type: ignore[ty:invalid-return-type]
 
     @staticmethod
     def build_factory_from_spec(spec: AttackTechniqueSpec) -> AttackTechniqueFactory:
@@ -319,7 +319,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
                 )
 
         return AttackTechniqueFactory(
-            attack_class=spec.attack_class,
+            attack_class=spec.attack_class,  # type: ignore[ty:invalid-argument-type]
             attack_kwargs=kwargs or None,
         )
 
@@ -331,7 +331,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Returns:
             bool: Whether the parameter is present in the class constructor.
         """
-        sig = inspect.signature(attack_class.__init__)  # type: ignore[misc]
+        sig = inspect.signature(attack_class.__init__)
         return "attack_adversarial_config" in sig.parameters
 
     def register_from_specs(

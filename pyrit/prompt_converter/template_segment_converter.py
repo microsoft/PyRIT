@@ -30,7 +30,7 @@ class TemplateSegmentConverter(PromptConverter):
         self,
         *,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified target and prompt template.
 

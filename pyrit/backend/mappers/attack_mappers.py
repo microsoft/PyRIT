@@ -108,7 +108,7 @@ async def _get_sas_for_container_async(*, container_url: str) -> str:
                 account_name=storage_account_name,
                 container_name=container_name,
                 user_delegation_key=delegation_key,
-                permission=ContainerSasPermissions(read=True),  # type: ignore[no-untyped-call,unused-ignore]
+                permission=ContainerSasPermissions(read=True),
                 expiry=expiry_time,
                 start=start_time,
             )

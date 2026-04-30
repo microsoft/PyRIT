@@ -128,7 +128,7 @@ class HumanLabeledDataset:
         version: str,
         harm_definition: Optional[str] = None,
         harm_definition_version: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize the HumanLabeledDataset.
 

@@ -28,7 +28,7 @@ class ScenarioIdentifier:
         scenario_version: int = 1,
         init_data: Optional[dict[str, Any]] = None,
         pyrit_version: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a ScenarioIdentifier.
 

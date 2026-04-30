@@ -54,7 +54,7 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
 
     cyber_specs = [s for s in SCENARIO_TECHNIQUES if s.name in _CYBER_TECHNIQUE_NAMES]
 
-    return AttackTechniqueRegistry.build_strategy_class_from_specs(
+    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
         class_name="CyberStrategy",
         specs=cyber_specs,
         aggregate_tags={

@@ -36,7 +36,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
         *,
         split: str = "330k_train",
         unsafe_only: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the BeaverTails dataset loader.
 
