@@ -284,6 +284,7 @@ scoring_config = AttackScoringConfig(
                     supports_multi_message_pieces=True,
                     supports_multi_turn=True,
                     supports_json_output=True,
+                    supports_editable_history=True,
                     input_modalities=frozenset(
                         {frozenset({"text", "image_path"}), frozenset({"text"}), frozenset({"image_path"})}
                     ),
