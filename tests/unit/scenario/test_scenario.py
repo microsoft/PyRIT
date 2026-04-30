@@ -292,6 +292,36 @@ class TestScenarioInitialization2:
         assert scenario._max_concurrency == 10
         assert scenario._memory_labels == {}
 
+    @pytest.mark.asyncio
+    async def test_initialize_async_validates_target_requirements(self, mock_objective_target):
+        """Test that initialize_async validates objective_target against TARGET_REQUIREMENTS."""
+        scenario = ConcreteScenario(name="Test Scenario", version=1)
+
+        with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
+            await scenario.initialize_async(objective_target=mock_objective_target)
+
+        mock_validate.assert_called_once_with(target=mock_objective_target)
+
+    @pytest.mark.asyncio
+    async def test_initialize_async_propagates_target_requirements_error(self, mock_objective_target):
+        """Test that initialize_async surfaces errors from TARGET_REQUIREMENTS.validate."""
+        scenario = ConcreteScenario(name="Test Scenario", version=1)
+
+        with patch(
+            "pyrit.prompt_target.common.target_requirements.TargetRequirements.validate",
+            side_effect=ValueError("Target must natively support 'editable_history'"),
+        ):
+            with pytest.raises(ValueError, match="editable_history"):
+                await scenario.initialize_async(objective_target=mock_objective_target)
+
+    def test_scenario_base_target_requirements_is_empty(self):
+        """Base Scenario declares an empty TargetRequirements so it accepts any target by default."""
+        from pyrit.prompt_target.common.target_requirements import TargetRequirements
+
+        assert isinstance(Scenario.TARGET_REQUIREMENTS, TargetRequirements)
+        assert Scenario.TARGET_REQUIREMENTS.required == frozenset()
+        assert Scenario.TARGET_REQUIREMENTS.native_required == frozenset()
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioExecution:

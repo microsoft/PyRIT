@@ -2022,7 +2022,7 @@ class MemoryInterface(abc.ABC):
             scenario_result = scenario_results[0]
 
             # Update the scenario run state
-            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
 
             # Save updated result back to memory using update
             entry = ScenarioResultEntry(entry=scenario_result)

@@ -12,6 +12,7 @@ from abc import abstractmethod
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Optional,
     Union,
     cast,
@@ -35,11 +36,12 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import (
         ScorerEvalDatasetFiles,
@@ -59,16 +61,26 @@ class Scorer(Identifiable, abc.ABC):
     # Specifies glob patterns for datasets and a result file name.
     evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
 
+    #: Capability requirements placed on the scorer's chat target (if any).
+    #: Subclasses that use a chat target should override this and pass the
+    #: target to ``super().__init__(chat_target=...)`` so the base class can
+    #: validate it.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
     _identifier: Optional[ComponentIdentifier] = None
 
-    def __init__(self, *, validator: ScorerPromptValidator) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
         """
         Initialize the Scorer.
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
+            chat_target (Optional[PromptTarget]): Chat target used by the scorer, if any. When
+                provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         self._validator = validator
+        if chat_target is not None:
+            type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     def get_identifier(self) -> ComponentIdentifier:
         """
@@ -355,7 +367,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        request.message_pieces[0].id = None
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -379,7 +391,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        request.message_pieces[0].id = None
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(
@@ -493,7 +505,7 @@ class Scorer(Identifiable, abc.ABC):
     async def _score_value_with_llm(
         self,
         *,
-        prompt_target: PromptChatTarget,
+        prompt_target: PromptTarget,
         system_prompt: str,
         message_value: str,
         message_data_type: PromptDataType,
@@ -515,7 +527,7 @@ class Scorer(Identifiable, abc.ABC):
         description fields.
 
         Args:
-            prompt_target (PromptChatTarget): The target LLM to send the message to.
+            prompt_target (PromptTarget): The target LLM to send the message to.
             system_prompt (str): The system-level prompt that guides the behavior of the target LLM.
             message_value (str): The actual value or content to be scored by the LLM (e.g., text, image path,
                 audio path).

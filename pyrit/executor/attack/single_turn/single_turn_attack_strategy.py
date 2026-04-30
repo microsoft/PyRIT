@@ -50,7 +50,7 @@ class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], Atta
         *,
         objective_target: PromptTarget,
         context_type: type[SingleTurnAttackContext[Any]] = SingleTurnAttackContext,
-        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
         logger: logging.Logger = logger,
     ) -> None:
         """
