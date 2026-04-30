@@ -349,11 +349,32 @@ class PyRITShell(cmd.Cmd):
             print("\nType 'help run' for more details and examples")
             return
 
+        # Look up declared params for the scenario so the parser can recognize
+        # scenario-specific flags. Built-in scenarios only in v1.
+        declared_params = None
+        scenario_name_token = line.split(maxsplit=1)[0] if line.strip() else ""
+        if scenario_name_token:
+            from pyrit.registry import ScenarioRegistry
+
+            try:
+                scenario_class = ScenarioRegistry.get_registry_singleton().get_class(scenario_name_token)
+            except KeyError:
+                scenario_class = None
+            if scenario_class is not None:
+                declared_params = scenario_class.supported_parameters()
+
         # Parse arguments using shared parser
         try:
-            args = self._fc.parse_run_arguments(args_string=line)
+            args = self._fc.parse_run_arguments(args_string=line, declared_params=declared_params)
         except ValueError as e:
             print(f"Error: {e}")
+            # Hint when an unknown-flag error likely stems from a user-defined scenario
+            # introduced via --initialization-scripts (not yet supported for shell augmentation).
+            if declared_params is None and "--initialization-scripts" in line:
+                print(
+                    "Note: scenario-specific flags from --initialization-scripts scenarios "
+                    "are not yet supported in pyrit_shell. Built-in scenarios only in this release."
+                )
             return
 
         # Resolve initialization scripts if provided
@@ -374,6 +395,7 @@ class PyRITShell(cmd.Cmd):
         )
 
         try:
+            scenario_args = self._fc.extract_scenario_args(parsed=args)
             result = asyncio.run(
                 self._fc.run_scenario_async(
                     scenario_name=args["scenario_name"],
@@ -385,6 +407,7 @@ class PyRITShell(cmd.Cmd):
                     memory_labels=args["memory_labels"],
                     dataset_names=args["dataset_names"],
                     max_dataset_size=args["max_dataset_size"],
+                    scenario_args=scenario_args,
                 )
             )
             # Store the command and result in history

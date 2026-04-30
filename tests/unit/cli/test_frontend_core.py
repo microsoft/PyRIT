@@ -1473,3 +1473,93 @@ class TestPrintTargetsList:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["initialization_scripts"] == ["/path/to/script.py"]
         assert call_kwargs["initializers"] is None
+
+
+class TestParseRunArgumentsScenarioParams:
+    """Tests for declared-parameter augmentation in parse_run_arguments."""
+
+    def test_parse_with_no_declared_params_unchanged(self):
+        """Existing behavior: declared_params=None leaves built-in parsing intact."""
+        result = frontend_core.parse_run_arguments(args_string="my_scenario --max-concurrency 5")
+
+        assert result["scenario_name"] == "my_scenario"
+        assert result["max_concurrency"] == 5
+
+    def test_int_param_coerced(self):
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario --max-turns 10",
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)],
+        )
+        assert result["scenario__max_turns"] == 10
+
+    def test_bool_param_uses_safe_coercion(self):
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario --enabled false",
+            declared_params=[Parameter(name="enabled", description="d", param_type=bool)],
+        )
+        assert result["scenario__enabled"] is False
+
+    def test_list_param_collects_multiple_values(self):
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario --datasets a b c",
+            declared_params=[Parameter(name="datasets", description="d", param_type=list[str])],
+        )
+        assert result["scenario__datasets"] == ["a", "b", "c"]
+
+    def test_unset_scenario_flag_is_none(self):
+        """Shell parser initializes absent flags to None; extract_scenario_args drops them."""
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario",
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)],
+        )
+        assert result["scenario__max_turns"] is None
+
+    def test_collision_with_built_in_flag_raises(self):
+        from pyrit.common import Parameter
+
+        with pytest.raises(ValueError, match="collides with a built-in flag"):
+            frontend_core.parse_run_arguments(
+                args_string="my_scenario --max-concurrency 5",
+                declared_params=[Parameter(name="max_concurrency", description="d", param_type=int)],
+            )
+
+    def test_scenario_vs_scenario_collision_raises(self):
+        """Two declared params normalizing to the same flag fail at parser-build time."""
+        from pyrit.common import Parameter
+
+        # foo_bar and foo-bar both normalize to --foo-bar
+        with pytest.raises(ValueError, match="normalize to the same CLI flag"):
+            frontend_core.parse_run_arguments(
+                args_string="my_scenario --foo-bar 1",
+                declared_params=[
+                    Parameter(name="foo_bar", description="d", param_type=int),
+                    Parameter(name="foo-bar", description="d", param_type=int),
+                ],
+            )
+
+
+class TestExtractScenarioArgs:
+    """Tests for extract_scenario_args helper."""
+
+    def test_no_scenario_keys_returns_empty(self):
+        result = frontend_core.extract_scenario_args(parsed={"scenario_name": "x", "max_concurrency": 5})
+        assert result == {}
+
+    def test_scenario_keys_extracted_with_prefix_stripped(self):
+        result = frontend_core.extract_scenario_args(
+            parsed={"scenario_name": "x", "scenario__max_turns": 10, "scenario__mode": "fast"}
+        )
+        assert result == {"max_turns": 10, "mode": "fast"}
+
+    def test_none_values_dropped(self):
+        """Absent shell flags (initialized to None) must not reach set_params_from_args."""
+        result = frontend_core.extract_scenario_args(parsed={"scenario__max_turns": None, "scenario__mode": "fast"})
+        assert result == {"mode": "fast"}

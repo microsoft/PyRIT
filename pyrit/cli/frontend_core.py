@@ -26,6 +26,7 @@ from pyrit.cli._cli_args import SQLITE as SQLITE
 from pyrit.cli._cli_args import _argparse_validator as _argparse_validator
 from pyrit.cli._cli_args import _parse_initializer_arg as _parse_initializer_arg
 from pyrit.cli._cli_args import add_common_arguments as add_common_arguments
+from pyrit.cli._cli_args import extract_scenario_args as extract_scenario_args
 from pyrit.cli._cli_args import non_negative_int as non_negative_int
 from pyrit.cli._cli_args import parse_list_targets_arguments as parse_list_targets_arguments
 from pyrit.cli._cli_args import parse_memory_labels as parse_memory_labels
