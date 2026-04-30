@@ -454,3 +454,148 @@ class TestMainIntegration:
         result = pyrit_scan.main(["--list-initializers"])
 
         assert result == 0
+
+
+class TestTwoPassParsing:
+    """Tests for the two-pass scenario-parameter augmentation flow."""
+
+    @staticmethod
+    def _patch_resolve(scenario_class):
+        """Patch the registry lookup so tests don't depend on the real registry."""
+        return patch.object(pyrit_scan, "_resolve_scenario_class", return_value=scenario_class)
+
+    @staticmethod
+    def _make_scenario_class(declared_params):
+        """Build a stand-in class whose only obligation is to expose supported_parameters()."""
+
+        class _FakeScenario:
+            @classmethod
+            def supported_parameters(cls):
+                return list(declared_params)
+
+        return _FakeScenario
+
+    def test_no_scenario_resolved_leaves_namespace_unaugmented(self):
+        """When the positional name is missing or unknown, scenario flags do not appear."""
+        with self._patch_resolve(None):
+            args = pyrit_scan.parse_args(["--list-scenarios"])
+
+        # No scenario__-prefixed attrs sneaked in.
+        scenario_keys = [k for k in vars(args) if k.startswith("scenario__")]
+        assert scenario_keys == []
+
+    def test_int_param_coerced(self):
+        """A declared int parameter coerces its string CLI value to int."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario", "--max-turns", "10"])
+
+        scenario_args = pyrit_scan._extract_scenario_args(parsed=args)
+        assert scenario_args == {"max_turns": 10}
+
+    def test_bool_param_uses_safe_coercion(self):
+        """``--enabled false`` is correctly parsed to False (avoids the type=bool footgun)."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class([Parameter(name="enabled", description="d", param_type=bool)])
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario", "--enabled", "false"])
+
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"enabled": False}
+
+    def test_list_param_collects_multiple_values(self):
+        """A declared list[str] parameter uses nargs='+' to collect successive values."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class([Parameter(name="datasets", description="d", param_type=list[str])])
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario", "--datasets", "a", "b", "c"])
+
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"datasets": ["a", "b", "c"]}
+
+    def test_choices_validated_by_argparse(self):
+        """A value outside ``choices`` is rejected at parse time."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="mode", description="d", param_type=str, choices=("fast", "slow"))]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(SystemExit):
+                pyrit_scan.parse_args(["fake_scenario", "--mode", "medium"])
+
+    def test_unset_scenario_flag_not_in_namespace(self):
+        """``argparse.SUPPRESS`` keeps absent flags out of the parsed Namespace."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario"])
+
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {}
+
+    def test_unknown_scenario_flag_rejected(self):
+        """Argparse pass 2 rejects flags the scenario didn't declare."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(SystemExit):
+                pyrit_scan.parse_args(["fake_scenario", "--unknown-flag", "value"])
+
+    def test_collision_with_built_in_flag_raises_at_build_time(self):
+        """A declared parameter colliding with a built-in flag fails at parser-build time."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_concurrency", description="d", param_type=int, default=10)]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(ValueError, match="collides with built-in flag"):
+                pyrit_scan.parse_args(["fake_scenario", "--max-concurrency", "5"])
+
+    def test_scenario_flag_works_before_positional(self):
+        """Pass 1 uses the full base parser so option order does not break positional ID."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["--config-file", "foo.yaml", "fake_scenario", "--max-turns", "7"])
+
+        # config-file landed correctly + scenario name identified + scenario param parsed
+        assert args.config_file == Path("foo.yaml")
+        assert args.scenario_name == "fake_scenario"
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"max_turns": 7}
+
+
+class TestExtractScenarioArgs:
+    """Tests for the namespaced-dest extraction helper."""
+
+    def test_no_scenario_keys_returns_empty(self):
+        from argparse import Namespace
+
+        result = pyrit_scan._extract_scenario_args(parsed=Namespace(scenario_name="x", config_file=None, log_level=20))
+        assert result == {}
+
+    def test_scenario_keys_extracted_with_prefix_stripped(self):
+        from argparse import Namespace
+
+        result = pyrit_scan._extract_scenario_args(
+            parsed=Namespace(
+                scenario_name="x",
+                config_file=None,
+                scenario__max_turns=10,
+                scenario__mode="fast",
+            )
+        )
+        assert result == {"max_turns": 10, "mode": "fast"}

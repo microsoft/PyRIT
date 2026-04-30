@@ -7,14 +7,23 @@ PyRIT CLI - Command-line interface for running security scenarios.
 This module provides the main entry point for the pyrit_scan command.
 """
 
+import argparse
 import asyncio
 import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.cli import frontend_core
+from pyrit.common.parameter import Parameter, coerce_bool, coerce_scalar
+from pyrit.registry import ScenarioRegistry
+from pyrit.scenario.core import Scenario
+
+# Scenario-declared parameters land in the parsed Namespace under this prefix
+# so they can be extracted unambiguously without comparing against a separate
+# list of built-in flag names (avoids drift if a built-in flag is added).
+_SCENARIO_DEST_PREFIX = "scenario__"
 
 _DESCRIPTION = """PyRIT Scanner - Run security scenarios against AI systems
 
@@ -168,12 +177,164 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
 
 def parse_args(args: Optional[list[str]] = None) -> Namespace:
     """
-    Parse command-line arguments for the PyRIT scanner.
+    Parse command-line arguments for the PyRIT scanner using a two-pass flow.
+
+    Pass 1 builds the parser with ``add_help=False`` and uses
+    ``parse_known_args`` to identify the positional scenario name without
+    failing on unknown scenario-specific flags. If a registered built-in
+    scenario is identified, its declared :class:`Parameter` list is added
+    to the pass-2 parser as additional flags (kebab-cased, namespaced under
+    ``scenario__<name>`` in the resulting Namespace, with type coercion via
+    ``pyrit.common.parameter`` helpers and ``default=argparse.SUPPRESS`` so
+    unset flags do not appear in the result).
+
+    Pass 2 uses the augmented parser to do the real parse, so argparse
+    handles typo errors, ``--help``, and per-flag type coercion uniformly.
+
+    Args:
+        args (Optional[list[str]]): Argument list (``sys.argv[1:]`` when None).
 
     Returns:
         Namespace: Parsed command-line arguments.
     """
-    return _build_base_parser().parse_args(args)
+    pass1_parser = _build_base_parser(add_help=False)
+    parsed_pass1, _ = pass1_parser.parse_known_args(args)
+
+    scenario_class = _resolve_scenario_class(parsed_pass1.scenario_name)
+
+    pass2_parser = _build_base_parser(add_help=True)
+    if scenario_class is not None:
+        _add_scenario_params(parser=pass2_parser, declared=scenario_class.supported_parameters())
+
+    return pass2_parser.parse_args(args)
+
+
+def _resolve_scenario_class(scenario_name: Optional[str]) -> Optional[type[Scenario]]:
+    """
+    Look up a scenario class by name from the built-in registry.
+
+    Returns ``None`` when the name is missing or unknown so that pass 2 can
+    surface its own ``--help`` / list-mode / "scenario not found" UX without
+    this helper short-circuiting it. v1 only resolves built-in scenarios;
+    user-defined scenarios discovered through ``--initialization-scripts``
+    are not augmented at parse time (the scripts are not executed here).
+
+    Args:
+        scenario_name (Optional[str]): Positional scenario name from pass 1.
+
+    Returns:
+        Optional[type[Scenario]]: The scenario class, or None.
+    """
+    if not scenario_name:
+        return None
+    registry = ScenarioRegistry.get_registry_singleton()
+    try:
+        return registry.get_class(scenario_name)
+    except KeyError:
+        return None
+
+
+def _add_scenario_params(*, parser: ArgumentParser, declared: list[Parameter]) -> None:
+    """
+    Add scenario-declared parameters to ``parser`` as CLI flags.
+
+    Each parameter becomes an argparse argument named ``--{kebab-case-name}``
+    with ``dest=scenario__<name>``, ``default=argparse.SUPPRESS`` so absent
+    flags do not appear in the parsed Namespace, and type/choices/nargs
+    derived from the ``Parameter`` declaration. Coercion routes through
+    the shared helpers in ``pyrit.common.parameter`` so the same
+    bool/scalar handling applies whether the value enters through CLI,
+    YAML, or programmatic ``set_params_from_args``.
+
+    Args:
+        parser (ArgumentParser): Parser to extend.
+        declared (list[Parameter]): Scenario's declared parameters.
+
+    Raises:
+        ValueError: If a scenario-derived flag collides with a built-in flag.
+    """
+    existing_flags = {action_str for action in parser._actions for action_str in action.option_strings}
+    for param in declared:
+        flag = f"--{param.name.replace('_', '-')}"
+        if flag in existing_flags:
+            raise ValueError(
+                f"Scenario parameter '{param.name}' collides with built-in flag {flag!r}. "
+                f"Rename the parameter to avoid the collision."
+            )
+        kwargs: dict[str, Any] = {
+            "dest": f"{_SCENARIO_DEST_PREFIX}{param.name}",
+            "default": argparse.SUPPRESS,
+            "help": param.description,
+        }
+        type_callable = _argparse_type_for(param=param)
+        if type_callable is not None:
+            kwargs["type"] = type_callable
+        if _is_list_param(param.param_type):
+            kwargs["nargs"] = "+"
+        if param.choices is not None:
+            kwargs["choices"] = list(param.choices)
+        parser.add_argument(flag, **kwargs)
+
+
+def _argparse_type_for(*, param: Parameter) -> Optional[Any]:
+    """
+    Return an argparse-compatible ``type=`` callable for a declared parameter.
+
+    Maps each supported ``param_type`` to a coercion function that takes the
+    raw string from argparse and returns the typed value. ``None``,
+    ``str``, and list element types are returned as plain ``str`` (or None
+    to skip type coercion); argparse handles those uniformly.
+
+    Args:
+        param (Parameter): The scenario-declared parameter.
+
+    Returns:
+        Optional[Any]: A callable suitable for argparse's ``type=`` keyword,
+            or None if no coercion is needed (str / raw passthrough).
+    """
+    param_type = param.param_type
+    if param_type is None or param_type is str:
+        return None
+    if param_type is bool:
+        return lambda raw: coerce_bool(param_name=param.name, raw_value=raw)
+    if param_type is int:
+        return lambda raw: coerce_scalar(param_name=param.name, scalar_type=int, raw_value=raw)
+    if param_type is float:
+        return lambda raw: coerce_scalar(param_name=param.name, scalar_type=float, raw_value=raw)
+    if _is_list_param(param_type):
+        # nargs='+' applies type per element; v1 only supports list[str], so str(...)
+        return str
+    return None
+
+
+def _is_list_param(param_type: Any) -> bool:
+    """Return True when ``param_type`` is a parameterized list generic (e.g. ``list[str]``)."""
+    from typing import get_origin
+
+    return get_origin(param_type) is list
+
+
+def _extract_scenario_args(*, parsed: Namespace) -> dict[str, Any]:
+    """
+    Extract scenario-declared parameter values from a parsed Namespace.
+
+    Relies on the ``scenario__<name>`` dest namespacing established in
+    ``_add_scenario_params`` so extraction does not depend on knowing
+    the full set of built-in flag names.
+
+    Args:
+        parsed (Namespace): Result of ``ArgumentParser.parse_args``.
+
+    Returns:
+        dict[str, Any]: Map of original parameter name to coerced value.
+            Empty when the scenario declares no parameters or the user
+            supplied none.
+    """
+    return {
+        key.removeprefix(_SCENARIO_DEST_PREFIX): value
+        for key, value in vars(parsed).items()
+        if key.startswith(_SCENARIO_DEST_PREFIX)
+    }
 
 
 def main(args: Optional[list[str]] = None) -> int:
@@ -266,6 +427,10 @@ def main(args: Optional[list[str]] = None) -> int:
         if parsed_args.memory_labels:
             memory_labels = frontend_core.parse_memory_labels(json_string=parsed_args.memory_labels)
 
+        # Extract scenario-declared parameter values from the parsed Namespace
+        # (those land under the scenario__ dest prefix during pass 2 augmentation).
+        scenario_args = _extract_scenario_args(parsed=parsed_args)
+
         # Run scenario
         asyncio.run(
             frontend_core.run_scenario_async(
@@ -278,6 +443,7 @@ def main(args: Optional[list[str]] = None) -> int:
                 memory_labels=memory_labels,
                 dataset_names=parsed_args.dataset_names,
                 max_dataset_size=parsed_args.max_dataset_size,
+                scenario_args=scenario_args,
             )
         )
         return 0

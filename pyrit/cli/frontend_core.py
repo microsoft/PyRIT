@@ -364,6 +364,7 @@ async def run_scenario_async(
     memory_labels: Optional[dict[str, str]] = None,
     dataset_names: Optional[list[str]] = None,
     max_dataset_size: Optional[int] = None,
+    scenario_args: Optional[dict[str, Any]] = None,
     print_summary: bool = True,
 ) -> ScenarioResult:
     """
@@ -385,6 +386,10 @@ async def run_scenario_async(
         max_dataset_size: Optional maximum number of items to use from the dataset.
             If dataset_names is provided, limits items from the new datasets.
             If only max_dataset_size is provided, overrides the scenario's default limit.
+        scenario_args: Optional map of scenario-declared parameter values (already
+            merged from CLI flags and config-file values by the caller). Passed to
+            ``Scenario.set_params_from_args`` after construction so the scenario's
+            ``self.params`` is populated before ``initialize_async`` runs.
         print_summary: Whether to print the summary after execution. Defaults to True.
 
     Returns:
@@ -502,6 +507,9 @@ async def run_scenario_async(
     # Scenarios here are a concrete subclass
     # Runtime parameters are passed to initialize_async()
     scenario = scenario_class()  # type: ignore[call-arg]
+    # Always populate self.params: an empty args dict still triggers
+    # missing-required validation and default materialization.
+    scenario.set_params_from_args(args=scenario_args or {})
     await scenario.initialize_async(**init_kwargs)
     result = await scenario.run_async()
 
