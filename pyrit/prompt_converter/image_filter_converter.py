@@ -42,7 +42,7 @@ class ImageFilterConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         filter_name: str | None = None,
         filter_path: str | pathlib.Path | None = None,
         variation: str | None = None,
@@ -110,8 +110,7 @@ class ImageFilterConverter(PromptConverter):
             key = name.strip().lower()
             if key in self._variation_map:
                 logger.warning(
-                    f"Duplicate variation key '{name}' in filter '{self._filter_name}', "
-                    "overwriting previous entry."
+                    f"Duplicate variation key '{name}' in filter '{self._filter_name}', overwriting previous entry."
                 )
             self._variation_map[key] = name
 
