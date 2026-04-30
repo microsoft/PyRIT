@@ -101,6 +101,49 @@ class SeedAttackGroup(SeedGroup):
             raise ValueError("SeedAttackGroup should always have an objective")
         return obj
 
+    def is_compatible_with_technique(self, *, technique: SeedAttackTechniqueGroup) -> bool:
+        """
+        Check whether this seed group can be merged with the given technique.
+
+        A technique containing a ``SeedSimulatedConversation`` is incompatible
+        with seed groups that have ``SeedPrompt`` objects whose sequences fall
+        within the simulated conversation's range.
+
+        Args:
+            technique: The technique group to check compatibility with.
+
+        Returns:
+            True if the merge would succeed, False if it would cause a
+            sequence overlap.
+        """
+        sim = technique.simulated_conversation_config
+        if sim is None:
+            return True
+        sim_range = sim.sequence_range
+        return not any(p.sequence in sim_range for p in self.prompts)
+
+    @staticmethod
+    def filter_compatible(
+        *,
+        seed_groups: Sequence[SeedAttackGroup],
+        technique: SeedAttackTechniqueGroup,
+    ) -> list[SeedAttackGroup]:
+        """
+        Return only the seed groups compatible with the given technique.
+
+        A seed group is incompatible when the technique carries a
+        ``SeedSimulatedConversation`` whose sequence range overlaps with
+        the group's prompt sequences.
+
+        Args:
+            seed_groups: Candidate seed groups.
+            technique: The technique to check compatibility against.
+
+        Returns:
+            The compatible subset of *seed_groups*.
+        """
+        return [sg for sg in seed_groups if sg.is_compatible_with_technique(technique=technique)]
+
     def with_technique(self, *, technique: SeedAttackTechniqueGroup) -> SeedAttackGroup:
         """
         Return a new SeedAttackGroup with technique seeds merged in.
@@ -113,7 +156,23 @@ class SeedAttackGroup(SeedGroup):
 
         Returns:
             A new SeedAttackGroup with the merged seeds.
+
+        Raises:
+            ValueError: If the technique contains a SeedSimulatedConversation whose
+                sequence range overlaps with existing prompt sequences.
         """
+        # Pre-merge compatibility check with a clear error message
+        if not self.is_compatible_with_technique(technique=technique):
+            sim = technique.simulated_conversation_config
+            assert sim is not None  # guaranteed by is_compatible_with_technique
+            prompt_sequences = sorted({p.sequence for p in self.prompts})
+            raise ValueError(
+                f"Cannot merge technique containing a SeedSimulatedConversation "
+                f"(sequence range {list(sim.sequence_range)}) with a seed group that has "
+                f"SeedPrompts at sequences {prompt_sequences}. Seed groups with prompts "
+                f"overlapping the simulated conversation range are incompatible."
+            )
+
         base = list(self.seeds)
         idx = technique.insertion_index
         technique_seeds = list(technique.seeds)
