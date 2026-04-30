@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import warnings
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from unit.mocks import MockPromptTarget
