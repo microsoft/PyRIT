@@ -599,3 +599,141 @@ class TestExtractScenarioArgs:
             )
         )
         assert result == {"max_turns": 10, "mode": "fast"}
+
+
+class TestConfigScenarioMerge:
+    """Tests for the CLI/config scenario_args merge in pyrit_scan.main()."""
+
+    @staticmethod
+    def _patch_resolve(scenario_class):
+        return patch.object(pyrit_scan, "_resolve_scenario_class", return_value=scenario_class)
+
+    @staticmethod
+    def _make_scenario_class(declared_params):
+        class _FakeScenario:
+            @classmethod
+            def supported_parameters(cls):
+                return list(declared_params)
+
+        return _FakeScenario
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_cli_args_override_config_args_per_key(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """When CLI and config both set max_turns, CLI wins per-key."""
+        from pyrit.common import Parameter
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        # Config sets max_turns=5, mode=slow; CLI overrides max_turns=10.
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args={"max_turns": 5, "mode": "slow"})
+        mock_frontend_core.return_value = mock_context
+
+        scenario_class = self._make_scenario_class(
+            [
+                Parameter(name="max_turns", description="d", param_type=int, default=5),
+                Parameter(name="mode", description="d", param_type=str, default="slow"),
+            ]
+        )
+        with self._patch_resolve(scenario_class):
+            pyrit_scan.main(["scam", "--max-turns", "10"])
+
+        # Inspect the scenario_args kwarg passed into run_scenario_async
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        assert call_kwargs["scenario_args"] == {"max_turns": 10, "mode": "slow"}
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_config_scenario_used_when_no_positional(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """Config-only scenario invocation: pyrit_scan --config-file my.yaml."""
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args={"max_turns": 5})
+        mock_frontend_core.return_value = mock_context
+
+        # No positional, no scenario flags (would require pass-2 augmentation,
+        # which is a documented v1 limitation).
+        with self._patch_resolve(None):
+            result = pyrit_scan.main([])
+
+        assert result == 0
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        assert call_kwargs["scenario_name"] == "scam"
+        assert call_kwargs["scenario_args"] == {"max_turns": 5}
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_config_args_ignored_when_cli_specifies_different_scenario(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """CLI scenario name differs from config: config args silently dropped (CLI-wins)."""
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args={"max_turns": 5})
+        mock_frontend_core.return_value = mock_context
+
+        with self._patch_resolve(None):
+            pyrit_scan.main(["other_scenario"])
+
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        assert call_kwargs["scenario_name"] == "other_scenario"
+        assert call_kwargs["scenario_args"] == {}
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_no_scenario_anywhere_returns_error(
+        self,
+        mock_frontend_core: MagicMock,
+    ):
+        """No CLI positional and no config scenario: explicit error message + nonzero exit."""
+        mock_context = MagicMock()
+        mock_context._scenario_config = None
+        mock_frontend_core.return_value = mock_context
+
+        with self._patch_resolve(None):
+            result = pyrit_scan.main([])
+
+        assert result == 1
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_config_args_deep_copied(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """Mutating scenario_args on one run must not leak into the config block."""
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        original_args = {"datasets": ["a", "b"]}
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args=original_args)
+        mock_frontend_core.return_value = mock_context
+
+        with self._patch_resolve(None):
+            pyrit_scan.main(["scam"])
+
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        # Mutate the passed dict
+        call_kwargs["scenario_args"]["datasets"].append("c")
+        # Original config block must be untouched
+        assert original_args == {"datasets": ["a", "b"]}

@@ -9,6 +9,7 @@ This module provides the main entry point for the pyrit_scan command.
 
 import argparse
 import asyncio
+import copy
 import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
@@ -369,12 +370,7 @@ def main(args: Optional[list[str]] = None) -> int:
         )
         return asyncio.run(frontend_core.print_targets_list_async(context=context))
 
-    # Verify scenario was provided
-    if not parsed_args.scenario_name:
-        print("Error: No scenario specified. Use --help for usage information.")
-        return 1
-
-    # Run scenario
+    # Run scenario (verify scenario name from CLI positional or config block)
     try:
         # Collect initialization scripts
         initialization_scripts = None
@@ -391,17 +387,30 @@ def main(args: Optional[list[str]] = None) -> int:
             log_level=parsed_args.log_level,
         )
 
+        # Resolve the effective scenario name: CLI positional wins, config falls through.
+        config_scenario = context._scenario_config
+        effective_scenario_name = parsed_args.scenario_name or (config_scenario.name if config_scenario else None)
+        if not effective_scenario_name:
+            print("Error: No scenario specified. Provide one positionally or via the config file's `scenario:` block.")
+            return 1
+
         # Parse memory labels if provided
         memory_labels = None
         if parsed_args.memory_labels:
             memory_labels = frontend_core.parse_memory_labels(json_string=parsed_args.memory_labels)
 
-        scenario_args = _extract_scenario_args(parsed=parsed_args)
+        # Merge scenario args: CLI wins per-key over config args. Config args
+        # are deep-copied so mutable values (lists, dicts) don't leak across runs.
+        cli_scenario_args = _extract_scenario_args(parsed=parsed_args)
+        merged_scenario_args: dict[str, Any] = {}
+        if config_scenario and config_scenario.name == effective_scenario_name and config_scenario.args:
+            merged_scenario_args.update(copy.deepcopy(config_scenario.args))
+        merged_scenario_args.update(cli_scenario_args)
 
         # Run scenario
         asyncio.run(
             frontend_core.run_scenario_async(
-                scenario_name=parsed_args.scenario_name,
+                scenario_name=effective_scenario_name,
                 context=context,
                 target_name=parsed_args.target,
                 scenario_strategies=parsed_args.scenario_strategies,
@@ -410,7 +419,7 @@ def main(args: Optional[list[str]] = None) -> int:
                 memory_labels=memory_labels,
                 dataset_names=parsed_args.dataset_names,
                 max_dataset_size=parsed_args.max_dataset_size,
-                scenario_args=scenario_args,
+                scenario_args=merged_scenario_args,
             )
         )
         return 0

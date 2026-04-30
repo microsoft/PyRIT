@@ -142,6 +142,7 @@ class FrontendCore:
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
         self._initialization_scripts = config._resolve_initialization_scripts()
         self._initializer_configs = config._initializer_configs if config._initializer_configs else None
+        self._scenario_config = config._scenario_config
         self._env_files = config._resolve_env_files()
         self._operator = config.operator
         self._operation = config.operation
@@ -220,6 +221,7 @@ class FrontendCore:
         derived._env_files = self._env_files
         derived._operator = self._operator
         derived._operation = self._operation
+        derived._scenario_config = self._scenario_config
 
         # Apply overrides or inherit
         derived._log_level = log_level if log_level is not None else self._log_level
