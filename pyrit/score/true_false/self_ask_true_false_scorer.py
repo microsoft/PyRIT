@@ -12,7 +12,7 @@ from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -100,11 +100,12 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text", "image_path"],
     )
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         true_false_question_path: Optional[Union[str, Path]] = None,
         true_false_question: Optional[TrueFalseQuestion] = None,
         true_false_system_prompt_path: Optional[Union[str, Path]] = None,
@@ -115,7 +116,9 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         Initialize the SelfAskTrueFalseScorer.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to interact with.
+            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
             true_false_question (Optional[TrueFalseQuestion]): The true/false question object.
             true_false_system_prompt_path (Optional[Union[str, Path]]): The path to the system prompt file.
@@ -127,7 +130,11 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             ValueError: If both true_false_question_path and true_false_question are provided.
             ValueError: If required keys are missing in true_false_question.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
 
         self._prompt_target = chat_target
 

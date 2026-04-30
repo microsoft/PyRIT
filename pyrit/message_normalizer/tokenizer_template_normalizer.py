@@ -122,7 +122,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         Returns:
             The loaded tokenizer.
         """
-        from transformers import AutoTokenizer  # type: ignore[ty:possibly-missing-import]
+        from transformers import AutoTokenizer
 
         return cast(
             "PreTrainedTokenizerBase",

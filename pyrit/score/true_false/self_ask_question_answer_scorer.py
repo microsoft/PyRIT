@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from pyrit.models import MessagePiece, Score, UnvalidatedScore
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 
 class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
@@ -37,7 +37,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         true_false_question_path: Optional[pathlib.Path] = None,
         validator: Optional[ScorerPromptValidator] = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
@@ -46,7 +46,9 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         Initialize the SelfAskQuestionAnswerScorer object.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to use for the scorer.
+            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             true_false_question_path (Optional[pathlib.Path]): The path to the true/false question file.
                 Defaults to None, which uses the default question_answering.yaml file.
             validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.

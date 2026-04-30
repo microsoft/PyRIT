@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -15,7 +16,7 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 if TYPE_CHECKING:
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.models import MessagePiece, Score, UnvalidatedScore
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 
 class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
@@ -28,11 +29,12 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         supported_data_types=["text"],
         is_objective_required=False,
     )
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         system_prompt_format_string: str,
         prompt_format_string: Optional[str] = None,
         category: Optional[str] = None,
@@ -55,7 +57,9 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         in the response, the provided `category` argument will be applied.
 
         Args:
-            chat_target (PromptChatTarget): The chat target used to score.
+            chat_target (PromptTarget): The chat target used to score. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, task (alias of objective), prompt, and message_piece.
             prompt_format_string (Optional[str]): User prompt template with the same placeholders.
@@ -73,7 +77,11 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         Raises:
             ValueError: If system_prompt_format_string is not provided or empty.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
         self._prompt_target = chat_target
         if not system_prompt_format_string:
             raise ValueError("system_prompt_format_string must be provided and non-empty.")
