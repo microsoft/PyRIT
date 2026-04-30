@@ -88,7 +88,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()
-        return cls._instances[cls]  # type: ignore[return-value]
+        return cls._instances[cls]
 
     @classmethod
     def reset_instance(cls) -> None:

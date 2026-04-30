@@ -28,7 +28,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "svannie678/red_team_repo_social_bias_prompts",
-    ):
+    ) -> None:
         """
         Initialize the Red Team Social Bias dataset loader.
 
@@ -116,7 +116,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                             data_type="text",
                             prompt_group_id=group_id,
                             sequence=i,
-                            **prompt_metadata,  # type: ignore[arg-type]
+                            **prompt_metadata,  # type: ignore[ty:invalid-argument-type]
                         )
                     )
             else:
@@ -133,7 +133,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                     SeedPrompt(
                         value=escaped_cleaned_value,
                         data_type="text",
-                        **prompt_metadata,  # type: ignore[arg-type]
+                        **prompt_metadata,  # type: ignore[ty:invalid-argument-type]
                     )
                 )
 

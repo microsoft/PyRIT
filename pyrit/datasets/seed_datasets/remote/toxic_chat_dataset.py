@@ -39,7 +39,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         *,
         config: str = "toxicchat0124",
         split: str = "train",
-    ):
+    ) -> None:
         """
         Initialize the ToxicChat dataset loader.
 

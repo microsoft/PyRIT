@@ -40,9 +40,9 @@ class FuzzerConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         prompt_template: SeedPrompt,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified chat target and prompt template.
 

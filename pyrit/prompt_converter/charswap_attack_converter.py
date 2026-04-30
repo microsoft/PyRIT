@@ -23,7 +23,7 @@ class CharSwapConverter(WordLevelConverter):
         *,
         max_iterations: int = 10,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified parameters.
 

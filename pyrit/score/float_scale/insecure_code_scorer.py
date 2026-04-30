@@ -9,7 +9,7 @@ from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -21,24 +21,25 @@ class InsecureCodeScorer(FloatScaleScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         system_prompt_path: Optional[Union[str, Path]] = None,
         validator: Optional[ScorerPromptValidator] = None,
-    ):
+    ) -> None:
         """
         Initialize the Insecure Code Scorer.
 
         Args:
-            chat_target (PromptChatTarget): The target to use for scoring code security.
+            chat_target (PromptTarget): The target to use for scoring code security.
             system_prompt_path (Optional[Union[str, Path]]): Path to the YAML file containing the system prompt.
                 Defaults to the default insecure code scoring prompt if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
         self._prompt_target = chat_target
 
@@ -92,7 +93,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             system_prompt=self._system_prompt,
             message_value=message_piece.original_value,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
+            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
             category=self._harm_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,

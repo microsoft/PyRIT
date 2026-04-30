@@ -22,7 +22,7 @@ class PrependedConversationConfig:
     This class provides control over:
     - Which message roles should have request converters applied
     - How to normalize conversation history for non-chat objective targets
-    - What to do when the objective target is not a PromptChatTarget
+    - What to do when the objective target is not a chat-capable PromptTarget
     """
 
     # Roles for which request converters should be applied to prepended messages.
@@ -36,13 +36,13 @@ class PrependedConversationConfig:
     # ConversationContextNormalizer is used that produces "Turn N: User/Assistant" format.
     message_normalizer: Optional[MessageStringNormalizer] = None
 
-    # Behavior when the target is a PromptTarget but not a PromptChatTarget:
+    # Behavior when the target is a PromptTarget but not a chat-capable PromptTarget:
     # - "normalize_first_turn": Normalize the prepended conversation into a string and
     #   store it in ConversationState.normalized_prepended_context. This context will be
     #   prepended to the first message sent to the target. Uses objective_target_context_normalizer
     #   if provided, otherwise falls back to ConversationContextNormalizer.
     # - "raise": Raise a ValueError. Use this when prepended conversation history must be
-    #   maintained by the target (i.e., target must be a PromptChatTarget).
+    #   maintained by the target (i.e., target must be a chat-capable PromptTarget).
     non_chat_target_behavior: Literal["normalize_first_turn", "raise"] = "normalize_first_turn"
 
     def get_message_normalizer(self) -> MessageStringNormalizer:

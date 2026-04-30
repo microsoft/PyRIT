@@ -60,7 +60,7 @@ class ImageCompressionConverter(PromptConverter):
         background_color: tuple[int, int, int] = (0, 0, 0),
         min_compression_threshold: int = 1024,
         fallback_to_original: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the converter with specified compression settings.
 

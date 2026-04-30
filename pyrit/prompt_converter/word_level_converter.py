@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
@@ -33,7 +33,8 @@ class WordLevelConverter(PromptConverter):
         *,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
         word_split_separator: Optional[str] = " ",
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the converter with the specified selection strategy.
 
@@ -42,8 +43,10 @@ class WordLevelConverter(PromptConverter):
                 words to convert. If None, all words will be converted. Defaults to None.
             word_split_separator (Optional[str]): Separator used to split words in the input text.
                 If None, splits by any whitespace. Defaults to " ".
+            **kwargs: Forwarded to ``PromptConverter.__init__`` to support cooperative multiple inheritance
+                (e.g., ``converter_target`` when mixed with LLM-based converters).
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self._word_selection_strategy = word_selection_strategy or AllWordsSelectionStrategy()
         self._word_split_separator = word_split_separator
 

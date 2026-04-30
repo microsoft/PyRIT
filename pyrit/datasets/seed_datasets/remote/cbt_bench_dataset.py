@@ -34,7 +34,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         source: str = "Psychotherapy-LLM/CBT-Bench",
         config: str = "core_fine_seed",
         split: str = "train",
-    ):
+    ) -> None:
         """
         Initialize the CBT-Bench dataset loader.
 

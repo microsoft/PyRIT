@@ -39,7 +39,7 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     from pyrit.registry.tag_query import TagQuery
     from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
-    return AttackTechniqueRegistry.build_strategy_class_from_specs(
+    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseStrategy",
         specs=TagQuery.all("core").filter(SCENARIO_TECHNIQUES),
         aggregate_tags={

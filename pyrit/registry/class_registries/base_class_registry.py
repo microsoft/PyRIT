@@ -143,8 +143,8 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             The singleton instance of this registry class.
         """
         if cls not in cls._instances:
-            cls._instances[cls] = cls()  # type: ignore[assignment]
-        return cls._instances[cls]  # type: ignore[return-value]
+            cls._instances[cls] = cls()  # type: ignore[ty:invalid-assignment]
+        return cls._instances[cls]
 
     @classmethod
     def reset_instance(cls) -> None:

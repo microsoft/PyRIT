@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
@@ -80,6 +81,9 @@ class AttackResult(StrategyResult):
 
     # Optional reason for the outcome, providing additional context
     outcome_reason: Optional[str] = None
+
+    # Wall-clock time the result was created or persisted.
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = field(default_factory=set)
@@ -220,7 +224,7 @@ def _add_attack_identifier_compat(cls: type) -> type:
         The same class with a wrapped ``__init__``.
 
     """
-    original_init = cls.__init__  # type: ignore[misc]
+    original_init = cls.__init__
 
     @functools.wraps(original_init)
     def wrapped_init(self: Any, *args: Any, **kwargs: Any) -> None:
@@ -241,7 +245,7 @@ def _add_attack_identifier_compat(cls: type) -> type:
                 )
         original_init(self, *args, **kwargs)
 
-    cls.__init__ = wrapped_init  # type: ignore[misc]
+    cls.__init__ = wrapped_init  # type: ignore[ty:invalid-assignment]
     return cls
 
 

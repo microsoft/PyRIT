@@ -158,7 +158,7 @@ def ensure_async_token_provider(
         """
         result = api_key()
         if inspect.isawaitable(result):
-            return await result
+            return await result  # type: ignore[ty:invalid-return-type]
         return result
 
     return async_token_provider
@@ -172,7 +172,7 @@ class AzureAuth(Authenticator):
     access_token: AccessToken
     _token_scope: str
 
-    def __init__(self, token_scope: str, tenant_id: str = ""):
+    def __init__(self, token_scope: str, tenant_id: str = "") -> None:
         """
         Initialize Azure authentication.
 
@@ -326,7 +326,7 @@ def get_azure_token_provider(scope: str) -> Callable[[], str]:
         raise
 
 
-def get_azure_async_token_provider(scope: str):  # type: ignore[no-untyped-def]
+def get_azure_async_token_provider(scope: str) -> Callable[[], Awaitable[str]]:
     """
     Get an asynchronous Azure token provider using AsyncDefaultAzureCredential.
 
@@ -370,7 +370,7 @@ def get_default_azure_scope(endpoint: str) -> str:
     return "https://cognitiveservices.azure.com/.default"
 
 
-def get_azure_openai_auth(endpoint: str):  # type: ignore[no-untyped-def]
+def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     """
     Get an async Azure token provider for OpenAI endpoints.
 
