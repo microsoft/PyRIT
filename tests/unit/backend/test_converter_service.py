@@ -413,6 +413,7 @@ def _try_instantiate_converter(converter_name: str):
 
     from pyrit.common.apply_defaults import _RequiredValueSentinel
     from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
 
     # Converters requiring external credentials or resources that can't be mocked
     # at the constructor level — these validate env vars / files in __init__ body
@@ -461,11 +462,18 @@ def _try_instantiate_converter(converter_name: str):
         ann = param.annotation
         ann_str = str(ann) if ann is not inspect.Parameter.empty else ""
 
-        # PromptChatTarget — mock it with a proper identifier
+        # PromptChatTarget / PromptTarget — mock it with a proper identifier
         if ann is not inspect.Parameter.empty and (
-            (isinstance(ann, type) and issubclass(ann, PromptChatTarget)) or "PromptChatTarget" in ann_str
+            (isinstance(ann, type) and issubclass(ann, PromptTarget))
+            or "PromptChatTarget" in ann_str
+            or "PromptTarget" in ann_str
         ):
-            mock_target = MagicMock(spec=PromptChatTarget)
+            spec_cls = (
+                PromptChatTarget
+                if (isinstance(ann, type) and issubclass(ann, PromptChatTarget)) or "PromptChatTarget" in ann_str
+                else PromptTarget
+            )
+            mock_target = MagicMock(spec=spec_cls)
             mock_target.__class__.__name__ = "MockChatTarget"
             # Configure get_identifier() to return a proper identifier-like object
             # so that _create_identifier can extract class_name, model_name, etc.

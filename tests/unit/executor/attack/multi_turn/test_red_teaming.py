@@ -289,6 +289,33 @@ class TestRedTeamingAttackInitialization:
                 attack_scoring_config=scoring_config,
             )
 
+    @pytest.mark.parametrize(
+        "missing_capability",
+        ["multi_turn", "system_prompt"],
+    )
+    def test_init_rejects_adversarial_chat_missing_native_capability(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        missing_capability: str,
+    ):
+        """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
+        from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != CapabilityName(
+            missing_capability
+        )
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+
+        with pytest.raises(ValueError, match=f"RedTeamingAttack .*{missing_capability}"):
+            RedTeamingAttack(
+                objective_target=mock_objective_target,
+                attack_adversarial_config=adversarial_config,
+                attack_scoring_config=scoring_config,
+            )
+
     def test_get_objective_target_returns_correct_target(
         self, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, mock_adversarial_chat: MagicMock
     ):

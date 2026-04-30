@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from transformers import (
-    AutoModelForCausalLM,  # type: ignore[ty:possibly-missing-import]
-    AutoTokenizer,  # type: ignore[ty:possibly-missing-import]
+    AutoModelForCausalLM,
+    AutoTokenizer,
     BatchEncoding,
     PretrainedConfig,
 )
@@ -280,12 +280,15 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))
+                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))  # type: ignore[ty:invalid-argument-type]
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
                     await download_specific_files(
-                        self.model_id or "", self.necessary_files, self.huggingface_token, Path(cache_dir)
+                        self.model_id or "",
+                        self.necessary_files,
+                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        Path(cache_dir),
                     )
 
                 # Load the tokenizer and model from the specified directory
@@ -301,7 +304,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)  # type: ignore[ty:invalid-argument-type]
+            self.model = self.model.to(self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -355,7 +358,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
         try:
             # Ensure model is on the correct device (should already be, but safeguard for device changes)
-            self.model.to(self.device)  # type: ignore[ty:invalid-argument-type]
+            self.model.to(self.device)
 
             # Record input length to extract only newly generated tokens
             input_length = input_ids.shape[-1]
@@ -371,7 +374,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
             assistant_response = cast(
                 "str",
-                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
+                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),
             ).strip()
 
             if not assistant_response:

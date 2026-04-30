@@ -17,7 +17,6 @@ build:
     build:
       html:
         - cd doc && jupyter-book build --all
-      commands:
         - mkdir -p $READTHEDOCS_OUTPUT/html
         - cp -r doc/_build/site/* $READTHEDOCS_OUTPUT/html/
 

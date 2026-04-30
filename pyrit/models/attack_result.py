@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
@@ -80,6 +81,9 @@ class AttackResult(StrategyResult):
 
     # Optional reason for the outcome, providing additional context
     outcome_reason: Optional[str] = None
+
+    # Wall-clock time the result was created or persisted.
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = field(default_factory=set)

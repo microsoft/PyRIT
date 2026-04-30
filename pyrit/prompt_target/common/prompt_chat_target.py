@@ -3,12 +3,10 @@
 
 from typing import Optional
 
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
@@ -28,6 +26,7 @@ class PromptChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
+            supports_editable_history=True,
         )
     )
 
@@ -65,43 +64,6 @@ class PromptChatTarget(PromptTarget):
             custom_capabilities=custom_capabilities,
         )
 
-    def set_system_prompt(
-        self,
-        *,
-        system_prompt: str,
-        conversation_id: str,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        labels: Optional[dict[str, str]] = None,  # deprecated
-    ) -> None:
-        """
-        Set the system prompt for the prompt target. May be overridden by subclasses.
-
-        Raises:
-            RuntimeError: If the conversation already exists.
-        """
-        if labels is not None:
-            print_deprecation_message(
-                old_item="set_system_prompt(..., labels=...)",
-                new_item="set_system_prompt(...)",
-                removed_in="0.16.0",
-            )
-        messages = self._memory.get_conversation(conversation_id=conversation_id)
-
-        if messages:
-            raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
-
-        self._memory.add_message_to_memory(
-            request=MessagePiece(
-                role="system",
-                conversation_id=conversation_id,
-                original_value=system_prompt,
-                converted_value=system_prompt,
-                prompt_target_identifier=self.get_identifier(),
-                attack_identifier=attack_identifier,
-                labels=labels,  # deprecated
-            ).to_message()
-        )
-
     def is_response_format_json(self, message_piece: MessagePiece) -> bool:
         """
         Check if the response format is JSON and ensure the target supports it.
@@ -135,7 +97,7 @@ class PromptChatTarget(PromptTarget):
         """
         config = _JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
 
-        if config.enabled and not self.capabilities.supports_json_output:
+        if config.enabled and not self.configuration.includes(capability=CapabilityName.JSON_OUTPUT):
             target_name = self.get_identifier().class_name
             raise ValueError(f"This target {target_name} does not support JSON response format.")
 

@@ -296,7 +296,7 @@ class RedTeamAgent(Scenario):
     async def initialize_async(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Optional[
             Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
         ] = None,
@@ -581,7 +581,7 @@ class RedTeamAgent(Scenario):
 
             # Create the adversarial config from self._adversarial_target
             attack_adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
-            kwargs["attack_adversarial_config"] = attack_adversarial_config  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+            kwargs["attack_adversarial_config"] = attack_adversarial_config  # type: ignore[ty:invalid-assignment]
 
         # Add attack-specific kwargs if provided
         if attack_kwargs:

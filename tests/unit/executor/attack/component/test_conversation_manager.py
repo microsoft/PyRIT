@@ -94,7 +94,13 @@ def mock_chat_target() -> MagicMock:
 @pytest.fixture
 def mock_prompt_target() -> MagicMock:
     """Create a mock prompt target (non-chat) for testing."""
+    from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+    from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+
     target = MagicMock(spec=PromptTarget)
+    target.configuration = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False),
+    )
     target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target
 
@@ -1095,7 +1101,7 @@ class TestPrependedConversationConfigSettings:
         config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         with pytest.raises(
-            ValueError, match="prepended_conversation requires the objective target to be a PromptChatTarget"
+            ValueError, match="prepended_conversation requires the objective target to be a chat-capable"
         ):
             await manager.initialize_context_async(
                 context=context,
