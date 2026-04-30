@@ -33,7 +33,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_text_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-    ):
+    ) -> None:
         """
         Initialize the HarmBench dataset loader.
 

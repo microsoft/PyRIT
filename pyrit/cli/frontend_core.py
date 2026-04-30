@@ -52,7 +52,7 @@ except ImportError:
     HAS_TERMCOLOR = False
 
     # Create a dummy termcolor module for fallback
-    class termcolor:  # type: ignore[no-redef]  # noqa: N801
+    class termcolor:  # noqa: N801
         """Dummy termcolor fallback for colored printing if termcolor is not installed."""
 
         @staticmethod
@@ -91,7 +91,7 @@ class FrontendCore:
         initializer_names: Optional[list[Any]] = None,
         env_files: Optional[list[Path]] = None,
         log_level: Optional[int] = None,
-    ):
+    ) -> None:
         """
         Initialize PyRIT context.
 
@@ -501,7 +501,7 @@ async def run_scenario_async(
 
     # Scenarios here are a concrete subclass
     # Runtime parameters are passed to initialize_async()
-    scenario = scenario_class()  # type: ignore[call-arg]
+    scenario = scenario_class()  # type: ignore[ty:missing-argument]
     await scenario.initialize_async(**init_kwargs)
     result = await scenario.run_async()
 

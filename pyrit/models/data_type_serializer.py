@@ -380,7 +380,7 @@ class DataTypeSerializer(abc.ABC):
 class TextDataTypeSerializer(DataTypeSerializer):
     """Serializer for text and text-like prompt values that stay in-memory."""
 
-    def __init__(self, *, prompt_text: str, data_type: PromptDataType = "text"):
+    def __init__(self, *, prompt_text: str, data_type: PromptDataType = "text") -> None:
         """
         Initialize a text serializer.
 
@@ -406,7 +406,7 @@ class TextDataTypeSerializer(DataTypeSerializer):
 class ErrorDataTypeSerializer(DataTypeSerializer):
     """Serializer for error payloads stored as in-memory text."""
 
-    def __init__(self, *, prompt_text: str):
+    def __init__(self, *, prompt_text: str) -> None:
         """
         Initialize an error serializer.
 
@@ -431,7 +431,7 @@ class ErrorDataTypeSerializer(DataTypeSerializer):
 class URLDataTypeSerializer(DataTypeSerializer):
     """Serializer for URL values and URL-backed local file references."""
 
-    def __init__(self, *, category: str, prompt_text: str, extension: Optional[str] = None):
+    def __init__(self, *, category: str, prompt_text: str, extension: Optional[str] = None) -> None:
         """
         Initialize a URL serializer.
 
@@ -461,7 +461,7 @@ class URLDataTypeSerializer(DataTypeSerializer):
 class ImagePathDataTypeSerializer(DataTypeSerializer):
     """Serializer for image path values stored on disk."""
 
-    def __init__(self, *, category: str, prompt_text: Optional[str] = None, extension: Optional[str] = None):
+    def __init__(self, *, category: str, prompt_text: Optional[str] = None, extension: Optional[str] = None) -> None:
         """
         Initialize an image-path serializer.
 
@@ -498,7 +498,7 @@ class AudioPathDataTypeSerializer(DataTypeSerializer):
         category: str,
         prompt_text: Optional[str] = None,
         extension: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize an audio-path serializer.
 
@@ -535,7 +535,7 @@ class VideoPathDataTypeSerializer(DataTypeSerializer):
         category: str,
         prompt_text: Optional[str] = None,
         extension: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a video-path serializer.
 
@@ -572,7 +572,7 @@ class BinaryPathDataTypeSerializer(DataTypeSerializer):
         category: str,
         prompt_text: Optional[str] = None,
         extension: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a generic binary-path serializer.
 

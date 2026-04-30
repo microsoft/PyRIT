@@ -431,6 +431,30 @@ class TestCrescendoAttackInitialization:
                 max_turns=max_turns,
             )
 
+    @pytest.mark.parametrize(
+        "missing_capability",
+        ["multi_turn", "system_prompt"],
+    )
+    def test_init_rejects_adversarial_chat_missing_native_capability(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        missing_capability: str,
+    ):
+        """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
+        from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != CapabilityName(
+            missing_capability
+        )
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+
+        with pytest.raises(ValueError, match=f"CrescendoAttack .*{missing_capability}"):
+            CrescendoAttack(
+                objective_target=mock_objective_target,
+                attack_adversarial_config=adversarial_config,
+            )
+
     def test_init_with_converter_configuration(
         self,
         mock_objective_target: MagicMock,

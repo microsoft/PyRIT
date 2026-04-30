@@ -38,6 +38,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
@@ -245,6 +246,10 @@ class AttackBuilder:
         )
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.capabilities.output_modalities = frozenset({frozenset(["text"])})
+        target.configuration.includes.side_effect = (
+            lambda capability: capability == CapabilityName.MULTI_TURN and supports_multi_turn
+        )
+        target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
 
     @staticmethod
@@ -587,7 +592,7 @@ class TestTreeOfAttacksInitialization:
         """Test that image target output modalities are passed to scorer validator."""
         builder = AttackBuilder()
         builder.objective_target = AttackBuilder._create_mock_target(supports_multi_turn=False)
-        builder.objective_target.capabilities.output_modalities = frozenset({frozenset(["image_path"])})
+        builder.objective_target.configuration.capabilities.output_modalities = frozenset({frozenset(["image_path"])})
         builder.adversarial_chat = AttackBuilder._create_mock_chat()
 
         attack = TreeOfAttacksWithPruningAttack(
@@ -1760,6 +1765,7 @@ class TestTreeOfAttacksNode:
     async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
         """Test that single-turn targets get a fresh conversation_id before each send."""
         node_components["objective_target"].capabilities.supports_multi_turn = False
+        node_components["objective_target"].configuration.includes.side_effect = lambda capability: False
         node = _TreeOfAttacksNode(**node_components)
 
         original_conv_id = node.objective_target_conversation_id

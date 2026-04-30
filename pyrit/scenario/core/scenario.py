@@ -14,7 +14,7 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, ClassVar, Optional, Union, cast
 
 from tqdm.auto import tqdm
 
@@ -22,9 +22,10 @@ from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackResult
+from pyrit.models import AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -35,7 +36,6 @@ from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, T
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.identifiers import ComponentIdentifier
-    from pyrit.models import SeedAttackGroup
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,10 @@ class Scenario(ABC):
     atomic attack tests (AtomicAttacks). It executes each AtomicAttack in sequence and
     aggregates the results into a ScenarioResult.
     """
+
+    #: Capability requirements placed on ``objective_target``. Subclasses override to declare
+    #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     def __init__(
         self,
@@ -269,7 +273,7 @@ class Scenario(ABC):
     async def initialize_async(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
         max_concurrency: int = 10,
@@ -316,6 +320,7 @@ class Scenario(ABC):
         # Set instance variables from parameters
         self._objective_target = objective_target
         self._objective_target_identifier = objective_target.get_identifier()
+        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._dataset_config_provided = dataset_config is not None
         self._dataset_config = dataset_config if dataset_config else self.default_dataset_config()
         self._max_concurrency = max_concurrency
@@ -640,6 +645,26 @@ class Scenario(ABC):
             scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
 
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
+                if factory.seed_technique is not None:
+                    compatible_groups = SeedAttackGroup.filter_compatible(
+                        seed_groups=seed_groups,
+                        technique=factory.seed_technique,
+                    )
+                    skipped = len(seed_groups) - len(compatible_groups)
+                    if skipped:
+                        logger.info(
+                            f"Skipped {skipped} seed group(s) from '{dataset_name}' for technique "
+                            f"'{technique_name}' (prompt sequences overlap with simulated conversation)."
+                        )
+                    if not compatible_groups:
+                        logger.warning(
+                            f"No compatible seed groups in '{dataset_name}' for technique "
+                            f"'{technique_name}', skipping this (technique, dataset) pair."
+                        )
+                        continue
+                else:
+                    compatible_groups = list(seed_groups)
+
                 attack_technique = factory.create(
                     objective_target=self._objective_target,
                     attack_scoring_config_override=scoring_for_technique,
@@ -652,7 +677,7 @@ class Scenario(ABC):
                     AtomicAttack(
                         atomic_attack_name=f"{technique_name}_{dataset_name}",
                         attack_technique=attack_technique,
-                        seed_groups=list(seed_groups),
+                        seed_groups=list(compatible_groups),
                         adversarial_chat=factory.adversarial_chat,
                         objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                         memory_labels=self._memory_labels,

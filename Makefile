@@ -1,4 +1,4 @@
-.PHONY: all pre-commit mypy unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
+.PHONY: all pre-commit ty unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
 
 CMD:=uv run -m
 PYMODULE:=pyrit
@@ -14,8 +14,8 @@ pre-commit:
 	$(CMD) isort --multi-line 3 --recursive $(PYMODULE) $(TESTS)
 	pre-commit run --all-files
 
-mypy:
-	$(CMD) mypy $(PYMODULE) $(UNIT_TESTS)
+ty:
+	$(CMD) ty check $(PYMODULE) $(UNIT_TESTS)
 
 # Build the full documentation site:
 # 1. Generate API reference JSON from Python source (griffe)

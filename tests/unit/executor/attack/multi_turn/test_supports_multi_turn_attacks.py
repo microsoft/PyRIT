@@ -27,6 +27,7 @@ def _make_strategy(*, supports_multi_turn: bool):
 
     target = MagicMock()
     target.capabilities.supports_multi_turn = supports_multi_turn
+    target.configuration.includes.return_value = supports_multi_turn
     target.get_identifier.return_value = MagicMock()
 
     with patch.multiple(
@@ -376,6 +377,7 @@ class TestTAPNodeDuplicateSystemMessages:
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
+        target.configuration.includes.return_value = supports_multi_turn
         target.get_identifier.return_value = MagicMock()
 
         adversarial_chat = MagicMock()
@@ -684,8 +686,14 @@ class TestValueErrorGuards:
     """Test that incompatible attacks raise ValueError for single-turn targets."""
 
     def _make_single_turn_target(self):
+        from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+        from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+
         target = MagicMock()
         target.capabilities.supports_multi_turn = False
+        target.configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=True),
+        )
         target.get_identifier.return_value = MagicMock()
         return target
 
@@ -706,52 +714,34 @@ class TestValueErrorGuards:
 
     @pytest.mark.asyncio
     async def test_crescendo_raises_for_single_turn_target(self):
-        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack, CrescendoAttackContext
+        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 
         target = self._make_single_turn_target()
-        attack = CrescendoAttack(
-            objective_target=target,
-            attack_adversarial_config=self._make_adversarial_config(),
-            attack_scoring_config=self._make_scoring_config(),
-        )
 
-        context = CrescendoAttackContext(
-            params=AttackParameters(objective="Test"),
-        )
-
-        with pytest.raises(ValueError, match="CrescendoAttack requires a multi-turn target"):
-            await attack._setup_async(context=context)
+        with pytest.raises(ValueError, match="supports_multi_turn"):
+            CrescendoAttack(
+                objective_target=target,
+                attack_adversarial_config=self._make_adversarial_config(),
+                attack_scoring_config=self._make_scoring_config(),
+            )
 
     @pytest.mark.asyncio
     async def test_multi_prompt_sending_raises_for_single_turn_target(self):
         from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttack
 
         target = self._make_single_turn_target()
-        attack = MultiPromptSendingAttack(objective_target=target)
 
-        context = MultiTurnAttackContext(
-            params=AttackParameters(objective="Test"),
-        )
-
-        with pytest.raises(ValueError, match="MultiPromptSendingAttack requires a multi-turn target"):
-            await attack._setup_async(context=context)
+        with pytest.raises(ValueError, match="supports_multi_turn"):
+            MultiPromptSendingAttack(objective_target=target)
 
     @pytest.mark.asyncio
     async def test_chunked_request_raises_for_single_turn_target(self):
-        from pyrit.executor.attack.multi_turn.chunked_request import (
-            ChunkedRequestAttack,
-            ChunkedRequestAttackContext,
-        )
+        from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack
 
         target = self._make_single_turn_target()
-        attack = ChunkedRequestAttack(objective_target=target)
 
-        context = ChunkedRequestAttackContext(
-            params=AttackParameters(objective="Test"),
-        )
-
-        with pytest.raises(ValueError, match="ChunkedRequestAttack requires a multi-turn target"):
-            await attack._setup_async(context=context)
+        with pytest.raises(ValueError, match="supports_multi_turn"):
+            ChunkedRequestAttack(objective_target=target)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -764,6 +754,7 @@ class TestTAPBranchingPreservesSystemPrompts:
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
+        target.configuration.includes.return_value = supports_multi_turn
         target.get_identifier.return_value = MagicMock()
 
         adversarial_chat = MagicMock()

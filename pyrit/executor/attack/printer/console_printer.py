@@ -23,7 +23,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
     for consoles that don't support ANSI characters.
     """
 
-    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True):
+    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True) -> None:
         """
         Initialize the console printer.
 

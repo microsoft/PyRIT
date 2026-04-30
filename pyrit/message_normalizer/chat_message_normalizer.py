@@ -6,7 +6,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Union
 
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,

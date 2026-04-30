@@ -16,7 +16,7 @@ class ConversationAnalytics:
     based on conversation history or embedding similarity.
     """
 
-    def __init__(self, *, memory_interface: MemoryInterface):
+    def __init__(self, *, memory_interface: MemoryInterface) -> None:
         """
         Initialize the ConversationAnalytics with a memory interface for data access.
 
@@ -86,7 +86,7 @@ class ConversationAnalytics:
         return similar_messages
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:  # type: ignore[type-arg, unused-ignore]
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     """
     Calculate the cosine similarity between two 1D vectors.
 

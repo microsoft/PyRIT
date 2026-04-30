@@ -19,7 +19,7 @@ class DiacriticConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, target_chars: str = "aeiou", accent: str = "acute"):
+    def __init__(self, target_chars: str = "aeiou", accent: str = "acute") -> None:
         """
         Initialize the converter with specified target characters and diacritic accent.
 
