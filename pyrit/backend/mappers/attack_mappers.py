@@ -33,6 +33,7 @@ from pyrit.backend.models.attacks import (
     Score,
     TargetInfo,
 )
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackResult, ChatMessageRole, PromptDataType
 from pyrit.models import Message as PyritMessage
 from pyrit.models import MessagePiece as PyritMessagePiece
@@ -409,7 +410,7 @@ def request_piece_to_pyrit_message_piece(
     role: ChatMessageRole,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,  # deprecated
 ) -> PyritMessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
@@ -420,10 +421,17 @@ def request_piece_to_pyrit_message_piece(
         conversation_id: The conversation/attack ID.
         sequence: The message sequence number.
         labels: Optional labels to attach to the piece.
+            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         PyritMessagePiece domain object.
     """
+    if labels is not None:
+        print_deprecation_message(
+            old_item="request_piece_to_pyrit_message_piece(..., labels=...)",
+            new_item="request_piece_to_pyrit_message_piece(...)",
+            removed_in="0.16.0",
+        )
     metadata: Optional[dict[str, str | int]] = None
     if piece.prompt_metadata:
         metadata = dict(piece.prompt_metadata)
@@ -439,7 +447,7 @@ def request_piece_to_pyrit_message_piece(
         conversation_id=conversation_id,
         sequence=sequence,
         prompt_metadata=metadata,
-        labels=labels or {},
+        labels=labels or {},  # deprecated
         original_prompt_id=original_prompt_id,
     )
 
@@ -449,7 +457,7 @@ def request_to_pyrit_message(
     request: AddMessageRequest,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,  # deprecated
 ) -> PyritMessage:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.
@@ -459,17 +467,24 @@ def request_to_pyrit_message(
         conversation_id: The conversation/attack ID.
         sequence: The message sequence number.
         labels: Optional labels to attach to each piece.
+            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         PyritMessage ready to send to the target.
     """
+    if labels is not None:
+        print_deprecation_message(
+            old_item="request_to_pyrit_message(..., labels=...)",
+            new_item="request_to_pyrit_message(...)",
+            removed_in="0.16.0",
+        )
     pieces = [
         request_piece_to_pyrit_message_piece(
             piece=p,
             role=request.role,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,
+            labels=labels,  # deprecated
         )
         for p in request.pieces
     ]

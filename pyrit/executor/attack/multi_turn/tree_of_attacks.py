@@ -982,7 +982,7 @@ class _TreeOfAttacksNode:
             system_prompt=system_prompt,
             conversation_id=self.adversarial_chat_conversation_id,
             attack_identifier=self._attack_id,
-            labels=self._memory_labels,
+            labels=self._memory_labels,  # deprecated
         )
 
         logger.debug(f"Node {self.node_id}: Using initial seed prompt for first turn")

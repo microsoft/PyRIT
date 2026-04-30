@@ -137,6 +137,23 @@ async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, s
 
 
 @pytest.mark.asyncio
+async def test_send_prompt_async_labels_emit_deprecation_warning(mock_memory_instance, seed_group):
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(
+        return_value=[MessagePiece(role="assistant", original_value="ok", conversation_id="conv-1").to_message()]
+    )
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+
+    normalizer = PromptNormalizer()
+    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
+
+    with patch("pyrit.prompt_normalizer.prompt_normalizer.print_deprecation_message") as mock_deprecation:
+        await normalizer.send_prompt_async(message=message, target=prompt_target, labels={"env": "prod"})
+
+    mock_deprecation.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_send_prompt_async_empty_response_exception_handled(mock_memory_instance, seed_group):
     # Use MagicMock with send_prompt_async as AsyncMock to avoid coroutine warnings on other methods
     prompt_target = MagicMock()

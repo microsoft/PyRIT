@@ -256,7 +256,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             system_prompt=adversarial_system_prompt,
             conversation_id=context.session.adversarial_chat_conversation_id,
             attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,
+            labels=context.memory_labels,  # deprecated
         )
 
     async def _perform_async(self, *, context: MultiTurnAttackContext[Any]) -> AttackResult:
