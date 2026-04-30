@@ -15,11 +15,12 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Optional, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Optional, Union, cast, get_origin
 
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
+from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
@@ -313,7 +314,7 @@ class Scenario(ABC):
                 # at coercion time on the first unknown name).
                 coerced[name] = raw_value
                 continue
-            coerced[name] = self._coerce_value(param=param, raw_value=raw_value)
+            coerced[name] = coerce_value(param=param, raw_value=raw_value)
 
         self._validate_params(params=coerced, declared=declared)
 
@@ -348,7 +349,10 @@ class Scenario(ABC):
                 raise ValueError(f"Scenario '{type(self).__name__}' declares duplicate parameter name '{param.name}'.")
             seen.add(param.name)
 
-            self._validate_param_type(param=param)
+            try:
+                validate_param_type(param=param)
+            except ValueError as exc:
+                raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
 
             if param.required and param.default is not None:
                 raise ValueError(
@@ -373,7 +377,7 @@ class Scenario(ABC):
                 # at declaration time, not when an end-user supplies a value.
                 for choice in param.choices:
                     try:
-                        self._coerce_value(param=param, raw_value=choice)
+                        coerce_value(param=param, raw_value=choice)
                     except ValueError as exc:
                         raise ValueError(
                             f"Scenario '{type(self).__name__}' parameter '{param.name}' choice "
@@ -382,7 +386,7 @@ class Scenario(ABC):
 
             if param.default is not None:
                 try:
-                    coerced_default = self._coerce_value(param=param, raw_value=param.default)
+                    coerced_default = coerce_value(param=param, raw_value=param.default)
                 except ValueError as exc:
                     raise ValueError(
                         f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
@@ -393,171 +397,6 @@ class Scenario(ABC):
                         f"Scenario '{type(self).__name__}' parameter '{param.name}' default "
                         f"{param.default!r} is not in declared choices {param.choices!r}."
                     )
-
-    def _validate_param_type(self, *, param: Parameter) -> None:
-        """
-        Reject parameter declarations with unsupported ``param_type``.
-
-        Supported types: ``None`` (raw passthrough), ``str``, ``int``,
-        ``float``, ``bool``, and ``list[str]``.
-
-        Args:
-            param (Parameter): The parameter declaration.
-
-        Raises:
-            ValueError: If ``param_type`` is not in the supported set.
-        """
-        param_type = param.param_type
-        if param_type is None or param_type in (str, int, float, bool):
-            return
-        if get_origin(param_type) is list:
-            type_args = get_args(param_type)
-            element_type = type_args[0] if type_args else str
-            if element_type is str:
-                return
-
-        raise ValueError(
-            f"Scenario '{type(self).__name__}' parameter '{param.name}' has unsupported "
-            f"param_type {param_type!r}. Supported types: str, int, float, bool, list[str], or None."
-        )
-
-    def _coerce_value(self, *, param: Parameter, raw_value: Any) -> Any:
-        """
-        Coerce a raw input value into the declared ``param_type`` and validate ``choices``.
-
-        Args:
-            param (Parameter): The parameter declaration.
-            raw_value (Any): The value as supplied (string from CLI, native
-                Python value from YAML, declared default during declaration
-                validation).
-
-        Returns:
-            Any: The coerced value, ready to store on ``self.params``.
-
-        Raises:
-            ValueError: If coercion fails or the coerced value is not in
-                ``choices``.
-        """
-        param_type = param.param_type
-        if param_type is None:
-            value: Any = raw_value
-        elif param_type is bool:
-            value = self._coerce_bool(param_name=param.name, raw_value=raw_value)
-        elif param_type is int:
-            value = self._coerce_scalar(param_name=param.name, scalar_type=int, raw_value=raw_value)
-        elif param_type is float:
-            value = self._coerce_scalar(param_name=param.name, scalar_type=float, raw_value=raw_value)
-        elif param_type is str:
-            value = str(raw_value)
-        elif get_origin(param_type) is list:
-            value = self._coerce_list(param=param, raw_value=raw_value)
-        else:
-            raise ValueError(
-                f"Parameter '{param.name}' has unsupported param_type {param_type!r}. "
-                f"Supported types: str, int, float, bool, list[str]."
-            )
-
-        if param.choices is not None and value not in param.choices:
-            raise ValueError(f"Parameter '{param.name}' value {value!r} is not in declared choices {param.choices!r}.")
-
-        return value
-
-    @staticmethod
-    def _coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
-        """
-        Coerce a raw value into ``int`` or ``float``, rejecting native ``bool`` inputs.
-
-        ``int(True) == 1`` and ``float(False) == 0.0`` are silent surprises
-        when a YAML typo or stray flag lands a ``bool`` where a number was
-        expected. We reject those explicitly.
-
-        Args:
-            param_name (str): Parameter name (used in error messages).
-            scalar_type (type): Either ``int`` or ``float``.
-            raw_value (Any): Value to coerce.
-
-        Returns:
-            Any: The coerced numeric value.
-
-        Raises:
-            ValueError: If ``raw_value`` is a ``bool`` or cannot be coerced.
-        """
-        if isinstance(raw_value, bool):
-            raise ValueError(
-                f"Parameter '{param_name}' expects {scalar_type.__name__} but received a bool ({raw_value!r})."
-            )
-        try:
-            return scalar_type(raw_value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Parameter '{param_name}' could not be coerced to {scalar_type.__name__}: {raw_value!r} ({exc})."
-            ) from exc
-
-    @staticmethod
-    def _coerce_bool(*, param_name: str, raw_value: Any) -> bool:
-        """
-        Parse a raw value as a boolean.
-
-        Accepts native ``bool``, plus case-insensitive strings ``true``/``1``/``yes``
-        for True and ``false``/``0``/``no`` for False. Avoids the well-known
-        ``bool("false") is True`` argparse footgun.
-
-        Args:
-            param_name (str): Parameter name (used in the error message).
-            raw_value (Any): Value to coerce.
-
-        Returns:
-            bool: Coerced boolean.
-
-        Raises:
-            ValueError: If the value is not a recognized boolean form.
-        """
-        if isinstance(raw_value, bool):
-            return raw_value
-        if isinstance(raw_value, str):
-            normalized = raw_value.strip().lower()
-            if normalized in ("true", "1", "yes"):
-                return True
-            if normalized in ("false", "0", "no"):
-                return False
-        raise ValueError(
-            f"Parameter '{param_name}' expects bool but received {raw_value!r}. "
-            f"Accepted values: true/false, 1/0, yes/no (case-insensitive), or a native bool."
-        )
-
-    def _coerce_list(self, *, param: Parameter, raw_value: Any) -> list[Any]:
-        """
-        Coerce a list-typed parameter, validating arity and per-element type.
-
-        Args:
-            param (Parameter): The parameter declaration. ``param.param_type``
-                must be a parameterized list generic such as ``list[str]``.
-            raw_value (Any): The raw value (must be a list).
-
-        Returns:
-            list[Any]: The coerced list.
-
-        Raises:
-            ValueError: If ``raw_value`` is not a list, or any element fails
-                coercion to the declared element type.
-        """
-        if not isinstance(raw_value, list):
-            raise ValueError(
-                f"Parameter '{param.name}' expects a list but received {type(raw_value).__name__} ({raw_value!r})."
-            )
-
-        type_args = get_args(param.param_type)
-        element_type = type_args[0] if type_args else str
-
-        if element_type is str:
-            return [str(item) for item in raw_value]
-        # Defensive: Stage 1 only ships list[str], but the coercion logic is
-        # written so future expansion to list[int] / list[float] / list[bool]
-        # would only need this branch widened.
-        raise ValueError(
-            f"Parameter '{param.name}' has unsupported list element type {element_type!r}. "
-            f"Supported list types: list[str]."
-        )
 
     def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
         """
