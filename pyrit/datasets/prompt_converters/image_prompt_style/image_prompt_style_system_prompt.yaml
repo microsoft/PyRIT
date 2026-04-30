@@ -1,4 +1,4 @@
-name: image_filter_system_prompt
+name: image_prompt_style_system_prompt
 data_type: text
 description: |
   System prompt for the ImagePromptStyleConverter. Instructs an LLM to expand a short user objective
