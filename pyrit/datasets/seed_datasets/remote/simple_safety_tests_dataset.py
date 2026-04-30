@@ -32,7 +32,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
         self,
         *,
         split: str = "test",
-    ):
+    ) -> None:
         """
         Initialize the SimpleSafetyTests dataset loader.
 

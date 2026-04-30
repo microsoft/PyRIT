@@ -65,7 +65,7 @@ class Score:
         scorer_class_identifier: Union[ComponentIdentifier, dict[str, Any]],
         timestamp: Optional[datetime] = None,
         objective: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a score object.
 

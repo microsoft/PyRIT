@@ -20,7 +20,7 @@ class LeetspeakConverter(WordLevelConverter):
         deterministic: bool = True,
         custom_substitutions: Optional[dict[str, list[str]]] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with optional deterministic mode and custom substitutions.
 

@@ -112,6 +112,26 @@ def test_token_provider_authentication():
     assert callable(target._api_key)
 
 
+def test_add_auth_header_with_callable_api_key():
+    """Test that _add_auth_param_to_headers calls the token provider and sets Bearer token."""
+    token_provider = MagicMock(return_value="test_token")
+    target = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key=token_provider)
+
+    headers: dict[str, str] = {}
+    target._add_auth_param_to_headers(headers)
+    token_provider.assert_called_once()
+    assert headers["Authorization"] == "Bearer test_token"
+
+
+def test_add_auth_header_with_string_api_key():
+    """Test that _add_auth_param_to_headers sets Ocp-Apim-Subscription-Key for string keys."""
+    target = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key="my_key")
+
+    headers: dict[str, str] = {}
+    target._add_auth_param_to_headers(headers)
+    assert headers["Ocp-Apim-Subscription-Key"] == "my_key"
+
+
 def test_init_raises_when_endpoint_none():
     """Guard at line 98: endpoint_value is None raises ValueError."""
     with patch("pyrit.prompt_target.prompt_shield_target.default_values") as mock_dv:

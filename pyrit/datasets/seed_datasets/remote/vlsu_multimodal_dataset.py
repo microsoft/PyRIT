@@ -58,7 +58,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         categories: Optional[list[VLSUCategory]] = None,
         unsafe_grades: Optional[list[str]] = None,
         max_examples: Optional[int] = None,
-    ):
+    ) -> None:
         """
         Initialize the ML-VLSU multimodal dataset loader.
 

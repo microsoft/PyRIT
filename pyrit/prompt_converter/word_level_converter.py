@@ -33,7 +33,7 @@ class WordLevelConverter(PromptConverter):
         *,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
         word_split_separator: Optional[str] = " ",
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified selection strategy.
 

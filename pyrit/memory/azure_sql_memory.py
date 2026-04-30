@@ -69,7 +69,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_sas_token: Optional[str] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
-    ):
+    ) -> None:
         """
         Initialize an Azure SQL Memory backend.
 
@@ -126,7 +126,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Optional[str]: Resolved SAS token or None if not provided.
         """
         try:
-            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)  # type: ignore[no-any-return]
+            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
         except ValueError:
             return None
 
@@ -752,7 +752,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     return query.distinct().all()
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[attr-defined]
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
                 raise
 
     def _update_entries(self, *, entries: MutableSequence[Base], update_fields: dict[str, Any]) -> bool:
@@ -780,7 +780,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[attr-defined]
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():

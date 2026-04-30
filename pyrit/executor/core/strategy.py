@@ -101,7 +101,7 @@ class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
         """
 
 
-class StrategyLogAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
+class StrategyLogAdapter(logging.LoggerAdapter):
     """
     Custom logger adapter that adds strategy information to log messages.
     """
@@ -150,7 +150,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         context_type: type[StrategyContextT],
         event_handler: Optional[StrategyEventHandler[StrategyContextT, StrategyResultT]] = None,
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Initialize the strategy with a context type and logger.
 
