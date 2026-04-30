@@ -43,39 +43,62 @@ class ImageFilterConverter(PromptConverter):
         self,
         *,
         converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
-        filter_name: str,
+        filter_name: str | None = None,
+        filter_path: str | pathlib.Path | None = None,
         variation: str | None = None,
     ) -> None:
         """
-        Initialize the converter with a target LLM, filter name, and optional variation.
+        Initialize the converter with a target LLM, filter specification, and optional variation.
+
+        Exactly one of ``filter_name`` or ``filter_path`` may be provided.  If neither is given,
+        a random built-in filter is selected.
 
         Args:
             converter_target: The LLM endpoint that generates the expanded prompt.
                 Can be omitted if a default has been configured via PyRIT initialization.
-            filter_name: Name of the filter YAML file (without extension) in the image_filter directory.
-            variation: Name of the variation to use (matched by key name in the YAML variations mapping,
-                e.g. "Bodycam Footage"). This is case-insensitive. If None, a random variation is selected
-                on each call to convert_async.
+            filter_name: Name of a built-in filter YAML file (without extension) in the
+                image_filter directory.  Mutually exclusive with ``filter_path``.
+            filter_path: Path to a custom filter YAML file.  Mutually exclusive with
+                ``filter_name``.
+            variation: Name of the variation to use (matched by key name in the YAML variations
+                mapping, e.g. "Wide Mirror Shot"). This is case-insensitive. If None, a random
+                variation is selected on each call to convert_async.
 
         Raises:
+            ValueError: If both filter_name and filter_path are provided.
             ValueError: If filter_name does not correspond to an existing YAML file.
+            ValueError: If filter_path does not exist.
             ValueError: If variation does not match any entry in the filter.
         """
+        if filter_name and filter_path:
+            raise ValueError("Only one of 'filter_name' or 'filter_path' may be specified, not both.")
+
         self.converter_target = converter_target
-        self._filter_name = filter_name
         self._variation = variation
 
         # Load the shared system prompt template
         system_prompt_path = IMAGE_FILTER_DIR / _SYSTEM_PROMPT_FILENAME
         self._system_prompt_template = SeedPrompt.from_yaml_file(system_prompt_path)
 
-        # Load the filter-specific YAML
-        filter_path = IMAGE_FILTER_DIR / f"{filter_name}.yaml"
-        if not filter_path.exists():
+        # Resolve the filter YAML file
+        if filter_path is not None:
+            resolved_path = pathlib.Path(filter_path)
+            if not resolved_path.exists():
+                raise ValueError(f"Filter path '{filter_path}' does not exist.")
+            self._filter_name = resolved_path.stem
+        elif filter_name is not None:
+            resolved_path = IMAGE_FILTER_DIR / f"{filter_name}.yaml"
+            if not resolved_path.exists():
+                available = self.list_available_filters()
+                raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
+            self._filter_name = filter_name
+        else:
+            # No filter specified — pick a random built-in filter
             available = self.list_available_filters()
-            raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
+            self._filter_name = random.choice(available)
+            resolved_path = IMAGE_FILTER_DIR / f"{self._filter_name}.yaml"
 
-        with open(filter_path, encoding="utf-8") as f:
+        with open(resolved_path, encoding="utf-8") as f:
             filter_data = yaml.safe_load(f)
 
         self._style_instructions: str = filter_data["style_instructions"]
@@ -87,7 +110,8 @@ class ImageFilterConverter(PromptConverter):
             key = name.strip().lower()
             if key in self._variation_map:
                 logger.warning(
-                    f"Duplicate variation key '{name}' in filter '{filter_name}', overwriting previous entry."
+                    f"Duplicate variation key '{name}' in filter '{self._filter_name}', "
+                    "overwriting previous entry."
                 )
             self._variation_map[key] = name
 
@@ -96,7 +120,7 @@ class ImageFilterConverter(PromptConverter):
             if key not in self._variation_map:
                 available_names = list(self._variations.keys())
                 raise ValueError(
-                    f"Variation '{variation}' not found in filter '{filter_name}'. "
+                    f"Variation '{variation}' not found in filter '{self._filter_name}'. "
                     f"Available variations: {available_names}"
                 )
 

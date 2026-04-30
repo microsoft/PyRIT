@@ -38,6 +38,52 @@ def test_init_valid_filter_and_variation(mock_target) -> None:
     assert "bodycam footage" in converter._variation_map
 
 
+def test_init_no_filter_picks_random(mock_target) -> None:
+    converter = ImageFilterConverter(
+        converter_target=mock_target,
+    )
+    available = ImageFilterConverter.list_available_filters()
+    assert converter._filter_name in available
+    assert converter._variation is None
+
+
+def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
+    custom_yaml = tmp_path / "custom_filter.yaml"
+    custom_yaml.write_text(
+        "style_instructions: custom style\n"
+        "variations:\n"
+        "  My Variation: description of variation\n"
+    )
+    converter = ImageFilterConverter(
+        converter_target=mock_target,
+        filter_path=custom_yaml,
+        variation="My Variation",
+    )
+    assert converter._filter_name == "custom_filter"
+    assert "my variation" in converter._variation_map
+
+
+def test_init_filter_path_nonexistent_raises(mock_target) -> None:
+    with pytest.raises(ValueError, match="does not exist"):
+        ImageFilterConverter(
+            converter_target=mock_target,
+            filter_path="/nonexistent/path.yaml",
+        )
+
+
+def test_init_both_filter_name_and_path_raises(mock_target, tmp_path) -> None:
+    custom_yaml = tmp_path / "custom.yaml"
+    custom_yaml.write_text(
+        "style_instructions: style\nvariations:\n  V1: desc\n"
+    )
+    with pytest.raises(ValueError, match="Only one of"):
+        ImageFilterConverter(
+            converter_target=mock_target,
+            filter_name="gritty_documentary",
+            filter_path=custom_yaml,
+        )
+
+
 def test_init_variation_none_is_valid(mock_target) -> None:
     converter = ImageFilterConverter(
         converter_target=mock_target,
