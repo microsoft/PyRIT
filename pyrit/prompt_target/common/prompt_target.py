@@ -6,6 +6,7 @@ import logging
 import warnings
 from typing import Any, Union, final
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
@@ -276,7 +277,7 @@ class PromptTarget(Identifiable):
         system_prompt: str,
         conversation_id: str,
         attack_identifier: ComponentIdentifier | None = None,
-        labels: dict[str, str] | None = None,
+        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """
         Inject a system prompt into memory for the given conversation.
@@ -303,6 +304,13 @@ class PromptTarget(Identifiable):
         Raises:
             RuntimeError: If the conversation already has messages.
         """
+        if labels is not None:
+            print_deprecation_message(
+                old_item="set_system_prompt(..., labels=...)",
+                new_item="set_system_prompt(...)",
+                removed_in="0.16.0",
+            )
+
         messages = self._memory.get_conversation(conversation_id=conversation_id)
 
         if messages:

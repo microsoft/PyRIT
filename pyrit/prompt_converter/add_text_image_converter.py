@@ -39,7 +39,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         font_size: int = 15,
         x_pos: int = 10,
         y_pos: int = 10,
-    ):
+    ) -> None:
         """
         Initialize the converter with the text and text properties.
 

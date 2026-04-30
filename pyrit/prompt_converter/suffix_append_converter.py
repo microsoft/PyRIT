@@ -18,7 +18,7 @@ class SuffixAppendConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, *, suffix: str):
+    def __init__(self, *, suffix: str) -> None:
         """
         Initialize the converter with the specified suffix.
 

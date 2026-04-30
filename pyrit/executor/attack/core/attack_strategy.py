@@ -123,7 +123,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
     Handles events during the execution of an attack strategy.
     """
 
-    def __init__(self, logger: logging.Logger = logger):
+    def __init__(self, logger: logging.Logger = logger) -> None:
         """
         Initialize the default event handler with a logger.
 
@@ -243,9 +243,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         *,
         objective_target: PromptTarget,
         context_type: type[AttackStrategyContextT],
-        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[invalid-assignment, invalid-parameter-default]
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Initialize the attack strategy with a specific context type and logger.
 

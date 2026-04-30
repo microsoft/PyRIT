@@ -25,7 +25,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "promptfoo/CCP-sensitive-prompts",
-    ):
+    ) -> None:
         """
         Initialize the CCP-sensitive prompts dataset loader.
 

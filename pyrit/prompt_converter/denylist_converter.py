@@ -26,10 +26,10 @@ class DenylistConverter(LLMGenericTextConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[invalid-assignment, invalid-parameter-default]
         system_prompt_template: Optional[SeedPrompt] = None,
         denylist: list[str] | None = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with a target, an optional system prompt template, and a denylist.
 

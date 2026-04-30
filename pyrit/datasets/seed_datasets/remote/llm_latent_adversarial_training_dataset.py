@@ -25,7 +25,7 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "LLM-LAT/harmful-dataset",
-    ):
+    ) -> None:
         """
         Initialize the LLM-LAT harmful dataset loader.
 

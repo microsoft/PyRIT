@@ -53,7 +53,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                 ]
             ]
         ] = None,
-    ):
+    ) -> None:
         """
         Initialize the PKU-SafeRLHF dataset loader.
 

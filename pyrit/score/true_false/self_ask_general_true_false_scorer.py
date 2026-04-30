@@ -106,7 +106,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[unresolved-attribute]
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),

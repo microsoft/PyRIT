@@ -34,7 +34,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         action: Literal["encode", "decode"] = "encode",
         base_char_utf8: Optional[str] = None,
         embed_in_base: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the converter with options for encoding/decoding.
 

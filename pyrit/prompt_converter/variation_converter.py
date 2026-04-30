@@ -41,9 +41,9 @@ class VariationConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[invalid-assignment, invalid-parameter-default]
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified target and prompt template.
 

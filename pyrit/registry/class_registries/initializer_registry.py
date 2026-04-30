@@ -107,7 +107,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         else:
             for _file_stem, _file_path, initializer_class in discover_in_directory(
                 directory=discovery_path,
-                base_class=PyRITInitializer,  # type: ignore[type-abstract]
+                base_class=PyRITInitializer,
                 recursive=True,
             ):
                 self._register_initializer(
@@ -143,7 +143,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                     and not inspect.isabstract(attr)
                 ):
                     self._register_initializer(
-                        initializer_class=attr,  # type: ignore[arg-type]
+                        initializer_class=attr,
                     )
 
         except Exception as e:

@@ -26,10 +26,10 @@ class ToneConverter(LLMGenericTextConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[invalid-assignment, invalid-parameter-default]
         tone: str,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the target chat support, tone, and optional prompt template.
 

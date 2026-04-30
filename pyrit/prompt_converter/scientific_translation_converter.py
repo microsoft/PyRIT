@@ -45,7 +45,7 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[invalid-assignment, invalid-parameter-default]
         mode: str = "combined",
         prompt_template: Optional[SeedPrompt] = None,
     ) -> None:
