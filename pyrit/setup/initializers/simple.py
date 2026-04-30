@@ -126,13 +126,13 @@ class SimpleInitializer(PyRITInitializer):
         api_key = self._get_api_key()
 
         # 1. Setup converter target
-        self._setup_converter_target(api_key=api_key)  # type: ignore[invalid-argument-type]
+        self._setup_converter_target(api_key=api_key)  # type: ignore[ty:invalid-argument-type]
 
         # 2. Setup scorers
-        self._setup_scorers(api_key=api_key)  # type: ignore[invalid-argument-type]
+        self._setup_scorers(api_key=api_key)  # type: ignore[ty:invalid-argument-type]
 
         # 3. Setup adversarial targets
-        self._setup_adversarial_targets(api_key=api_key)  # type: ignore[invalid-argument-type]
+        self._setup_adversarial_targets(api_key=api_key)  # type: ignore[ty:invalid-argument-type]
 
     def _setup_converter_target(self, *, api_key: str) -> None:
         """Set up the default converter target configuration."""

@@ -421,7 +421,7 @@ class Psychosocial(Scenario):
         )
 
         # Wrap with conversation scorer to evaluate full conversation history
-        conversation_scorer: FloatScaleScorer = create_conversation_scorer(scorer=psych_scorer)  # type: ignore[invalid-assignment, invalid-parameter-default]
+        conversation_scorer: FloatScaleScorer = create_conversation_scorer(scorer=psych_scorer)  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
         # Wrap with threshold scorer
         # threshold=1.0 means only raw score 5 counts as attack success (extremely harmful)

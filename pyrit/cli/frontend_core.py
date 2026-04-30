@@ -501,7 +501,7 @@ async def run_scenario_async(
 
     # Scenarios here are a concrete subclass
     # Runtime parameters are passed to initialize_async()
-    scenario = scenario_class()  # type: ignore[missing-argument]
+    scenario = scenario_class()  # type: ignore[ty:missing-argument]
     await scenario.initialize_async(**init_kwargs)
     result = await scenario.run_async()
 

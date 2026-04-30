@@ -158,7 +158,7 @@ def ensure_async_token_provider(
         """
         result = api_key()
         if inspect.isawaitable(result):
-            return await result  # type: ignore[invalid-return-type]
+            return await result  # type: ignore[ty:invalid-return-type]
         return result
 
     return async_token_provider

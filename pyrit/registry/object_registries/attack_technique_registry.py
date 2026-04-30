@@ -270,9 +270,9 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         def _get_aggregate_tags(cls: type) -> set[str]:
             return set(all_aggregate_tag_names)
 
-        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[invalid-assignment, invalid-parameter-default]
+        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
-        return strategy_cls  # type: ignore[invalid-return-type]
+        return strategy_cls  # type: ignore[ty:invalid-return-type]
 
     @staticmethod
     def build_factory_from_spec(spec: AttackTechniqueSpec) -> AttackTechniqueFactory:
@@ -319,7 +319,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
                 )
 
         return AttackTechniqueFactory(
-            attack_class=spec.attack_class,  # type: ignore[invalid-argument-type]
+            attack_class=spec.attack_class,  # type: ignore[ty:invalid-argument-type]
             attack_kwargs=kwargs or None,
         )
 

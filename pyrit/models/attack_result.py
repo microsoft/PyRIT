@@ -241,7 +241,7 @@ def _add_attack_identifier_compat(cls: type) -> type:
                 )
         original_init(self, *args, **kwargs)
 
-    cls.__init__ = wrapped_init  # type: ignore[invalid-assignment]
+    cls.__init__ = wrapped_init  # type: ignore[ty:invalid-assignment]
     return cls
 
 

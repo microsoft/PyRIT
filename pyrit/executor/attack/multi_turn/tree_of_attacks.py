@@ -137,7 +137,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
         """
-        return self.objective_scorer.threshold  # type: ignore[unresolved-attribute]
+        return self.objective_scorer.threshold  # type: ignore[ty:unresolved-attribute]
 
 
 @dataclass
@@ -1878,7 +1878,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             adversarial_chat_seed_prompt=self._adversarial_chat_seed_prompt,
             adversarial_chat_system_seed_prompt=self._adversarial_chat_system_seed_prompt,
             adversarial_chat_prompt_template=self._adversarial_chat_prompt_template,
-            objective_scorer=self._objective_scorer,  # type: ignore[invalid-argument-type]
+            objective_scorer=self._objective_scorer,  # type: ignore[ty:invalid-argument-type]
             on_topic_scorer=self._create_on_topic_scorer(context.objective),
             request_converters=self._request_converters,
             response_converters=self._response_converters,

@@ -246,6 +246,6 @@ class AttackParameters:
                 c, seed_group=seed_group, adversarial_chat=adversarial_chat, objective_scorer=objective_scorer, **ov
             )
 
-        new_cls.from_seed_group_async = classmethod(from_seed_group_async_wrapper)  # type: ignore[unresolved-attribute]
+        new_cls.from_seed_group_async = classmethod(from_seed_group_async_wrapper)  # type: ignore[ty:unresolved-attribute]
 
-        return new_cls  # type: ignore[invalid-return-type]
+        return new_cls  # type: ignore[ty:invalid-return-type]

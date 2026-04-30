@@ -293,7 +293,7 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
         }
 
         if self.voice:
-            session_config["audio"]["output"]["voice"] = self.voice  # type: ignore[invalid-assignment]
+            session_config["audio"]["output"]["voice"] = self.voice  # type: ignore[ty:invalid-assignment]
 
         return session_config
 

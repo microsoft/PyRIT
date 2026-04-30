@@ -205,7 +205,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },
-                    **common_metadata,  # type: ignore[invalid-argument-type]
+                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

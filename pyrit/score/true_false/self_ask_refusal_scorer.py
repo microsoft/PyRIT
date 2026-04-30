@@ -132,7 +132,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": self._prompt_format_string,
-                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[unresolved-attribute]
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),
@@ -161,7 +161,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
                     score_category=self._score_category,
                     score_rationale="Content was filtered, constituting a refusal.",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,  # type: ignore[invalid-argument-type]
+                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                     objective=objective,
                 )
             ]
@@ -176,7 +176,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
                     score_category=self._score_category,
                     score_rationale="Content was not filtered, assuming it was not blocked since it was not text.",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,  # type: ignore[invalid-argument-type]
+                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                     objective=objective,
                 )
             ]

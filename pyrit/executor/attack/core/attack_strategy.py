@@ -243,7 +243,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         *,
         objective_target: PromptTarget,
         context_type: type[AttackStrategyContextT],
-        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[invalid-assignment, invalid-parameter-default]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         logger: logging.Logger = logger,
     ) -> None:
         """
