@@ -9,16 +9,17 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 """
 
 import asyncio
+import copy
 import logging
 import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, Union, cast, get_args, get_origin
 
 from tqdm.auto import tqdm
 
-from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
@@ -122,6 +123,15 @@ class Scenario(ABC):
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
 
+        # Custom parameters declared via supported_parameters() and populated
+        # from CLI / config via set_params_from_args(). Empty for scenarios
+        # that declare no custom parameters.
+        self.params: dict[str, Any] = {}
+
+        # Tracks whether _validate_declarations() has run yet on this instance
+        # — declarations are static per class, so we only need to validate once.
+        self._declarations_validated: bool = False
+
     @property
     def name(self) -> str:
         """Get the name of the scenario."""
@@ -173,6 +183,28 @@ class Scenario(ABC):
         Returns:
             DatasetConfiguration: The default dataset configuration.
         """
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Get the list of custom parameters this scenario accepts.
+
+        Override this classmethod to declare scenario-specific parameters that
+        can be set from the CLI (``--my-param``), the shell ``run`` command,
+        or YAML configuration. Declared parameters are coerced to the correct
+        Python type, validated, and stored on ``self.params`` before
+        ``initialize_async()`` runs, so subclasses can read them via bracket
+        access (e.g. ``self.params["max_turns"]``).
+
+        Implemented as a classmethod (not a property) so the framework can
+        introspect the parameter list without instantiating the scenario —
+        ``--list-scenarios`` and the dynamic CLI parser both need this before
+        any concrete scenario exists.
+
+        Returns:
+            list[Parameter]: List of declared parameters. Defaults to empty list.
+        """
+        return []
 
     def _get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
         """
@@ -242,6 +274,311 @@ class Scenario(ABC):
         scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
         logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
         return scorer
+
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """
+        Populate ``self.params`` from merged CLI / config arguments.
+
+        Coerces each value to its declared ``param_type``, validates, and
+        materializes declared defaults for params not in ``args``.
+
+        Args:
+            args (dict[str, Any]): Map of parameter name to raw value. Keys
+                with ``None`` values are treated as absent (matches the
+                YAML ``null`` convention) and the declared default is used.
+                Argparse callers should use ``argparse.SUPPRESS`` so unset
+                flags do not appear at all.
+
+        Raises:
+            ValueError: Invalid declaration, unknown or missing-required
+                parameter, coercion failure, or value not in ``choices``.
+        """
+        declared = list(self.supported_parameters())
+        if not self._declarations_validated:
+            self._validate_declarations(declared=declared)
+            self._declarations_validated = True
+
+        declared_by_name = {p.name: p for p in declared}
+
+        # Drop keys whose value is None — treat them as "use the declared
+        # default" so YAML `key: null` and a missing key behave the same.
+        supplied = {name: value for name, value in args.items() if value is not None}
+
+        coerced: dict[str, Any] = {}
+        for name, raw_value in supplied.items():
+            param = declared_by_name.get(name)
+            if param is None:
+                # Stash unknown values so _validate_params can surface a single
+                # well-formatted error listing all of them (instead of failing
+                # at coercion time on the first unknown name).
+                coerced[name] = raw_value
+                continue
+            coerced[name] = self._coerce_value(param=param, raw_value=raw_value)
+
+        self._validate_params(params=coerced, declared=declared)
+
+        for param in declared:
+            if param.name not in coerced and param.default is not None:
+                # Deep-copy so authors using mutable defaults like [] cannot
+                # accidentally share mutable state across scenario instances.
+                coerced[param.name] = copy.deepcopy(param.default)
+
+        self.params = coerced
+
+    def _validate_declarations(self, *, declared: list[Parameter]) -> None:
+        """
+        Validate the scenario's parameter declarations.
+
+        Catches author mistakes once, the first time params are set, before
+        they have a chance to corrupt ``self.params`` silently.
+
+        Args:
+            declared (list[Parameter]): Parameter list returned by
+                ``supported_parameters()``.
+
+        Raises:
+            ValueError: If declarations contain duplicate names, an
+                unsupported ``param_type``, ``choices`` not coercible to
+                ``param_type``, or a default that fails coercion / is not
+                in ``choices``.
+        """
+        seen: set[str] = set()
+        for param in declared:
+            if param.name in seen:
+                raise ValueError(f"Scenario '{type(self).__name__}' declares duplicate parameter name '{param.name}'.")
+            seen.add(param.name)
+
+            self._validate_param_type(param=param)
+
+            if param.required and param.default is not None:
+                raise ValueError(
+                    f"Scenario '{type(self).__name__}' parameter '{param.name}' is declared as required "
+                    f"but also has a default value. A required parameter cannot have a default."
+                )
+
+            if param.choices is not None and param.param_type is not None:
+                # Confirm each choice is coercible to the declared type, so an
+                # author who writes choices=("a","b") with param_type=int learns
+                # at declaration time, not when an end-user supplies a value.
+                for choice in param.choices:
+                    try:
+                        self._coerce_value(param=param, raw_value=choice)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Scenario '{type(self).__name__}' parameter '{param.name}' choice "
+                            f"{choice!r} is not coercible to {param.param_type!r}: {exc}"
+                        ) from exc
+
+            if param.default is not None:
+                try:
+                    coerced_default = self._coerce_value(param=param, raw_value=param.default)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
+                    ) from exc
+
+                if param.choices is not None and coerced_default not in param.choices:
+                    raise ValueError(
+                        f"Scenario '{type(self).__name__}' parameter '{param.name}' default "
+                        f"{param.default!r} is not in declared choices {param.choices!r}."
+                    )
+
+    def _validate_param_type(self, *, param: Parameter) -> None:
+        """
+        Reject parameter declarations with unsupported ``param_type``.
+
+        Supported types: ``None`` (raw passthrough), ``str``, ``int``,
+        ``float``, ``bool``, and ``list[str]``.
+
+        Args:
+            param (Parameter): The parameter declaration.
+
+        Raises:
+            ValueError: If ``param_type`` is not in the supported set.
+        """
+        param_type = param.param_type
+        if param_type is None or param_type in (str, int, float, bool):
+            return
+        if get_origin(param_type) is list:
+            type_args = get_args(param_type)
+            element_type = type_args[0] if type_args else str
+            if element_type is str:
+                return
+
+        raise ValueError(
+            f"Scenario '{type(self).__name__}' parameter '{param.name}' has unsupported "
+            f"param_type {param_type!r}. Supported types: str, int, float, bool, list[str], or None."
+        )
+
+    def _coerce_value(self, *, param: Parameter, raw_value: Any) -> Any:
+        """
+        Coerce a raw input value into the declared ``param_type`` and validate ``choices``.
+
+        Args:
+            param (Parameter): The parameter declaration.
+            raw_value (Any): The value as supplied (string from CLI, native
+                Python value from YAML, declared default during declaration
+                validation).
+
+        Returns:
+            Any: The coerced value, ready to store on ``self.params``.
+
+        Raises:
+            ValueError: If coercion fails or the coerced value is not in
+                ``choices``.
+        """
+        param_type = param.param_type
+        if param_type is None:
+            value: Any = raw_value
+        elif param_type is bool:
+            value = self._coerce_bool(param_name=param.name, raw_value=raw_value)
+        elif param_type is int:
+            value = self._coerce_scalar(param_name=param.name, scalar_type=int, raw_value=raw_value)
+        elif param_type is float:
+            value = self._coerce_scalar(param_name=param.name, scalar_type=float, raw_value=raw_value)
+        elif param_type is str:
+            value = str(raw_value)
+        elif get_origin(param_type) is list:
+            value = self._coerce_list(param=param, raw_value=raw_value)
+        else:
+            raise ValueError(
+                f"Parameter '{param.name}' has unsupported param_type {param_type!r}. "
+                f"Supported types: str, int, float, bool, list[str]."
+            )
+
+        if param.choices is not None and value not in param.choices:
+            raise ValueError(f"Parameter '{param.name}' value {value!r} is not in declared choices {param.choices!r}.")
+
+        return value
+
+    @staticmethod
+    def _coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
+        """
+        Coerce a raw value into ``int`` or ``float``, rejecting native ``bool`` inputs.
+
+        ``int(True) == 1`` and ``float(False) == 0.0`` are silent surprises
+        when a YAML typo or stray flag lands a ``bool`` where a number was
+        expected. We reject those explicitly.
+
+        Args:
+            param_name (str): Parameter name (used in error messages).
+            scalar_type (type): Either ``int`` or ``float``.
+            raw_value (Any): Value to coerce.
+
+        Returns:
+            Any: The coerced numeric value.
+
+        Raises:
+            ValueError: If ``raw_value`` is a ``bool`` or cannot be coerced.
+        """
+        if isinstance(raw_value, bool):
+            raise ValueError(
+                f"Parameter '{param_name}' expects {scalar_type.__name__} but received a bool ({raw_value!r})."
+            )
+        try:
+            return scalar_type(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Parameter '{param_name}' could not be coerced to {scalar_type.__name__}: {raw_value!r} ({exc})."
+            ) from exc
+
+    @staticmethod
+    def _coerce_bool(*, param_name: str, raw_value: Any) -> bool:
+        """
+        Parse a raw value as a boolean.
+
+        Accepts native ``bool``, plus case-insensitive strings ``true``/``1``/``yes``
+        for True and ``false``/``0``/``no`` for False. Avoids the well-known
+        ``bool("false") is True`` argparse footgun.
+
+        Args:
+            param_name (str): Parameter name (used in the error message).
+            raw_value (Any): Value to coerce.
+
+        Returns:
+            bool: Coerced boolean.
+
+        Raises:
+            ValueError: If the value is not a recognized boolean form.
+        """
+        if isinstance(raw_value, bool):
+            return raw_value
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            if normalized in ("true", "1", "yes"):
+                return True
+            if normalized in ("false", "0", "no"):
+                return False
+        raise ValueError(
+            f"Parameter '{param_name}' expects bool but received {raw_value!r}. "
+            f"Accepted values: true/false, 1/0, yes/no (case-insensitive), or a native bool."
+        )
+
+    def _coerce_list(self, *, param: Parameter, raw_value: Any) -> list[Any]:
+        """
+        Coerce a list-typed parameter, validating arity and per-element type.
+
+        Args:
+            param (Parameter): The parameter declaration. ``param.param_type``
+                must be a parameterized list generic such as ``list[str]``.
+            raw_value (Any): The raw value (must be a list).
+
+        Returns:
+            list[Any]: The coerced list.
+
+        Raises:
+            ValueError: If ``raw_value`` is not a list, or any element fails
+                coercion to the declared element type.
+        """
+        if not isinstance(raw_value, list):
+            raise ValueError(
+                f"Parameter '{param.name}' expects a list but received {type(raw_value).__name__} ({raw_value!r})."
+            )
+
+        type_args = get_args(param.param_type)
+        element_type = type_args[0] if type_args else str
+
+        if element_type is str:
+            return [str(item) for item in raw_value]
+        # Defensive: Stage 1 only ships list[str], but the coercion logic is
+        # written so future expansion to list[int] / list[float] / list[bool]
+        # would only need this branch widened.
+        raise ValueError(
+            f"Parameter '{param.name}' has unsupported list element type {element_type!r}. "
+            f"Supported list types: list[str]."
+        )
+
+    def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
+        """
+        Validate the supplied parameters against the scenario's declarations.
+
+        Args:
+            params (dict[str, Any]): Parameters as supplied (post-coercion for
+                declared names; raw for unknown names).
+            declared (list[Parameter]): The snapshot of declared parameters.
+                Passed in so coercion and validation use a single consistent
+                view (see ``set_params_from_args``).
+
+        Raises:
+            ValueError: If unknown parameter names are present, or if a
+                ``required=True`` declared parameter is missing.
+        """
+        declared_names = {p.name for p in declared}
+
+        unknown = sorted(set(params.keys()) - declared_names)
+        if unknown:
+            raise ValueError(
+                f"Scenario '{type(self).__name__}' received unknown parameter(s): {', '.join(unknown)}. "
+                f"Supported parameters: "
+                f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
+            )
+
+        missing_required = [p.name for p in declared if p.required and p.name not in params]
+        if missing_required:
+            raise ValueError(
+                f"Scenario '{type(self).__name__}' is missing required parameter(s): "
+                f"{', '.join(sorted(missing_required))}."
+            )
 
     def _prepare_strategies(
         self,
