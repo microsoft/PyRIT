@@ -7,6 +7,9 @@ from pyrit.prompt_target.hugging_face.hugging_face_endpoint_target import (
     HuggingFaceEndpointTarget,
 )
 
+# HuggingFaceEndpointTarget emits a DeprecationWarning on construction
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
 
 @pytest.fixture
 def hugging_face_endpoint_target(patch_central_database) -> HuggingFaceEndpointTarget:
@@ -138,4 +141,15 @@ def test_sampling_params_with_do_sample_no_warning():
             model_id="test-model",
             temperature=0.7,
             do_sample=True,
+        )
+
+
+@pytest.mark.filterwarnings("default::DeprecationWarning")
+def test_init_emits_deprecation_warning():
+    """HuggingFaceEndpointTarget emits a DeprecationWarning on construction."""
+    with pytest.warns(DeprecationWarning, match="deprecated and will be removed"):
+        HuggingFaceEndpointTarget(
+            hf_token="test_token",
+            endpoint="https://api-inference.huggingface.co/models/test-model",
+            model_id="test-model",
         )

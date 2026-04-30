@@ -67,7 +67,7 @@ Get your API key from [console.groq.com](https://console.groq.com/).
 ```bash
 OPENAI_CHAT_ENDPOINT="https://router.huggingface.co/v1"
 OPENAI_CHAT_KEY="hf_your-token-here"
-OPENAI_CHAT_MODEL="katanemo/Arch-Router-1.5B:hf-inference"
+OPENAI_CHAT_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 ```
 
 Get your token from [huggingface.co/docs/hub/security-tokens](https://huggingface.co/docs/hub/security-tokens). Browse available models at [huggingface.co/models](https://huggingface.co/models).

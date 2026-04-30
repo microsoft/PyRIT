@@ -4,6 +4,7 @@
 import logging
 import warnings
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
@@ -19,7 +20,10 @@ class HuggingFaceEndpointTarget(PromptTarget):
     """
     The HuggingFaceEndpointTarget interacts with HuggingFace models hosted on cloud endpoints.
 
-    Inherits from PromptTarget to comply with the current design standards.
+    .. deprecated:: 0.13.0
+        Use ``OpenAIChatTarget`` with ``endpoint="https://router.huggingface.co/v1"``
+        and ``api_key=HUGGINGFACE_TOKEN`` instead. The HuggingFace Inference Providers API
+        is OpenAI-compatible, making this target redundant. Will be removed in v0.15.0.
     """
 
     def __init__(
@@ -61,6 +65,12 @@ class HuggingFaceEndpointTarget(PromptTarget):
             custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
                 ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
+        print_deprecation_message(
+            old_item=HuggingFaceEndpointTarget,
+            new_item="OpenAIChatTarget with endpoint='https://router.huggingface.co/v1'",
+            removed_in="v0.15.0",
+        )
+
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             verbose=verbose,

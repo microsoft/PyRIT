@@ -20,7 +20,7 @@ import pytest
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget
 
-DEFAULT_HF_MODEL = "katanemo/Arch-Router-1.5B:hf-inference"
+DEFAULT_HF_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 
 
 @pytest.fixture()
