@@ -119,7 +119,7 @@ class AttackExecutor:
     from seed groups.
     """
 
-    def __init__(self, *, max_concurrency: int = 1):
+    def __init__(self, *, max_concurrency: int = 1) -> None:
         """
         Initialize the attack executor with configurable concurrency control.
 

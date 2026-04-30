@@ -14,6 +14,8 @@ import pytest
 
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
+    AttackSummary,
+    ConversationMessagesResponse,
     CreateAttackRequest,
     MessagePieceRequest,
     PrependedMessageRequest,
@@ -196,41 +198,90 @@ class TestListAttacks:
         assert result.items[0].attack_type == "Test Attack"
 
     @pytest.mark.asyncio
-    async def test_list_attacks_filters_by_attack_type_exact(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks passes attack_type to memory layer."""
+    async def test_list_attacks_filters_by_attack_types_exact(self, attack_service, mock_memory) -> None:
+        """Test that list_attacks passes attack_types to memory layer."""
         ar1 = make_attack_result(conversation_id="attack-1", name="CrescendoAttack")
         mock_memory.get_attack_results.return_value = [ar1]
         mock_memory.get_message_pieces.return_value = []
 
-        result = await attack_service.list_attacks_async(attack_type="CrescendoAttack")
+        result = await attack_service.list_attacks_async(attack_types=["CrescendoAttack"])
 
         assert len(result.items) == 1
         assert result.items[0].conversation_id == "attack-1"
-        # Verify attack_type was forwarded to the memory layer as attack_class
+        # Verify attack_types was forwarded to the memory layer as attack_classes
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["attack_class"] == "CrescendoAttack"
+        assert call_kwargs["attack_classes"] == ["CrescendoAttack"]
 
     @pytest.mark.asyncio
-    async def test_list_attacks_attack_type_passed_to_memory(self, attack_service, mock_memory) -> None:
-        """Test that attack_type is forwarded to memory as attack_class for DB-level filtering."""
+    async def test_list_attacks_attack_types_passed_to_memory(self, attack_service, mock_memory) -> None:
+        """Test that attack_types is forwarded to memory as attack_classes for DB-level filtering."""
         mock_memory.get_attack_results.return_value = []
         mock_memory.get_message_pieces.return_value = []
 
-        await attack_service.list_attacks_async(attack_type="Crescendo")
+        await attack_service.list_attacks_async(attack_types=["Crescendo"])
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["attack_class"] == "Crescendo"
+        assert call_kwargs["attack_classes"] == ["Crescendo"]
 
     @pytest.mark.asyncio
-    async def test_list_attacks_filters_by_no_converters(self, attack_service, mock_memory) -> None:
-        """Test that converter_types=[] is forwarded to memory for DB-level filtering."""
+    async def test_list_attacks_filters_by_attack_types_multi(self, attack_service, mock_memory) -> None:
+        """Test that multiple attack_types are forwarded as a list to memory for OR-matching."""
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(attack_types=["CrescendoAttack", "ManualAttack"])
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["attack_classes"] == ["CrescendoAttack", "ManualAttack"]
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_attack_types_empty_list_coerced_to_none(self, attack_service, mock_memory) -> None:
+        """Test that attack_types=[] is coerced to None before reaching memory (no filter)."""
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(attack_types=[])
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["attack_classes"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_coerces_empty_converter_types_to_no_filter(self, attack_service, mock_memory) -> None:
+        """converter_types=[] at the service boundary means 'no converter filter'.
+
+        The 'attacks with no converters' intent is expressed via has_converters=False;
+        an empty list is coerced to None so route/service/memory stay consistent.
+        """
         mock_memory.get_attack_results.return_value = []
         mock_memory.get_message_pieces.return_value = []
 
         await attack_service.list_attacks_async(converter_types=[])
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["converter_classes"] == []
+        assert call_kwargs["converter_classes"] is None
+        assert call_kwargs["has_converters"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_forwards_has_converters_true(self, attack_service, mock_memory) -> None:
+        """has_converters=True is forwarded to memory."""
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(has_converters=True)
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["has_converters"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_forwards_has_converters_false(self, attack_service, mock_memory) -> None:
+        """has_converters=False is forwarded to memory."""
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(has_converters=False)
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["has_converters"] is False
 
     @pytest.mark.asyncio
     async def test_list_attacks_filters_by_converter_types_and_logic(self, attack_service, mock_memory) -> None:
@@ -269,9 +320,68 @@ class TestListAttacks:
 
         assert len(result.items) == 1
         assert result.items[0].conversation_id == "attack-1"
-        # Verify converter_types was forwarded to the memory layer
+        # Verify converter_types was forwarded to the memory layer with default "all" mode
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
+        assert call_kwargs["converter_classes_match"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_converter_match_all_explicit_pushes_to_memory(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Explicit converter_types_match='all' still pushes converter filter to memory."""
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(
+            converter_types=["Base64Converter", "ROT13Converter"],
+            converter_types_match="all",
+        )
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
+        assert call_kwargs["converter_classes_match"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_converter_match_any_single_converter_pushes_to_memory(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Degenerate case: converter_types_match='any' with one converter still pushes to memory.
+
+        The memory layer ignores the match mode when the list has fewer than 2 entries, but the
+        service still forwards the mode verbatim (memory is authoritative for that optimization).
+        """
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(
+            converter_types=["Base64Converter"],
+            converter_types_match="any",
+        )
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["converter_classes"] == ["Base64Converter"]
+        assert call_kwargs["converter_classes_match"] == "any"
+
+    @pytest.mark.asyncio
+    async def test_list_attacks_converter_match_any_pushes_to_memory(self, attack_service, mock_memory) -> None:
+        """converter_types_match='any' with 2+ converters pushes down to the DB via memory.
+
+        Previously this branch loaded every row matching other filters into Python and filtered
+        with a set intersection, which was O(total rows) per query. The OR-matching is now
+        expressed as a DB predicate so only matching rows are returned and pagination is honored.
+        """
+        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_message_pieces.return_value = []
+
+        await attack_service.list_attacks_async(
+            converter_types=["Base64Converter", "ROT13Converter"],
+            converter_types_match="any",
+        )
+
+        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
+        assert call_kwargs["converter_classes_match"] == "any"
 
     @pytest.mark.asyncio
     async def test_list_attacks_filters_by_min_turns(self, attack_service, mock_memory) -> None:
@@ -748,7 +858,7 @@ class TestCreateAttack:
             call_args = mock_memory.add_attack_results_to_memory.call_args
             stored_ar = call_args[1]["attack_results"][0]
             assert stored_ar.objective == "Manual attack via GUI"
-            assert stored_ar.attack_identifier.class_name == "ManualAttack"
+            assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
 
 
 # ============================================================================
@@ -1158,9 +1268,9 @@ class TestAddMessage:
             # Normalizer should still get empty converter configs since pieces are preconverted
             call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
             assert call_kwargs["request_converter_configurations"] == []
-            # attack_identifier should be updated with converter identifiers
+            # atomic_attack_identifier should be updated with converter identifiers
             update_call = mock_memory.update_attack_result_by_id.call_args[1]
-            assert "attack_identifier" in update_call["update_fields"]
+            assert "atomic_attack_identifier" in update_call["update_fields"]
 
     @pytest.mark.asyncio
     async def test_add_message_no_existing_pieces_uses_request_labels(self, attack_service, mock_memory) -> None:
@@ -2199,11 +2309,93 @@ class TestAttackServiceAdditionalCoverage:
             await attack_service.add_message_async(attack_result_id="attack-1", request=request)
 
         update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
-        persisted_identifiers = update_fields["attack_identifier"]["children"]["request_converters"]
+        # Converters are now stored inside atomic_attack_identifier -> attack_technique -> attack
+        atomic_id = update_fields["atomic_attack_identifier"]
+        attack_id = atomic_id["children"]["attack_technique"]["children"]["attack"]
+        persisted_identifiers = attack_id["children"]["request_converters"]
         persisted_classes = [identifier["class_name"] for identifier in persisted_identifiers]
 
         assert persisted_classes.count("ExistingConverter") == 1
         assert persisted_classes.count("NewConverter") == 1
+        # The deprecated attack_identifier column should NOT be written
+        assert "attack_identifier" not in update_fields
+
+    @pytest.mark.asyncio
+    async def test_converter_merge_with_flat_atomic_identifier(self, attack_service, mock_memory):
+        """Should merge converters via fallback path when atomic_attack_identifier has no attack_technique child."""
+        new_converter = ComponentIdentifier(
+            class_name="NewConverter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+
+        # Build a flat atomic identifier (no attack_technique nesting — legacy shape)
+        attack_id = ComponentIdentifier(
+            class_name="ManualAttack",
+            class_module="pyrit.backend",
+            children={
+                "objective_target": ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target"),
+            },
+        )
+        ar = make_attack_result(conversation_id="flat-1")
+        ar.atomic_attack_identifier = ComponentIdentifier(
+            class_name="AtomicAttack",
+            class_module="pyrit.scenario.core.atomic_attack",
+            children={"attack": attack_id},
+        )
+
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_message_pieces.return_value = []
+
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="flat-1",
+            send=False,
+            converter_ids=["c-1"],
+        )
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
+            patch.object(
+                attack_service,
+                "get_attack_async",
+                new=AsyncMock(
+                    return_value=AttackSummary(
+                        attack_result_id="ar-flat-1",
+                        conversation_id="flat-1",
+                        attack_type="ManualAttack",
+                        converters=[],
+                        message_count=0,
+                        labels={},
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                ),
+            ),
+            patch.object(
+                attack_service,
+                "get_conversation_messages_async",
+                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="flat-1", messages=[])),
+            ),
+        ):
+            mock_converter_service = MagicMock()
+            mock_converter_service.get_converter_objects_for_ids.return_value = [
+                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
+            ]
+            mock_get_converter_service.return_value = mock_converter_service
+
+            await attack_service.add_message_async(attack_result_id="flat-1", request=request)
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        assert "atomic_attack_identifier" in update_fields
+        assert "attack_identifier" not in update_fields
+        # Flat fallback: converter should be under atomic -> attack -> children
+        atomic_id = update_fields["atomic_attack_identifier"]
+        attack_child = atomic_id["children"]["attack"]
+        persisted_converters = attack_child["children"]["request_converters"]
+        assert len(persisted_converters) == 1
+        assert persisted_converters[0]["class_name"] == "NewConverter"
 
     def test_duplicate_conversation_up_to_adds_pieces_when_present(self, attack_service, mock_memory):
         """Should duplicate up to cutoff and persist duplicated pieces only when returned."""

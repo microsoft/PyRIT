@@ -115,11 +115,11 @@ class FoundryComposite:
     def name(self) -> str:
         """Return a human-readable name for this composite."""
         if not self.converters:
-            return self.attack.value if self.attack else "baseline"
+            return self.attack.value if self.attack else "baseline"  # type: ignore[ty:invalid-return-type]
         if self.attack is None and len(self.converters) == 1:
             return str(self.converters[0].value)
         attack_name = self.attack.value if self.attack else "baseline"
-        converter_names = ", ".join(c.value for c in self.converters)
+        converter_names = ", ".join(c.value for c in self.converters)  # type: ignore[ty:no-matching-overload]
         return f"ComposedStrategy({attack_name}, {converter_names})"
 
 
@@ -250,7 +250,7 @@ class RedTeamAgent(Scenario):
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a Foundry Scenario with the specified attack strategies.
 
@@ -296,7 +296,7 @@ class RedTeamAgent(Scenario):
     async def initialize_async(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         scenario_strategies: Optional[
             Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
         ] = None,
@@ -332,7 +332,7 @@ class RedTeamAgent(Scenario):
             memory_labels=memory_labels,
         )
 
-    def _prepare_strategies(  # type: ignore[override]
+    def _prepare_strategies(  # type: ignore[ty:invalid-method-override]
         self,
         strategies: "Optional[Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy]]",
     ) -> list[ScenarioStrategy]:
@@ -581,7 +581,7 @@ class RedTeamAgent(Scenario):
 
             # Create the adversarial config from self._adversarial_target
             attack_adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
-            kwargs["attack_adversarial_config"] = attack_adversarial_config  # type: ignore[assignment]
+            kwargs["attack_adversarial_config"] = attack_adversarial_config  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
 
         # Add attack-specific kwargs if provided
         if attack_kwargs:
@@ -590,4 +590,4 @@ class RedTeamAgent(Scenario):
         # Type ignore is used because this is a factory method that works with compatible
         # attack types. The caller is responsible for ensuring the attack type accepts
         # these constructor parameters.
-        return attack_type(**kwargs)  # type: ignore[arg-type]
+        return attack_type(**kwargs)  # type: ignore[ty:invalid-argument-type]

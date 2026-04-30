@@ -30,7 +30,7 @@ class UnicodeConfusableConverter(PromptConverter):
         *,
         source_package: Literal["confusable_homoglyphs", "confusables"] = "confusable_homoglyphs",
         deterministic: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified source package for homoglyph generation.
 

@@ -119,7 +119,7 @@ def _parse_arg_descriptions(converter_class: type) -> dict[str, str]:
     Returns:
         dict[str, str]: Mapping of parameter names to their descriptions.
     """
-    doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()  # type: ignore[misc]
+    doc = (converter_class.__init__.__doc__ or converter_class.__doc__ or "").strip()
     match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", doc, re.DOTALL)
     if not match:
         return {}
@@ -142,7 +142,7 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
         list[ConverterParameterSchema]: List of parameter schemas.
     """
     try:
-        sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
+        sig = inspect.signature(converter_class.__init__)
     except (ValueError, TypeError):
         return []
 
@@ -186,7 +186,7 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
 def _is_llm_based(converter_class: type) -> bool:
     """Return True if the converter requires an LLM target parameter."""
     try:
-        sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
+        sig = inspect.signature(converter_class.__init__)
     except (ValueError, TypeError):
         return False
 
@@ -477,7 +477,7 @@ class ConverterService:
             Params dict with values coerced to the expected types.
         """
         try:
-            sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
+            sig = inspect.signature(converter_class.__init__)
         except (ValueError, TypeError) as e:
             raise ValueError(
                 f"Failed to inspect __init__ signature for converter '{converter_class.__name__}': {e}"
@@ -531,7 +531,7 @@ class ConverterService:
             Params dict with data-URI values replaced by file paths.
         """
         try:
-            sig = inspect.signature(converter_class.__init__)  # type: ignore[misc]
+            sig = inspect.signature(converter_class.__init__)
         except (ValueError, TypeError):
             return params
 

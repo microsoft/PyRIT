@@ -167,7 +167,8 @@ class MyCustomScenario(Scenario):
         # ... your scenario-specific initialization code
 
     async def _get_atomic_attacks_async(self):
-        # Build and return your atomic attacks based on self._scenario_composites
+        # Override only if your scenario needs custom attack construction.
+        # The base class provides a default that uses the factory/registry pattern.
         # Example: create attacks for each strategy composite
         return []
 

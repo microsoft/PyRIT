@@ -270,9 +270,10 @@ class TestTargetInitializerTags:
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
-        # Default targets should be registered, scorer variants should not
+        # Default targets should be registered (including temp9), scorer-only should not
         assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
-        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp0") is None
 
         # Clean up
         del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
@@ -281,7 +282,7 @@ class TestTargetInitializerTags:
 
     @pytest.mark.asyncio
     async def test_default_tag_excludes_scorer_targets(self) -> None:
-        """Test that tags=['default'] only registers default-tagged targets."""
+        """Test that tags=['default'] registers default-tagged targets including temp9."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
         os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
@@ -292,7 +293,8 @@ class TestTargetInitializerTags:
 
         registry = TargetRegistry.get_registry_singleton()
         assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
-        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp0") is None
 
         # Clean up
         del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
@@ -301,7 +303,7 @@ class TestTargetInitializerTags:
 
     @pytest.mark.asyncio
     async def test_scorer_tag_only_registers_scorer_targets(self) -> None:
-        """Test that tags=['scorer'] only registers scorer-tagged targets."""
+        """Test that tags=['scorer'] only registers scorer-tagged targets (temp0)."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
         os.environ["AZURE_OPENAI_GPT4O_KEY"] = "test_key"
         os.environ["AZURE_OPENAI_GPT4O_MODEL"] = "gpt-4o"
@@ -312,7 +314,8 @@ class TestTargetInitializerTags:
 
         registry = TargetRegistry.get_registry_singleton()
         assert registry.get_instance_by_name("azure_openai_gpt4o") is None
-        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp9") is None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_temp0") is not None
 
         # Clean up
         del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]

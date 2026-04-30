@@ -128,7 +128,7 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
         """
-        return self.objective_scorer.threshold
+        return self.objective_scorer.threshold  # type: ignore[ty:unresolved-attribute]
 
 
 @dataclass
@@ -982,7 +982,7 @@ class _TreeOfAttacksNode:
             system_prompt=system_prompt,
             conversation_id=self.adversarial_chat_conversation_id,
             attack_identifier=self._attack_id,
-            labels=self._memory_labels,
+            labels=self._memory_labels,  # deprecated
         )
 
         logger.debug(f"Node {self.node_id}: Using initial seed prompt for first turn")
@@ -1254,7 +1254,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -1266,7 +1266,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         desired_response_prefix: str = "Sure, here is",
         batch_size: int = 10,
         prepended_conversation_config: Optional[PrependedConversationConfig] = None,
-    ):
+    ) -> None:
         """
         Initialize the Tree of Attacks with Pruning attack strategy.
 
@@ -1862,7 +1862,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             adversarial_chat_seed_prompt=self._adversarial_chat_seed_prompt,
             adversarial_chat_system_seed_prompt=self._adversarial_chat_system_seed_prompt,
             adversarial_chat_prompt_template=self._adversarial_chat_prompt_template,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=self._objective_scorer,  # type: ignore[ty:invalid-argument-type]
             on_topic_scorer=self._create_on_topic_scorer(context.objective),
             request_converters=self._request_converters,
             response_converters=self._response_converters,

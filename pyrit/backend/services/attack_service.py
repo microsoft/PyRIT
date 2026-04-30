@@ -82,10 +82,12 @@ class AttackService:
     async def list_attacks_async(
         self,
         *,
-        attack_type: Optional[str] = None,
-        converter_types: Optional[list[str]] = None,
+        attack_types: Optional[Sequence[str]] = None,
+        converter_types: Optional[Sequence[str]] = None,
+        converter_types_match: Literal["any", "all"] = "all",
+        has_converters: Optional[bool] = None,
         outcome: Optional[Literal["undetermined", "success", "failure"]] = None,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str | Sequence[str]]] = None,
         min_turns: Optional[int] = None,
         max_turns: Optional[int] = None,
         limit: int = 20,
@@ -97,12 +99,24 @@ class AttackService:
         Queries AttackResult entries from the database.
 
         Args:
-            attack_type: Filter by exact attack type name (case-sensitive).
-            converter_types: Filter by converter usage.
-                None = no filter, [] = only attacks with no converters,
-                ["A", "B"] = only attacks using ALL specified converters (AND logic, case-insensitive).
+            attack_types: Filter by attack type names (case-insensitive). May be specified
+                multiple times to OR-match across types. None or empty list applies no filter.
+            converter_types: Filter by converter class names (case-insensitive).
+                ``None`` or an empty list applies no filter at this layer. Combination
+                semantics for multiple entries are controlled by ``converter_types_match``.
+                To restrict results to attacks with no converters, pass
+                ``has_converters=False`` instead.
+            converter_types_match: How to combine multiple entries in ``converter_types``.
+                ``"all"`` (default) matches attacks that used every listed converter.
+                ``"any"`` matches attacks that used at least one of the listed converters.
+                Ignored when ``converter_types`` is None or has fewer than 2 entries.
+            has_converters: Filter by converter presence. ``True`` returns only attacks that
+                used at least one converter. ``False`` returns only attacks that used no
+                converters. ``None`` applies no filter.
             outcome: Filter by attack outcome.
-            labels: Filter by labels (all must match).
+            labels: Filter by labels. See ``MemoryInterface.get_attack_results`` for
+                semantics (AND across label names; string equality or sequence OR within
+                each name).
             min_turns: Filter by minimum executed turns.
             max_turns: Filter by maximum executed turns.
             limit: Maximum items to return.
@@ -112,11 +126,19 @@ class AttackService:
             AttackListResponse with filtered and paginated attack summaries.
         """
         # Phase 1: Query + lightweight filtering (no pieces needed)
+        # Coerce an empty converter_types list to None so it behaves as "no filter" at
+        # this layer — the "attacks with no converters" case is expressed through
+        # has_converters=False, which keeps the three layers (route/service/memory)
+        # consistent.
+        effective_converter_types = converter_types if converter_types else None
+
         attack_results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
-            attack_class=attack_type,
-            converter_classes=converter_types,
+            attack_classes=attack_types if attack_types else None,
+            converter_classes=effective_converter_types,
+            converter_classes_match=converter_types_match,
+            has_converters=has_converters,
         )
 
         filtered: list[AttackResult] = []
@@ -318,7 +340,7 @@ class AttackService:
             await self._store_prepended_messages(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
-                labels=labels,
+                labels=labels,  # deprecated
             )
 
         return CreateAttackResponse(
@@ -558,7 +580,7 @@ class AttackService:
         ar = results[0]
         main_conversation_id = ar.conversation_id
 
-        self._validate_target_match(attack_identifier=ar.attack_identifier, request=request)
+        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
         self._validate_operator_match(conversation_id=main_conversation_id, request=request)
 
         msg_conversation_id = request.target_conversation_id
@@ -592,14 +614,14 @@ class AttackService:
                 target_registry_name=target_registry_name,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,
+                labels=attack_labels,  # deprecated
             )
         else:
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,
+                labels=attack_labels,  # deprecated
             )
 
         await self._update_attack_after_message_async(attack_result_id=attack_result_id, ar=ar, request=request)
@@ -719,7 +741,7 @@ class AttackService:
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
             new_converter_ids = [c.get_identifier() for c in converter_objs]
-            aid = ar.attack_identifier
+            aid = ar.get_attack_strategy_identifier()
             if aid:
                 existing_converters: list[ComponentIdentifier] = list(aid.get_child_list("request_converters"))
                 existing_hashes = {c.hash for c in existing_converters}
@@ -733,8 +755,6 @@ class AttackService:
                     params=dict(aid.params),
                     children=new_children,
                 )
-                update_fields["attack_identifier"] = new_aid.to_dict()
-                # Also update atomic_attack_identifier so get_attack_strategy_identifier() sees the change
                 if ar.atomic_attack_identifier:
                     atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
                     atomic_children = dict(atomic.children)
@@ -832,7 +852,7 @@ class AttackService:
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
             if labels_override is not None:
-                piece.labels = dict(labels_override)
+                piece.labels = dict(labels_override)  # deprecated
             if remap_assistant_to_simulated and piece.api_role == "assistant":
                 piece._role = "simulated_assistant"
 
@@ -923,7 +943,7 @@ class AttackService:
         self,
         conversation_id: str,
         prepended: list[Any],
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """Store prepended conversation messages in memory."""
         for seq, msg in enumerate(prepended):
@@ -933,7 +953,7 @@ class AttackService:
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
-                    labels=labels,
+                    labels=labels,  # deprecated
                 )
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -944,7 +964,7 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -959,7 +979,7 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,
+            labels=labels,  # deprecated
         )
 
         converter_configs = self._get_converter_configs(request)
@@ -980,7 +1000,7 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
@@ -990,7 +1010,7 @@ class AttackService:
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
-                labels=labels,
+                labels=labels,  # deprecated
             )
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 

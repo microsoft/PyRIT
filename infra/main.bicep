@@ -475,6 +475,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_CLIENT_ID'
               value: managedIdentity.properties.clientId
             }
+            // CORS origin for the SPA. The ACA-generated FQDN is deterministic
+            // (<appName>.<envDefaultDomain>), so we compute it from upstream
+            // resources rather than self-referencing containerApp.
+            {
+              name: 'PYRIT_CORS_ORIGINS'
+              value: 'https://${appName}.${acaEnvironment.properties.defaultDomain}'
+            }
           ]
         }
       ]

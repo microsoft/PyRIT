@@ -13,7 +13,7 @@ services:
       - pip-cache:/home/vscode/.cache/pip:cached
       - uv-cache:/home/vscode/.cache/uv:cached
       - precommit-cache:/home/vscode/.cache/pre-commit:cached
-      - mypy-cache:/workspace/.mypy_cache:cached
+      - ty-cache:/workspace/.ty_cache:cached
       - pylance-cache:/home/vscode/.cache/pylance:cached
       - node-modules:/workspace/frontend/node_modules:cached
       - ~/.pyrit:/home/vscode/.pyrit:cached
@@ -27,6 +27,6 @@ volumes:
   pip-cache:
   uv-cache:
   precommit-cache:
-  mypy-cache:
+  ty-cache:
   pylance-cache:
   node-modules:

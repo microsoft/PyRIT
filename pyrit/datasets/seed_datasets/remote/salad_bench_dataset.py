@@ -37,7 +37,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
         *,
         config: str = "prompts",
         split: str = "base",
-    ):
+    ) -> None:
         """
         Initialize the SALAD-Bench dataset loader.
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import os
 import sys
 from unittest.mock import patch
@@ -213,6 +214,65 @@ class TestAIRTInitializerInitialize:
             pytest.raises(ValueError, match="operation"),
         ):
             init._validate_operation_fields()
+
+    def test_validate_operation_fields_skips_when_pyrit_conf_missing(self, tmp_path):
+        """Test that _validate_operation_fields does not crash when .pyrit_conf is missing.
+
+        In container/GUI deployments, .pyrit_conf does not exist. The method should
+        skip validation gracefully instead of raising FileNotFoundError.
+        """
+        nonexistent_path = tmp_path / "nonexistent" / ".pyrit_conf"
+        init = AIRTInitializer()
+        with patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", nonexistent_path):
+            # Should not raise
+            init._validate_operation_fields()
+
+    def test_validate_operation_fields_preserves_existing_labels_when_pyrit_conf_missing(self, tmp_path):
+        """Test that existing GLOBAL_MEMORY_LABELS are preserved when .pyrit_conf is missing."""
+        nonexistent_path = tmp_path / "nonexistent" / ".pyrit_conf"
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", nonexistent_path),
+            patch.dict("os.environ", {"GLOBAL_MEMORY_LABELS": '{"operator": "gui_user", "operation": "gui_op"}'}),
+        ):
+            init._validate_operation_fields()
+            # Existing labels should remain untouched
+            labels = json.loads(os.environ["GLOBAL_MEMORY_LABELS"])
+            assert labels["operator"] == "gui_user"
+            assert labels["operation"] == "gui_op"
+
+    def test_validate_operation_fields_merges_conf_into_labels(self, tmp_path):
+        """Test that .pyrit_conf values are merged into GLOBAL_MEMORY_LABELS when labels are missing."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "conf_user", "operation": "conf_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            patch.dict("os.environ", {}, clear=False),
+        ):
+            # Remove GLOBAL_MEMORY_LABELS if present
+            os.environ.pop("GLOBAL_MEMORY_LABELS", None)
+            init._validate_operation_fields()
+            labels = json.loads(os.environ["GLOBAL_MEMORY_LABELS"])
+            assert labels["operator"] == "conf_user"
+            assert labels["operation"] == "conf_op"
+
+    def test_validate_operation_fields_does_not_overwrite_existing_labels(self, tmp_path):
+        """Test that .pyrit_conf values do not overwrite existing GLOBAL_MEMORY_LABELS entries."""
+        conf_file = tmp_path / ".pyrit_conf"
+        conf_file.write_text(yaml.dump({"operator": "conf_user", "operation": "conf_op"}))
+        init = AIRTInitializer()
+        with (
+            patch("pyrit.setup.initializers.airt.DEFAULT_CONFIG_PATH", conf_file),
+            patch.dict(
+                "os.environ",
+                {"GLOBAL_MEMORY_LABELS": '{"operator": "existing_user", "operation": "existing_op"}'},
+            ),
+        ):
+            init._validate_operation_fields()
+            labels = json.loads(os.environ["GLOBAL_MEMORY_LABELS"])
+            assert labels["operator"] == "existing_user"
+            assert labels["operation"] == "existing_op"
 
     def test_validate_db_connection_raises_error(self):
         """Test that validate raises error when AZURE_SQL_DB_CONNECTION_STRING is missing."""

@@ -61,7 +61,7 @@ class Scorer(Identifiable, abc.ABC):
 
     _identifier: Optional[ComponentIdentifier] = None
 
-    def __init__(self, *, validator: ScorerPromptValidator):
+    def __init__(self, *, validator: ScorerPromptValidator) -> None:
         """
         Initialize the Scorer.
 
@@ -355,7 +355,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None  # type: ignore[assignment]
+        request.message_pieces[0].id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -379,7 +379,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None  # type: ignore[assignment]
+        request.message_pieces[0].id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(
@@ -410,14 +410,13 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: A flattened list of Score objects from all scored prompts.
 
         Raises:
-            ValueError: If objectives is empty or if the number of objectives doesn't match
+            ValueError: If objectives is not None and the number of objectives doesn't match
                 the number of messages.
         """
-        if not objectives:
+        if objectives is None:
             objectives = [""] * len(messages)
-
         elif len(objectives) != len(messages):
-            raise ValueError("The number of tasks must match the number of messages.")
+            raise ValueError("The number of objectives must match the number of messages.")
 
         if len(messages) == 0:
             return []
@@ -456,7 +455,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             ValueError: If the number of objectives does not match the number of image_paths.
         """
-        if objectives and len(objectives) != len(image_paths):
+        if objectives is not None and len(objectives) != len(image_paths):
             raise ValueError("The number of objectives must match the number of image_paths.")
 
         if len(image_paths) == 0:
@@ -465,10 +464,10 @@ class Scorer(Identifiable, abc.ABC):
         prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
-            task_arguments=["image_path", "objective"] if objectives else ["image_path"],
+            task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
             prompt_target=prompt_target,
             batch_size=batch_size,
-            items_to_batch=[image_paths, objectives] if objectives else [image_paths],
+            items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )
 
         return [score for sublist in results for score in sublist]
@@ -623,7 +622,7 @@ class Scorer(Identifiable, abc.ABC):
             elif isinstance(cat_val, list):
                 if not all(isinstance(x, str) for x in cat_val):
                     raise ValueError("'category' must be a string or a list of strings")
-                normalized_category = cat_val
+                normalized_category = cat_val  # type: ignore[ty:invalid-assignment]
             else:
                 # JSON must yield either a string or a list of strings
                 raise ValueError("'category' must be a string or a list of strings")

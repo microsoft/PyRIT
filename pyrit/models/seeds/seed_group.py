@@ -49,7 +49,7 @@ class SeedGroup(YamlLoadable):
         *,
         seeds: Sequence[Union[Seed, dict[str, Any]]],
         is_jinja_template: bool = False,
-    ):
+    ) -> None:
         """
         Initialize a SeedGroup.
 

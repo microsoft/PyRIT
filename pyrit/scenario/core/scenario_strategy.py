@@ -61,6 +61,13 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
     (like "easy", "moderate", "difficult" or "fast", "medium") that automatically expand
     to include all strategies with that tag.
 
+    **Convention**: Strategy enum members should map 1:1 to selectable **attack techniques**
+    (e.g., ``PromptSending``, ``RolePlay``, ``TAP``) or to aggregates of techniques
+    (e.g., ``DEFAULT``, ``SINGLE_TURN``).  Datasets control *what* content or objectives
+    are tested; strategies control *how* attacks are executed.  Avoid encoding dataset or
+    category selection into the strategy enum — use ``DatasetConfiguration`` and the
+    ``--dataset-names`` CLI flag for that axis.
+
     **Tags**: Flexible categorization system where strategies can have multiple tags
     (e.g., {"easy", "converter"}, {"difficult", "multi_turn"})
 
@@ -265,7 +272,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             if not isinstance(item, cls):
                 continue
             if item.value in aggregate_tags:
-                for s in cls.expand({item}):
+                for s in cls.expand({item}):  # type: ignore[ty:invalid-argument-type]
                     if s not in seen:
                         seen.add(s)
                         result.append(s)

@@ -109,7 +109,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
             for registry_name, scenario_class in discover_in_package(
                 package_path=package_path,
                 package_name="pyrit.scenario.scenarios",
-                base_class=Scenario,  # type: ignore[type-abstract]
+                base_class=Scenario,
                 recursive=True,
             ):
                 # Skip deprecated alias classes
@@ -117,6 +117,22 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 if doc.startswith("Deprecated alias"):
                     logger.debug(f"Skipping deprecated alias: {scenario_class.__name__}")
                     continue
+
+                # Skip re-exported aliases: if the class was defined in a different
+                # module than the one being discovered, it's an alias (e.g.,
+                # ContentHarms in content_harms.py is really RapidResponse from
+                # rapid_response.py).
+                class_module = getattr(scenario_class, "__module__", "")
+                expected_module_suffix = registry_name.replace(".", "/")
+                if not class_module.endswith(registry_name.replace("/", ".")):
+                    # Build the full expected module name for comparison
+                    expected_module = f"pyrit.scenario.scenarios.{registry_name.replace('/', '.')}"
+                    if class_module != expected_module:
+                        logger.debug(
+                            f"Skipping alias '{scenario_class.__name__}' in '{registry_name}' "
+                            f"(defined in {class_module})"
+                        )
+                        continue
 
                 # Check for registry key collision
                 if registry_name in self._class_entries:
@@ -146,9 +162,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         from pyrit.scenario.core import Scenario
 
         try:
-            for _, scenario_class in discover_subclasses_in_loaded_modules(
-                base_class=Scenario  # type: ignore[type-abstract]
-            ):
+            for _, scenario_class in discover_subclasses_in_loaded_modules(base_class=Scenario):
                 # Check if this is a user-defined class (not from pyrit.scenario.scenarios)
                 if not scenario_class.__module__.startswith("pyrit.scenario.scenarios"):
                     # Convert class name to snake_case for scenario name
