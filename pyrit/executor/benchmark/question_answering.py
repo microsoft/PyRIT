@@ -91,7 +91,7 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         question_asking_format_string: str = _DEFAULT_QUESTION_FORMAT,
         options_format_string: str = _DEFAULT_OPTIONS_FORMAT,
         max_attempts_on_failure: int = 0,
-    ):
+    ) -> None:
         """
         Initialize the question answering benchmark strategy.
 

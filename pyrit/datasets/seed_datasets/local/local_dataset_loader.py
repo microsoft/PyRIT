@@ -28,7 +28,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
 
     should_register = False
 
-    def __init__(self, *, file_path: Path):
+    def __init__(self, *, file_path: Path) -> None:
         """
         Initialize the local dataset loader.
 

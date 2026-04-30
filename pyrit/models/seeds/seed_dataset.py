@@ -102,7 +102,7 @@ class SeedDataset(YamlLoadable):
         added_by: Optional[str] = None,
         seed_type: Optional[SeedType] = None,
         is_jinja_template: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the dataset.
         Typically, you'll call from_dict or from_yaml_file so that top-level defaults
@@ -151,7 +151,7 @@ class SeedDataset(YamlLoadable):
         self.seeds = []
         for p in input_seeds:
             if isinstance(p, dict):
-                p_seed_type = p.get("seed_type", seed_type)
+                p_seed_type = p.get("seed_type", seed_type)  # type: ignore[ty:no-matching-overload]
 
                 effective_type: SeedType = "prompt"
                 if p_seed_type == "objective":
@@ -165,44 +165,44 @@ class SeedDataset(YamlLoadable):
                 # Note: If Seed base class param names change, update here too.
                 # SeedSimulatedConversation computes its own value, so we don't require it.
                 base_params = {
-                    "value_sha256": p.get("value_sha256"),
+                    "value_sha256": p.get("value_sha256"),  # type: ignore[ty:invalid-argument-type]
                     "id": uuid.uuid4(),
-                    "name": p.get("name") or self.name,
-                    "dataset_name": p.get("dataset_name") or self.dataset_name or self.name,
-                    "harm_categories": p.get("harm_categories", []),
-                    "description": p.get("description") or self.description,
-                    "authors": p.get("authors", []),
-                    "groups": p.get("groups", []),
-                    "source": p.get("source") or self.source,
-                    "date_added": p.get("date_added"),
-                    "added_by": p.get("added_by"),
-                    "metadata": p.get("metadata", {}),
-                    "prompt_group_id": p.get("prompt_group_id"),
+                    "name": p.get("name") or self.name,  # type: ignore[ty:invalid-argument-type]
+                    "dataset_name": p.get("dataset_name") or self.dataset_name or self.name,  # type: ignore[ty:invalid-argument-type]
+                    "harm_categories": p.get("harm_categories", []),  # type: ignore[ty:no-matching-overload]
+                    "description": p.get("description") or self.description,  # type: ignore[ty:invalid-argument-type]
+                    "authors": p.get("authors", []),  # type: ignore[ty:no-matching-overload]
+                    "groups": p.get("groups", []),  # type: ignore[ty:no-matching-overload]
+                    "source": p.get("source") or self.source,  # type: ignore[ty:invalid-argument-type]
+                    "date_added": p.get("date_added"),  # type: ignore[ty:invalid-argument-type]
+                    "added_by": p.get("added_by"),  # type: ignore[ty:invalid-argument-type]
+                    "metadata": p.get("metadata", {}),  # type: ignore[ty:no-matching-overload]
+                    "prompt_group_id": p.get("prompt_group_id"),  # type: ignore[ty:invalid-argument-type]
                     "is_jinja_template": is_jinja_template,
                 }
 
                 if effective_type == "simulated_conversation":
-                    _adv_path = p.get("adversarial_chat_system_prompt_path")
-                    _sim_path = p.get("simulated_target_system_prompt_path")
-                    _sc_kwargs: dict[str, Any] = {**base_params, "num_turns": p.get("num_turns", 3)}
+                    _adv_path = p.get("adversarial_chat_system_prompt_path")  # type: ignore[ty:invalid-argument-type]
+                    _sim_path = p.get("simulated_target_system_prompt_path")  # type: ignore[ty:invalid-argument-type]
+                    _sc_kwargs: dict[str, Any] = {**base_params, "num_turns": p.get("num_turns", 3)}  # type: ignore[ty:no-matching-overload]
                     if _adv_path is not None:
                         _sc_kwargs["adversarial_chat_system_prompt_path"] = str(_adv_path)
                     if _sim_path is not None:
                         _sc_kwargs["simulated_target_system_prompt_path"] = str(_sim_path)
-                    self.seeds.append(SeedSimulatedConversation(**_sc_kwargs))
+                    self.seeds.append(SeedSimulatedConversation(**_sc_kwargs))  # type: ignore[ty:invalid-argument-type]
                 elif effective_type == "objective":
                     # SeedObjective inherits data_type="text" from base Seed property
-                    base_params["value"] = p["value"]
-                    self.seeds.append(SeedObjective(**base_params))
+                    base_params["value"] = p["value"]  # type: ignore[ty:invalid-argument-type]
+                    self.seeds.append(SeedObjective(**base_params))  # type: ignore[ty:invalid-argument-type]
                 else:  # prompt
-                    base_params["value"] = p["value"]
+                    base_params["value"] = p["value"]  # type: ignore[ty:invalid-argument-type]
                     self.seeds.append(
                         SeedPrompt(
-                            **base_params,
-                            data_type=p.get("data_type") or self.data_type,
-                            role=p.get("role", "user"),
-                            sequence=p.get("sequence", 0),
-                            parameters=p.get("parameters", {}),
+                            **base_params,  # type: ignore[ty:invalid-argument-type]
+                            data_type=p.get("data_type") or self.data_type,  # type: ignore[ty:invalid-argument-type]
+                            role=p.get("role", "user"),  # type: ignore[ty:no-matching-overload]
+                            sequence=p.get("sequence", 0),  # type: ignore[ty:no-matching-overload]
+                            parameters=p.get("parameters", {}),  # type: ignore[ty:no-matching-overload]
                         )
                     )
             elif isinstance(p, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):

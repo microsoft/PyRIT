@@ -302,6 +302,50 @@ class TestAttackResultToSummary:
 
         assert summary.message_count == 5
 
+    def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
+        """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=persisted_ts,
+        )
+        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.created_at == persisted_ts
+        assert summary.updated_at == persisted_ts
+
+    def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
+        """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
+        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=ar_ts,
+            metadata={"created_at": metadata_ts.isoformat()},
+        )
+        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.created_at == metadata_ts
+
+    def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
+        """When neither metadata nor ar.timestamp is set, fall back to datetime.now()."""
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+        )
+        ar.timestamp = None  # type: ignore[assignment]
+
+        before = datetime.now(timezone.utc)
+        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        after = datetime.now(timezone.utc)
+
+        assert before <= summary.created_at <= after
+
     """Tests for pyrit_scores_to_dto function."""
 
     def test_maps_scores(self) -> None:
@@ -691,6 +735,29 @@ class TestRequestToPyritMessage:
         assert result.message_pieces[0].conversation_id == "conv-1"
         assert result.message_pieces[0].sequence == 0
 
+    def test_labels_emit_deprecation_warning(self) -> None:
+        """Test that passing labels emits deprecation warning through mapper helper."""
+        request = MagicMock()
+        request.role = "user"
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.prompt_metadata = None
+        piece.mime_type = None
+        piece.original_prompt_id = None
+        request.pieces = [piece]
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_to_pyrit_message(
+                request=request,
+                conversation_id="conv-1",
+                sequence=0,
+                labels={"env": "prod"},
+            )
+
+        assert mock_deprecation.call_count == 2
+
 
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
@@ -810,6 +877,27 @@ class TestRequestPieceToPyritMessagePiece:
         )
 
         assert result.labels == {"env": "prod"}
+
+    def test_labels_emit_deprecation_warning(self) -> None:
+        """Test that passing labels emits deprecation warning."""
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.mime_type = None
+        piece.prompt_metadata = None
+        piece.original_prompt_id = None
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_piece_to_pyrit_message_piece(
+                piece=piece,
+                role="user",
+                conversation_id="conv-1",
+                sequence=0,
+                labels={"env": "prod"},
+            )
+
+        mock_deprecation.assert_called_once()
 
     def test_labels_default_to_empty_dict(self) -> None:
         """Test that labels default to empty dict when not provided."""

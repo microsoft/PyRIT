@@ -28,7 +28,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         *,
         source: str = "Babelscape/ALERT",
         category: Optional[Literal["alert", "alert_adversarial"]] = "alert_adversarial",
-    ):
+    ) -> None:
         """
         Initialize the Babelscape ALERT dataset loader.
 
