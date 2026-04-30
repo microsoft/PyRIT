@@ -1,20 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import logging
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 from urllib.parse import urlparse
 
 import aiofiles
-from azure.core.exceptions import ClientAuthenticationError, ResourceNotFoundError
-from azure.storage.blob import ContentSettings
-from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
-from pyrit.auth import AzureStorageAuth
+if TYPE_CHECKING:
+    from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,10 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             AsyncContainerClient: The initialized container client.
         """
+        from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
+
+        from pyrit.auth import AzureStorageAuth
+
         sas_token = self._sas_token
         if not self._sas_token:
             logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
@@ -218,6 +222,9 @@ class AzureBlobStorageIO(StorageIO):
         Raises:
             RuntimeError: If the Azure container client is not initialized.
         """
+        from azure.core.exceptions import ClientAuthenticationError
+        from azure.storage.blob import ContentSettings
+
         content_settings = ContentSettings(content_type=f"{content_type}")
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
@@ -364,6 +371,8 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bool: True when the path exists.
         """
+        from azure.core.exceptions import ResourceNotFoundError
+
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         try:
@@ -387,6 +396,8 @@ class AzureBlobStorageIO(StorageIO):
         Returns:
             bool: True when the blob exists and has non-zero content size.
         """
+        from azure.core.exceptions import ResourceNotFoundError
+
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         try:

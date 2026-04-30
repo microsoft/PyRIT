@@ -200,9 +200,17 @@ def attack_result_to_summary(
     last_preview = stats.last_message_preview
     labels = dict(stats.labels) if stats.labels else {}
 
+    # Resolution order for created_at: explicit metadata override, then the
+    # persisted AttackResult.timestamp, and finally datetime.now() as a
+    # last-resort fallback for never-persisted results.
     created_str = ar.metadata.get("created_at")
     updated_str = ar.metadata.get("updated_at")
-    created_at = datetime.fromisoformat(created_str) if created_str else datetime.now(timezone.utc)
+    if created_str:
+        created_at = datetime.fromisoformat(created_str)
+    elif ar.timestamp is not None:
+        created_at = ar.timestamp
+    else:
+        created_at = datetime.now(timezone.utc)
     updated_at = datetime.fromisoformat(updated_str) if updated_str else created_at
 
     aid = ar.get_attack_strategy_identifier()
