@@ -10,7 +10,6 @@ from real remote sources, and stores them in in-memory CentralMemory.
 
 import logging
 
-
 from pyrit.memory import CentralMemory
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 

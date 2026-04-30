@@ -4,7 +4,6 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from pyrit.cli import pyrit_backend
 
 

@@ -4,7 +4,6 @@
 import uuid
 from datetime import datetime, timezone
 
-
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 

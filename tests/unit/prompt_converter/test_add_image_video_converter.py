@@ -78,9 +78,7 @@ async def test_add_image_video_converter_invalid_video_path(tmp_path, video_conv
 async def test_add_image_video_converter(tmp_path, video_converter_sample_video, video_converter_sample_image):
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
-    result_path = await converter._add_image_to_video(
-        image_path=video_converter_sample_image, output_path=output_path
-    )
+    result_path = await converter._add_image_to_video(image_path=video_converter_sample_image, output_path=output_path)
     assert result_path == output_path
 
 

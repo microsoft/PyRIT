@@ -32,5 +32,3 @@ PyRIT is installed in editable mode, so changes to the source code are immediate
 ```bash
 uv sync --reinstall-package pyrit
 ```
-
-

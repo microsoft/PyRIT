@@ -10,7 +10,6 @@ Covers the lifespan manager and setup_frontend function.
 import os
 from unittest.mock import MagicMock, patch
 
-
 from pyrit.backend.main import app, lifespan, setup_frontend
 
 
