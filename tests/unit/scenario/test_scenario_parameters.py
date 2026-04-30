@@ -315,6 +315,18 @@ class TestDeclarationValidation:
         with pytest.raises(ValueError, match="not in declared choices"):
             scenario.set_params_from_args(args={})
 
+    def test_choices_on_list_param_rejected_at_declaration(self) -> None:
+        """Combining `choices` with a list param_type is rejected pending semantic resolution.
+
+        argparse's per-item choices for nargs='+' diverges from core's whole-list
+        post-coercion check, so we forbid the combination at declaration time.
+        """
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="datasets", description="d", param_type=list[str], choices=("a", "b"))]
+        )
+        with pytest.raises(ValueError, match="choices on a list param_type"):
+            scenario.set_params_from_args(args={})
+
     def test_unsupported_param_type_rejected_at_declaration(self) -> None:
         """An unsupported param_type (e.g. set[str]) fails at declaration time, not user time."""
         scenario = _make_scenario(declared_params=[Parameter(name="tags", description="d", param_type=set[str])])

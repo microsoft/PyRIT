@@ -356,6 +356,17 @@ class Scenario(ABC):
                     f"but also has a default value. A required parameter cannot have a default."
                 )
 
+            if param.choices is not None and get_origin(param.param_type) is list:
+                # argparse applies `choices` per-item with `nargs='+'`, but
+                # core validation checks `value not in choices` against the
+                # whole list. Until we reconcile those semantics, reject the
+                # combination at declaration time.
+                raise ValueError(
+                    f"Scenario '{type(self).__name__}' parameter '{param.name}' declares choices on a list "
+                    f"param_type ({param.param_type!r}); this combination is not supported. "
+                    f"Use a scalar param_type with choices, or omit choices on list params."
+                )
+
             if param.choices is not None and param.param_type is not None:
                 # Confirm each choice is coercible to the declared type, so an
                 # author who writes choices=("a","b") with param_type=int learns
