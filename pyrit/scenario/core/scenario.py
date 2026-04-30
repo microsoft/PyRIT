@@ -124,13 +124,8 @@ class Scenario(ABC):
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
 
-        # Custom parameters declared via supported_parameters() and populated
-        # from CLI / config via set_params_from_args(). Empty for scenarios
-        # that declare no custom parameters.
+        # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
         self.params: dict[str, Any] = {}
-
-        # Tracks whether _validate_declarations() has run yet on this instance
-        # — declarations are static per class, so we only need to validate once.
         self._declarations_validated: bool = False
 
     @property
@@ -188,22 +183,14 @@ class Scenario(ABC):
     @classmethod
     def supported_parameters(cls) -> list[Parameter]:
         """
-        Get the list of custom parameters this scenario accepts.
+        Override to declare custom parameters this scenario accepts.
 
-        Override this classmethod to declare scenario-specific parameters that
-        can be set from the CLI (``--my-param``), the shell ``run`` command,
-        or YAML configuration. Declared parameters are coerced to the correct
-        Python type, validated, and stored on ``self.params`` before
-        ``initialize_async()`` runs, so subclasses can read them via bracket
-        access (e.g. ``self.params["max_turns"]``).
-
-        Implemented as a classmethod (not a property) so the framework can
-        introspect the parameter list without instantiating the scenario —
-        ``--list-scenarios`` and the dynamic CLI parser both need this before
-        any concrete scenario exists.
+        Declared parameters flow from CLI/config through ``set_params_from_args``
+        into ``self.params`` before ``initialize_async()`` runs. Implemented as
+        a classmethod so ``--list-scenarios`` can introspect without instantiating.
 
         Returns:
-            list[Parameter]: List of declared parameters. Defaults to empty list.
+            list[Parameter]: Declared parameters (default: empty list).
         """
         return []
 
@@ -285,10 +272,8 @@ class Scenario(ABC):
 
         Args:
             args (dict[str, Any]): Map of parameter name to raw value. Keys
-                with ``None`` values are treated as absent (matches the
-                YAML ``null`` convention) and the declared default is used.
-                Argparse callers should use ``argparse.SUPPRESS`` so unset
-                flags do not appear at all.
+                with ``None`` values are treated as absent (YAML ``null``).
+                Argparse callers should use ``argparse.SUPPRESS``.
 
         Raises:
             ValueError: Invalid declaration, unknown or missing-required
@@ -301,17 +286,14 @@ class Scenario(ABC):
 
         declared_by_name = {p.name: p for p in declared}
 
-        # Drop keys whose value is None — treat them as "use the declared
-        # default" so YAML `key: null` and a missing key behave the same.
+        # None values are treated as absent so YAML `key: null` falls through to defaults.
         supplied = {name: value for name, value in args.items() if value is not None}
 
         coerced: dict[str, Any] = {}
         for name, raw_value in supplied.items():
             param = declared_by_name.get(name)
             if param is None:
-                # Stash unknown values so _validate_params can surface a single
-                # well-formatted error listing all of them (instead of failing
-                # at coercion time on the first unknown name).
+                # Stash unknowns so _validate_params can list them all at once.
                 coerced[name] = raw_value
                 continue
             coerced[name] = coerce_value(param=param, raw_value=raw_value)
@@ -320,22 +302,17 @@ class Scenario(ABC):
 
         for param in declared:
             if param.name not in coerced and param.default is not None:
-                # Deep-copy so authors using mutable defaults like [] cannot
-                # accidentally share mutable state across scenario instances.
+                # Deep-copy so mutable defaults like [] aren't shared across instances.
                 coerced[param.name] = copy.deepcopy(param.default)
 
         self.params = coerced
 
     def _validate_declarations(self, *, declared: list[Parameter]) -> None:
         """
-        Validate the scenario's parameter declarations.
-
-        Catches author mistakes once, the first time params are set, before
-        they have a chance to corrupt ``self.params`` silently.
+        Validate the scenario's parameter declarations on first use.
 
         Args:
-            declared (list[Parameter]): Parameter list returned by
-                ``supported_parameters()``.
+            declared (list[Parameter]): The ``supported_parameters()`` snapshot.
 
         Raises:
             ValueError: If declarations contain duplicate names, an
@@ -361,10 +338,8 @@ class Scenario(ABC):
                 )
 
             if param.choices is not None and get_origin(param.param_type) is list:
-                # argparse applies `choices` per-item with `nargs='+'`, but
-                # core validation checks `value not in choices` against the
-                # whole list. Until we reconcile those semantics, reject the
-                # combination at declaration time.
+                # argparse `nargs='+'` applies choices per-item; core checks the whole list.
+                # Reject the combination until we reconcile the semantics.
                 raise ValueError(
                     f"Scenario '{type(self).__name__}' parameter '{param.name}' declares choices on a list "
                     f"param_type ({param.param_type!r}); this combination is not supported. "
@@ -372,9 +347,7 @@ class Scenario(ABC):
                 )
 
             if param.choices is not None and param.param_type is not None:
-                # Confirm each choice is coercible to the declared type, so an
-                # author who writes choices=("a","b") with param_type=int learns
-                # at declaration time, not when an end-user supplies a value.
+                # Each choice must be coercible — fail at declaration time, not user time.
                 for choice in param.choices:
                     try:
                         coerce_value(param=param, raw_value=choice)
@@ -400,18 +373,15 @@ class Scenario(ABC):
 
     def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
         """
-        Validate the supplied parameters against the scenario's declarations.
+        Validate supplied params against the scenario's declarations.
 
         Args:
-            params (dict[str, Any]): Parameters as supplied (post-coercion for
-                declared names; raw for unknown names).
-            declared (list[Parameter]): The snapshot of declared parameters.
-                Passed in so coercion and validation use a single consistent
-                view (see ``set_params_from_args``).
+            params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
+            declared (list[Parameter]): Declarations snapshot from the caller, so
+                the whole call sees one consistent view.
 
         Raises:
-            ValueError: If unknown parameter names are present, or if a
-                ``required=True`` declared parameter is missing.
+            ValueError: For unknown names or missing required params.
         """
         declared_names = {p.name for p in declared}
 

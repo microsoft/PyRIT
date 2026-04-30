@@ -1,20 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""
-Unified parameter declaration for PyRIT components.
-
-Both initializers and scenarios use ``Parameter`` to declare the custom
-parameters they accept. The framework inspects these declarations for CLI
-argument building, config-file validation, ``--list-scenarios`` / ``--list-initializers``
-display, and runtime type coercion.
-
-The module-level coercion helpers (``coerce_value``, ``coerce_bool``,
-``coerce_scalar``, ``coerce_list``) and ``validate_param_type`` are reused
-across the scenario layer and both CLI parsers (``pyrit_scan`` argparse and
-``pyrit_shell`` shlex), so the bool/scalar/list handling stays consistent
-no matter where a value enters the framework.
-"""
+"""Unified parameter declaration and coercion helpers shared by initializers, scenarios, and CLI parsers."""
 
 from dataclasses import dataclass
 from types import GenericAlias
@@ -26,29 +13,21 @@ _SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool)
 @dataclass(frozen=True)
 class Parameter:
     """
-    Describes a parameter that a PyRIT component accepts.
-
-    Used by both ``PyRITInitializer`` subclasses and ``Scenario`` subclasses
-    to declare their configurable surface area.
+    Describes a parameter that a PyRIT component (initializer or scenario) accepts.
 
     Args:
-        name (str): The parameter name. Becomes the key in the component's
-            ``params`` dict and is converted to ``--kebab-case`` for the CLI.
+        name (str): Parameter name; becomes the key in ``params`` and the
+            ``--kebab-case`` CLI flag.
         description (str): Human-readable description shown in ``--help`` and
-            in ``--list-scenarios`` / ``--list-initializers``.
+            ``--list-*`` output.
         required (bool): Whether the parameter must be provided. Defaults to False.
-        default (Any): Default value applied when the parameter is not supplied.
-            Defaults to None. Note: initializer authors should pass values matching
-            the ``dict[str, list[str]]`` storage convention enforced by
-            ``PyRITInitializer.set_params_from_args`` (typically ``list[str]``)
-            until typed coercion is added on the initializer path.
-        param_type (type | GenericAlias | None): Type used to coerce raw input
-            for scenario parameters. Supported types are ``str``, ``int``,
-            ``float``, ``bool``, and ``list[str]``. When None, no framework-side
-            coercion is performed (the initializer convention). Defaults to None.
-        choices (tuple[Any, ...] | None): Optional set of allowed values.
-            Validated after coercion. Lists are accepted at construction time
-            and normalized to tuples to preserve frozen-dataclass hashability.
+        default (Any): Default value when not supplied. Initializers should pass
+            ``list[str]`` until typed coercion is added on that path. Defaults to None.
+        param_type (type | GenericAlias | None): Type for scenario-side coercion.
+            Supported: ``str``, ``int``, ``float``, ``bool``, ``list[str]``. None
+            means no coercion (the initializer convention). Defaults to None.
+        choices (tuple[Any, ...] | None): Optional allowed values, validated after
+            coercion. Lists are normalized to tuples to keep the dataclass hashable.
             Defaults to None.
     """
 
@@ -60,25 +39,21 @@ class Parameter:
     choices: tuple[Any, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Normalize ``choices`` from list to tuple to keep the dataclass hashable."""
+        """Normalize ``choices`` to a tuple to keep the frozen dataclass hashable."""
         if self.choices is not None and not isinstance(self.choices, tuple):
             object.__setattr__(self, "choices", tuple(self.choices))
 
 
 def validate_param_type(*, param: Parameter) -> None:
     """
-    Reject parameter declarations with unsupported ``param_type``.
-
-    Supported types: ``None`` (raw passthrough), ``str``, ``int``, ``float``,
-    ``bool``, and ``list[str]``.
+    Reject parameter declarations with an unsupported ``param_type``.
 
     Args:
         param (Parameter): The parameter declaration.
 
     Raises:
-        ValueError: If ``param_type`` is not in the supported set. The error
-            message references only the parameter; callers add component
-            context (scenario name, initializer name, etc.).
+        ValueError: If ``param_type`` is not ``None``, ``str``, ``int``,
+            ``float``, ``bool``, or ``list[str]``.
     """
     param_type = param.param_type
     if param_type is None or param_type in _SUPPORTED_SCALAR_TYPES:
@@ -97,22 +72,17 @@ def validate_param_type(*, param: Parameter) -> None:
 
 def coerce_value(*, param: Parameter, raw_value: Any) -> Any:
     """
-    Coerce a raw input value into the declared ``param_type`` and validate ``choices``.
-
-    Used both by ``Scenario.set_params_from_args`` (after CLI/config merge)
-    and by the CLI parser layer (as an argparse ``type=`` callable or shell
-    ``_ArgSpec.parser``).
+    Coerce a raw value to ``param.param_type`` and validate against ``param.choices``.
 
     Args:
         param (Parameter): The parameter declaration.
-        raw_value (Any): The value as supplied (string from CLI, native Python
-            value from YAML, declared default during declaration validation).
+        raw_value (Any): Value as supplied by CLI, YAML, or declared default.
 
     Returns:
-        Any: The coerced value, ready to store on a component's ``params``.
+        Any: The coerced value.
 
     Raises:
-        ValueError: If coercion fails or the coerced value is not in ``choices``.
+        ValueError: If coercion fails or the result is not in ``choices``.
     """
     param_type = param.param_type
     if param_type is None:
@@ -141,15 +111,13 @@ def coerce_value(*, param: Parameter, raw_value: Any) -> Any:
 
 def coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
     """
-    Coerce a raw value into ``int`` or ``float``, rejecting native ``bool`` inputs.
+    Coerce ``raw_value`` to ``int`` or ``float``, rejecting native ``bool`` inputs.
 
-    ``int(True) == 1`` and ``float(False) == 0.0`` are silent surprises when
-    a YAML typo or stray flag lands a ``bool`` where a number was expected.
-    We reject those explicitly.
+    Avoids ``int(True) == 1`` / ``float(False) == 0.0`` silent surprises.
 
     Args:
-        param_name (str): Parameter name (used in error messages).
-        scalar_type (type): Either ``int`` or ``float``.
+        param_name (str): Parameter name for error messages.
+        scalar_type (type): ``int`` or ``float``.
         raw_value (Any): Value to coerce.
 
     Returns:
@@ -172,21 +140,20 @@ def coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
 
 def coerce_bool(*, param_name: str, raw_value: Any) -> bool:
     """
-    Parse a raw value as a boolean.
+    Parse ``raw_value`` as a boolean, avoiding the ``bool("false") is True`` argparse footgun.
 
-    Accepts native ``bool``, plus case-insensitive strings ``true``/``1``/``yes``
-    for True and ``false``/``0``/``no`` for False. Avoids the well-known
-    ``bool("false") is True`` argparse footgun.
+    Accepts native ``bool`` and case-insensitive ``true``/``1``/``yes`` /
+    ``false``/``0``/``no`` strings.
 
     Args:
-        param_name (str): Parameter name (used in error messages).
+        param_name (str): Parameter name for error messages.
         raw_value (Any): Value to coerce.
 
     Returns:
-        bool: Coerced boolean.
+        bool: The coerced boolean.
 
     Raises:
-        ValueError: If the value is not a recognized boolean form.
+        ValueError: If ``raw_value`` is not a recognized boolean form.
     """
     if isinstance(raw_value, bool):
         return raw_value
@@ -204,19 +171,17 @@ def coerce_bool(*, param_name: str, raw_value: Any) -> bool:
 
 def coerce_list(*, param: Parameter, raw_value: Any) -> list[Any]:
     """
-    Coerce a list-typed parameter, validating arity and per-element type.
+    Coerce a ``list[T]`` parameter (v1: only ``list[str]``).
 
     Args:
-        param (Parameter): The parameter declaration. ``param.param_type``
-            must be a parameterized list generic such as ``list[str]``.
-        raw_value (Any): The raw value (must be a list).
+        param (Parameter): Declaration with ``param_type`` like ``list[str]``.
+        raw_value (Any): Must be a list.
 
     Returns:
         list[Any]: The coerced list.
 
     Raises:
-        ValueError: If ``raw_value`` is not a list, or any element fails
-            coercion to the declared element type.
+        ValueError: If ``raw_value`` is not a list or the element type isn't ``str``.
     """
     if not isinstance(raw_value, list):
         raise ValueError(
@@ -228,9 +193,6 @@ def coerce_list(*, param: Parameter, raw_value: Any) -> list[Any]:
 
     if element_type is str:
         return [str(item) for item in raw_value]
-    # Defensive: v1 only ships list[str], but the coercion logic is written
-    # so future expansion to list[int] / list[float] / list[bool] would only
-    # need this branch widened.
     raise ValueError(
         f"Parameter '{param.name}' has unsupported list element type {element_type!r}. Supported list types: list[str]."
     )
