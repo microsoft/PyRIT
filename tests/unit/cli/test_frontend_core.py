@@ -488,6 +488,55 @@ class TestFormatFunctions:
         assert "strategy2" in captured.out
         assert "Default Strategy" in captured.out
 
+    def test_format_scenario_metadata_with_supported_parameters(self, capsys):
+        """Test format_scenario_metadata renders the supported_parameters section."""
+        scenario_metadata = ScenarioMetadata(
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="",
+            registry_name="test",
+            default_strategy="",
+            all_strategies=(),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+            supported_parameters=(
+                ("max_turns", "Conversation turn cap", False, 5, "int", None),
+                ("mode", "Run mode", False, "fast", "str", "'fast', 'slow'"),
+                ("required_param", "Required input", True, None, "str", None),
+            ),
+        )
+
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
+
+        captured = capsys.readouterr()
+        assert "Supported Parameters:" in captured.out
+        assert "max_turns" in captured.out
+        assert "(int)" in captured.out
+        assert "[default: 5]" in captured.out
+        assert "Conversation turn cap" in captured.out
+        assert "[choices: 'fast', 'slow']" in captured.out
+        assert "(required)" in captured.out
+
+    def test_format_scenario_metadata_omits_section_when_no_parameters(self, capsys):
+        """A scenario without declared parameters should not print the Supported Parameters header."""
+        scenario_metadata = ScenarioMetadata(
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="",
+            registry_name="test",
+            default_strategy="",
+            all_strategies=(),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+        )
+
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
+
+        captured = capsys.readouterr()
+        assert "Supported Parameters" not in captured.out
+
     def test_format_initializer_metadata_basic(self, capsys) -> None:
         """Test format_initializer_metadata with basic metadata."""
         initializer_metadata = InitializerMetadata(
@@ -1563,3 +1612,25 @@ class TestExtractScenarioArgs:
         """Absent shell flags (initialized to None) must not reach set_params_from_args."""
         result = frontend_core.extract_scenario_args(parsed={"scenario__max_turns": None, "scenario__mode": "fast"})
         assert result == {"mode": "fast"}
+
+
+class TestParamTypeDisplay:
+    """Tests for the registry's _param_type_display helper."""
+
+    def test_none_renders_as_any(self):
+        from pyrit.registry.class_registries.scenario_registry import _param_type_display
+
+        assert _param_type_display(None) == "any"
+
+    def test_builtin_types(self):
+        from pyrit.registry.class_registries.scenario_registry import _param_type_display
+
+        assert _param_type_display(int) == "int"
+        assert _param_type_display(str) == "str"
+        assert _param_type_display(bool) == "bool"
+
+    def test_parameterized_generic_uses_repr(self):
+        """list[str] has no __name__; falls back to repr."""
+        from pyrit.registry.class_registries.scenario_registry import _param_type_display
+
+        assert _param_type_display(list[str]) == "list[str]"
