@@ -3,6 +3,7 @@
 
 from typing import Optional
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
@@ -70,7 +71,7 @@ class PromptChatTarget(PromptTarget):
         system_prompt: str,
         conversation_id: str,
         attack_identifier: Optional[ComponentIdentifier] = None,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """
         Set the system prompt for the prompt target. May be overridden by subclasses.
@@ -78,6 +79,12 @@ class PromptChatTarget(PromptTarget):
         Raises:
             RuntimeError: If the conversation already exists.
         """
+        if labels is not None:
+            print_deprecation_message(
+                old_item="set_system_prompt(..., labels=...)",
+                new_item="set_system_prompt(...)",
+                removed_in="0.16.0",
+            )
         messages = self._memory.get_conversation(conversation_id=conversation_id)
 
         if messages:
@@ -91,7 +98,7 @@ class PromptChatTarget(PromptTarget):
                 converted_value=system_prompt,
                 prompt_target_identifier=self.get_identifier(),
                 attack_identifier=attack_identifier,
-                labels=labels,
+                labels=labels,  # deprecated
             ).to_message()
         )
 

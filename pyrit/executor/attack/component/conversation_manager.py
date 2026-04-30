@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
     PrependedConversationConfig,
@@ -57,7 +58,7 @@ def get_adversarial_chat_messages(
     adversarial_chat_conversation_id: str,
     attack_identifier: ComponentIdentifier,
     adversarial_chat_target_identifier: ComponentIdentifier,
-    labels: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,  # deprecated
 ) -> list[Message]:
     """
     Transform prepended conversation messages for adversarial chat with swapped roles.
@@ -76,10 +77,17 @@ def get_adversarial_chat_messages(
         attack_identifier (ComponentIdentifier): Attack identifier to associate with messages.
         adversarial_chat_target_identifier (ComponentIdentifier): Target identifier for the adversarial chat.
         labels: Optional labels to associate with the messages.
+            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         List of transformed messages with swapped roles and new IDs.
     """
+    if labels is not None:
+        print_deprecation_message(
+            old_item="get_adversarial_chat_messages(..., labels=...)",
+            new_item="get_adversarial_chat_messages(...)",
+            removed_in="0.16.0",
+        )
     if not prepended_conversation:
         return []
 
@@ -110,7 +118,7 @@ def get_adversarial_chat_messages(
                 conversation_id=adversarial_chat_conversation_id,
                 attack_identifier=attack_identifier,
                 prompt_target_identifier=adversarial_chat_target_identifier,
-                labels=labels,
+                labels=labels,  # deprecated
             )
 
             result.append(adversarial_piece.to_message())
@@ -245,7 +253,7 @@ class ConversationManager:
         target: PromptChatTarget,
         conversation_id: str,
         system_prompt: str,
-        labels: Optional[dict[str, str]] = None,
+        labels: Optional[dict[str, str]] = None,  # deprecated
     ) -> None:
         """
         Set or update the system prompt for a conversation.
@@ -255,12 +263,19 @@ class ConversationManager:
             conversation_id: Unique identifier for the conversation.
             system_prompt: The system prompt text.
             labels: Optional labels to associate with the system prompt.
+                Deprecated: This parameter will be removed in a release 0.16.0.
         """
+        if labels is not None:
+            print_deprecation_message(
+                old_item="set_system_prompt(..., labels=...)",
+                new_item="set_system_prompt(...)",
+                removed_in="0.16.0",
+            )
         target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
             attack_identifier=self._attack_identifier,
-            labels=labels,
+            labels=labels,  # deprecated
         )
 
     async def initialize_context_async(
