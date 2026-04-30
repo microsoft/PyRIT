@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.17.2
 # ---
 
 # %% [markdown]
@@ -15,34 +15,10 @@
 #
 # ## Overview
 #
-# This notebook covers three categories of image converters:
+# This notebook covers two categories of image converters:
 #
-# - **[Text to Text](#text-to-text)**: Convert (objective) text into text prompt for image generation
 # - **[Text to Image](#text-to-image)**: Convert text into images (QR codes, text overlays)
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
-
-# %% [markdown]
-# <a id="text-to-text"></a>
-# ## Text to Text
-#
-# ### ImageFilterConverter
-#
-# The `ImageFilterConverter` converts a short, simple text prompt into an image stylistic prompt for a model that can then generate this image.
-#
-
-# %%
-from pyrit.prompt_converter import ImageFilterConverter
-from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
-
-target = OpenAIChatTarget()
-converter = ImageFilterConverter(converter_target=target, filter_name="gritty_documentary", variation="Bodycam Footage")
-prompt = "person walking through a dark alley"
-result = await converter.convert_async(prompt=prompt)
-print("original prompt:", prompt)
-print("converted prompt:", result.output_text)
 
 # %% [markdown]
 # <a id="text-to-image"></a>

@@ -1,7 +1,7 @@
 name: image_filter_system_prompt
 data_type: text
 description: |
-  System prompt for the ImageFilterConverter. Instructs an LLM to expand a short user objective
+  System prompt for the ImagePromptStyleConverter. Instructs an LLM to expand a short user objective
   into a detailed image generation prompt using the provided photographic style and scene variation.
 authors:
   - AI Red Team

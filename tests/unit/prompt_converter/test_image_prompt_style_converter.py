@@ -7,7 +7,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_converter import ImageFilterConverter
+from pyrit.prompt_converter import ImagePromptStyleConverter
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
@@ -28,7 +28,7 @@ def mock_target() -> PromptTarget:
 
 
 def test_init_valid_filter_and_variation(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
         variation="Bodycam Footage",
@@ -39,10 +39,10 @@ def test_init_valid_filter_and_variation(mock_target) -> None:
 
 
 def test_init_no_filter_picks_random(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
     )
-    available = ImageFilterConverter.list_available_filters()
+    available = ImagePromptStyleConverter.list_available_filters()
     assert converter._filter_name in available
     assert converter._variation is None
 
@@ -50,7 +50,7 @@ def test_init_no_filter_picks_random(mock_target) -> None:
 def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
     custom_yaml = tmp_path / "custom_filter.yaml"
     custom_yaml.write_text("style_instructions: custom style\nvariations:\n  My Variation: description of variation\n")
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_path=custom_yaml,
         variation="My Variation",
@@ -61,7 +61,7 @@ def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
 
 def test_init_filter_path_nonexistent_raises(mock_target) -> None:
     with pytest.raises(ValueError, match="does not exist"):
-        ImageFilterConverter(
+        ImagePromptStyleConverter(
             converter_target=mock_target,
             filter_path="/nonexistent/path.yaml",
         )
@@ -71,7 +71,7 @@ def test_init_both_filter_name_and_path_raises(mock_target, tmp_path) -> None:
     custom_yaml = tmp_path / "custom.yaml"
     custom_yaml.write_text("style_instructions: style\nvariations:\n  V1: desc\n")
     with pytest.raises(ValueError, match="Only one of"):
-        ImageFilterConverter(
+        ImagePromptStyleConverter(
             converter_target=mock_target,
             filter_name="gritty_documentary",
             filter_path=custom_yaml,
@@ -79,7 +79,7 @@ def test_init_both_filter_name_and_path_raises(mock_target, tmp_path) -> None:
 
 
 def test_init_variation_none_is_valid(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
     )
@@ -87,7 +87,7 @@ def test_init_variation_none_is_valid(mock_target) -> None:
 
 
 def test_init_variation_not_case_sensitive(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
         variation="bodycam footage",
@@ -98,7 +98,7 @@ def test_init_variation_not_case_sensitive(mock_target) -> None:
 
 def test_init_invalid_filter_name_raises(mock_target) -> None:
     with pytest.raises(ValueError, match="not found"):
-        ImageFilterConverter(
+        ImagePromptStyleConverter(
             converter_target=mock_target,
             filter_name="nonexistent_filter",
         )
@@ -106,7 +106,7 @@ def test_init_invalid_filter_name_raises(mock_target) -> None:
 
 def test_init_invalid_variation_raises(mock_target) -> None:
     with pytest.raises(ValueError, match="not found in filter"):
-        ImageFilterConverter(
+        ImagePromptStyleConverter(
             converter_target=mock_target,
             filter_name="gritty_documentary",
             variation="Nonexistent Variation",
@@ -114,7 +114,7 @@ def test_init_invalid_variation_raises(mock_target) -> None:
 
 
 def test_list_available_filters() -> None:
-    filters = ImageFilterConverter.list_available_filters()
+    filters = ImagePromptStyleConverter.list_available_filters()
     assert isinstance(filters, list)
     assert "gritty_documentary" in filters
     assert len(filters) > 0
@@ -122,7 +122,7 @@ def test_list_available_filters() -> None:
 
 @pytest.mark.asyncio
 async def test_convert_async_with_specific_variation(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
         variation="Bodycam Footage",
@@ -141,7 +141,7 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
 
 @pytest.mark.asyncio
 async def test_convert_async_with_random_variation(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
     )
@@ -157,7 +157,7 @@ async def test_convert_async_with_random_variation(mock_target) -> None:
 
 @pytest.mark.asyncio
 async def test_convert_async_unsupported_input_type_raises(mock_target) -> None:
-    converter = ImageFilterConverter(
+    converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
     )
@@ -180,16 +180,16 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
     mock_seed_prompt = MagicMock()
 
     with (
-        caplog.at_level("WARNING", logger="pyrit.prompt_converter.image_filter_converter"),
+        caplog.at_level("WARNING", logger="pyrit.prompt_converter.image_prompt_style_converter"),
         patch(
-            "pyrit.prompt_converter.image_filter_converter.SeedPrompt.from_yaml_file",
+            "pyrit.prompt_converter.image_prompt_style_converter.SeedPrompt.from_yaml_file",
             return_value=mock_seed_prompt,
         ),
         patch("pathlib.Path.exists", return_value=True),
         patch("builtins.open", mock_open()),
         patch("yaml.safe_load", return_value=duplicate_yaml),
     ):
-        converter = ImageFilterConverter(
+        converter = ImagePromptStyleConverter(
             converter_target=mock_target,
             filter_name="gritty_documentary",
         )

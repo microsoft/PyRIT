@@ -26,7 +26,7 @@ IMAGE_FILTER_DIR = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "image_filter"
 _SYSTEM_PROMPT_FILENAME = "image_filter_system_prompt.yaml"
 
 
-class ImageFilterConverter(PromptConverter):
+class ImagePromptStyleConverter(PromptConverter):
     """
     LLM-based converter that expands a short objective into a detailed image generation prompt
     using a photographic style filter and scene variation.
