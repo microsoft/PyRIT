@@ -475,7 +475,7 @@ class CopilotAuthenticator(Authenticator):
                 logger.info("Gracefully closing Playwright browser instance...")
 
                 if page:
-                    await page.close()  # type: ignore[ty:possibly-unresolved-reference]
+                    await page.close()
                 if context:
                     await context.close()
                 if browser:
