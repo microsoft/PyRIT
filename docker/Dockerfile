@@ -77,6 +77,9 @@ RUN mkdir -p /app/notebooks /app/data /app/assets && \
 RUN mkdir -p /home/vscode/.pyrit && \
     chown -R vscode:vscode /home/vscode/.pyrit
 
+# ipykernel and jupyter are in the dev dependency-group (not pip extras), so install them explicitly
+RUN uv pip install --python /opt/venv/bin/python ipykernel jupyter
+
 # Register the Jupyter kernel for the venv
 RUN /opt/venv/bin/python -m ipykernel install --user --name pyrit --display-name "PyRIT"
 

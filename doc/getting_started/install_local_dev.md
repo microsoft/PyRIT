@@ -12,7 +12,7 @@ Set up a PyRIT development environment on your local machine.
 
 **Why uv?**
 - **Much faster** than pip (10-100x faster dependency resolution)
-- **Simpler** than conda/mamba for pure Python projects
+- **Simpler** environment management for pure Python projects
 - **Native Windows support** — no WSL required, although if using a devcontainer, WSL is recommended
 - **Automatic virtual environment management**
 - **Compatible with existing pyproject.toml**
