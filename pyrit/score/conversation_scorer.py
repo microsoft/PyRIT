@@ -84,7 +84,7 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,
+                    labels=original_piece.labels,  # deprecated
                     prompt_target_identifier=original_piece.prompt_target_identifier,
                     attack_identifier=original_piece.attack_identifier,
                     original_value_data_type=original_piece.original_value_data_type,
@@ -183,7 +183,7 @@ def create_conversation_scorer(
         )
 
     # Dynamically create a class that inherits from both ConversationScorer and the scorer's base class
-    class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore[misc, valid-type]
+    class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore[valid-type]  # type: ignore[ty:unsupported-base]
         """Dynamic ConversationScorer that inherits from both ConversationScorer and the wrapped scorer's base class."""
 
         def __init__(self) -> None:

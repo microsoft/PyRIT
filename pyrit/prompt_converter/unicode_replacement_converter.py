@@ -18,7 +18,7 @@ class UnicodeReplacementConverter(WordLevelConverter):
         *,
         encode_spaces: bool = False,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified selection strategy.
 

@@ -243,7 +243,7 @@ class PlaywrightCopilotTarget(PromptTarget):
                     role="assistant",
                     original_value=piece_data,
                     conversation_id=request_piece.conversation_id,
-                    labels=request_piece.labels,
+                    labels=request_piece.labels,  # deprecated
                     prompt_target_identifier=request_piece.prompt_target_identifier,
                     attack_identifier=request_piece.attack_identifier,
                     original_value_data_type=piece_type,
@@ -525,7 +525,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         # Return latest new message groups (re-slice to exclude historical groups)
         all_groups = await self._page.query_selector_all(selectors.ai_messages_group_selector)
-        return all_groups[initial_group_count:]  # type: ignore[no-any-return, unused-ignore]
+        return all_groups[initial_group_count:]
 
     async def _extract_images_from_iframes(self, ai_message_groups: list[Any]) -> list[Any]:
         """

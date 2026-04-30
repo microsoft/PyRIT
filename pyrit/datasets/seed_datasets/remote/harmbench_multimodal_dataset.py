@@ -50,7 +50,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         ),
         source_type: Literal["public_url", "file"] = "public_url",
         categories: Optional[list[SemanticCategory]] = None,
-    ):
+    ) -> None:
         """
         Initialize the HarmBench multimodal dataset loader.
 

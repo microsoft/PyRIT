@@ -27,7 +27,7 @@ class ConsoleScorerPrinter(ScorerPrinter):
     _SCORER_DISPLAY_PARAMS = frozenset({"scorer_type", "score_aggregator"})
     _TARGET_DISPLAY_PARAMS = frozenset({"model_name", "temperature"})
 
-    def __init__(self, *, indent_size: int = 2, enable_colors: bool = True):
+    def __init__(self, *, indent_size: int = 2, enable_colors: bool = True) -> None:
         """
         Initialize the console scorer printer.
 

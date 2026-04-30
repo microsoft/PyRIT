@@ -163,7 +163,7 @@ def _argparse_validator(validator_func: Callable[..., Any]) -> Callable[[Any], A
     sig = inspect.signature(validator_func)
     params = list(sig.parameters.keys())
     if not params:
-        raise ValueError(f"Validator function {validator_func.__name__} must have at least one parameter")
+        raise ValueError(f"Validator function {validator_func.__name__} must have at least one parameter")  # type: ignore[ty:unresolved-attribute]
     first_param = params[0]
 
     def wrapper(value: Any) -> Any:

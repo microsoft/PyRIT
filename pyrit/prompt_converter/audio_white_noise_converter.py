@@ -77,7 +77,7 @@ class AudioWhiteNoiseConverter(PromptConverter):
 
         # Clip to valid range
         if np.issubdtype(data.dtype, np.integer):
-            noisy = np.clip(noisy, info.min, info.max)
+            noisy = np.clip(noisy, info.min, info.max)  # type: ignore[ty:possibly-unresolved-reference]
 
         return np.asarray(noisy)
 

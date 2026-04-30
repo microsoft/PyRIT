@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any, Optional, cast
 
 from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
+    AutoModelForCausalLM,  # type: ignore[ty:possibly-missing-import]
+    AutoTokenizer,  # type: ignore[ty:possibly-missing-import]
     BatchEncoding,
     PretrainedConfig,
 )
@@ -273,7 +273,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 )
 
             # Move the model to the correct device
-            self.model = self.model.to(self.device)  # type: ignore[arg-type]
+            self.model = self.model.to(self.device)  # type: ignore[ty:invalid-argument-type]
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -330,7 +330,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
         try:
             # Ensure model is on the correct device (should already be the case from `load_model_and_tokenizer`)
-            self.model.to(self.device)  # type: ignore[arg-type]
+            self.model.to(self.device)  # type: ignore[ty:invalid-argument-type]
 
             # Record the length of the input tokens to later extract only the generated tokens
             input_length = input_ids.shape[-1]
@@ -353,7 +353,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             # Decode the assistant's response from the generated token IDs
             assistant_response = cast(
                 "str",
-                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),
+                self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
             ).strip()
 
             if not assistant_response:

@@ -39,7 +39,7 @@ class _DefaultPromptGeneratorStrategyEventHandler(
     Handles events during the execution of a prompt generator strategy.
     """
 
-    def __init__(self, logger: logging.Logger = logger):
+    def __init__(self, logger: logging.Logger = logger) -> None:
         """
         Initialize the default event handler with a logger.
 
@@ -74,7 +74,7 @@ class PromptGeneratorStrategy(Strategy[PromptGeneratorStrategyContextT, PromptGe
         event_handler: Optional[
             StrategyEventHandler[PromptGeneratorStrategyContextT, PromptGeneratorStrategyResultT]
         ] = None,
-    ):
+    ) -> None:
         """
         Initialize the prompt generator strategy.
 

@@ -79,7 +79,7 @@ class CodeChameleonConverter(PromptConverter):
                     raise ValueError("Encryption and decryption functions not provided for custom encrypt_type.")
                 self.encrypt_function = encrypt_function
                 if isinstance(decrypt_function, list):
-                    self.decrypt_function = self._stringify_decrypt(decrypt_function)
+                    self.decrypt_function = self._stringify_decrypt(decrypt_function)  # type: ignore[ty:invalid-argument-type]
                 else:
                     self.decrypt_function = self._stringify_decrypt([decrypt_function])
             case "reverse":

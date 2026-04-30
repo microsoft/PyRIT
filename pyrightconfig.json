@@ -9,7 +9,6 @@
       "**/dist",
       ".venv",
       "pyrit.egg-info",
-      ".mypy_cache",
       ".pytest_cache"
     ],
     "reportMissingImports": true
