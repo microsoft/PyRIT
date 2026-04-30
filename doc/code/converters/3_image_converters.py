@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -36,6 +36,7 @@ from PIL import Image
 
 from pyrit.prompt_converter import QRCodeConverter
 from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
