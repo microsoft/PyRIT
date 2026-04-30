@@ -19,7 +19,7 @@ class ScenarioSummary(BaseModel):
     """Summary of a registered scenario."""
 
     scenario_name: str = Field(..., description="Registry key (e.g., 'foundry.red_team_agent')")
-    class_name: str = Field(..., description="Python class name (e.g., 'RedTeamAgentScenario')")
+    scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
     description: str = Field(..., description="Human-readable description of the scenario")
     default_strategy: str = Field(..., description="Default strategy name used when none specified")
     aggregate_strategies: list[str] = Field(

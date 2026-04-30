@@ -92,7 +92,7 @@ class TestScenarioServiceListScenarios:
 
             assert len(result.items) == 1
             assert result.items[0].scenario_name == "test.scenario"
-            assert result.items[0].class_name == "TestScenario"
+            assert result.items[0].scenario_type == "TestScenario"
             assert result.items[0].description == "A test scenario"
             assert result.items[0].default_strategy == "default"
             assert result.items[0].aggregate_strategies == ["all", "default"]
@@ -232,7 +232,7 @@ class TestScenarioRoutes:
         """Test that GET /api/scenarios returns scenario data."""
         summary = ScenarioSummary(
             scenario_name="foundry.red_team_agent",
-            class_name="RedTeamAgentScenario",
+            scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
             default_strategy="default",
             aggregate_strategies=["all", "default"],
@@ -258,7 +258,7 @@ class TestScenarioRoutes:
             assert len(data["items"]) == 1
             item = data["items"][0]
             assert item["scenario_name"] == "foundry.red_team_agent"
-            assert item["class_name"] == "RedTeamAgentScenario"
+            assert item["scenario_type"] == "RedTeamAgentScenario"
             assert item["default_strategy"] == "default"
             assert item["aggregate_strategies"] == ["all", "default"]
             assert item["all_strategies"] == ["prompt_sending", "role_play"]
@@ -286,7 +286,7 @@ class TestScenarioRoutes:
         """Test that GET /api/scenarios/{name} returns 200 when found."""
         summary = ScenarioSummary(
             scenario_name="foundry.red_team_agent",
-            class_name="RedTeamAgentScenario",
+            scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
             default_strategy="default",
             aggregate_strategies=["all"],
@@ -321,7 +321,7 @@ class TestScenarioRoutes:
         """Test that dotted scenario names (e.g., 'foundry.red_team_agent') work in path."""
         summary = ScenarioSummary(
             scenario_name="garak.encoding",
-            class_name="EncodingScenario",
+            scenario_type="EncodingScenario",
             description="Encoding scenario",
             default_strategy="all",
             aggregate_strategies=["all"],

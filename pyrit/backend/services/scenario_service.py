@@ -28,7 +28,7 @@ def _metadata_to_summary(metadata: ScenarioMetadata) -> ScenarioSummary:
     """
     return ScenarioSummary(
         scenario_name=metadata.registry_name,
-        class_name=metadata.class_name,
+        scenario_type=metadata.class_name,
         description=metadata.class_description,
         default_strategy=metadata.default_strategy,
         aggregate_strategies=list(metadata.aggregate_strategies),
