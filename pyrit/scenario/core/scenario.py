@@ -10,6 +10,7 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 
 import asyncio
 import copy
+import json
 import logging
 import textwrap
 import uuid
@@ -41,6 +42,56 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
+
+
+def _assert_json_serializable(*, params: dict[str, Any]) -> None:
+    """
+    Raise if any value in ``params`` cannot round-trip through JSON.
+
+    Stage 5 stores ``params`` on ``ScenarioIdentifier.init_data`` for resume
+    validation; the underlying memory column is JSON. Catching unserializable
+    values here gives a clear error rather than a database failure.
+
+    Args:
+        params (dict[str, Any]): Effective parameters to validate.
+
+    Raises:
+        ValueError: If any value is not JSON-serializable.
+    """
+    try:
+        json.dumps(params)
+    except TypeError as exc:
+        raise ValueError(
+            f"Scenario params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
+            f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for scenario parameters."
+        ) from exc
+
+
+def _format_param_key_diff(*, stored: dict[str, Any], current: dict[str, Any]) -> str:
+    """
+    Render the set-level difference between two param dicts as a short string.
+
+    Lists only key names (no values) so secrets or large blobs in scenario
+    parameters do not leak into logs.
+
+    Args:
+        stored (dict[str, Any]): Persisted params from the previous run.
+        current (dict[str, Any]): Effective params for the current run.
+
+    Returns:
+        str: A short summary like ``"added: x, y; removed: z; changed: max_turns"``.
+    """
+    parts: list[str] = []
+    added = sorted(set(current) - set(stored))
+    removed = sorted(set(stored) - set(current))
+    changed = sorted(k for k in set(stored) & set(current) if stored[k] != current[k])
+    if added:
+        parts.append(f"added: {', '.join(added)}")
+    if removed:
+        parts.append(f"removed: {', '.join(removed)}")
+    if changed:
+        parts.append(f"changed: {', '.join(changed)}")
+    return "; ".join(parts) if parts else "no diff details"
 
 
 class Scenario(ABC):
@@ -514,6 +565,12 @@ class Scenario(ABC):
         # Build display group mapping from atomic attacks
         self._display_group_map = {aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks}
 
+        # Snapshot params onto the identifier for resume validation. Deep-copy
+        # to avoid sharing mutable state with self.params.
+        params_snapshot = copy.deepcopy(self.params)
+        _assert_json_serializable(params=params_snapshot)
+        self._identifier.init_data = params_snapshot
+
         # Create new scenario result
         attack_results: dict[str, list[AttackResult]] = {
             atomic_attack.atomic_attack_name: [] for atomic_attack in self._atomic_attacks
@@ -635,6 +692,17 @@ class Scenario(ABC):
                 f"Scenario result ID {self._scenario_result_id} has mismatched version: "
                 f"stored={stored_version}, current={self._identifier.version}. "
                 f"Creating new scenario result."
+            )
+            return False
+
+        # Treat None (legacy result without persisted params) as empty.
+        stored_params = stored_result.scenario_identifier.init_data or {}
+        if stored_params != self.params:
+            diff = _format_param_key_diff(stored=stored_params, current=self.params)
+            logger.warning(
+                f"Scenario result ID {self._scenario_result_id} has mismatched parameters ({diff}). "
+                f"Either CLI/config args differ from the original run, or a scenario default changed "
+                f"between releases. Creating new scenario result."
             )
             return False
 

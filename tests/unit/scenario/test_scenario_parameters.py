@@ -412,3 +412,107 @@ class TestNoneIsAbsent:
         )
         with pytest.raises(ValueError, match="missing required parameter"):
             scenario.set_params_from_args(args={"key": None})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestResumeParameterValidation:
+    """Tests for Stage 5 resume validation against persisted scenario params."""
+
+    @staticmethod
+    def _make_stored_result(*, scenario_name: str, version: int, init_data):
+        """Build a minimal ScenarioResult with a controlled identifier for resume tests."""
+        from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+
+        identifier = ScenarioIdentifier(
+            name=scenario_name,
+            description="",
+            scenario_version=version,
+            init_data=init_data,
+        )
+        target_id = ComponentIdentifier(class_name="MockTarget", class_module="tests.unit.scenarios")
+        return ScenarioResult(
+            scenario_identifier=identifier,
+            objective_target_identifier=target_id,
+            objective_scorer_identifier=_TEST_SCORER_ID,
+            labels={},
+            attack_results={},
+            scenario_run_state="CREATED",
+        )
+
+    def test_matching_params_returns_true(self) -> None:
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        scenario.set_params_from_args(args={"max_turns": 10})
+
+        stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 10})
+        assert scenario._validate_stored_scenario(stored_result=stored) is True
+
+    def test_changed_param_returns_false_with_diff(self, caplog) -> None:
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        scenario.set_params_from_args(args={"max_turns": 10})
+
+        stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 5})
+        with caplog.at_level("WARNING"):
+            result = scenario._validate_stored_scenario(stored_result=stored)
+        assert result is False
+        # Diff log should reference the key but NOT the values (no leak).
+        assert "changed: max_turns" in caplog.text
+        assert "10" not in caplog.text
+        assert "stored=5" not in caplog.text
+
+    def test_added_param_returns_false(self, caplog) -> None:
+        scenario = _make_scenario(
+            declared_params=[
+                Parameter(name="max_turns", description="d", param_type=int, default=5),
+                Parameter(name="mode", description="d", param_type=str, default="fast"),
+            ]
+        )
+        scenario.set_params_from_args(args={})
+
+        stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 5})
+        with caplog.at_level("WARNING"):
+            result = scenario._validate_stored_scenario(stored_result=stored)
+        assert result is False
+        assert "added: mode" in caplog.text
+
+    def test_legacy_init_data_none_matches_empty_params(self) -> None:
+        """A pre-Stage-5 stored result has init_data=None; treat as empty for back-compat."""
+        scenario = _make_scenario(declared_params=[])
+        scenario.set_params_from_args(args={})
+
+        stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data=None)
+        assert scenario._validate_stored_scenario(stored_result=stored) is True
+
+    def test_legacy_init_data_none_mismatches_populated_params(self, caplog) -> None:
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        scenario.set_params_from_args(args={"max_turns": 7})
+
+        stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data=None)
+        with caplog.at_level("WARNING"):
+            result = scenario._validate_stored_scenario(stored_result=stored)
+        assert result is False
+        assert "added: max_turns" in caplog.text
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestParamPersistenceJsonSafety:
+    """Tests for the JSON-serializability check before persisting params."""
+
+    def test_json_safe_scalar_passes(self) -> None:
+        from pyrit.scenario.core.scenario import _assert_json_serializable
+
+        _assert_json_serializable(params={"max_turns": 5, "mode": "fast", "datasets": ["a", "b"]})
+
+    def test_non_json_safe_value_raises(self) -> None:
+        from pyrit.scenario.core.scenario import _assert_json_serializable
+
+        class _NotJsonable:
+            pass
+
+        with pytest.raises(ValueError, match="non-JSON-serializable"):
+            _assert_json_serializable(params={"x": _NotJsonable()})
