@@ -555,7 +555,7 @@ def construct_response_from_request(
                 role="assistant",
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
-                labels=request.labels,
+                labels=request.labels,  # deprecated
                 prompt_target_identifier=request.prompt_target_identifier,
                 attack_identifier=request.attack_identifier,
                 original_value_data_type=response_type,

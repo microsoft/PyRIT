@@ -8,6 +8,7 @@ import traceback
 from typing import Any, Optional
 from uuid import uuid4
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     ComponentRole,
     EmptyResponseException,
@@ -80,6 +81,7 @@ class PromptNormalizer:
             response_converter_configurations (list[PromptConverterConfiguration], optional): Configurations for
                 converting the response. Defaults to an empty list.
             labels (Optional[dict[str, str]], optional): Labels associated with the request. Defaults to None.
+                Deprecated: This parameter will be removed in a release 0.16.0.
             attack_identifier (Optional[ComponentIdentifier], optional): Identifier for the attack. Defaults to
                 None.
 
@@ -90,6 +92,12 @@ class PromptNormalizer:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
         """
+        if labels is not None:
+            print_deprecation_message(
+                old_item="send_prompt_async(..., labels=...)",
+                new_item="send_prompt_async(...)",
+                removed_in="0.16.0",
+            )
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
         response_converter_configurations = response_converter_configurations or []
@@ -103,7 +111,7 @@ class PromptNormalizer:
         for piece in request.message_pieces:
             piece.conversation_id = conversation_id
             if labels:
-                piece.labels = labels
+                piece.labels = labels  # deprecated
             piece.prompt_target_identifier = target.get_identifier()
             if attack_identifier:
                 piece.attack_identifier = attack_identifier
