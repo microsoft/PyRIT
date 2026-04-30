@@ -16,17 +16,7 @@ from typing import Optional
 
 from pyrit.cli import frontend_core
 
-
-def parse_args(args: Optional[list[str]] = None) -> Namespace:
-    """
-    Parse command-line arguments for the PyRIT scanner.
-
-    Returns:
-        Namespace: Parsed command-line arguments.
-    """
-    parser = ArgumentParser(
-        prog="pyrit_scan",
-        description="""PyRIT Scanner - Run security scenarios against AI systems
+_DESCRIPTION = """PyRIT Scanner - Run security scenarios against AI systems
 
 Examples:
   # List available scenarios, initializers, and targets
@@ -46,8 +36,32 @@ Examples:
   # Run specific strategies or options
   pyrit_scan foundry.red_team_agent --target my_target --strategies base64 rot13 --initializers target
   pyrit_scan foundry.red_team_agent --target my_target --initializers target --max-concurrency 10 --max-retries 3
-""",
+"""
+
+
+def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
+    """
+    Build the ``pyrit_scan`` argparse parser with the built-in (non-scenario) flags.
+
+    Defined as a helper so the same flag definitions can be reused across the
+    two-pass parsing flow that adds scenario-declared parameters dynamically:
+    pass 1 builds the parser with ``add_help=False`` to identify the scenario
+    name without firing on ``--help``; pass 2 builds the parser again with
+    ``add_help=True`` and augments it with scenario-specific flags before
+    parsing for real.
+
+    Args:
+        add_help (bool): Whether the parser should register the standard
+            ``-h``/``--help`` action. Defaults to True.
+
+    Returns:
+        ArgumentParser: The parser with all built-in flags registered.
+    """
+    parser = ArgumentParser(
+        prog="pyrit_scan",
+        description=_DESCRIPTION,
         formatter_class=RawDescriptionHelpFormatter,
+        add_help=add_help,
     )
 
     parser.add_argument(
@@ -149,7 +163,17 @@ Examples:
         help=frontend_core.ARG_HELP["target"],
     )
 
-    return parser.parse_args(args)
+    return parser
+
+
+def parse_args(args: Optional[list[str]] = None) -> Namespace:
+    """
+    Parse command-line arguments for the PyRIT scanner.
+
+    Returns:
+        Namespace: Parsed command-line arguments.
+    """
+    return _build_base_parser().parse_args(args)
 
 
 def main(args: Optional[list[str]] = None) -> int:
