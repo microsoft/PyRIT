@@ -793,7 +793,7 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
-        self.timestamp = datetime.now(tz=timezone.utc)
+        self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
         self.pyrit_version = pyrit.__version__
 
     @staticmethod
@@ -894,6 +894,7 @@ class AttackResultEntry(Base):
             outcome_reason=self.outcome_reason,
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
+            timestamp=_ensure_utc(self.timestamp) or datetime.now(tz=timezone.utc),
         )
 
 

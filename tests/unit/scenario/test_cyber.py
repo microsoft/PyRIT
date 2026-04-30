@@ -340,7 +340,7 @@ class TestCyberRegistryIntegration:
         """red_teaming factory should have adversarial config baked in."""
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         factories = scenario._get_attack_technique_factories()
-        assert "attack_adversarial_config" in factories["red_teaming"]._attack_kwargs
+        assert factories["red_teaming"]._adversarial_config is not None
 
     def test_register_idempotent(self):
         """Calling register_scenario_techniques twice doesn't duplicate entries."""
