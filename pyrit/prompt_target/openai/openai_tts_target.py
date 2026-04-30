@@ -148,8 +148,8 @@ class OpenAITTSTarget(OpenAITarget):
                 model=str(body_parameters["model"]),
                 voice=str(body_parameters["voice"]),
                 input=str(body_parameters["input"]),
-                response_format=body_parameters.get("response_format"),  # type: ignore[ty:invalid-argument-type]
-                speed=body_parameters.get("speed"),  # type: ignore[ty:invalid-argument-type]
+                response_format=body_parameters.get("response_format"),
+                speed=body_parameters.get("speed"),
             ),
             request=message,
         )

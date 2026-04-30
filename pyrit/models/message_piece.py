@@ -319,7 +319,7 @@ class MessagePiece:
 
         This is needed when we're scoring prompts or other things that have not been sent by PyRIT
         """
-        self.id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        self.id = None
 
     def to_dict(self) -> dict[str, object]:
         """

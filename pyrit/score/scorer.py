@@ -367,7 +367,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        request.message_pieces[0].id = None
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -391,7 +391,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        request.message_pieces[0].id = None
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(
