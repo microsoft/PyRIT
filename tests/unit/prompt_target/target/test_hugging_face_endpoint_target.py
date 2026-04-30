@@ -314,8 +314,20 @@ def test_validate_request_rejects_multiple_pieces():
         model_id="test-model",
     )
 
-    piece1 = MessagePiece(role="user", original_value="first", converted_value="first", converted_value_data_type="text", conversation_id="conv1")
-    piece2 = MessagePiece(role="user", original_value="second", converted_value="second", converted_value_data_type="text", conversation_id="conv1")
+    piece1 = MessagePiece(
+        role="user",
+        original_value="first",
+        converted_value="first",
+        converted_value_data_type="text",
+        conversation_id="conv1",
+    )
+    piece2 = MessagePiece(
+        role="user",
+        original_value="second",
+        converted_value="second",
+        converted_value_data_type="text",
+        conversation_id="conv1",
+    )
     message = Message(message_pieces=[piece1, piece2])
 
     with pytest.raises(ValueError, match="single message piece"):
