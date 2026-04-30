@@ -329,7 +329,7 @@ class AzureBlobStorageIO(StorageIO):
 
             # Download the blob
             blob_stream = await blob_client.download_blob()
-            return bytes(await blob_stream.readall())  # type: ignore[ty:invalid-argument-type]
+            return bytes(await blob_stream.readall())
 
         except Exception as exc:
             logger.exception(f"Failed to read file at {blob_name}: {exc}")

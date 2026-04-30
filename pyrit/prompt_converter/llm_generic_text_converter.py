@@ -15,7 +15,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +27,13 @@ class LLMGenericTextConverter(PromptConverter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         system_prompt_template: Optional[SeedPrompt] = None,
         user_prompt_template_with_objective: Optional[SeedPrompt] = None,
         **kwargs: Any,
@@ -41,8 +42,10 @@ class LLMGenericTextConverter(PromptConverter):
         Initialize the converter with a target and optional prompt templates.
 
         Args:
-            converter_target (PromptChatTarget): The endpoint that converts the prompt.
-                Can be omitted if a default has been configured via PyRIT initialization.
+            converter_target (PromptTarget): The endpoint that converts the prompt. Must satisfy
+                ``CHAT_CONSUMER_REQUIREMENTS`` (multi-turn + editable history capabilities, possibly
+                via normalization-pipeline adaptation). Can be omitted if a default has been configured
+                via PyRIT initialization.
             system_prompt_template (SeedPrompt, Optional): The prompt template to set as the system prompt.
             user_prompt_template_with_objective (SeedPrompt, Optional): The prompt template to set as the user prompt.
                 expects
@@ -51,6 +54,7 @@ class LLMGenericTextConverter(PromptConverter):
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
         """
+        super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
         self._prompt_kwargs = kwargs

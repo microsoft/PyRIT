@@ -44,8 +44,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int | tuple[int, int] = 15,
-        x_pos: int = _UNSET,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
-        y_pos: int = _UNSET,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        x_pos: int = _UNSET,  # type: ignore[ty:invalid-parameter-default]
+        y_pos: int = _UNSET,  # type: ignore[ty:invalid-parameter-default]
         bounding_box: tuple[int, int, int, int] | None = None,
         rotation: float = 0.0,
         center_text: bool = False,
