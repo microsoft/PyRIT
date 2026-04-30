@@ -3,8 +3,7 @@
 
 """PyRIT initializers package."""
 
-import warnings
-
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import Parameter
 from pyrit.setup.initializers.airt import AIRTInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer
@@ -28,10 +27,10 @@ __all__ = [
 
 def __getattr__(name: str) -> type:
     if name == "InitializerParameter":
-        warnings.warn(
-            "InitializerParameter is deprecated. Use Parameter from pyrit.common instead.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item="pyrit.setup.initializers.InitializerParameter",
+            new_item=Parameter,
+            removed_in="v0.16.0",
         )
         return Parameter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

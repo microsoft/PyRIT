@@ -856,14 +856,21 @@ class TestInitializerParameterDeprecation:
         """Accessing InitializerParameter on the package emits a DeprecationWarning."""
         import pyrit.setup.initializers as initializers_module
 
-        with pytest.warns(DeprecationWarning, match="Use Parameter from pyrit.common"):
+        with pytest.warns(DeprecationWarning, match=r"will be removed in v0\.16\.0"):
+            _ = initializers_module.InitializerParameter
+
+    def test_package_level_alias_warning_points_to_replacement(self) -> None:
+        """The deprecation warning tells users which class to use instead."""
+        import pyrit.setup.initializers as initializers_module
+
+        with pytest.warns(DeprecationWarning, match=r"pyrit\.common\.parameter\.Parameter"):
             _ = initializers_module.InitializerParameter
 
     def test_canonical_module_alias_emits_deprecation_warning(self) -> None:
         """Accessing InitializerParameter on pyrit_initializer also emits the warning."""
         import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
 
-        with pytest.warns(DeprecationWarning, match="Use Parameter from pyrit.common"):
+        with pytest.warns(DeprecationWarning, match=r"will be removed in v0\.16\.0"):
             value = pyrit_initializer_module.InitializerParameter
 
         assert value is Parameter

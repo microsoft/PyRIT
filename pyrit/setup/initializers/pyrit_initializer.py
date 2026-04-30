@@ -9,22 +9,22 @@ which are class-based alternatives to initialization scripts.
 """
 
 import sys
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from typing import Any
 
 from pyrit.common.apply_defaults import get_global_default_values
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import Parameter
 
 
 def __getattr__(name: str) -> type:
     if name == "InitializerParameter":
-        warnings.warn(
-            "InitializerParameter is deprecated. Use Parameter from pyrit.common instead.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item="pyrit.setup.initializers.pyrit_initializer.InitializerParameter",
+            new_item=Parameter,
+            removed_in="v0.16.0",
         )
         return Parameter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
