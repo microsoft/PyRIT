@@ -33,7 +33,7 @@ class TestDescriptionFromDocstring:
 
     def test_returns_fallback_when_empty_docstring(self):
         class EmptyDoc:
-            """   """
+            """ """
 
         result = ClassRegistryEntry.description_from_docstring(EmptyDoc, fallback="fallback")
         assert result == "fallback"
