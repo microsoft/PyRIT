@@ -533,6 +533,13 @@ class Scenario(ABC):
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
+        # Materialize declared defaults for programmatic callers that skip the
+        # explicit set_params_from_args step. Frontend-driven flows already
+        # call it (which sets _declarations_validated=True), so this is a no-op
+        # in that path.
+        if not self._declarations_validated:
+            self.set_params_from_args(args={})
+
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
         if self._include_baseline:
