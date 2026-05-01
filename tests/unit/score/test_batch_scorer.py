@@ -48,7 +48,6 @@ class TestBatchScorerInitialization:
 class TestBatchScorerScoreResponsesByFilters:
     """Test score_responses_by_filters_async method functionality."""
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_basic_functionality(
         self, sample_conversations: MutableSequence[Message]
     ) -> None:
@@ -69,7 +68,6 @@ class TestBatchScorerScoreResponsesByFilters:
             scorer.score_prompts_batch_async.assert_called_once()
             assert scores[0] == test_score
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_with_all_parameters(
         self, sample_conversations: MutableSequence[Message]
     ) -> None:
@@ -115,7 +113,6 @@ class TestBatchScorerScoreResponsesByFilters:
                 converted_value_sha256=None,
             )
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_raises_error_no_matching_filters(self) -> None:
         """Test that ValueError is raised when no entries match filters."""
         memory = MagicMock()
@@ -186,7 +183,6 @@ class TestBatchScorerUtilityMethods:
 class TestBatchScorerErrorHandling:
     """Test error handling scenarios for BatchScorer."""
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_no_filters_provided(
         self, sample_conversations: MutableSequence[Message]
     ) -> None:
@@ -217,7 +213,6 @@ class TestBatchScorerErrorHandling:
                 converted_value_sha256=None,
             )
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_handles_multiple_conversations(self) -> None:
         """Test that scoring handles pieces from multiple conversations correctly."""
         memory = MagicMock()
@@ -273,7 +268,6 @@ class TestBatchScorerErrorHandling:
             assert len(messages) == 4
             assert len(scores) == 4
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_groups_by_sequence_within_conversation(self) -> None:
         """Test that pieces are properly grouped by sequence within each conversation."""
         memory = MagicMock()
@@ -326,7 +320,6 @@ class TestBatchScorerErrorHandling:
             assert len(messages[1].message_pieces) == 2
             assert len(messages[2].message_pieces) == 1
 
-    @pytest.mark.asyncio
     async def test_score_responses_by_filters_removes_duplicate_message_pieces(self) -> None:
         """Test that duplicate message pieces are filtered out before batch scoring."""
         memory = MagicMock()

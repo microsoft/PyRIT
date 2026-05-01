@@ -157,7 +157,6 @@ class TestPlaywrightTarget:
         # Should not raise any exception
         target._validate_request(normalized_conversation=[request])
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_single_text(self, mock_interaction_func, mock_page, text_message_piece):
         """Test sending a single text prompt."""
         target = PlaywrightTarget(interaction_func=mock_interaction_func, page=mock_page)
@@ -174,7 +173,6 @@ class TestPlaywrightTarget:
         # Verify interaction function was called correctly
         mock_interaction_func.assert_awaited_once_with(mock_page, request)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_multiple_pieces(self, mock_interaction_func, mock_page, multiple_text_pieces):
         """Test sending multiple text prompts."""
         target = PlaywrightTarget(interaction_func=mock_interaction_func, page=mock_page)
@@ -191,7 +189,6 @@ class TestPlaywrightTarget:
         # Verify interaction function was called with the complete request
         mock_interaction_func.assert_awaited_once_with(mock_page, request)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_image_request(self, mock_interaction_func, mock_page, image_message_piece):
         """Test sending an image prompt."""
         target = PlaywrightTarget(interaction_func=mock_interaction_func, page=mock_page)
@@ -208,7 +205,6 @@ class TestPlaywrightTarget:
         # Verify interaction function was called correctly
         mock_interaction_func.assert_awaited_once_with(mock_page, request)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_no_page(self, mock_interaction_func, text_message_piece):
         """Test error when page is not initialized."""
         target = PlaywrightTarget(interaction_func=mock_interaction_func, page=None)
@@ -217,7 +213,6 @@ class TestPlaywrightTarget:
         with pytest.raises(RuntimeError, match="Playwright page is not initialized"):
             await target.send_prompt_async(message=request)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_interaction_error(self, mock_page, text_message_piece):
         """Test error handling during interaction."""
 
@@ -231,7 +226,6 @@ class TestPlaywrightTarget:
         with pytest.raises(RuntimeError, match="An error occurred during interaction: Interaction failed"):
             await target.send_prompt_async(message=request)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_response_construction(self, mock_page, text_message_piece):
         """Test that response is constructed correctly."""
 
@@ -254,7 +248,6 @@ class TestPlaywrightTarget:
         assert response[0].message_pieces[0].converted_value == expected_response.message_pieces[0].converted_value
         assert response[0].message_pieces[0].api_role == expected_response.message_pieces[0].api_role
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_empty_response(self, mock_page, text_message_piece):
         """Test handling of empty response from interaction function."""
 
@@ -280,7 +273,6 @@ class TestPlaywrightTarget:
         # Check that the protocol exists and has the right signature
         assert callable(InteractionFunction)
 
-    @pytest.mark.asyncio
     async def test_interaction_function_receives_complete_request(self, mock_page, multiple_text_pieces):
         """Test that interaction function receives the complete Message."""
         received_request = None
@@ -347,7 +339,6 @@ class TestPlaywrightTargetEdgeCases:
         ):
             target._validate_request(normalized_conversation=[request])
 
-    @pytest.mark.asyncio
     async def test_interaction_function_with_complex_response(self, mock_page):
         """Test interaction function that returns complex response."""
 

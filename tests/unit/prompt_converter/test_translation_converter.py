@@ -29,7 +29,6 @@ def test_translator_converter_languages_validation_throws(languages, sqlite_inst
         TranslationConverter(converter_target=prompt_target, language=languages)
 
 
-@pytest.mark.asyncio
 async def test_translation_converter_convert_async_retrieve_key_capitalization_mismatch(sqlite_instance):
     prompt_target = MockPromptTarget()
 
@@ -44,7 +43,6 @@ async def test_translation_converter_convert_async_retrieve_key_capitalization_m
         assert raised is False
 
 
-@pytest.mark.asyncio
 async def test_translation_converter_retries_on_exception(sqlite_instance):
     prompt_target = MockPromptTarget()
     max_retries = 3
@@ -62,7 +60,6 @@ async def test_translation_converter_retries_on_exception(sqlite_instance):
             assert mock_send_prompt.call_count == max_retries
 
 
-@pytest.mark.asyncio
 async def test_translation_converter_succeeds_after_retries(sqlite_instance):
     """Test that TranslationConverter succeeds if a retry attempt works."""
     prompt_target = MockPromptTarget()

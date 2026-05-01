@@ -258,7 +258,6 @@ class TestChunkedRequestAttack:
 class TestChunkedRequestAttackExecution:
     """Tests for the main attack execution logic."""
 
-    @pytest.mark.asyncio
     async def test_perform_async_sets_atomic_attack_identifier(self):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
         mock_target = _make_mock_target()

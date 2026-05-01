@@ -67,7 +67,6 @@ def test_validate_rate_limit_rpm_with_batch_gt_1_raises():
         _validate_rate_limit_parameters(prompt_target=target, batch_size=5)
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_empty_items_raises():
     with pytest.raises(ValueError, match="No items to batch"):
         await batch_task_async(
@@ -78,7 +77,6 @@ async def test_batch_task_async_empty_items_raises():
         )
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_empty_inner_list_raises():
     with pytest.raises(ValueError, match="No items to batch"):
         await batch_task_async(
@@ -89,7 +87,6 @@ async def test_batch_task_async_empty_inner_list_raises():
         )
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_mismatched_args_raises():
     with pytest.raises(ValueError, match="Number of lists of items to batch must match"):
         await batch_task_async(
@@ -100,7 +97,6 @@ async def test_batch_task_async_mismatched_args_raises():
         )
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_calls_func():
     mock_func = AsyncMock(return_value="result")
     results = await batch_task_async(
@@ -113,7 +109,6 @@ async def test_batch_task_async_calls_func():
     assert mock_func.call_count == 3
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_multiple_item_lists():
     mock_func = AsyncMock(return_value="ok")
     results = await batch_task_async(
@@ -126,7 +121,6 @@ async def test_batch_task_async_multiple_item_lists():
     assert mock_func.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_passes_kwargs():
     mock_func = AsyncMock(return_value="done")
     await batch_task_async(
@@ -141,7 +135,6 @@ async def test_batch_task_async_passes_kwargs():
     assert call_kwargs["extra_param"] == "extra_value"
 
 
-@pytest.mark.asyncio
 async def test_batch_task_async_validates_rate_limit():
     target = MagicMock()
     target._max_requests_per_minute = 10

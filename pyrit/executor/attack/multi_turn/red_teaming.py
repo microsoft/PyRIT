@@ -38,6 +38,8 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,6 +47,13 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+# RedTeamingAttack sets a system prompt on its adversarial target and drives a multi-turn dialogue
+# through it. Both capabilities must be natively supported — adaptation would silently change the
+# semantics (e.g. history-squash normalization would collapse the dialogue into a single turn).
+_ADVERSARIAL_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
+)
 
 
 class RTASystemPromptPaths(enum.Enum):
@@ -89,7 +98,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -137,6 +146,13 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
+        # The adversarial target must natively support multi-turn dialogue and system prompts;
+        # the class-level ``TARGET_REQUIREMENTS`` only covers ``objective_target``.
+        try:
+            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+        except ValueError as exc:
+            raise ValueError(f"RedTeamingAttack {exc}") from exc
+
         system_prompt_template_path = (
             attack_adversarial_config.system_prompt_path or RTASystemPromptPaths.TEXT_GENERATION.value
         )

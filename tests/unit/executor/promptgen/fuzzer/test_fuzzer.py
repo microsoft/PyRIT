@@ -236,7 +236,6 @@ class TestFuzzerGenerator:
             generator._validate_context(context=context)
         assert exc_info.match("Prompt templates in context cannot be empty.")
 
-    @pytest.mark.asyncio
     async def test_fuzzer_generator_with_default_scorer(
         self, scoring_target: MockPromptTarget, template_converters: list[FuzzerConverter]
     ) -> None:
@@ -374,7 +373,6 @@ class TestFuzzerGenerator:
         assert "Total Queries: 25" in str_result
         assert "Successful Templates: 1" in str_result
 
-    @pytest.mark.asyncio
     async def test_execute_generation_reaches_jailbreak_goal(
         self,
         scoring_target: MockPromptTarget,
@@ -403,7 +401,6 @@ class TestFuzzerGenerator:
                         assert len(result.successful_templates) >= 0  # Check result structure
                         assert mock_iteration.call_count == 2  # Called twice before stopping
 
-    @pytest.mark.asyncio
     async def test_execute_generation_reaches_query_limit(
         self,
         scoring_target: MockPromptTarget,

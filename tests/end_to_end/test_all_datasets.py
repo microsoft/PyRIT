@@ -67,7 +67,6 @@ def _init_memory():
 class TestAllDatasets:
     """Exhaustive test that every registered dataset provider can be fetched."""
 
-    @pytest.mark.asyncio
     @pytest.mark.timeout(_TEST_TIMEOUT)
     @pytest.mark.parametrize("name,provider_cls", get_dataset_providers())
     async def test_fetch_dataset(self, name, provider_cls):

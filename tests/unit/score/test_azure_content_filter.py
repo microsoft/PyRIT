@@ -36,7 +36,6 @@ def text_message_piece() -> MessagePiece:
     return get_test_message_piece()
 
 
-@pytest.mark.asyncio
 async def test_score_async_unsupported_data_type_returns_empty_list(
     patch_central_database, audio_message_piece: MessagePiece
 ):
@@ -53,7 +52,6 @@ async def test_score_async_unsupported_data_type_returns_empty_list(
     os.remove(audio_message_piece.converted_value)
 
 
-@pytest.mark.asyncio
 async def test_score_piece_async_text(patch_central_database, text_message_piece: MessagePiece):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
     mock_client = AsyncMock()
@@ -70,7 +68,6 @@ async def test_score_piece_async_text(patch_central_database, text_message_piece
     assert "AzureContentFilterScorer" in str(score.scorer_class_identifier)
 
 
-@pytest.mark.asyncio
 async def test_score_piece_async_image(patch_central_database, image_message_piece: MessagePiece):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
     mock_client = AsyncMock()
@@ -113,7 +110,6 @@ def test_async_callable_api_key_accepted():
     assert inspect.iscoroutinefunction(scorer._api_key)
 
 
-@pytest.mark.asyncio
 async def test_async_callable_api_key_returns_token():
     async def async_provider():
         return "token"
@@ -137,7 +133,6 @@ def test_sync_callable_returning_coroutine_accepted():
     assert inspect.iscoroutinefunction(scorer._api_key)
 
 
-@pytest.mark.asyncio
 async def test_sync_callable_returning_coroutine_returns_token():
     async def async_fn():
         return "token"
@@ -154,14 +149,12 @@ def test_sync_callable_api_key_accepted():
     assert inspect.iscoroutinefunction(scorer._api_key)
 
 
-@pytest.mark.asyncio
 async def test_sync_callable_api_key_returns_token():
     scorer = AzureContentFilterScorer(api_key=lambda: "token", endpoint="bar")
     result = await scorer._api_key()
     assert result == "token"
 
 
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_adds_to_memory():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
@@ -177,7 +170,6 @@ async def test_azure_content_filter_scorer_adds_to_memory():
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_score(patch_central_database):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
 
@@ -209,7 +201,6 @@ def test_azure_content_explicit_category():
     assert len(scorer._harm_categories) == 1
 
 
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_chunks_long_text(patch_central_database):
     """
     Test that AzureContentFilterScorer chunks text longer than 10,000 characters
@@ -234,7 +225,6 @@ async def test_azure_content_filter_scorer_chunks_long_text(patch_central_databa
         assert mock_client.analyze_text.call_count == 2  # Called once per chunk
 
 
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_accepts_short_text(patch_central_database):
     """
     Test that AzureContentFilterScorer accepts text under 10,000 characters.
@@ -258,7 +248,6 @@ async def test_azure_content_filter_scorer_accepts_short_text(patch_central_data
         mock_client.analyze_text.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_evaluate_async_raises_for_multiple_categories():
     """Test that evaluate_async raises ValueError when multiple harm categories are configured."""
     scorer = AzureContentFilterScorer(
@@ -268,7 +257,6 @@ async def test_evaluate_async_raises_for_multiple_categories():
         await scorer.evaluate_async()
 
 
-@pytest.mark.asyncio
 async def test_evaluate_async_raises_for_all_categories():
     """Test that evaluate_async raises ValueError when all categories are configured (default)."""
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar")
@@ -276,7 +264,6 @@ async def test_evaluate_async_raises_for_all_categories():
         await scorer.evaluate_async()
 
 
-@pytest.mark.asyncio
 async def test_evaluate_async_sets_file_mapping_for_single_category(patch_central_database):
     """Test that evaluate_async sets evaluation_file_mapping for single category."""
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])

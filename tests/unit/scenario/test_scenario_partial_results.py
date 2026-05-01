@@ -114,7 +114,6 @@ class ConcreteScenario(Scenario):
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.asyncio
 class TestScenarioPartialAttackCompletion:
     """Tests for Scenario handling AttackExecutorResult from atomic attacks."""
 

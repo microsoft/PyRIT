@@ -3,15 +3,12 @@
 
 import os
 
-import pytest
-
 from pyrit.prompt_converter import (
     AzureSpeechAudioToTextConverter,
     AzureSpeechTextToAudioConverter,
 )
 
 
-@pytest.mark.asyncio
 async def test_azure_speech_text_to_audio_converter_entra_auth(monkeypatch):
     """Test Azure Speech text-to-audio converter with Entra authentication."""
     # Ensure key auth is not used — this test validates the Entra auto-detection path
@@ -38,7 +35,6 @@ async def test_azure_speech_text_to_audio_converter_entra_auth(monkeypatch):
         os.unlink(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_azure_speech_audio_to_text_converter_entra_auth(monkeypatch):
     """Test Azure Speech audio-to-text converter with Entra authentication."""
     import tempfile

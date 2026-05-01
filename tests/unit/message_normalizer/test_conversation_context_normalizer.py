@@ -41,14 +41,12 @@ def _make_non_text_message(
 class TestConversationContextNormalizerNormalizeStringAsync:
     """Tests for ConversationContextNormalizer.normalize_string_async."""
 
-    @pytest.mark.asyncio
     async def test_empty_list_raises(self):
         """Test that empty message list raises ValueError."""
         normalizer = ConversationContextNormalizer()
         with pytest.raises(ValueError, match="Messages list cannot be empty"):
             await normalizer.normalize_string_async(messages=[])
 
-    @pytest.mark.asyncio
     async def test_basic_conversation(self):
         """Test basic user-assistant conversation formatting."""
         normalizer = ConversationContextNormalizer()
@@ -63,7 +61,6 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         assert "User: Hello" in result
         assert "Assistant: Hi there!" in result
 
-    @pytest.mark.asyncio
     async def test_skips_system_messages(self):
         """Test that system messages are skipped in output."""
         normalizer = ConversationContextNormalizer()
@@ -80,7 +77,6 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         assert "User: Hello" in result
         assert "Assistant: Hi!" in result
 
-    @pytest.mark.asyncio
     async def test_turn_numbering(self):
         """Test that turns are numbered correctly."""
         normalizer = ConversationContextNormalizer()
@@ -96,7 +92,6 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         assert "Turn 1:" in result
         assert "Turn 2:" in result
 
-    @pytest.mark.asyncio
     async def test_shows_original_if_different_from_converted(self):
         """Test that original value is shown when different from converted."""
         normalizer = ConversationContextNormalizer()

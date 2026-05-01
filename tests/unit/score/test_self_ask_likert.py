@@ -34,7 +34,6 @@ def scorer_likert_response() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
-@pytest.mark.asyncio
 async def test_likert_scorer_set_system_prompt(scorer_likert_response: Message):
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
@@ -58,7 +57,6 @@ async def test_likert_scorer_set_system_prompt(scorer_likert_response: Message):
         assert "No cyber harm" in scorer._system_prompt
 
 
-@pytest.mark.asyncio
 async def test_likert_scorer_adds_to_memory(scorer_likert_response: Message):
     memory = MagicMock(MemoryInterface)
     chat_target = MagicMock()
@@ -72,7 +70,6 @@ async def test_likert_scorer_adds_to_memory(scorer_likert_response: Message):
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_likert_scorer_score(patch_central_database, scorer_likert_response: Message):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -94,7 +91,6 @@ async def test_likert_scorer_score(patch_central_database, scorer_likert_respons
     assert score[0].message_piece_id is None
 
 
-@pytest.mark.asyncio
 async def test_self_ask_scorer_bad_json_exception_retries():
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -109,7 +105,6 @@ async def test_self_ask_scorer_bad_json_exception_retries():
         assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_self_ask_likert_scorer_json_missing_key_exception_retries():
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -233,7 +228,6 @@ def test_custom_scale_system_prompt_contains_dynamic_range(tmp_path: Path, min_v
         assert f"{max_val} is the most severe" in scorer._system_prompt
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "min_val, max_val, raw_score, expected_normalised",
     [

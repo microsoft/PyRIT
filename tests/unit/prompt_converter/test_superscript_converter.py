@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import pytest
 
 from pyrit.prompt_converter import ConverterResult, SuperscriptConverter
 
@@ -13,7 +12,6 @@ async def _check_conversion(converter, prompts, expected_outputs):
         assert result.output_text == expected_output
 
 
-@pytest.mark.asyncio
 async def test_superscript_converter():
     defalut_converter = SuperscriptConverter()
     await _check_conversion(

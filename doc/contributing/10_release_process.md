@@ -138,7 +138,7 @@ This should print
 
 This step is crucial to ensure that the new package works out of the box.
 
-Create a new environment with the equivalent of `uv venv --python 3.11`. You do not need to test with multiple versions of python or environments, but this manual process can detect issues with the package. Install the built wheel file `uv pip install dist/pyrit-x.y.z-py3-none-any.whl[all,dev]`.
+Create a new environment with the equivalent of `uv venv --python 3.11`. You do not need to test with multiple versions of python or environments, but this manual process can detect issues with the package. Install the built wheel file `uv pip install dist/pyrit-x.y.z-py3-none-any.whl[all]`.
 
 Once the package is successfully installed in the new environment, run `uv pip show pyrit`. Ensure that the version matches the release `vx.y.z` and that the package is found under the site-packages directory of the environment, like `..\venv\Lib\site-packages`.
 

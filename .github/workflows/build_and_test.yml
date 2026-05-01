@@ -57,7 +57,7 @@ jobs:
             **/uv.lock
 
       - name: Install dev extras
-        run: uv sync --extra dev --extra all
+        run: uv sync --extra all
 
       - name: disk space
         shell: bash
@@ -113,14 +113,14 @@ jobs:
 
       # Install PyRIT with optional extras
       - name: Install PyRIT with uv
-        # If the matrix extras is 'dev_all', then we install '.[dev,all]'
-        # otherwise just install the literal extras from the matrix
+        # If the matrix extras is 'dev_all', then we install all extras
+        # otherwise just install the default dependencies
         shell: bash
         run: |
           if [ "${{ matrix.package_extras }}" = "dev_all" ]; then
-            uv sync --extra dev --extra all
+            uv sync --extra all
           else
-            uv sync --extra dev
+            uv sync
           fi
 
       - name: Run unit tests

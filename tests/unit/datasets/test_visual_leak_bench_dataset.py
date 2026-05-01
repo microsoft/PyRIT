@@ -88,7 +88,6 @@ class TestVisualLeakBenchDataset:
         dataset = _VisualLeakBenchDataset(max_examples=10)
         assert dataset.max_examples == 10
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_ocr_creates_pair(self):
         """Test that OCR Injection example creates an image+text pair."""
         mock_data = [_make_ocr_example()]
@@ -112,7 +111,6 @@ class TestVisualLeakBenchDataset:
         assert text_prompt.value == _VisualLeakBenchDataset.OCR_INJECTION_PROMPT
         assert image_prompt.value == "/fake/ocr.png"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_pii_creates_pair(self):
         """Test that PII Leakage example creates an image+text pair with the PII prompt."""
         mock_data = [_make_pii_example()]
@@ -128,7 +126,6 @@ class TestVisualLeakBenchDataset:
         text_prompt = next(s for s in dataset.seeds if s.data_type == "text")
         assert text_prompt.value == _VisualLeakBenchDataset.PII_LEAKAGE_PROMPT
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_harm_categories_ocr(self):
         """Test that OCR Injection examples have correct harm categories."""
         mock_data = [_make_ocr_example()]
@@ -143,7 +140,6 @@ class TestVisualLeakBenchDataset:
         for seed in dataset.seeds:
             assert seed.harm_categories == ["ocr_injection"]
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_harm_categories_pii(self):
         """Test that PII Leakage examples include pii_leakage and the specific PII type."""
         mock_data = [_make_pii_example(pii_type="SSN")]
@@ -159,7 +155,6 @@ class TestVisualLeakBenchDataset:
             assert "pii_leakage" in seed.harm_categories
             assert "ssn" in seed.harm_categories
 
-    @pytest.mark.asyncio
     async def test_category_filter_ocr_only(self):
         """Test filtering to OCR Injection only excludes PII examples."""
         mock_data = [_make_ocr_example(), _make_pii_example()]
@@ -175,7 +170,6 @@ class TestVisualLeakBenchDataset:
         for seed in dataset.seeds:
             assert seed.harm_categories == ["ocr_injection"]
 
-    @pytest.mark.asyncio
     async def test_category_filter_pii_only(self):
         """Test filtering to PII Leakage only excludes OCR examples."""
         mock_data = [_make_ocr_example(), _make_pii_example()]
@@ -191,7 +185,6 @@ class TestVisualLeakBenchDataset:
         for seed in dataset.seeds:
             assert "pii_leakage" in seed.harm_categories
 
-    @pytest.mark.asyncio
     async def test_pii_type_filter(self):
         """Test that pii_types filter excludes non-matching PII examples."""
         mock_data = [
@@ -210,7 +203,6 @@ class TestVisualLeakBenchDataset:
         for seed in dataset.seeds:
             assert "email" in seed.harm_categories
 
-    @pytest.mark.asyncio
     async def test_pii_type_filter_does_not_affect_ocr(self):
         """Test that pii_types filter does not exclude OCR Injection examples."""
         mock_data = [_make_ocr_example(), _make_pii_example(pii_type="SSN")]
@@ -227,7 +219,6 @@ class TestVisualLeakBenchDataset:
         categories = [seed.harm_categories for seed in dataset.seeds]
         assert any("ocr_injection" in cats for cats in categories)
 
-    @pytest.mark.asyncio
     async def test_max_examples_limits_output(self):
         """Test that max_examples limits the number of examples returned."""
         mock_data = [
@@ -246,7 +237,6 @@ class TestVisualLeakBenchDataset:
         # max_examples=2 → at most 4 prompts (2 pairs)
         assert len(dataset.seeds) <= 4
 
-    @pytest.mark.asyncio
     async def test_all_images_fail_produces_empty_dataset(self):
         """Test that when all image downloads fail, no prompts are produced and SeedDataset raises."""
         mock_data = [_make_ocr_example()]
@@ -260,7 +250,6 @@ class TestVisualLeakBenchDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset(cache=False)
 
-    @pytest.mark.asyncio
     async def test_failed_image_skipped_but_others_succeed(self):
         """Test that a failed image is skipped while other examples continue."""
         mock_data = [
@@ -286,7 +275,6 @@ class TestVisualLeakBenchDataset:
         # Only the second example (which succeeded) should be in the dataset
         assert len(dataset.seeds) == 2
 
-    @pytest.mark.asyncio
     async def test_missing_required_key_raises(self):
         """Test that a missing required key in data raises ValueError."""
         mock_data = [{"filename": "ocr_v2_0000.png", "category": "OCR Injection"}]  # missing 'target'
@@ -296,7 +284,6 @@ class TestVisualLeakBenchDataset:
             with pytest.raises(ValueError, match="Missing keys in example"):
                 await loader.fetch_dataset(cache=False)
 
-    @pytest.mark.asyncio
     async def test_prompts_share_group_id_and_dataset_name(self):
         """Test that both prompts in a pair share group_id and dataset_name."""
         mock_data = [_make_ocr_example()]
@@ -316,7 +303,6 @@ class TestVisualLeakBenchDataset:
         assert image_p.dataset_name == "visual_leak_bench"
         assert text_p.dataset_name == "visual_leak_bench"
 
-    @pytest.mark.asyncio
     async def test_metadata_stored_on_prompts(self):
         """Test that relevant metadata is stored on both prompts."""
         mock_data = [_make_pii_example(pii_type="Email", target="user@example.com")]
@@ -363,7 +349,6 @@ class TestVisualLeakBenchDataset:
         assert loader._get_query_prompt("PII Leakage") == _VisualLeakBenchDataset.PII_LEAKAGE_PROMPT
 
 
-@pytest.mark.asyncio
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
     from unittest.mock import AsyncMock, MagicMock

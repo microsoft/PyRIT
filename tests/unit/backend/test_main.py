@@ -10,22 +10,18 @@ Covers the lifespan manager and setup_frontend function.
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from pyrit.backend.main import app, lifespan, setup_frontend
 
 
 class TestLifespan:
     """Tests for the application lifespan context manager."""
 
-    @pytest.mark.asyncio
     async def test_lifespan_yields(self) -> None:
         """Test that lifespan yields without performing initialization (handled by CLI)."""
         with patch("pyrit.memory.CentralMemory._memory_instance", MagicMock()):
             async with lifespan(app):
                 pass  # Should complete without error
 
-    @pytest.mark.asyncio
     async def test_lifespan_warns_when_memory_not_initialized(self) -> None:
         """Test that lifespan logs a warning when CentralMemory is not set."""
         with (

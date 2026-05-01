@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, RandomCapitalLettersConverter
 
 
-@pytest.mark.asyncio
 async def test_random_capital_100_percent():
     converter = RandomCapitalLettersConverter(percentage=100.0)
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_random_capital_100_percent():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_random_capital_preserves_non_alpha():
     converter = RandomCapitalLettersConverter(percentage=100.0)
     result = await converter.convert_async(prompt="hello123", input_type="text")
@@ -24,14 +22,12 @@ async def test_random_capital_preserves_non_alpha():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_random_capital_0_not_allowed():
     converter = RandomCapitalLettersConverter(percentage=0)
     with pytest.raises(ValueError):
         await converter.convert_async(prompt="hello", input_type="text")
 
 
-@pytest.mark.asyncio
 async def test_random_capital_partial():
     converter = RandomCapitalLettersConverter(percentage=50.0)
     result = await converter.convert_async(prompt="abcdefghij", input_type="text")
@@ -42,7 +38,6 @@ async def test_random_capital_partial():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_random_capital_empty():
     converter = RandomCapitalLettersConverter(percentage=100.0)
     result = await converter.convert_async(prompt="", input_type="text")
@@ -51,7 +46,6 @@ async def test_random_capital_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_random_capital_input_not_supported():
     converter = RandomCapitalLettersConverter()
     with pytest.raises(ValueError):

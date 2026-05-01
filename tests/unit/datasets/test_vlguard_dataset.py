@@ -93,7 +93,6 @@ class TestVLGuardDataset:
         loader = _VLGuardDataset(categories=[VLGuardCategory.PRIVACY, VLGuardCategory.DECEPTION])
         assert len(loader.categories) == 2
 
-    @pytest.mark.asyncio
     async def test_fetch_unsafes_subset(self, mock_vlguard_metadata, tmp_path):
         """Test fetching the unsafes subset returns only unsafe image examples."""
         image_dir = tmp_path / "test"
@@ -121,7 +120,6 @@ class TestVLGuardDataset:
             assert text_prompts[0].metadata["subset"] == "unsafes"
             assert text_prompts[0].metadata["safe_image"] is False
 
-    @pytest.mark.asyncio
     async def test_fetch_safe_unsafes_subset(self, mock_vlguard_metadata, tmp_path):
         """Test fetching the safe_unsafes subset returns safe images with unsafe instructions."""
         image_dir = tmp_path / "test"
@@ -142,7 +140,6 @@ class TestVLGuardDataset:
             assert text_prompts[0].value == "How can I use this image to spread misinformation?"
             assert text_prompts[0].metadata["safe_image"] is True
 
-    @pytest.mark.asyncio
     async def test_fetch_safe_safes_subset(self, mock_vlguard_metadata, tmp_path):
         """Test fetching the safe_safes subset returns safe images with safe instructions."""
         image_dir = tmp_path / "test"
@@ -162,7 +159,6 @@ class TestVLGuardDataset:
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
             assert text_prompts[0].value == "Describe the scene in this image."
 
-    @pytest.mark.asyncio
     async def test_category_filtering(self, mock_vlguard_metadata, tmp_path):
         """Test that category filtering returns only matching examples."""
         image_dir = tmp_path / "test"
@@ -185,7 +181,6 @@ class TestVLGuardDataset:
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
             assert text_prompts[0].harm_categories == ["privacy"]
 
-    @pytest.mark.asyncio
     async def test_max_examples(self, mock_vlguard_metadata, tmp_path):
         """Test that max_examples limits the number of returned examples."""
         image_dir = tmp_path / "test"
@@ -205,7 +200,6 @@ class TestVLGuardDataset:
             # max_examples=1 → 1 example × 2 prompts = 2 prompts
             assert len(dataset.seeds) == 2
 
-    @pytest.mark.asyncio
     async def test_prompt_group_id_links_text_and_image(self, mock_vlguard_metadata, tmp_path):
         """Test that text and image prompts share the same prompt_group_id."""
         image_dir = tmp_path / "test"
@@ -231,7 +225,6 @@ class TestVLGuardDataset:
             assert text_prompt.sequence == 0
             assert image_prompt.sequence == 1
 
-    @pytest.mark.asyncio
     async def test_missing_image_skipped(self, mock_vlguard_metadata, tmp_path):
         """Test that examples with missing images are skipped."""
         image_dir = tmp_path / "test"
@@ -251,14 +244,12 @@ class TestVLGuardDataset:
             # Only 1 example should be included (the one with the existing image)
             assert len(dataset.seeds) == 2
 
-    @pytest.mark.asyncio
     async def test_extract_instruction_unsafes(self):
         """Test _extract_instruction for unsafes subset."""
         loader = _VLGuardDataset(subset=VLGuardSubset.UNSAFES)
         instr_resp = [{"instruction": "Test instruction", "response": "Test response"}]
         assert loader._extract_instruction(instr_resp) == "Test instruction"
 
-    @pytest.mark.asyncio
     async def test_extract_instruction_safe_unsafes(self):
         """Test _extract_instruction for safe_unsafes subset."""
         loader = _VLGuardDataset(subset=VLGuardSubset.SAFE_UNSAFES)
@@ -268,14 +259,12 @@ class TestVLGuardDataset:
         ]
         assert loader._extract_instruction(instr_resp) == "Unsafe question"
 
-    @pytest.mark.asyncio
     async def test_extract_instruction_returns_none_for_missing_key(self):
         """Test _extract_instruction returns None when key is missing."""
         loader = _VLGuardDataset(subset=VLGuardSubset.SAFE_UNSAFES)
         instr_resp = [{"safe_instruction": "Safe question", "response": "Safe answer"}]
         assert loader._extract_instruction(instr_resp) is None
 
-    @pytest.mark.asyncio
     async def test_extract_instruction_safe_safes(self):
         """Test _extract_instruction for safe_safes subset."""
         loader = _VLGuardDataset(subset=VLGuardSubset.SAFE_SAFES)
@@ -284,7 +273,6 @@ class TestVLGuardDataset:
         ]
         assert loader._extract_instruction(instr_resp) == "Describe the park"
 
-    @pytest.mark.asyncio
     async def test_examples_with_invalid_instr_resp_skipped(self, tmp_path):
         """Test that examples with missing or non-list instr-resp are skipped."""
         metadata = [
@@ -311,7 +299,6 @@ class TestVLGuardDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset()
 
-    @pytest.mark.asyncio
     async def test_examples_with_missing_image_field_skipped(self, tmp_path):
         """Test that examples with no image field are skipped."""
         metadata = [
@@ -334,7 +321,6 @@ class TestVLGuardDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset()
 
-    @pytest.mark.asyncio
     async def test_examples_with_no_extractable_instruction_skipped(self, tmp_path):
         """Test that examples where _extract_instruction returns None are skipped."""
         metadata = [
@@ -359,7 +345,6 @@ class TestVLGuardDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset()
 
-    @pytest.mark.asyncio
     async def test_download_dataset_files_uses_cache(self, tmp_path):
         """Test that _download_dataset_files_async returns cached data when available."""
         cache_dir = tmp_path / "seed-prompt-entries" / "vlguard"
@@ -381,7 +366,6 @@ class TestVLGuardDataset:
         assert metadata == test_metadata
         assert result_dir == image_dir
 
-    @pytest.mark.asyncio
     async def test_download_dataset_files_downloads_when_no_cache(self, tmp_path):
         """Test that _download_dataset_files_async downloads and extracts when cache is empty."""
         cache_dir = tmp_path / "seed-prompt-entries" / "vlguard"

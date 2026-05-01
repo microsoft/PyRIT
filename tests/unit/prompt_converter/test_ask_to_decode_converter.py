@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import AskToDecodeConverter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_ask_to_decode_converter_with_custom_template():
     """Test converter with a custom template."""
     template = "Decode this: {encoded_text}"
@@ -20,7 +19,6 @@ async def test_ask_to_decode_converter_with_custom_template():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_ask_to_decode_converter_with_encoding_name_and_template():
     """Test converter with encoding name and custom template."""
     template = "{encoding_name}: {encoded_text}"
@@ -34,7 +32,6 @@ async def test_ask_to_decode_converter_with_encoding_name_and_template():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_ask_to_decode_converter_random_template():
     """Test converter with random template selection."""
     converter = AskToDecodeConverter()
@@ -48,7 +45,6 @@ async def test_ask_to_decode_converter_random_template():
     assert "test_encoded_text" in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_ask_to_decode_converter_random_template_with_encoding_name():
     """Test converter with random template and encoding name."""
     converter = AskToDecodeConverter(encoding_name="ROT13")
@@ -62,7 +58,6 @@ async def test_ask_to_decode_converter_random_template_with_encoding_name():
     assert "grfg" in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_ask_to_decode_converter_input_type_not_supported():
     """Test that non-text input types raise ValueError."""
     converter = AskToDecodeConverter()
