@@ -7,6 +7,8 @@ PyRIT CLI - Command-line interface for running security scenarios.
 This module provides the main entry point for the pyrit_scan command.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import copy
@@ -14,12 +16,19 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Any, Optional, get_origin
+from typing import TYPE_CHECKING, Any, Optional, get_origin
 
-from pyrit.cli import frontend_core
-from pyrit.common.parameter import Parameter, coerce_bool, coerce_scalar
-from pyrit.registry import ScenarioRegistry
-from pyrit.scenario.core import Scenario
+from pyrit.cli._cli_args import (
+    ARG_HELP,
+    _parse_initializer_arg,
+    non_negative_int,
+    positive_int,
+    validate_log_level_argparse,
+)
+
+if TYPE_CHECKING:
+    from pyrit.common.parameter import Parameter
+    from pyrit.scenario.core import Scenario
 
 # Namespacing prefix for scenario-declared params on the parsed Namespace.
 _SCENARIO_DEST_PREFIX = "scenario__"
@@ -72,12 +81,12 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
     parser.add_argument(
         "--config-file",
         type=Path,
-        help=frontend_core.ARG_HELP["config_file"],
+        help=ARG_HELP["config_file"],
     )
 
     parser.add_argument(
         "--log-level",
-        type=frontend_core.validate_log_level_argparse,
+        type=validate_log_level_argparse,
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
     )
@@ -110,16 +119,16 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
 
     parser.add_argument(
         "--initializers",
-        type=frontend_core._parse_initializer_arg,
+        type=_parse_initializer_arg,
         nargs="+",
-        help=frontend_core.ARG_HELP["initializers"],
+        help=ARG_HELP["initializers"],
     )
 
     parser.add_argument(
         "--initialization-scripts",
         type=str,
         nargs="+",
-        help=frontend_core.ARG_HELP["initialization_scripts"],
+        help=ARG_HELP["initialization_scripts"],
     )
 
     parser.add_argument(
@@ -128,44 +137,44 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         type=str,
         nargs="+",
         dest="scenario_strategies",
-        help=frontend_core.ARG_HELP["scenario_strategies"],
+        help=ARG_HELP["scenario_strategies"],
     )
 
     parser.add_argument(
         "--max-concurrency",
-        type=frontend_core.positive_int,
-        help=frontend_core.ARG_HELP["max_concurrency"],
+        type=positive_int,
+        help=ARG_HELP["max_concurrency"],
     )
 
     parser.add_argument(
         "--max-retries",
-        type=frontend_core.non_negative_int,
-        help=frontend_core.ARG_HELP["max_retries"],
+        type=non_negative_int,
+        help=ARG_HELP["max_retries"],
     )
 
     parser.add_argument(
         "--memory-labels",
         type=str,
-        help=frontend_core.ARG_HELP["memory_labels"],
+        help=ARG_HELP["memory_labels"],
     )
 
     parser.add_argument(
         "--dataset-names",
         type=str,
         nargs="+",
-        help=frontend_core.ARG_HELP["dataset_names"],
+        help=ARG_HELP["dataset_names"],
     )
 
     parser.add_argument(
         "--max-dataset-size",
-        type=frontend_core.positive_int,
-        help=frontend_core.ARG_HELP["max_dataset_size"],
+        type=positive_int,
+        help=ARG_HELP["max_dataset_size"],
     )
 
     parser.add_argument(
         "--target",
         type=str,
-        help=frontend_core.ARG_HELP["target"],
+        help=ARG_HELP["target"],
     )
 
     return parser
@@ -212,6 +221,8 @@ def _resolve_scenario_class(scenario_name: Optional[str]) -> Optional[type[Scena
     """
     if not scenario_name:
         return None
+    from pyrit.registry import ScenarioRegistry
+
     registry = ScenarioRegistry.get_registry_singleton()
     try:
         return registry.get_class(scenario_name)
@@ -269,6 +280,8 @@ def _argparse_type_for(*, param: Parameter) -> Optional[Any]:
     param_type = param.param_type
     if param_type is None or param_type is str:
         return None
+    from pyrit.common.parameter import coerce_bool, coerce_scalar
+
     if param_type is bool:
         return lambda raw: coerce_bool(param_name=param.name, raw_value=raw)
     if param_type is int:
@@ -312,13 +325,16 @@ def main(args: Optional[list[str]] = None) -> int:
     Returns:
         int: Exit code (0 for success, 1 for error).
     """
-    print("Starting PyRIT...")
-    sys.stdout.flush()
-
     try:
         parsed_args = parse_args(args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
+
+    print("Starting PyRIT...")
+    sys.stdout.flush()
+
+    # Defer the heavy import until after arg parsing so --help is instant.
+    from pyrit.cli import frontend_core
 
     # Handle list commands (don't need full context)
     if parsed_args.list_scenarios:

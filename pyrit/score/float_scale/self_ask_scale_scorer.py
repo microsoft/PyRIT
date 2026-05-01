@@ -11,7 +11,7 @@ from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SCALES_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -39,11 +39,12 @@ class SelfAskScaleScorer(FloatScaleScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         scale_arguments_path: Optional[Union[Path, str]] = None,
         system_prompt_path: Optional[Union[Path, str]] = None,
         validator: Optional[ScorerPromptValidator] = None,
@@ -52,14 +53,14 @@ class SelfAskScaleScorer(FloatScaleScorer):
         Initialize the SelfAskScaleScorer.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to use for scoring.
+            chat_target (PromptTarget): The chat target to use for scoring.
             scale_arguments_path (Optional[Union[Path, str]]): Path to the YAML file containing scale definitions.
                 Defaults to TREE_OF_ATTACKS_SCALE if not provided.
             system_prompt_path (Optional[Union[Path, str]]): Path to the YAML file containing the system prompt.
                 Defaults to GENERAL_SYSTEM_PROMPT if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
         self._prompt_target = chat_target
 
@@ -121,7 +122,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             system_prompt=self._system_prompt,
             message_value=scoring_prompt,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
+            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
             category=self._category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,

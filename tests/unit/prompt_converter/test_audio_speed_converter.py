@@ -12,7 +12,6 @@ from scipy.io import wavfile
 from pyrit.prompt_converter.audio_speed_converter import AudioSpeedConverter
 
 
-@pytest.mark.asyncio
 async def test_speed_up_audio(sqlite_instance):
     """Speeding up should produce fewer samples than the original."""
     sample_rate = 44100
@@ -39,7 +38,6 @@ async def test_speed_up_audio(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_slow_down_audio(sqlite_instance):
     """Slowing down should produce more samples than the original."""
     sample_rate = 44100
@@ -64,7 +62,6 @@ async def test_slow_down_audio(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_speed_factor_one_preserves_length(sqlite_instance):
     """A speed factor of 1.0 should keep the same number of samples."""
     sample_rate = 44100
@@ -87,7 +84,6 @@ async def test_speed_factor_one_preserves_length(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_stereo_audio(sqlite_instance):
     """Converter should handle stereo (2-channel) audio correctly."""
     sample_rate = 44100
@@ -110,7 +106,6 @@ async def test_stereo_audio(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_file_not_found():
     """Non-existent file should raise FileNotFoundError."""
     converter = AudioSpeedConverter(speed_factor=1.5)
@@ -132,7 +127,6 @@ def test_invalid_speed_factor_negative():
         AudioSpeedConverter(speed_factor=-1.0)
 
 
-@pytest.mark.asyncio
 async def test_unsupported_input_type(sqlite_instance):
     """Passing an unsupported input_type should raise ValueError."""
     converter = AudioSpeedConverter(speed_factor=1.5)

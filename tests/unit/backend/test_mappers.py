@@ -302,6 +302,50 @@ class TestAttackResultToSummary:
 
         assert summary.message_count == 5
 
+    def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
+        """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=persisted_ts,
+        )
+        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.created_at == persisted_ts
+        assert summary.updated_at == persisted_ts
+
+    def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
+        """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
+        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=ar_ts,
+            metadata={"created_at": metadata_ts.isoformat()},
+        )
+        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.created_at == metadata_ts
+
+    def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
+        """When neither metadata nor ar.timestamp is set, fall back to datetime.now()."""
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+        )
+        ar.timestamp = None  # type: ignore[assignment]
+
+        before = datetime.now(timezone.utc)
+        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        after = datetime.now(timezone.utc)
+
+        assert before <= summary.created_at <= after
+
     """Tests for pyrit_scores_to_dto function."""
 
     def test_maps_scores(self) -> None:
@@ -343,7 +387,6 @@ class TestAttackResultToSummary:
 class TestPyritMessagesToDto:
     """Tests for pyrit_messages_to_dto_async function."""
 
-    @pytest.mark.asyncio
     async def test_maps_single_message(self) -> None:
         """Test mapping a single message with one piece."""
         piece = _make_mock_piece(original_value="hi", converted_value="hi")
@@ -358,7 +401,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value == "hi"
         assert result[0].pieces[0].converted_value == "hi"
 
-    @pytest.mark.asyncio
     async def test_maps_data_types_separately(self) -> None:
         """Test that original and converted data types are mapped independently."""
         piece = _make_mock_piece(original_value="describe this", converted_value="base64data")
@@ -372,13 +414,11 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value_data_type == "text"
         assert result[0].pieces[0].converted_value_data_type == "image"
 
-    @pytest.mark.asyncio
     async def test_maps_empty_list(self) -> None:
         """Test mapping an empty messages list."""
         result = await pyrit_messages_to_dto_async([])
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_populates_mime_type_for_image(self) -> None:
         """Test that MIME types are inferred for image pieces."""
         piece = _make_mock_piece(original_value="/path/to/photo.png", converted_value="/path/to/photo.jpg")
@@ -392,7 +432,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value_mime_type == "image/png"
         assert result[0].pieces[0].converted_value_mime_type == "image/jpeg"
 
-    @pytest.mark.asyncio
     async def test_mime_type_none_for_text(self) -> None:
         """Test that MIME type is None for text pieces."""
         piece = _make_mock_piece(original_value="hello", converted_value="hello")
@@ -404,7 +443,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value_mime_type is None
         assert result[0].pieces[0].converted_value_mime_type is None
 
-    @pytest.mark.asyncio
     async def test_mime_type_for_audio(self) -> None:
         """Test that MIME types are inferred for audio pieces."""
         piece = _make_mock_piece(original_value="/tmp/speech.wav", converted_value="/tmp/speech.mp3")
@@ -419,7 +457,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value_mime_type in ("audio/wav", "audio/x-wav")
         assert result[0].pieces[0].converted_value_mime_type == "audio/mpeg"
 
-    @pytest.mark.asyncio
     async def test_local_media_file_returns_media_url(self) -> None:
         """Test that local media files are converted to /api/media URLs."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -441,7 +478,6 @@ class TestPyritMessagesToDto:
         finally:
             os.unlink(tmp_path)
 
-    @pytest.mark.asyncio
     async def test_data_uri_passthrough(self) -> None:
         """Test that pre-encoded data URIs are not re-encoded."""
         piece = _make_mock_piece(
@@ -458,7 +494,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value == "data:image/png;base64,AAAA"
         assert result[0].pieces[0].converted_value == "data:image/jpeg;base64,BBBB"
 
-    @pytest.mark.asyncio
     async def test_non_blob_http_url_passthrough(self) -> None:
         """Test that non-Azure-Blob HTTP URLs are passed through as-is."""
         piece = _make_mock_piece(
@@ -475,7 +510,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value == "http://example.com/image.png"
         assert result[0].pieces[0].converted_value == "http://example.com/image.png"
 
-    @pytest.mark.asyncio
     async def test_azure_blob_url_is_signed(self) -> None:
         """Test that Azure Blob Storage URLs are signed with SAS tokens."""
         blob_url = "https://myaccount.blob.core.windows.net/dbdata/prompt-memory-entries/images/test.png"
@@ -499,7 +533,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value == signed_url
         assert result[0].pieces[0].converted_value == signed_url
 
-    @pytest.mark.asyncio
     async def test_azure_blob_url_sign_failure_returns_raw_url(self) -> None:
         """Test that blob sign failure falls back to the raw blob URL."""
         blob_url = "https://myaccount.blob.core.windows.net/dbdata/images/test.png"
@@ -522,7 +555,6 @@ class TestPyritMessagesToDto:
         assert result[0].pieces[0].original_value == blob_url
         assert result[0].pieces[0].converted_value == blob_url
 
-    @pytest.mark.asyncio
     async def test_nonexistent_media_file_returns_raw_path(self) -> None:
         """Test that non-existent local media files fall back to raw path values."""
         piece = _make_mock_piece(original_value="/tmp/nonexistent.png", converted_value="/tmp/nonexistent.png")
@@ -559,13 +591,11 @@ class TestIsAzureBlobUrl:
 class TestSignBlobUrlAsync:
     """Tests for _sign_blob_url_async helper."""
 
-    @pytest.mark.asyncio
     async def test_non_blob_url_unchanged(self) -> None:
         """Non-Azure URLs pass through without signing."""
         result = await _sign_blob_url_async(blob_url="http://example.com/img.png")
         assert result == "http://example.com/img.png"
 
-    @pytest.mark.asyncio
     async def test_already_signed_url_is_re_signed(self) -> None:
         """URLs with existing query params (expired SAS) are stripped and re-signed."""
         url = "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=old"
@@ -577,7 +607,6 @@ class TestSignBlobUrlAsync:
             result = await _sign_blob_url_async(blob_url=url)
         assert result == "https://acct.blob.core.windows.net/c/b.png?sv=2024&sig=fresh"
 
-    @pytest.mark.asyncio
     async def test_appends_sas_token(self) -> None:
         """SAS token is appended to unsigned blob URLs."""
         url = "https://acct.blob.core.windows.net/container/path/blob.png"
@@ -591,7 +620,6 @@ class TestSignBlobUrlAsync:
         assert result == f"{url}?sv=2024&sig=test"
         mock_sas.assert_called_once_with(container_url="https://acct.blob.core.windows.net/container")
 
-    @pytest.mark.asyncio
     async def test_sas_failure_returns_original(self) -> None:
         """SAS generation failure falls back to the unsigned URL."""
         url = "https://acct.blob.core.windows.net/c/b.png"
@@ -604,7 +632,6 @@ class TestSignBlobUrlAsync:
 
         assert result == url
 
-    @pytest.mark.asyncio
     async def test_empty_path_returns_original(self) -> None:
         """Blob URL with empty path is returned unsigned."""
         url = "https://acct.blob.core.windows.net"
@@ -690,6 +717,29 @@ class TestRequestToPyritMessage:
         assert result.message_pieces[0].original_value == "hello"
         assert result.message_pieces[0].conversation_id == "conv-1"
         assert result.message_pieces[0].sequence == 0
+
+    def test_labels_emit_deprecation_warning(self) -> None:
+        """Test that passing labels emits deprecation warning through mapper helper."""
+        request = MagicMock()
+        request.role = "user"
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.prompt_metadata = None
+        piece.mime_type = None
+        piece.original_prompt_id = None
+        request.pieces = [piece]
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_to_pyrit_message(
+                request=request,
+                conversation_id="conv-1",
+                sequence=0,
+                labels={"env": "prod"},
+            )
+
+        assert mock_deprecation.call_count == 2
 
 
 class TestRequestPieceToPyritMessagePiece:
@@ -810,6 +860,27 @@ class TestRequestPieceToPyritMessagePiece:
         )
 
         assert result.labels == {"env": "prod"}
+
+    def test_labels_emit_deprecation_warning(self) -> None:
+        """Test that passing labels emits deprecation warning."""
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.mime_type = None
+        piece.prompt_metadata = None
+        piece.original_prompt_id = None
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_piece_to_pyrit_message_piece(
+                piece=piece,
+                role="user",
+                conversation_id="conv-1",
+                sequence=0,
+                labels={"env": "prod"},
+            )
+
+        mock_deprecation.assert_called_once()
 
     def test_labels_default_to_empty_dict(self) -> None:
         """Test that labels default to empty dict when not provided."""

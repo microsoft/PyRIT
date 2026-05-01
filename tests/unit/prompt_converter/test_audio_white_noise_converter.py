@@ -12,7 +12,6 @@ from scipy.io import wavfile
 from pyrit.prompt_converter.audio_white_noise_converter import AudioWhiteNoiseConverter
 
 
-@pytest.mark.asyncio
 async def test_white_noise_modifies_signal(sqlite_instance):
     """Output should differ from input (noise was added)."""
     sample_rate = 44100
@@ -39,7 +38,6 @@ async def test_white_noise_modifies_signal(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_white_noise_preserves_shape(sqlite_instance):
     """Output should have the same number of samples and sample rate."""
     sample_rate = 44100
@@ -62,7 +60,6 @@ async def test_white_noise_preserves_shape(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_white_noise_stereo(sqlite_instance):
     """Converter should handle stereo (2-channel) audio correctly."""
     sample_rate = 44100
@@ -85,7 +82,6 @@ async def test_white_noise_stereo(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_white_noise_small_scale_stays_close(sqlite_instance):
     """With a tiny noise_scale the output should stay close to the original."""
     sample_rate = 44100
@@ -109,7 +105,6 @@ async def test_white_noise_small_scale_stays_close(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_white_noise_file_not_found():
     """Non-existent file should raise FileNotFoundError."""
     converter = AudioWhiteNoiseConverter(noise_scale=0.02)
@@ -135,7 +130,6 @@ def test_white_noise_invalid_scale_above_one():
         AudioWhiteNoiseConverter(noise_scale=1.5)
 
 
-@pytest.mark.asyncio
 async def test_white_noise_unsupported_input_type(sqlite_instance):
     """Passing an unsupported input_type should raise ValueError."""
     converter = AudioWhiteNoiseConverter(noise_scale=0.02)

@@ -206,7 +206,6 @@ def test_extract_reasoning_summary_summary_not_list(printer):
     assert result == ""
 
 
-@pytest.mark.asyncio
 async def test_print_conversation_async_no_conversation_id(printer, capsys):
     result = AttackResult(objective="test", conversation_id="")
     await printer.print_conversation_async(result)
@@ -214,7 +213,6 @@ async def test_print_conversation_async_no_conversation_id(printer, capsys):
     assert "No conversation ID" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_conversation_async_no_messages(printer, mock_memory, capsys):
     mock_memory.get_conversation.return_value = []
     result = AttackResult(objective="test", conversation_id="conv-123")
@@ -223,14 +221,12 @@ async def test_print_conversation_async_no_messages(printer, mock_memory, capsys
     assert "No conversation found" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_messages_async_empty_list(printer, capsys):
     await printer.print_messages_async(messages=[])
     captured = capsys.readouterr()
     assert "No messages to display" in captured.out
 
 
-@pytest.mark.asyncio
 @patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
 async def test_print_messages_async_user_message(mock_display, printer, sample_message, capsys):
     await printer.print_messages_async(messages=[sample_message])
@@ -240,7 +236,6 @@ async def test_print_messages_async_user_message(mock_display, printer, sample_m
     assert "Hello world" in captured.out
 
 
-@pytest.mark.asyncio
 @patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
 async def test_print_messages_async_assistant_message(mock_display, printer, capsys):
     piece = MessagePiece(
@@ -255,7 +250,6 @@ async def test_print_messages_async_assistant_message(mock_display, printer, cap
     assert "Response" in captured.out
 
 
-@pytest.mark.asyncio
 @patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
 async def test_print_messages_async_converted_differs(mock_display, printer, capsys):
     piece = MessagePiece(
@@ -271,7 +265,6 @@ async def test_print_messages_async_converted_differs(mock_display, printer, cap
     assert "Converted" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_summary_async(printer, sample_attack_result, capsys):
     await printer.print_summary_async(sample_attack_result)
     captured = capsys.readouterr()
@@ -282,7 +275,6 @@ async def test_print_summary_async(printer, sample_attack_result, capsys):
     assert "Test successful" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_result_async_basic(printer, sample_attack_result, mock_memory, capsys):
     mock_memory.get_conversation.return_value = []
     await printer.print_result_async(sample_attack_result)
@@ -291,7 +283,6 @@ async def test_print_result_async_basic(printer, sample_attack_result, mock_memo
     assert "Report generated at" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_result_async_with_metadata(printer, mock_memory, capsys):
     result = AttackResult(
         objective="test",
@@ -306,7 +297,6 @@ async def test_print_result_async_with_metadata(printer, mock_memory, capsys):
     assert "extra info" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_pruned_conversations_no_pruned(printer, capsys):
     result = AttackResult(objective="test", conversation_id="conv-1")
     await printer._print_pruned_conversations_async(result)
@@ -314,7 +304,6 @@ async def test_print_pruned_conversations_no_pruned(printer, capsys):
     assert captured.out == ""
 
 
-@pytest.mark.asyncio
 async def test_print_pruned_conversations_with_messages(printer, mock_memory, capsys):
     piece = MessagePiece(
         role="assistant",
@@ -337,7 +326,6 @@ async def test_print_pruned_conversations_with_messages(printer, mock_memory, ca
     assert "Pruned response" in captured.out
 
 
-@pytest.mark.asyncio
 async def test_print_adversarial_conversation_no_refs(printer, capsys):
     result = AttackResult(objective="test", conversation_id="conv-1")
     await printer._print_adversarial_conversation_async(result)

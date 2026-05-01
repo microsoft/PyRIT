@@ -32,7 +32,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
         self,
         *,
         split: str = "train",
-    ):
+    ) -> None:
         """
         Initialize the HarmfulQA dataset loader.
 

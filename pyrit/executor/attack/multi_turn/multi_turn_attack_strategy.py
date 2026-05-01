@@ -18,6 +18,7 @@ from pyrit.executor.attack.core.attack_strategy import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import ConversationReference, ConversationType
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:
     from pyrit.models import (
@@ -75,9 +76,9 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         *,
         objective_target: PromptTarget,
         context_type: type[MultiTurnAttackStrategyContextT],
-        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Implement the base class for multi-turn attack strategies.
 
@@ -117,7 +118,7 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         Args:
             context: The current attack context.
         """
-        if self._objective_target.capabilities.supports_multi_turn:
+        if self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
             return
 
         if context.executed_turns == 0:

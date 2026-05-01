@@ -49,7 +49,6 @@ class TestTargetInitializerInitialize:
                 if var and var in os.environ:
                     del os.environ[var]
 
-    @pytest.mark.asyncio
     async def test_initialize_runs_without_error_no_env_vars(self):
         """Test that initialize runs without errors when no env vars are set."""
         init = TargetInitializer()
@@ -59,7 +58,6 @@ class TestTargetInitializerInitialize:
         registry = TargetRegistry.get_registry_singleton()
         assert len(registry) == 0
 
-    @pytest.mark.asyncio
     async def test_registers_target_when_env_vars_set(self):
         """Test that a target is registered when its env vars are set."""
         os.environ["PLATFORM_OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
@@ -75,7 +73,6 @@ class TestTargetInitializerInitialize:
         assert target is not None
         assert target._model_name == "gpt-4o"
 
-    @pytest.mark.asyncio
     async def test_does_not_register_target_without_endpoint(self):
         """Test that target is not registered if endpoint is missing."""
         # Only set key, not endpoint
@@ -88,7 +85,6 @@ class TestTargetInitializerInitialize:
         registry = TargetRegistry.get_registry_singleton()
         assert "platform_openai_chat" not in registry
 
-    @pytest.mark.asyncio
     async def test_does_not_register_target_without_api_key(self):
         """Test that target is not registered if api_key env var is missing."""
         # Only set endpoint, not key
@@ -101,7 +97,6 @@ class TestTargetInitializerInitialize:
         registry = TargetRegistry.get_registry_singleton()
         assert "platform_openai_chat" not in registry
 
-    @pytest.mark.asyncio
     async def test_registers_multiple_targets(self):
         """Test that multiple targets are registered when their env vars are set."""
         # Set up platform_openai_chat
@@ -122,7 +117,6 @@ class TestTargetInitializerInitialize:
         assert "platform_openai_chat" in registry
         assert "openai_image_platform" in registry
 
-    @pytest.mark.asyncio
     async def test_registers_azure_content_safety_without_model(self):
         """Test that PromptShieldTarget is registered without model_name (it doesn't use one)."""
         os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"] = "https://test.cognitiveservices.azure.com"
@@ -136,7 +130,6 @@ class TestTargetInitializerInitialize:
         registry = TargetRegistry.get_registry_singleton()
         assert "azure_content_safety" in registry
 
-    @pytest.mark.asyncio
     async def test_underlying_model_passed_when_set(self):
         """Test that underlying_model is passed to target when env var is set."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://my-deployment.openai.azure.com/openai/v1"
@@ -155,7 +148,6 @@ class TestTargetInitializerInitialize:
         assert target._model_name == "my-deployment-name"
         assert target._underlying_model == "gpt-4o"
 
-    @pytest.mark.asyncio
     async def test_registers_ollama_without_api_key(self):
         """Test that Ollama target is registered without requiring an API key."""
         os.environ["OLLAMA_CHAT_ENDPOINT"] = "http://127.0.0.1:11434/v1"
@@ -170,7 +162,6 @@ class TestTargetInitializerInitialize:
         assert target is not None
         assert target._model_name == "llama2"
 
-    @pytest.mark.asyncio
     async def test_azure_target_uses_entra_auth(self):
         """Test that Azure targets use Entra auth (token provider) instead of API key."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://my-deployment.openai.azure.com/openai/v1"
@@ -226,7 +217,6 @@ class TestTargetInitializerTargetConfigs:
 class TestTargetInitializerGetInfo:
     """Tests for TargetInitializer.get_info_async method."""
 
-    @pytest.mark.asyncio
     async def test_get_info_returns_expected_structure(self):
         """Test that get_info_async returns expected structure."""
         info = await TargetInitializer.get_info_async()
@@ -237,7 +227,6 @@ class TestTargetInitializerGetInfo:
         assert "description" in info
         assert isinstance(info["description"], str)
 
-    @pytest.mark.asyncio
     async def test_get_info_required_env_vars_empty_or_not_present(self):
         """Test that get_info has empty or no required_env_vars (since none are required)."""
         info = await TargetInitializer.get_info_async()
@@ -259,7 +248,6 @@ class TestTargetInitializerTags:
         """Clean up after each test."""
         TargetRegistry.reset_instance()
 
-    @pytest.mark.asyncio
     async def test_no_tags_registers_default_only(self) -> None:
         """Test that no tags registers only default targets (not scorer variants)."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -280,7 +268,6 @@ class TestTargetInitializerTags:
         del os.environ["AZURE_OPENAI_GPT4O_KEY"]
         del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
 
-    @pytest.mark.asyncio
     async def test_default_tag_excludes_scorer_targets(self) -> None:
         """Test that tags=['default'] registers default-tagged targets including temp9."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -301,7 +288,6 @@ class TestTargetInitializerTags:
         del os.environ["AZURE_OPENAI_GPT4O_KEY"]
         del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
 
-    @pytest.mark.asyncio
     async def test_scorer_tag_only_registers_scorer_targets(self) -> None:
         """Test that tags=['scorer'] only registers scorer-tagged targets (temp0)."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -322,7 +308,6 @@ class TestTargetInitializerTags:
         del os.environ["AZURE_OPENAI_GPT4O_KEY"]
         del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
 
-    @pytest.mark.asyncio
     async def test_multiple_tags_registers_matching(self) -> None:
         """Test that multiple tags register targets matching any tag."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -342,7 +327,6 @@ class TestTargetInitializerTags:
         del os.environ["AZURE_OPENAI_GPT4O_KEY"]
         del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
 
-    @pytest.mark.asyncio
     async def test_all_tag_registers_all_targets(self) -> None:
         """Test that tags=['all'] registers both default and scorer targets."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -377,7 +361,6 @@ class TestTargetInitializerDefaultObjectiveTarget:
         for var in ["OPENAI_CHAT_ENDPOINT", "OPENAI_CHAT_KEY", "OPENAI_CHAT_MODEL"]:
             os.environ.pop(var, None)
 
-    @pytest.mark.asyncio
     async def test_openai_chat_registered_with_default_tag(self) -> None:
         """Test that openai_chat target is tagged as DEFAULT_OBJECTIVE_TARGET."""
         from pyrit.setup.initializers.components.targets import TargetInitializerTags
@@ -396,7 +379,6 @@ class TestTargetInitializerDefaultObjectiveTarget:
         assert len(entries) == 1
         assert entries[0].name == "openai_chat"
 
-    @pytest.mark.asyncio
     async def test_no_default_tag_when_env_vars_missing(self) -> None:
         """Test that no DEFAULT_OBJECTIVE_TARGET is tagged when openai_chat env vars missing."""
         from pyrit.setup.initializers.components.targets import TargetInitializerTags
@@ -408,14 +390,12 @@ class TestTargetInitializerDefaultObjectiveTarget:
         entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET)
         assert len(entries) == 0
 
-    @pytest.mark.asyncio
     async def test_openai_chat_config_has_default_objective_target_flag(self) -> None:
         """Test that the openai_chat TargetConfig has default_objective_target=True."""
         openai_chat_configs = [c for c in TARGET_CONFIGS if c.registry_name == "openai_chat"]
         assert len(openai_chat_configs) == 1
         assert openai_chat_configs[0].default_objective_target is True
 
-    @pytest.mark.asyncio
     async def test_other_targets_not_tagged_as_default(self) -> None:
         """Test that non-default targets are not tagged as DEFAULT_OBJECTIVE_TARGET."""
         other_configs = [c for c in TARGET_CONFIGS if c.registry_name != "openai_chat"]

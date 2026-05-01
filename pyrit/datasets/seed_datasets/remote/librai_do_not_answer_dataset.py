@@ -26,7 +26,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "LibrAI/do-not-answer",
-    ):
+    ) -> None:
         """
         Initialize the LibrAI Do Not Answer dataset loader.
 

@@ -10,7 +10,6 @@ import pytest
 from pyrit.prompt_converter import NegationTrapConverter
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_initialization_with_defaults() -> None:
     """Test that converter initializes with default values."""
     converter = NegationTrapConverter()
@@ -19,7 +18,6 @@ async def test_negation_trap_converter_initialization_with_defaults() -> None:
     assert converter.trap_template == NegationTrapConverter.DEFAULT_TEMPLATE
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_initialization_with_custom_wrong_value() -> None:
     """Test that converter initializes with custom wrong value."""
     converter = NegationTrapConverter(wrong_value="abc123")
@@ -28,7 +26,6 @@ async def test_negation_trap_converter_initialization_with_custom_wrong_value() 
     assert converter.trap_template == NegationTrapConverter.DEFAULT_TEMPLATE
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_initialization_with_custom_template() -> None:
     """Test that converter initializes with custom template."""
     custom_template = "Is {prompt} equal to '{wrong_value}'?"
@@ -38,28 +35,24 @@ async def test_negation_trap_converter_initialization_with_custom_template() -> 
     assert converter.trap_template == custom_template
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_template_missing_wrong_value() -> None:
     """Test that template validation catches missing {wrong_value} placeholder."""
     with pytest.raises(ValueError, match="must contain '{wrong_value}' placeholder"):
         NegationTrapConverter(trap_template="Is {prompt} correct?")
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_template_missing_prompt() -> None:
     """Test that template validation catches missing {prompt} placeholder."""
     with pytest.raises(ValueError, match="must contain '{prompt}' placeholder"):
         NegationTrapConverter(trap_template="The answer is NOT '{wrong_value}'")
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_template_missing_both_placeholders() -> None:
     """Test that template validation catches missing both placeholders."""
     with pytest.raises(ValueError, match="must contain"):
         NegationTrapConverter(trap_template="This is a static template")
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_default_template() -> None:
     """Test conversion using the default template."""
     converter = NegationTrapConverter(wrong_value="abc123")
@@ -70,7 +63,6 @@ async def test_negation_trap_converter_default_template() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_custom_template_true_false() -> None:
     """Test conversion with a true/false style template."""
     template = "True or False: {prompt} is '{wrong_value}'. If false, what is the correct answer?"
@@ -83,7 +75,6 @@ async def test_negation_trap_converter_custom_template_true_false() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_custom_template_correction() -> None:
     """Test conversion with a correction style template."""
     template = "I believe {prompt} is '{wrong_value}'. Please correct me if I'm wrong."
@@ -96,7 +87,6 @@ async def test_negation_trap_converter_custom_template_correction() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_custom_template_confirmation() -> None:
     """Test conversion with a confirmation style template."""
     template = "Can you confirm {prompt} is NOT '{wrong_value}'? If it's not that, what is it?"
@@ -109,7 +99,6 @@ async def test_negation_trap_converter_custom_template_confirmation() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_custom_template_comparison() -> None:
     """Test conversion with a comparison style template."""
     template = "Is '{wrong_value}' equal to {prompt}? If not, how does it differ?"
@@ -122,7 +111,6 @@ async def test_negation_trap_converter_custom_template_comparison() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_prompt_as_subject() -> None:
     """Test that the full prompt is used as the subject in the template."""
     converter = NegationTrapConverter(wrong_value="invalid")
@@ -133,7 +121,6 @@ async def test_negation_trap_converter_prompt_as_subject() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_custom_template_with_placeholders() -> None:
     """Test that both placeholders are correctly replaced in custom templates."""
     template = "Is {prompt} equal to '{wrong_value}'?"
@@ -147,7 +134,6 @@ async def test_negation_trap_converter_custom_template_with_placeholders() -> No
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_with_special_characters() -> None:
     """Test conversion with special characters in prompt and wrong value."""
     converter = NegationTrapConverter(wrong_value="p@ssw0rd!")
@@ -158,7 +144,6 @@ async def test_negation_trap_converter_with_special_characters() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_with_multiline_prompt() -> None:
     """Test conversion with multiline prompt."""
     converter = NegationTrapConverter(wrong_value="wrong")
@@ -172,7 +157,6 @@ async def test_negation_trap_converter_with_multiline_prompt() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_with_empty_wrong_value() -> None:
     """Test conversion with empty wrong value."""
     converter = NegationTrapConverter(wrong_value="")
@@ -183,7 +167,6 @@ async def test_negation_trap_converter_with_empty_wrong_value() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_with_long_wrong_value() -> None:
     """Test conversion with a long wrong value."""
     long_value = "this_is_a_very_long_wrong_value_that_should_still_work_correctly"
@@ -195,7 +178,6 @@ async def test_negation_trap_converter_with_long_wrong_value() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_unsupported_input_type() -> None:
     """Test that unsupported input types raise ValueError."""
     converter = NegationTrapConverter()
@@ -203,7 +185,6 @@ async def test_negation_trap_converter_unsupported_input_type() -> None:
         await converter.convert_async(prompt="test", input_type="image_path")
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_unsupported_input_type_audio() -> None:
     """Test that audio input type raises ValueError."""
     converter = NegationTrapConverter()
@@ -211,7 +192,6 @@ async def test_negation_trap_converter_unsupported_input_type_audio() -> None:
         await converter.convert_async(prompt="test", input_type="audio_path")
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_input_supported() -> None:
     """Test that input_supported method works correctly."""
     converter = NegationTrapConverter()
@@ -221,7 +201,6 @@ async def test_negation_trap_converter_input_supported() -> None:
     assert converter.input_supported("audio_path") is False
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_output_supported() -> None:
     """Test that output_supported method works correctly."""
     converter = NegationTrapConverter()
@@ -231,7 +210,6 @@ async def test_negation_trap_converter_output_supported() -> None:
     assert converter.output_supported("audio_path") is False
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_multiple_conversions() -> None:
     """Test that converter can be reused for multiple conversions."""
     converter = NegationTrapConverter(wrong_value="wrong123")
@@ -246,7 +224,6 @@ async def test_negation_trap_converter_multiple_conversions() -> None:
     assert output1.output_text != output2.output_text
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_template_with_extra_placeholders() -> None:
     """Test that templates with extra placeholders work (only prompt and wrong_value replaced)."""
     template = "Context: {prompt} vs '{wrong_value}' - what's the difference?"
@@ -259,7 +236,6 @@ async def test_negation_trap_converter_template_with_extra_placeholders() -> Non
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_supported_input_types_tuple() -> None:
     """Test that SUPPORTED_INPUT_TYPES is properly defined."""
     assert hasattr(NegationTrapConverter, "SUPPORTED_INPUT_TYPES")
@@ -267,7 +243,6 @@ async def test_negation_trap_converter_supported_input_types_tuple() -> None:
     assert isinstance(NegationTrapConverter.SUPPORTED_INPUT_TYPES, tuple)
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_supported_output_types_tuple() -> None:
     """Test that SUPPORTED_OUTPUT_TYPES is properly defined."""
     assert hasattr(NegationTrapConverter, "SUPPORTED_OUTPUT_TYPES")
@@ -275,7 +250,6 @@ async def test_negation_trap_converter_supported_output_types_tuple() -> None:
     assert isinstance(NegationTrapConverter.SUPPORTED_OUTPUT_TYPES, tuple)
 
 
-@pytest.mark.asyncio
 async def test_negation_trap_converter_default_template_constant() -> None:
     """Test that DEFAULT_TEMPLATE constant exists and has required placeholders."""
     assert hasattr(NegationTrapConverter, "DEFAULT_TEMPLATE")

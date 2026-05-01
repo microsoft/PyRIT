@@ -18,7 +18,6 @@ def image_message_piece() -> MessagePiece:
     return get_image_message_piece()
 
 
-@pytest.mark.asyncio
 async def test_score_async_unsupported_data_type_inverts_false_to_true(
     patch_central_database, image_message_piece: MessagePiece
 ):
@@ -37,7 +36,6 @@ async def test_score_async_unsupported_data_type_inverts_false_to_true(
     os.remove(image_message_piece.converted_value)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("sub_string", ["I can't answer", "Not present"])
 async def test_substring_scorer_score(patch_central_database, sub_string: str):
     full_text = "blah I can't answer that too"
@@ -56,7 +54,6 @@ async def test_substring_scorer_score(patch_central_database, sub_string: str):
     assert score[0].message_piece_id is None
 
 
-@pytest.mark.asyncio
 async def test_substring_scorer_adds_to_memory():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):

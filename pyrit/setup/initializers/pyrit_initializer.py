@@ -349,7 +349,7 @@ class PyRITInitializer(ABC):
 
         # Add supported parameters if any are declared
         if instance.supported_parameters:
-            base_info["supported_parameters"] = [
+            base_info["supported_parameters"] = [  # type: ignore[ty:invalid-assignment]
                 {
                     "name": p.name,
                     "description": p.description,
@@ -361,7 +361,7 @@ class PyRITInitializer(ABC):
 
         # Add required environment variables if any are defined
         if instance.required_env_vars:
-            base_info["required_env_vars"] = instance.required_env_vars
+            base_info["required_env_vars"] = instance.required_env_vars  # type: ignore[ty:invalid-assignment]
 
         # Add dynamic default values information
         try:

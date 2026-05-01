@@ -105,7 +105,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         source_type: Literal["public_url", "file"] = "public_url",
         templates: list[str] | None = None,
         max_examples: int | None = None,
-    ):
+    ) -> None:
         """
         Initialize the ComicJailbreak dataset loader.
 

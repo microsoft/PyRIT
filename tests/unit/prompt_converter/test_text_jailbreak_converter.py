@@ -21,7 +21,6 @@ def converter(mock_jailbreak):
     return TextJailbreakConverter(jailbreak_template=mock_jailbreak)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_basic(converter, mock_jailbreak):
     """Test basic conversion functionality"""
     prompt = "test prompt"
@@ -32,7 +31,6 @@ async def test_convert_async_basic(converter, mock_jailbreak):
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_unsupported_input_type(converter):
     """Test that unsupported input types raise ValueError"""
     with pytest.raises(ValueError, match="Input type not supported"):
@@ -53,7 +51,6 @@ def test_output_supported(converter):
     assert converter.output_supported("audio_path") is False
 
 
-@pytest.mark.asyncio
 async def test_convert_async_with_empty_prompt(converter, mock_jailbreak):
     """Test conversion with empty prompt"""
     prompt = ""

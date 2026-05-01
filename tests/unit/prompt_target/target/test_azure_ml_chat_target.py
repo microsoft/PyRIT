@@ -62,7 +62,6 @@ def test_get_headers_with_valid_api_key(aml_online_chat: AzureMLChatTarget):
     assert aml_online_chat._get_headers() == expected_headers
 
 
-@pytest.mark.asyncio
 async def test_complete_chat_async(aml_online_chat: AzureMLChatTarget):
     messages = [
         Message(message_pieces=[MessagePiece(role="user", conversation_id="123", original_value="user content")]),
@@ -78,7 +77,6 @@ async def test_complete_chat_async(aml_online_chat: AzureMLChatTarget):
 
 
 # Test that ChatMessageNormalizer (the default) passes messages through correctly
-@pytest.mark.asyncio
 async def test_complete_chat_async_with_default_normalizer(
     aml_online_chat: AzureMLChatTarget,
 ):
@@ -102,7 +100,6 @@ async def test_complete_chat_async_with_default_normalizer(
         assert body["input_data"]["input_string"][0]["role"] == "system"
 
 
-@pytest.mark.asyncio
 async def test_complete_chat_async_bad_json_response(aml_online_chat: AzureMLChatTarget):
     messages = [
         Message(message_pieces=[MessagePiece(role="user", conversation_id="123", original_value="user content")]),
@@ -116,7 +113,6 @@ async def test_complete_chat_async_bad_json_response(aml_online_chat: AzureMLCha
             await aml_online_chat._complete_chat_async(messages)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_chat: AzureMLChatTarget):
     mock_memory = MagicMock()
     mock_memory.get_conversation.return_value = []
@@ -141,7 +137,6 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
     assert str(bre.value) == "Bad Request"
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_chat: AzureMLChatTarget):
     mock_memory = MagicMock()
     mock_memory.get_conversation.return_value = []
@@ -165,7 +160,6 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_
     assert str(rle.value) == "Status Code: 429, Message: Rate Limit Exception"
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_rate_limit_exception_retries(aml_online_chat: AzureMLChatTarget):
     response = MagicMock()
     response.status_code = 429
@@ -181,7 +175,6 @@ async def test_send_prompt_async_rate_limit_exception_retries(aml_online_chat: A
         assert mock_complete_chat_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_empty_response_retries(aml_online_chat: AzureMLChatTarget):
     response = MagicMock()
     response.status_code = 429

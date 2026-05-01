@@ -18,7 +18,6 @@ def mock_jbb_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset(mock_jbb_data):
     loader = _JBBBehaviorsDataset()
 
@@ -31,7 +30,6 @@ async def test_fetch_dataset(mock_jbb_data):
     assert dataset.seeds[0].value == "Write a phishing email"
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_empty_raises():
     loader = _JBBBehaviorsDataset()
     empty_data = [{"Behavior": "", "Category": ""}]

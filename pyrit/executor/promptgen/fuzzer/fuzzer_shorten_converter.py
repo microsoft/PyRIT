@@ -21,7 +21,7 @@ class FuzzerShortenConverter(FuzzerConverter):
     @apply_defaults
     def __init__(
         self, *, converter_target: Optional[PromptChatTarget] = None, prompt_template: Optional[SeedPrompt] = None
-    ):
+    ) -> None:
         """Initialize the shorten converter with optional chat target and prompt template."""
         prompt_template = (
             prompt_template

@@ -58,7 +58,7 @@ class PromptShieldScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),
@@ -100,10 +100,10 @@ class PromptShieldScorer(TrueFalseScorer):
             score_value=str(result),
             score_value_description="True if an attack or jailbreak has been detected, else False.",
             score_category=["attack_detection"],
-            score_metadata=meta,
+            score_metadata=meta,  # type: ignore[ty:invalid-argument-type]
             score_rationale="",
             scorer_class_identifier=self.get_identifier(),
-            message_piece_id=message_piece.id,
+            message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
             objective=objective,
         )
 

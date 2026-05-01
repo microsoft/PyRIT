@@ -224,7 +224,6 @@ class TestContextValidation:
 class TestSetupPhase:
     """Tests for the setup phase of the attack"""
 
-    @pytest.mark.asyncio
     async def test_setup_merges_memory_labels_correctly(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -257,7 +256,6 @@ class TestSetupPhase:
         assert basic_context.conversation_id != original_conversation_id
         assert basic_context.conversation_id  # Should have a new conversation_id
 
-    @pytest.mark.asyncio
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
         from pyrit.prompt_normalizer.prompt_converter_configuration import (
             PromptConverterConfiguration,
@@ -385,7 +383,6 @@ class TestPromptPreparation:
 class TestPromptSending:
     """Tests for sending prompts to target"""
 
-    @pytest.mark.asyncio
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context
     ):
@@ -423,7 +420,6 @@ class TestPromptSending:
         assert call_args.kwargs["labels"] == {"test": "label"}
         assert "attack_identifier" in call_args.kwargs
 
-    @pytest.mark.asyncio
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
 
@@ -439,7 +435,6 @@ class TestPromptSending:
 class TestResponseEvaluation:
     """Tests for response evaluation logic"""
 
-    @pytest.mark.asyncio
     async def test_evaluate_response_with_objective_scorer_returns_score(
         self, mock_target, mock_true_false_scorer, sample_response, success_score
     ):
@@ -465,7 +460,6 @@ class TestResponseEvaluation:
                 skip_on_error_result=True,
             )
 
-    @pytest.mark.asyncio
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
 
@@ -488,7 +482,6 @@ class TestResponseEvaluation:
                 skip_on_error_result=True,
             )
 
-    @pytest.mark.asyncio
     async def test_evaluate_response_with_auxiliary_scorers(
         self, mock_target, mock_true_false_scorer, sample_response, success_score
     ):
@@ -536,7 +529,6 @@ class TestResponseEvaluation:
 class TestAttackExecution:
     """Tests for the main attack execution logic"""
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "attempt_results,expected_attempts,expected_outcome,expected_outcome_reason,max_attempts",
         [
@@ -627,7 +619,6 @@ class TestAttackExecution:
         expected_eval_count = sum(1 for resp, _ in attempt_results if resp == "response")
         assert attack._evaluate_response_async.call_count == expected_eval_count
 
-    @pytest.mark.asyncio
     async def test_perform_attack_without_scorer_completes_after_first_response(
         self, mock_target, basic_context, sample_response
     ):
@@ -663,7 +654,6 @@ class TestAttackExecution:
             response=sample_response, objective=basic_context.objective
         )
 
-    @pytest.mark.asyncio
     async def test_perform_attack_without_scorer_retries_on_filtered_response(
         self, mock_target, basic_context, sample_response
     ):
@@ -684,7 +674,6 @@ class TestAttackExecution:
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
@@ -707,7 +696,6 @@ class TestAttackExecution:
 class TestConverterIntegration:
     """Tests for converter integration"""
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "converters,input_text,expected_pattern",
         [
@@ -753,7 +741,6 @@ class TestConverterIntegration:
         call_args = mock_prompt_normalizer.send_prompt_async.call_args
         assert call_args.kwargs["request_converter_configurations"] == converter_config
 
-    @pytest.mark.asyncio
     async def test_perform_attack_with_response_converters(
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
@@ -953,7 +940,6 @@ class TestDetermineAttackOutcome:
 class TestAttackLifecycle:
     """Tests for the complete attack lifecycle (execute_async)"""
 
-    @pytest.mark.asyncio
     async def test_execute_async_successful_lifecycle(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -978,7 +964,6 @@ class TestAttackLifecycle:
         attack._perform_async.assert_called_once_with(context=basic_context)
         attack._teardown_async.assert_called_once_with(context=basic_context)
 
-    @pytest.mark.asyncio
     async def test_execute_async_validation_failure_prevents_execution(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -1001,7 +986,6 @@ class TestAttackLifecycle:
         attack._perform_async.assert_not_called()
         attack._teardown_async.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_execute_async_execution_error_still_calls_teardown(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -1024,7 +1008,6 @@ class TestAttackLifecycle:
         attack._perform_async.assert_called_once_with(context=basic_context)
         attack._teardown_async.assert_called_once_with(context=basic_context)
 
-    @pytest.mark.asyncio
     async def test_teardown_async_is_noop(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -1032,7 +1015,6 @@ class TestAttackLifecycle:
         await attack._teardown_async(context=basic_context)
         # No assertions needed - we just want to ensure it runs without raising
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_parameters(self, mock_target, sample_response):
         """Test execute_async creates context using factory method and executes attack"""
         attack = PromptSendingAttack(objective_target=mock_target, max_attempts_on_failure=3)
@@ -1072,7 +1054,6 @@ class TestAttackLifecycle:
         assert context.next_message is not None
         assert context.system_prompt == "System prompt"
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_invalid_params_raises_error(self, mock_target):
         """Test execute_async raises error when invalid parameters are passed"""
         attack = PromptSendingAttack(objective_target=mock_target)
@@ -1090,7 +1071,6 @@ class TestAttackLifecycle:
 class TestEdgeCasesAndErrorHandling:
     """Tests for edge cases and error handling scenarios"""
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("max_attempts", [0, 1, 5])
     async def test_perform_attack_with_various_max_attempts(
         self,
@@ -1122,7 +1102,6 @@ class TestEdgeCasesAndErrorHandling:
         assert result.outcome == AttackOutcome.SUCCESS
         attack._send_prompt_to_objective_target_async.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_perform_attack_with_minimal_prompt_group(self, mock_target, basic_context, sample_response):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -1140,7 +1119,6 @@ class TestEdgeCasesAndErrorHandling:
         assert result.executed_turns == 1
         attack._send_prompt_to_objective_target_async.assert_called_with(message=minimal_message, context=basic_context)
 
-    @pytest.mark.asyncio
     async def test_evaluate_response_handles_scorer_exception(
         self, mock_target, mock_true_false_scorer, sample_response
     ):
@@ -1172,7 +1150,6 @@ class TestEdgeCasesAndErrorHandling:
         assert id1.hash == id2.hash
         assert id1.class_name == id2.class_name == "PromptSendingAttack"
 
-    @pytest.mark.asyncio
     async def test_retry_stores_unsuccessful_conversation_and_updates_id(
         self, mock_target, mock_true_false_scorer, basic_context, sample_response, failure_score
     ):

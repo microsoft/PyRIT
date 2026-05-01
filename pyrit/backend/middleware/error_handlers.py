@@ -38,7 +38,7 @@ def register_error_handlers(app: FastAPI) -> None:
                     field=field_path,
                     message=error["msg"],
                     code=error["type"],
-                )  # type: ignore[call-arg]
+                )
             )
 
         problem = ProblemDetail(
@@ -72,7 +72,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
             instance=str(request.url.path),
-        )  # type: ignore[call-arg]
+        )
 
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -96,7 +96,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
             instance=str(request.url.path),
-        )  # type: ignore[call-arg]
+        )
 
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -120,7 +120,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
             instance=str(request.url.path),
-        )  # type: ignore[call-arg]
+        )
 
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -144,7 +144,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status=status.HTTP_501_NOT_IMPLEMENTED,
             detail=str(exc) or "This feature is not yet implemented",
             instance=str(request.url.path),
-        )  # type: ignore[call-arg]
+        )
 
         return JSONResponse(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -175,7 +175,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred",
             instance=str(request.url.path),
-        )  # type: ignore[call-arg]
+        )
 
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

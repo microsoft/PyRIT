@@ -143,7 +143,6 @@ class TestCyberBasic:
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         assert scenario.name == "Cyber"
 
-    @pytest.mark.asyncio
     @patch.object(
         DatasetConfiguration, "get_seed_attack_groups", return_value={"malware": _make_seed_groups("malware")}
     )
@@ -158,14 +157,12 @@ class TestCyberBasic:
         # ALL expands to prompt_sending + red_teaming → 2 strategies
         assert len(scenario._scenario_strategies) == 2
 
-    @pytest.mark.asyncio
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
-    @pytest.mark.asyncio
     @patch.object(
         DatasetConfiguration, "get_seed_attack_groups", return_value={"malware": _make_seed_groups("malware")}
     )
@@ -180,7 +177,6 @@ class TestCyberBasic:
         await scenario.initialize_async(objective_target=mock_objective_target, memory_labels=labels)
         assert scenario._memory_labels == labels
 
-    @pytest.mark.asyncio
     @patch.object(
         DatasetConfiguration, "get_seed_attack_groups", return_value={"malware": _make_seed_groups("malware")}
     )
@@ -222,7 +218,6 @@ class TestCyberAttackGeneration:
             await scenario.initialize_async(**init_kwargs)
             return await scenario._get_atomic_attacks_async()
 
-    @pytest.mark.asyncio
     async def test_all_strategy_produces_prompt_sending_and_red_teaming(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -234,7 +229,6 @@ class TestCyberAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, RedTeamingAttack}
 
-    @pytest.mark.asyncio
     async def test_single_turn_strategy_produces_prompt_sending(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -244,7 +238,6 @@ class TestCyberAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack}
 
-    @pytest.mark.asyncio
     async def test_multi_turn_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -254,7 +247,6 @@ class TestCyberAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {RedTeamingAttack}
 
-    @pytest.mark.asyncio
     async def test_default_strategy_produces_both_techniques(self, mock_objective_target, mock_objective_scorer):
         """Default (ALL) should produce both PromptSending and RedTeaming."""
         attacks = await self._init_and_get_attacks(
@@ -264,7 +256,6 @@ class TestCyberAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, RedTeamingAttack}
 
-    @pytest.mark.asyncio
     async def test_single_technique_selection(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -275,7 +266,6 @@ class TestCyberAttackGeneration:
         for a in attacks:
             assert isinstance(a.attack_technique.attack, PromptSendingAttack)
 
-    @pytest.mark.asyncio
     async def test_atomic_attack_names_are_unique(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -286,7 +276,6 @@ class TestCyberAttackGeneration:
         for name in names:
             assert "_" in name
 
-    @pytest.mark.asyncio
     async def test_attacks_include_seed_groups(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
@@ -296,7 +285,6 @@ class TestCyberAttackGeneration:
         for a in attacks:
             assert len(a.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_raises_when_not_initialized(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         with pytest.raises(ValueError, match="Scenario not properly initialized"):
@@ -340,7 +328,7 @@ class TestCyberRegistryIntegration:
         """red_teaming factory should have adversarial config baked in."""
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         factories = scenario._get_attack_technique_factories()
-        assert "attack_adversarial_config" in factories["red_teaming"]._attack_kwargs
+        assert factories["red_teaming"]._adversarial_config is not None
 
     def test_register_idempotent(self):
         """Calling register_scenario_techniques twice doesn't duplicate entries."""

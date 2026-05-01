@@ -65,7 +65,6 @@ def test_validate_top_p_above_one_raises():
         validate_top_p(1.1)
 
 
-@pytest.mark.asyncio
 async def test_limit_requests_per_minute_no_rpm():
     mock_self = MagicMock()
     mock_self._max_requests_per_minute = None
@@ -79,7 +78,6 @@ async def test_limit_requests_per_minute_no_rpm():
     assert result == "response"
 
 
-@pytest.mark.asyncio
 async def test_limit_requests_per_minute_with_rpm():
     mock_self = MagicMock()
     mock_self._max_requests_per_minute = 30
@@ -93,7 +91,6 @@ async def test_limit_requests_per_minute_with_rpm():
     assert result == "response"
 
 
-@pytest.mark.asyncio
 async def test_limit_requests_per_minute_zero_rpm():
     mock_self = MagicMock()
     mock_self._max_requests_per_minute = 0

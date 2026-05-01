@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, NatoConverter
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_simple_text():
     """Test basic NATO phonetic alphabet conversion."""
     converter = NatoConverter()
@@ -19,7 +18,6 @@ async def test_nato_converter_simple_text():
     assert result.output_text == "Alfa Bravo Charlie"
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_uppercase():
     """Test NATO conversion with uppercase letters."""
     converter = NatoConverter()
@@ -32,7 +30,6 @@ async def test_nato_converter_uppercase():
     assert result.output_text == "Alfa Bravo Charlie"
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_mixed_case():
     """Test NATO conversion with mixed case letters."""
     converter = NatoConverter()
@@ -45,7 +42,6 @@ async def test_nato_converter_mixed_case():
     assert result.output_text == "Hotel Echo Lima Lima Oscar"
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_with_numbers():
     """Test that numbers are ignored in NATO conversion."""
     converter = NatoConverter()
@@ -59,7 +55,6 @@ async def test_nato_converter_with_numbers():
     assert result.output_text == "Alfa Bravo Charlie"
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_with_spaces():
     """Test that spaces are ignored in NATO conversion."""
     converter = NatoConverter()
@@ -73,7 +68,6 @@ async def test_nato_converter_with_spaces():
     assert result.output_text == "Alfa Bravo Charlie"
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_with_punctuation():
     """Test that punctuation is ignored in NATO conversion."""
     converter = NatoConverter()
@@ -87,7 +81,6 @@ async def test_nato_converter_with_punctuation():
     assert result.output_text == "Hotel Echo Lima Lima Oscar Whiskey Oscar Romeo Lima Delta"
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_empty_string():
     """Test NATO conversion with empty string."""
     converter = NatoConverter()
@@ -100,7 +93,6 @@ async def test_nato_converter_empty_string():
     assert result.output_text == ""
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_no_letters():
     """Test NATO conversion with no alphabetic characters."""
     converter = NatoConverter()
@@ -113,7 +105,6 @@ async def test_nato_converter_no_letters():
     assert result.output_text == ""
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_all_letters():
     """Test NATO conversion with all letters of the alphabet."""
     converter = NatoConverter()
@@ -131,7 +122,6 @@ async def test_nato_converter_all_letters():
     assert result.output_text == expected
 
 
-@pytest.mark.asyncio
 async def test_nato_converter_input_type_not_supported():
     """Test that non-text input types raise ValueError."""
     converter = NatoConverter()

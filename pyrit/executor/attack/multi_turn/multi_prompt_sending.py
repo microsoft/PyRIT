@@ -29,6 +29,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import Scorer
 
 if TYPE_CHECKING:
@@ -123,11 +125,20 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
     and multiple scorer types for comprehensive evaluation.
     """
 
+    # Sending a sequence of distinct prompts depends on the target maintaining
+    # conversation state between them. History-squash adaptation would collapse
+    # them into one message and silently break the attack's sequencing
+    # semantics. Declare MULTI_TURN as ``native_required`` so adaptation is
+    # rejected at construction time.
+    TARGET_REQUIREMENTS = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN}),
+    )
+
     @apply_defaults
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -204,16 +215,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         Args:
             context (MultiTurnAttackContext): The attack context containing attack parameters.
-
-        Raises:
-            ValueError: If the objective target does not support multi-turn conversations.
         """
-        if not self._objective_target.capabilities.supports_multi_turn:
-            raise ValueError(
-                "MultiPromptSendingAttack requires a multi-turn target. "
-                "The objective target does not support multi-turn conversations."
-            )
-
         # Ensure the context has a session (like red_teaming.py does)
         context.session = ConversationSession()
 

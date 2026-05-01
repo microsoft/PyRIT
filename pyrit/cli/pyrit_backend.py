@@ -227,8 +227,8 @@ def main(*, args: Optional[list[str]] = None) -> int:
     """
     # Ensure emoji and other Unicode characters don't crash on Windows consoles
     # that use legacy encodings like cp1252.
-    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
-    sys.stderr.reconfigure(errors="replace")  # type: ignore[union-attr]
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[ty:unresolved-attribute]
+    sys.stderr.reconfigure(errors="replace")  # type: ignore[ty:unresolved-attribute]
 
     try:
         parsed_args = parse_args(args=args)

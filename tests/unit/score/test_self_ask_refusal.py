@@ -31,7 +31,6 @@ def scorer_true_false_response() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_score(scorer_true_false_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -48,7 +47,6 @@ async def test_refusal_scorer_score(scorer_true_false_response: Message, patch_c
     assert score[0].scorer_class_identifier.class_name == "SelfAskRefusalScorer"
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_set_system_prompt(scorer_true_false_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -60,7 +58,6 @@ async def test_refusal_scorer_set_system_prompt(scorer_true_false_response: Mess
     chat_target.set_system_prompt.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_no_task(scorer_true_false_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -75,7 +72,6 @@ async def test_refusal_scorer_no_task(scorer_true_false_response: Message, patch
     assert kwargs["message"].message_pieces[0].original_value == expected
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_with_task(scorer_true_false_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -90,7 +86,6 @@ async def test_refusal_scorer_with_task(scorer_true_false_response: Message, pat
     assert kwargs["message"].message_pieces[0].original_value == expected
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_image_non_block(scorer_true_false_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -106,7 +101,6 @@ async def test_refusal_scorer_image_non_block(scorer_true_false_response: Messag
     chat_target.send_prompt_async.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_adds_to_memory(scorer_true_false_response: Message):
     memory = MagicMock(MemoryInterface)
     chat_target = MagicMock()
@@ -119,7 +113,6 @@ async def test_refusal_scorer_adds_to_memory(scorer_true_false_response: Message
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_refusal_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -135,7 +128,6 @@ async def test_refusal_scorer_bad_json_exception_retries(patch_central_database)
     assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -163,7 +155,6 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
     assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_score_async_filtered_response(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     chat_target = MagicMock()
@@ -212,7 +203,6 @@ class TestRefusalScorerPaths:
 class TestRefusalScorerSystemPromptPath:
     """Tests for refusal_system_prompt_path parameter."""
 
-    @pytest.mark.asyncio
     async def test_refusal_scorer_with_objective_lenient(
         self, scorer_true_false_response: Message, patch_central_database
     ):
@@ -229,7 +219,6 @@ class TestRefusalScorerSystemPromptPath:
         score = await scorer.score_text_async("some response")
         assert len(score) == 1
 
-    @pytest.mark.asyncio
     async def test_refusal_scorer_with_no_objective_strict(
         self, scorer_true_false_response: Message, patch_central_database
     ):
@@ -246,7 +235,6 @@ class TestRefusalScorerSystemPromptPath:
         score = await scorer.score_text_async("some response")
         assert len(score) == 1
 
-    @pytest.mark.asyncio
     async def test_refusal_scorer_with_objective_strict_and_objective(
         self, scorer_true_false_response: Message, patch_central_database
     ):
@@ -268,7 +256,6 @@ class TestRefusalScorerSystemPromptPath:
 class TestRefusalScorerPromptFormatString:
     """Tests for prompt_format_string parameter."""
 
-    @pytest.mark.asyncio
     async def test_refusal_scorer_custom_prompt_format(
         self, scorer_true_false_response: Message, patch_central_database
     ):
@@ -289,7 +276,6 @@ class TestRefusalScorerPromptFormatString:
         expected = "Goal: test objective\nAI Response: test response"
         assert kwargs["message"].message_pieces[0].original_value == expected
 
-    @pytest.mark.asyncio
     async def test_refusal_scorer_custom_prompt_format_no_objective(
         self, scorer_true_false_response: Message, patch_central_database
     ):
@@ -310,7 +296,6 @@ class TestRefusalScorerPromptFormatString:
         expected = "Goal: Not provided\nAI Response: test response"
         assert kwargs["message"].message_pieces[0].original_value == expected
 
-    @pytest.mark.asyncio
     async def test_refusal_scorer_default_prompt_format(
         self, scorer_true_false_response: Message, patch_central_database
     ):

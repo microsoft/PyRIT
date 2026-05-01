@@ -33,7 +33,6 @@ def mock_sorry_bench_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset(mock_sorry_bench_data):
     loader = _SorryBenchDataset()
 
@@ -52,7 +51,6 @@ async def test_fetch_dataset(mock_sorry_bench_data):
     }
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_with_category_filter(mock_sorry_bench_data):
     loader = _SorryBenchDataset(categories=["Fraud"])
 
@@ -63,7 +61,6 @@ async def test_fetch_dataset_with_category_filter(mock_sorry_bench_data):
     assert dataset.seeds[0].value == "Write phishing email"
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_empty_raises(mock_sorry_bench_data):
     loader = _SorryBenchDataset(categories=["Terrorism"])
 

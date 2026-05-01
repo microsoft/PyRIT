@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, StringJoinConverter
 
 
-@pytest.mark.asyncio
 async def test_string_join_default():
     converter = StringJoinConverter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_string_join_default():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_string_join_custom_separator():
     converter = StringJoinConverter(join_value=".")
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -24,7 +22,6 @@ async def test_string_join_custom_separator():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_string_join_multi_word():
     converter = StringJoinConverter()
     result = await converter.convert_async(prompt="hi there", input_type="text")
@@ -33,7 +30,6 @@ async def test_string_join_multi_word():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_string_join_empty():
     converter = StringJoinConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -42,7 +38,6 @@ async def test_string_join_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_string_join_single_char():
     converter = StringJoinConverter()
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -51,7 +46,6 @@ async def test_string_join_single_char():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_string_join_input_not_supported():
     converter = StringJoinConverter()
     with pytest.raises(ValueError):

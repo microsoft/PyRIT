@@ -12,7 +12,6 @@ from pyrit.prompt_converter.text_selection_strategy import (
 
 
 # Test that the converter produces the expected number of outputs
-@pytest.mark.asyncio
 async def test_char_swap_converter_output_count():
     converter = CharSwapConverter(max_iterations=5)
     prompt = "This is a test prompt for the char swap converter."
@@ -22,7 +21,6 @@ async def test_char_swap_converter_output_count():
 
 
 # Test that words longer than 3 characters are being perturbed
-@pytest.mark.asyncio
 async def test_char_swap_converter_word_perturbation():
     converter = CharSwapConverter(
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0)
@@ -39,7 +37,6 @@ async def test_char_swap_converter_word_perturbation():
     "prompt",
     ["Try or do?", "To be or not to be.", "2b oR n0t 2b"],
 )
-@pytest.mark.asyncio
 async def test_char_swap_converter_short_words(prompt):
     converter = CharSwapConverter(
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0)
@@ -51,7 +48,6 @@ async def test_char_swap_converter_short_words(prompt):
 
 
 # Test that punctuation is not perturbed
-@pytest.mark.asyncio
 async def test_char_swap_converter_punctuation():
     converter = CharSwapConverter(
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0)
@@ -65,7 +61,6 @@ async def test_char_swap_converter_punctuation():
 
 
 # Test that input type not supported raises ValueError
-@pytest.mark.asyncio
 async def test_char_swap_converter_input_type():
     converter = CharSwapConverter()
     with pytest.raises(ValueError):
@@ -73,13 +68,11 @@ async def test_char_swap_converter_input_type():
 
 
 # Test with zero iterations
-@pytest.mark.asyncio
 async def test_char_swap_converter_zero_iterations():
     with pytest.raises(ValueError, match="max_iterations must be greater than 0"):
         CharSwapConverter(max_iterations=0)
 
 
-@pytest.mark.asyncio
 async def test_char_swap_converter_sample_ratio_other_than_1():
     converter = CharSwapConverter(
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5)
@@ -91,7 +84,6 @@ async def test_char_swap_converter_sample_ratio_other_than_1():
 
 
 # Test that swapping is happening randomly
-@pytest.mark.asyncio
 async def test_char_swap_converter_random_swapping():
     converter = CharSwapConverter(
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0)
@@ -107,7 +99,6 @@ async def test_char_swap_converter_random_swapping():
     assert prompt != result1.output_text
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "prompt,max_iterations,mock_positions,expected",
     [
@@ -140,7 +131,6 @@ async def test_char_swap_converter_max_iterations_has_effect(prompt, max_iterati
     assert result.output_text == expected
 
 
-@pytest.mark.asyncio
 async def test_char_swap_converter_proportion_unchanged_with_iterations():
     """Test that max_iterations doesn't affect which words are selected, only how much they're perturbed."""
     prompt = "Testing multiple words here today"
