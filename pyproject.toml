@@ -70,8 +70,7 @@ dependencies = [
     "websockets>=14.0",
 ]
 
-[project.optional-dependencies]
-# always make sure the individual ones are in sync with the all group
+[dependency-groups]
 dev = [
     "feedgen>=1.0.0",
     "griffe>=2.0.0",
@@ -105,6 +104,9 @@ dev = [
     "types-tabulate>=0.9.0",
     "types-ujson>=5.10.0",
 ]
+
+[project.optional-dependencies]
+# always make sure the individual ones are in sync with the all group
 huggingface = [
     "torch>=2.7.0",
 ]
@@ -133,7 +135,7 @@ speech = [
     "azure-cognitiveservices-speech>=1.46.0",
 ]
 
-# all includes all functional dependencies excluding the ones from the "dev" extra
+# all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
     "av>=14.0.0",

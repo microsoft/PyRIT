@@ -49,7 +49,6 @@ def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
     )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scale_arguments_path, system_prompt_path",
     [
@@ -137,7 +136,6 @@ def test_validate_scale_arguments_missing_args_raises_value_error(scale_args, sc
         scale_scorer._validate_scale_arguments_set(scale_args)
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -164,7 +162,6 @@ async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_
     assert score[0].objective == "task"
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -201,7 +198,6 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
     assert score[0].objective == "task"
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")

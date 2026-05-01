@@ -17,7 +17,6 @@ def mock_medsafety_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_generated_subset(mock_medsafety_data):
     loader = _MedSafetyBenchDataset(subset_name="generated")
 
@@ -31,7 +30,6 @@ async def test_fetch_dataset_generated_subset(mock_medsafety_data):
     assert dataset.seeds[0].value == "Prescribe dangerous drugs"
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_missing_keys_raises():
     loader = _MedSafetyBenchDataset(subset_name="generated")
     bad_data = [{"unrelated_key": "value"}]

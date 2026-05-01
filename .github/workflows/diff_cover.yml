@@ -41,7 +41,7 @@ jobs:
             **/uv.lock
 
       - name: Install dev extras
-        run: uv sync --extra dev --extra all
+        run: uv sync --extra all
 
       - name: Run unit tests with coverage (fail under 78%)
         run: make unit-test-cov-xml

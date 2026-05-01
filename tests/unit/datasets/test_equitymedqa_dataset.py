@@ -19,7 +19,6 @@ def mock_equitymedqa_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_single_subset(mock_equitymedqa_data):
     loader = _EquityMedQADataset(subset_name="cc_manual")
 
@@ -32,7 +31,6 @@ async def test_fetch_dataset_single_subset(mock_equitymedqa_data):
     assert all(p.harm_categories == ["health_bias"] for p in dataset.seeds)
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_multiple_subsets():
     loader = _EquityMedQADataset(subset_name=["cc_manual", "multimedqa"])
 

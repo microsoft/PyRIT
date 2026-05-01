@@ -10,15 +10,19 @@ uv pip list
 Then activate it using
 
 ```bash
-conda activate <env_name>
+# Windows
+.\.venv\Scripts\Activate.ps1
+
+# macOS/Linux
+source .venv/bin/activate
 ```
 
 Next, you need to install the IPython kernel in the virtual environment.
 
 Note: Jupyter and ipykernel are no longer installed by default with the base package. If you need to use Jupyter notebooks with PyRIT, you'll need to install these dependencies using one of the following methods:
 
-1. Install with development dependencies: `uv pip install --extra dev`
-2. Install with all optional dependencies: `pip install --extra all`
+1. Install with development dependencies: `uv sync`
+2. Install with all optional dependencies: `uv sync --extra all`
 3. Install just the notebook dependencies manually: `uv pip install jupyter ipykernel`
 
 After installing these dependencies, you can proceed with the kernel setup steps below.

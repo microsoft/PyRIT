@@ -29,7 +29,6 @@ def mock_salad_bench_data():
 class TestSaladBenchDataset:
     """Test the SALAD-Bench dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_salad_bench_data):
         """Test fetching SALAD-Bench dataset."""
         loader = _SaladBenchDataset()
@@ -59,7 +58,6 @@ class TestSaladBenchDataset:
         loader = _SaladBenchDataset()
         assert loader.dataset_name == "salad_bench"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_with_custom_config(self, mock_salad_bench_data):
         """Test fetching with custom config."""
         loader = _SaladBenchDataset(

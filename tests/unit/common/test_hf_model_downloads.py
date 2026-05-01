@@ -32,7 +32,6 @@ def setup_environment():
         yield token
 
 
-@pytest.mark.asyncio
 async def test_download_specific_files(setup_environment):
     """Test downloading specific files"""
     token = setup_environment  # Get the token from the fixture

@@ -1076,7 +1076,6 @@ def test_message_piece_scores_duplicate_piece(sqlite_instance: MemoryInterface):
     assert retrieved_pieces[1].scores[0].score_value == "0.8"
 
 
-@pytest.mark.asyncio
 async def test_message_piece_hash_stored_and_retrieved(sqlite_instance: MemoryInterface):
     entries = [
         MessagePiece(
@@ -1101,7 +1100,6 @@ async def test_message_piece_hash_stored_and_retrieved(sqlite_instance: MemoryIn
         assert prompt.original_value_sha256
 
 
-@pytest.mark.asyncio
 async def test_seed_prompt_hash_stored_and_retrieved(sqlite_instance: MemoryInterface):
     """Test that seed prompt hash values are properly stored and retrieved."""
     # Create a seed prompt

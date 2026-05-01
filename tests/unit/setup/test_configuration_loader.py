@@ -265,7 +265,6 @@ class TestConfigurationLoaderResolvers:
 class TestConfigurationLoaderInitialization:
     """Tests for ConfigurationLoader.initialize_pyrit_async method."""
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     async def test_initialize_pyrit_async_basic(self, mock_init):
         """Test basic initialization with minimal configuration."""
@@ -281,7 +280,6 @@ class TestConfigurationLoaderInitialization:
         assert call_kwargs["env_files"] is None
         assert call_kwargs["silent"] is False
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     @mock.patch("pyrit.registry.InitializerRegistry")
     async def test_initialize_pyrit_async_with_initializers(self, mock_registry_cls, mock_init):
@@ -311,7 +309,6 @@ class TestConfigurationLoaderInitialization:
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs["initializers"] == [mock_initializer_instance]
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.registry.InitializerRegistry")
     async def test_initialize_pyrit_async_unknown_initializer_raises_error(self, mock_registry_cls):
         """Test that unknown initializer name raises ValueError."""
@@ -333,7 +330,6 @@ class TestConfigurationLoaderInitialization:
 class TestInitializeFromConfigAsync:
     """Tests for initialize_from_config_async function."""
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.initialize_pyrit_async")
     async def test_initialize_from_config_with_path(self, mock_init, mock_from_yaml):
@@ -347,7 +343,6 @@ class TestInitializeFromConfigAsync:
         mock_init.assert_called_once()
         assert result is mock_config
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.initialize_pyrit_async")
     async def test_initialize_from_config_with_string_path(self, mock_init, mock_from_yaml):
@@ -361,7 +356,6 @@ class TestInitializeFromConfigAsync:
         call_args = mock_from_yaml.call_args[0][0]
         assert isinstance(call_args, pathlib.Path)
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.get_default_config_path")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.initialize_pyrit_async")

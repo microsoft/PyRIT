@@ -23,7 +23,6 @@ def test_prompt_variation_init_templates_not_null(sqlite_instance):
     assert prompt_variation.system_prompt
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "converted_value",
     [

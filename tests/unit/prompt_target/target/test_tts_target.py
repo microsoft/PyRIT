@@ -57,7 +57,6 @@ def test_tts_initializes_calls_get_required_parameters(patch_central_database):
         mock_get_non_required.assert_any_call(env_var_name=target.api_key_environment_variable, passed_value="keytest")
 
 
-@pytest.mark.asyncio
 async def test_tts_validate_request_length(tts_target: OpenAITTSTarget):
     request = Message(
         message_pieces=[
@@ -73,7 +72,6 @@ async def test_tts_validate_request_length(tts_target: OpenAITTSTarget):
         await tts_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_tts_validate_prompt_type(tts_target: OpenAITTSTarget):
     request = Message(message_pieces=[get_image_message_piece()])
     with pytest.raises(
@@ -84,7 +82,6 @@ async def test_tts_validate_prompt_type(tts_target: OpenAITTSTarget):
         await tts_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_tts_validate_previous_conversations(
     tts_target: OpenAITTSTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -111,7 +108,6 @@ async def test_tts_validate_previous_conversations(
 
 
 @pytest.mark.parametrize("response_format", ["mp3", "ogg"])
-@pytest.mark.asyncio
 async def test_tts_send_prompt_file_save_async(
     patch_central_database,
     sample_conversations: MutableSequence[MessagePiece],
@@ -144,7 +140,6 @@ async def test_tts_send_prompt_file_save_async(
 testdata = [(400, "Bad Request", Exception), (429, "Rate Limit Reached", RateLimitException)]
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("status_code, error_text, exception_class", testdata)
 async def test_tts_send_prompt_async_exception_adds_to_memory(
     tts_target: OpenAITTSTarget,
@@ -180,7 +175,6 @@ async def test_tts_send_prompt_async_exception_adds_to_memory(
             await tts_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_tts_send_prompt_async_rate_limit_exception_retries(
     tts_target: OpenAITTSTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -198,7 +192,6 @@ async def test_tts_send_prompt_async_rate_limit_exception_retries(
             await tts_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_tts_send_prompt_with_speed_parameter(
     patch_central_database,
     sample_conversations: MutableSequence[MessagePiece],

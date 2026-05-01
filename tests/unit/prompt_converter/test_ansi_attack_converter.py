@@ -17,7 +17,6 @@ from pyrit.prompt_converter.ansi_escape.ansi_payloads import (
 )
 
 
-@pytest.mark.asyncio
 async def test_convert_async_default_settings():
     converter = AnsiAttackConverter()
     prompt = "User wants to do something."
@@ -28,7 +27,6 @@ async def test_convert_async_default_settings():
     assert "User wants to do something." in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_convert_async_no_user_prompt():
     converter = AnsiAttackConverter(incorporate_user_prompt=True)
     # If no user prompt is given (empty string), just ensure we get a scenario
@@ -37,7 +35,6 @@ async def test_convert_async_no_user_prompt():
     assert result.output_text != ""
 
 
-@pytest.mark.asyncio
 async def test_convert_async_incorporate_user_prompt_false():
     converter = AnsiAttackConverter(incorporate_user_prompt=False)
     prompt = "User prompt that should not appear."
@@ -47,7 +44,6 @@ async def test_convert_async_incorporate_user_prompt_false():
     assert "User prompt that should not appear." not in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_convert_async_unescape_scenario():
     # Force scenario to choose the unescape scenario by mocking random.choice
     with patch("random.choice") as mock_choice:
@@ -119,7 +115,6 @@ async def test_convert_async_unescape_scenario():
         assert "Test prompt" in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_convert_async_all_features_off():
     converter = AnsiAttackConverter(
         include_raw=False,
@@ -136,7 +131,6 @@ async def test_convert_async_all_features_off():
     assert "render green terminal text" in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_convert_async_invalid_input_type():
     converter = AnsiAttackConverter()
     with pytest.raises(ValueError) as excinfo:
@@ -144,7 +138,6 @@ async def test_convert_async_invalid_input_type():
     assert "Input type not supported" in str(excinfo.value)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_no_scenarios():
     # Test a scenario where no variants are available:
     # Actually, if we set all includes to False, we get the fallback scenario.
@@ -163,7 +156,6 @@ async def test_convert_async_no_scenarios():
     assert "render green terminal text" in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_convert_async_only_tasks():
     converter = AnsiAttackConverter(
         include_raw=False,

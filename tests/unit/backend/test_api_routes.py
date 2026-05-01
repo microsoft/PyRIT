@@ -1312,7 +1312,6 @@ class TestLabelsRoutes:
             assert set(data["labels"]["operator"]) == {"alice", "bob"}
             assert set(data["labels"]["operation"]) == {"hunt", "scan"}
 
-    @pytest.mark.asyncio
     async def test_get_label_options_unsupported_source_returns_empty_labels(self) -> None:
         """Test that get_label_options returns empty labels for unsupported source types."""
         with patch("pyrit.backend.routes.labels.CentralMemory"):

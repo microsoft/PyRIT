@@ -552,7 +552,6 @@ class TestTreeOfAttacksInitialization:
         # TAPAttackScoringConfig exposes threshold property
         assert result.threshold == 0.75
 
-    @pytest.mark.asyncio
     async def test_tree_depth_validation_with_prepended_conversation(self, attack_builder, helpers):
         """Test that prepended conversation turns are validated against tree_depth."""
         attack = attack_builder.with_default_mocks().with_tree_params(tree_depth=1).build()
@@ -644,7 +643,6 @@ class TestPruningLogic:
         assert len(completed) == 3
         assert all(not node.off_topic for node in completed)
 
-    @pytest.mark.asyncio
     async def test_send_prompts_adds_off_topic_and_incomplete_nodes_to_related_conversations(
         self, attack_builder, node_factory, helpers
     ):
@@ -1208,7 +1206,6 @@ class TestBranchingLogic:
 class TestExecutionPhase:
     """Tests for the main execution phase of the attack."""
 
-    @pytest.mark.asyncio
     async def test_perform_attack_single_iteration_success(self, attack_builder, node_factory, helpers):
         """Test successful execution of single iteration."""
         attack = (
@@ -1235,7 +1232,6 @@ class TestExecutionPhase:
         assert result.conversation_id == "success_conv"
         assert result.max_depth_reached == 1
 
-    @pytest.mark.asyncio
     async def test_perform_attack_early_termination_on_success(self, attack_builder, node_factory, helpers):
         """Test early termination when objective is achieved."""
         attack = (
@@ -1264,7 +1260,6 @@ class TestExecutionPhase:
         assert result.max_depth_reached == 1
         assert result.conversation_id == "success_conv"
 
-    @pytest.mark.asyncio
     async def test_perform_attack_batch_processing(self, attack_builder, node_factory, helpers):
         """Test batch processing of nodes."""
         attack = (
@@ -1287,7 +1282,6 @@ class TestExecutionPhase:
         for node in nodes:
             node.send_prompt_async.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_perform_async_sets_atomic_attack_identifier(self, attack_builder, node_factory, helpers):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
         attack = (
@@ -1420,7 +1414,6 @@ class TestHelperMethods:
 class TestEndToEndExecution:
     """Tests for end-to-end execution using execute_async."""
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_message_uses_it_for_root_node(self, attack_builder, helpers):
         """Test that providing a message parameter uses it for the root node prompt."""
         attack = (
@@ -1469,7 +1462,6 @@ class TestEndToEndExecution:
         assert context.next_message == custom_message
         assert isinstance(result, TAPAttackResult)
 
-    @pytest.mark.asyncio
     async def test_execute_async_success_flow(self, attack_builder, helpers):
         """Test complete successful attack flow through execute_async."""
         attack = (
@@ -1577,7 +1569,6 @@ class TestTreeOfAttacksNode:
         assert child_node.parent_id == parent_node.node_id
         assert child_node.completed is False
 
-    @pytest.mark.asyncio
     async def test_node_send_prompt_json_error_handling(self, node_components):
         """Test handling of JSON parsing errors in send_prompt_async."""
         prompt_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1600,7 +1591,6 @@ class TestTreeOfAttacksNode:
         assert node.error_message is not None
         assert "Error sending prompt with conversation ID" in node.error_message
 
-    @pytest.mark.asyncio
     async def test_node_send_prompt_unexpected_error_handling(self, node_components):
         """Test handling of unexpected errors in send_prompt_async."""
         node = _TreeOfAttacksNode(**node_components)
@@ -1616,7 +1606,6 @@ class TestTreeOfAttacksNode:
         assert node.error_message is not None
         assert "Execution error" in node.error_message
 
-    @pytest.mark.asyncio
     async def test_node_off_topic_detection(self, node_components):
         """Test off-topic detection in nodes after retry exhaustion.
 
@@ -1662,7 +1651,6 @@ class TestTreeOfAttacksNode:
         # Verify the on-topic scorer was called multiple times (initial + retries + final check)
         assert on_topic_scorer.score_text_async.call_count >= 2
 
-    @pytest.mark.asyncio
     async def test_node_auxiliary_scoring(self, node_components):
         """Test auxiliary scoring functionality."""
         # Add auxiliary scorers with specific class identifiers
@@ -1816,7 +1804,6 @@ class TestTreeOfAttacksNode:
 class TestTreeOfAttacksErrorHandling:
     """Tests for error handling in TreeOfAttacksWithPruningAttack."""
 
-    @pytest.mark.asyncio
     async def test_attack_handles_all_nodes_failing(self, attack_builder, helpers, node_factory):
         """Test attack behavior when all nodes fail."""
         attack = (
@@ -1853,7 +1840,6 @@ class TestTreeOfAttacksErrorHandling:
         # The actual message is about not achieving threshold score
         assert "did not achieve threshold score" in result.outcome_reason.lower()
 
-    @pytest.mark.asyncio
     async def test_attack_continues_after_node_errors(self, attack_builder, node_factory, helpers):
         """Test that attack continues when some nodes have errors."""
         attack = (

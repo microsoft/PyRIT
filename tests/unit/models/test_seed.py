@@ -344,7 +344,6 @@ def test_prompt_dataset_from_yaml_defaults():
     assert "PyRIT Team" in prompts.seeds[2].groups
 
 
-@pytest.mark.asyncio
 async def test_group_seed_groups_from_yaml(sqlite_instance):
     prompts = SeedDataset.from_yaml_file(
         pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "examples" / "illegal-multimodal-dataset.prompt"
@@ -358,7 +357,6 @@ async def test_group_seed_groups_from_yaml(sqlite_instance):
     assert len(groups) == 5
 
 
-@pytest.mark.asyncio
 async def test_group_seed_prompt_alias_sets_group_id(sqlite_instance):
     prompts = SeedDataset.from_yaml_file(
         pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "examples" / "illegal-multimodal-dataset.prompt"
@@ -558,7 +556,6 @@ def test_seed_group_harm_categories_mixed_some_empty():
     assert set(group.harm_categories) == {"violence", "illegal"}
 
 
-@pytest.mark.asyncio
 async def test_hashes_generated():
     entry = SeedPrompt(
         value="Hello1",
@@ -568,7 +565,6 @@ async def test_hashes_generated():
     assert entry.value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
 
 
-@pytest.mark.asyncio
 async def test_hashes_generated_files():
     filename = ""
     with tempfile.NamedTemporaryFile(delete=False) as f:
@@ -586,7 +582,6 @@ async def test_hashes_generated_files():
     os.remove(filename)
 
 
-@pytest.mark.asyncio
 async def test_memory_encoding_metadata_image(sqlite_instance):
     mock_image = Image.new("RGB", (400, 300), (255, 255, 255))
     mock_image.save("test.png")
@@ -601,7 +596,6 @@ async def test_memory_encoding_metadata_image(sqlite_instance):
     os.remove("test.png")
 
 
-@pytest.mark.asyncio
 @patch("pyrit.models.seeds.seed_prompt.TinyTag")
 async def test_memory_encoding_metadata_audio(mock_tinytag, sqlite_instance):
     # Simulate WAV data

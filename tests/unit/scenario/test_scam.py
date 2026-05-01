@@ -173,7 +173,6 @@ class TestScamInitialization:
             assert scenario._adversarial_chat == adversarial_chat
             assert scenario._adversarial_config.target == adversarial_chat
 
-    @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -190,7 +189,6 @@ class TestScamInitialization:
 class TestScamAttackGeneration:
     """Tests for Scam attack generation."""
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_all(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -204,7 +202,6 @@ class TestScamAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_singleturn_async(
         self,
         *,
@@ -228,7 +225,6 @@ class TestScamAttackGeneration:
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_multiturn_async(
         self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
     ):
@@ -247,7 +243,6 @@ class TestScamAttackGeneration:
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_runs_include_objectives_async(
         self,
         *,
@@ -269,7 +264,6 @@ class TestScamAttackGeneration:
             for index, objective in enumerate(run.objectives):
                 assert mock_memory_seeds[index].value in objective
 
-    @pytest.mark.asyncio
     async def test_get_atomic_attacks_async_returns_attacks(
         self,
         *,
@@ -292,7 +286,6 @@ class TestScamAttackGeneration:
 class TestScamLifecycle:
     """Tests for Scam lifecycle behavior."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_max_concurrency(
         self,
         *,
@@ -309,7 +302,6 @@ class TestScamLifecycle:
             )
             assert scenario._max_concurrency == 20
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_memory_labels(
         self,
         *,
@@ -347,7 +339,6 @@ class TestScamProperties:
 
         assert scenario.VERSION == 1
 
-    @pytest.mark.asyncio
     async def test_no_target_duplication_async(
         self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[SeedGroup], mock_dataset_config
     ) -> None:

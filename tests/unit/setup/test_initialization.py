@@ -114,7 +114,6 @@ class TestInitializePyrit:
         """Clear default values before each test."""
         reset_default_values()
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     @mock.patch("pyrit.setup.initialization._load_environment_files")
     async def test_initialize_basic(self, mock_load_env, mock_set_memory):
@@ -124,7 +123,6 @@ class TestInitializePyrit:
         mock_load_env.assert_called_once()
         mock_set_memory.assert_called_once()
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     @mock.patch("pyrit.setup.initialization._load_environment_files")
     async def test_initialize_with_script(self, mock_load_env, mock_set_memory):
@@ -156,7 +154,6 @@ class ScriptInit(PyRITInitializer):
         finally:
             os.unlink(script_path)
 
-    @pytest.mark.asyncio
     async def test_invalid_memory_type_raises_error(self):
         """Test that invalid memory type raises ValueError."""
         with pytest.raises(ValueError, match="is not a supported type"):
@@ -166,7 +163,6 @@ class ScriptInit(PyRITInitializer):
 class TestLoadEnvironmentFiles:
     """Tests for _load_environment_files function and env_files parameter in initialize_pyrit_async."""
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
     async def test_loads_default_env_files_when_none_provided(self, mock_config_path, mock_load_dotenv):
@@ -193,7 +189,6 @@ class TestLoadEnvironmentFiles:
             assert env_file in calls
             assert env_local_file in calls
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
     async def test_only_loads_existing_default_files(self, mock_config_path, mock_load_dotenv):
@@ -213,7 +208,6 @@ class TestLoadEnvironmentFiles:
             assert mock_load_dotenv.call_count == 1
             assert mock_load_dotenv.call_args[0][0] == env_file
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     async def test_loads_custom_env_files_in_order(self, mock_load_dotenv):
         """Test that custom env_files are loaded in the order provided."""
@@ -236,7 +230,6 @@ class TestLoadEnvironmentFiles:
             call_args = [call[0][0] for call in mock_load_dotenv.call_args_list]
             assert call_args == [env1, env2, env3]
 
-    @pytest.mark.asyncio
     async def test_raises_error_for_nonexistent_env_file(self):
         """Test that ValueError is raised for non-existent env file."""
         nonexistent = pathlib.Path("/nonexistent/path/.env")
@@ -244,7 +237,6 @@ class TestLoadEnvironmentFiles:
         with pytest.raises(ValueError, match="Environment file not found"):
             _load_environment_files(env_files=[nonexistent])
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_pyrit_with_custom_env_files(self, mock_set_memory):
         """Test initialize_pyrit_async with custom env_files."""
@@ -258,7 +250,6 @@ class TestLoadEnvironmentFiles:
 
             mock_set_memory.assert_called_once()
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_pyrit_raises_for_nonexistent_env_file(self, mock_set_memory):
         """Test that initialize_pyrit_async raises ValueError for non-existent env file."""
@@ -267,7 +258,6 @@ class TestLoadEnvironmentFiles:
         with pytest.raises(ValueError, match="Environment file not found"):
             await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_files=[nonexistent])
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.HOME_PATH")
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")

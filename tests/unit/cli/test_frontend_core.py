@@ -860,7 +860,6 @@ class TestParseListTargetsArguments:
             frontend_core.parse_list_targets_arguments(args_string="--unknown-flag")
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsync:
     """Tests for run_scenario_async function."""
@@ -1253,7 +1252,6 @@ class TestWithOverrides:
         assert result["target"] is None
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsyncTarget:
     """Tests for target resolution in run_scenario_async."""
@@ -1390,7 +1388,6 @@ class TestRunScenarioAsyncTarget:
         assert "objective_target" not in call_kwargs
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestPrintTargetsList:
     """Tests for print_targets_list_async function."""

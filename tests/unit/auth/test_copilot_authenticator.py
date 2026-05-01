@@ -443,7 +443,6 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
 class TestCopilotAuthenticatorTokenRetrieval:
     """Test token retrieval via get_token method."""
 
-    @pytest.mark.asyncio
     async def test_get_token_uses_cached_token(self, mock_env_vars, mock_persistent_cache):
         """Test that get_token uses cached token when available."""
 
@@ -463,7 +462,6 @@ class TestCopilotAuthenticatorTokenRetrieval:
             token = await authenticator.get_token_async()
             assert token == "cached.valid.token"
 
-    @pytest.mark.asyncio
     async def test_get_token_fetches_new_when_no_cache(self, mock_env_vars, mock_persistent_cache):
         """Test that get_token fetches new token when cache is empty."""
 
@@ -484,7 +482,6 @@ class TestCopilotAuthenticatorTokenRetrieval:
             mock_fetch.assert_called_once()
             assert token == "new.fetched.token"
 
-    @pytest.mark.asyncio
     async def test_get_token_serializes_concurrent_requests(self, mock_env_vars, mock_persistent_cache):
         """Test that concurrent get_token calls are serialized via lock."""
 
@@ -539,7 +536,6 @@ class TestCopilotAuthenticatorTokenRetrieval:
 class TestCopilotAuthenticatorTokenRefresh:
     """Test token refresh functionality."""
 
-    @pytest.mark.asyncio
     async def test_refresh_token_clears_cache(self, mock_env_vars, mock_persistent_cache):
         """Test that refresh_token clears existing cache."""
 
@@ -558,7 +554,6 @@ class TestCopilotAuthenticatorTokenRefresh:
             await authenticator.refresh_token_async()
             assert any(json.dumps({}) in str(call) for call in mock_persistent_cache.save.call_args_list)
 
-    @pytest.mark.asyncio
     async def test_refresh_token_fetches_new_token(self, mock_env_vars, mock_persistent_cache):
         """Test that refresh_token fetches new token."""
 
@@ -578,7 +573,6 @@ class TestCopilotAuthenticatorTokenRefresh:
             mock_fetch.assert_called_once()
             assert token == "refreshed.token"
 
-    @pytest.mark.asyncio
     async def test_refresh_token_raises_on_failure(self, mock_env_vars, mock_persistent_cache):
         """Test that refresh_token raises exception when fetch fails."""
 
@@ -597,7 +591,6 @@ class TestCopilotAuthenticatorTokenRefresh:
             with pytest.raises(RuntimeError, match="Failed to refresh access token"):
                 await authenticator.refresh_token_async()
 
-    @pytest.mark.asyncio
     async def test_refresh_token_clears_current_claims(self, mock_env_vars, mock_persistent_cache):
         """Test that refresh_token clears current claims."""
 
@@ -621,7 +614,6 @@ class TestCopilotAuthenticatorTokenRefresh:
 class TestCopilotAuthenticatorGetClaims:
     """Test JWT claims retrieval."""
 
-    @pytest.mark.asyncio
     async def test_get_claims_returns_current_claims(self, mock_env_vars, mock_persistent_cache):
         """Test that get_claims returns current claims."""
 
@@ -635,7 +627,6 @@ class TestCopilotAuthenticatorGetClaims:
             claims = await authenticator.get_claims()
             assert claims == test_claims
 
-    @pytest.mark.asyncio
     async def test_get_claims_returns_empty_dict_when_no_claims(self, mock_env_vars, mock_persistent_cache):
         """Test that get_claims returns empty dict when no claims set."""
 
@@ -686,7 +677,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
         else:
             sys.modules.pop("playwright.async_api", None)
 
-    @pytest.mark.asyncio
     async def test_fetch_token_playwright_not_installed(self, mock_env_vars, mock_persistent_cache):
         """Test that RuntimeError is raised when Playwright is not installed."""
 
@@ -701,7 +691,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             with pytest.raises(RuntimeError, match="Playwright is not installed"):
                 await authenticator._fetch_access_token_with_playwright()
 
-    @pytest.mark.asyncio
     async def test_fetch_token_with_playwright_success(self, mock_env_vars, mock_persistent_cache):
         """Test successful token fetch with Playwright."""
 
@@ -768,7 +757,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             mock_browser.close.assert_called_once()
             mock_context.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_fetch_token_handles_browser_launch_failure(self, mock_env_vars, mock_persistent_cache):
         """Test handling of browser launch failure."""
 
@@ -790,7 +778,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             token = await authenticator._fetch_access_token_with_playwright()
             assert token is None
 
-    @pytest.mark.asyncio
     async def test_fetch_token_sanitizes_password_in_errors(self, mock_env_vars, mock_persistent_cache):
         """Test that password is sanitized in error messages."""
 
@@ -818,7 +805,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             assert any("******" in msg for msg in logged_messages)
             assert not any("test_password_123" in msg for msg in logged_messages)
 
-    @pytest.mark.asyncio
     async def test_fetch_token_timeout_waiting_for_token(self, mock_env_vars, mock_persistent_cache):
         """Test timeout when waiting for token capture."""
 
@@ -856,7 +842,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             assert token is None
             mock_browser.close.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_fetch_token_closes_browser_on_exception(self, mock_env_vars, mock_persistent_cache):
         """Test that browser is closed even when exception occurs."""
 
@@ -895,7 +880,6 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
 class TestAuthenticateWithPlaywrightGuards:
     """Test null guards in _run_playwright_browser_automation."""
 
-    @pytest.mark.asyncio
     async def test_authenticate_returns_none_when_username_is_none(self, mock_persistent_cache):
         """Test that _run_playwright_browser_automation returns None when username is None."""
         with (
@@ -939,7 +923,6 @@ class TestAuthenticateWithPlaywrightGuards:
                 result = await authenticator._run_playwright_browser_automation()
                 assert result is None
 
-    @pytest.mark.asyncio
     async def test_authenticate_returns_none_when_password_is_none(self, mock_persistent_cache):
         """Test that _run_playwright_browser_automation returns None when password is None."""
         with (

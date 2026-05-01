@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import AsciiSmugglerConverter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_ascii_smuggler_encode_basic():
     converter = AsciiSmugglerConverter(action="encode")
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -16,7 +15,6 @@ async def test_ascii_smuggler_encode_basic():
         assert ord(char) > 0xE0000
 
 
-@pytest.mark.asyncio
 async def test_ascii_smuggler_decode_roundtrip():
     encoder = AsciiSmugglerConverter(action="encode")
     encoded = await encoder.convert_async(prompt="hello", input_type="text")
@@ -26,7 +24,6 @@ async def test_ascii_smuggler_decode_roundtrip():
     assert decoded.output_text == "hello"
 
 
-@pytest.mark.asyncio
 async def test_ascii_smuggler_with_unicode_tags():
     converter = AsciiSmugglerConverter(action="encode", unicode_tags=True)
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -34,7 +31,6 @@ async def test_ascii_smuggler_with_unicode_tags():
     assert result.output_text.endswith(chr(0xE007F))
 
 
-@pytest.mark.asyncio
 async def test_ascii_smuggler_empty():
     converter = AsciiSmugglerConverter(action="encode")
     result = await converter.convert_async(prompt="", input_type="text")
@@ -46,7 +42,6 @@ def test_ascii_smuggler_invalid_action():
         AsciiSmugglerConverter(action="invalid")
 
 
-@pytest.mark.asyncio
 async def test_ascii_smuggler_input_not_supported():
     converter = AsciiSmugglerConverter(action="encode")
     with pytest.raises(ValueError, match="Input type not supported"):

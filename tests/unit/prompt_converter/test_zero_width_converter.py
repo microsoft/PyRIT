@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, ZeroWidthConverter
 
 
-@pytest.mark.asyncio
 async def test_convert_async_injects_zero_width_spaces():
     converter = ZeroWidthConverter()
     text = "Hello"
@@ -16,7 +15,6 @@ async def test_convert_async_injects_zero_width_spaces():
     assert result.output_text == expected_output  # Check if output matches expected result with zero-width spaces
 
 
-@pytest.mark.asyncio
 async def test_convert_async_long_text():
     converter = ZeroWidthConverter()
     text = "This is a longer text used to test the ZeroWidthConverter."
@@ -30,7 +28,6 @@ async def test_convert_async_long_text():
     assert len(result.output_text) == len(text) + len(text) - 1
 
 
-@pytest.mark.asyncio
 async def test_convert_async_handles_empty_string():
     converter = ZeroWidthConverter()
     text = ""
@@ -38,7 +35,6 @@ async def test_convert_async_handles_empty_string():
     assert result.output_text == ""  # Output should be empty if input is empty
 
 
-@pytest.mark.asyncio
 async def test_convert_async_non_text_input_type():
     converter = ZeroWidthConverter()
     with pytest.raises(ValueError) as excinfo:
@@ -56,7 +52,6 @@ def test_input_supported_non_text():
     assert converter.input_supported("non-text") is False  # Should not support non-'text' input types
 
 
-@pytest.mark.asyncio
 async def test_convert_async_single_character():
     converter = ZeroWidthConverter()
     text = "A"  # Single character input
@@ -65,7 +60,6 @@ async def test_convert_async_single_character():
     assert result.output_text == expected_output
 
 
-@pytest.mark.asyncio
 async def test_convert_async_multiple_whitespace():
     converter = ZeroWidthConverter()
     text = "   "  # Input with multiple whitespace characters

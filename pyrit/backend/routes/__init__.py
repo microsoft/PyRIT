@@ -5,7 +5,7 @@
 API route handlers.
 """
 
-from pyrit.backend.routes import attacks, converters, health, labels, media, targets, version
+from pyrit.backend.routes import attacks, converters, health, labels, media, scenarios, targets, version
 
 __all__ = [
     "attacks",
@@ -13,6 +13,7 @@ __all__ = [
     "health",
     "labels",
     "media",
+    "scenarios",
     "targets",
     "version",
 ]

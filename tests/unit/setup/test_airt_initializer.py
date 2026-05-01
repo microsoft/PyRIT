@@ -93,7 +93,6 @@ class TestAIRTInitializerInitialize:
             if hasattr(sys.modules["__main__"], attr):
                 delattr(sys.modules["__main__"], attr)
 
-    @pytest.mark.asyncio
     async def test_initialize_runs_without_error(self, patch_pyrit_conf):
         """Test that initialize runs without errors when no API keys are set (Entra auth fallback)."""
         init = AIRTInitializer()
@@ -103,7 +102,6 @@ class TestAIRTInitializerInitialize:
         ):
             await init.initialize_async()
 
-    @pytest.mark.asyncio
     async def test_initialize_uses_api_keys_when_set(self, patch_pyrit_conf):
         """Test that initialize uses API keys from env vars when they are set."""
         os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY"] = "converter-key"
@@ -128,7 +126,6 @@ class TestAIRTInitializerInitialize:
                 if var in os.environ:
                     del os.environ[var]
 
-    @pytest.mark.asyncio
     async def test_get_info_after_initialize_has_populated_data(self, patch_pyrit_conf):
         """Test that get_info_async() returns populated data after initialization."""
         init = AIRTInitializer()
@@ -309,7 +306,6 @@ class TestAIRTInitializerGetInfo:
         assert len(info["description"]) > 0
 
 
-@pytest.mark.asyncio
 async def test_initialize_async_raises_when_converter_endpoint_is_none():
     """Test that initialize_async raises ValueError when converter_endpoint env var is None."""
     init = AIRTInitializer()
@@ -331,7 +327,6 @@ async def test_initialize_async_raises_when_converter_endpoint_is_none():
             await init.initialize_async()
 
 
-@pytest.mark.asyncio
 async def test_initialize_async_raises_when_scorer_endpoint_is_none():
     """Test that initialize_async raises ValueError when scorer_endpoint env var is None."""
     init = AIRTInitializer()

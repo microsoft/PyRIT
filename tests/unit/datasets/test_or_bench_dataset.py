@@ -31,7 +31,6 @@ def mock_or_bench_data():
 class TestORBench80KDataset:
     """Test the OR-Bench 80K dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_or_bench_data):
         """Test fetching OR-Bench 80K dataset."""
         loader = _ORBench80KDataset()
@@ -56,7 +55,6 @@ class TestORBench80KDataset:
 class TestORBenchHardDataset:
     """Test the OR-Bench Hard-1K dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_or_bench_data):
         """Test fetching OR-Bench Hard dataset."""
         loader = _ORBenchHardDataset()
@@ -79,7 +77,6 @@ class TestORBenchHardDataset:
 class TestORBenchToxicDataset:
     """Test the OR-Bench Toxic dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_or_bench_data):
         """Test fetching OR-Bench Toxic dataset."""
         loader = _ORBenchToxicDataset()

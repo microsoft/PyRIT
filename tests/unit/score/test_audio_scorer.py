@@ -117,7 +117,6 @@ class TestAudioTrueFalseScorer:
 
         assert isinstance(identifier, ComponentIdentifier)
 
-    @pytest.mark.asyncio
     async def test_score_piece_with_transcript(self, audio_message_piece):
         """Test scoring audio with a valid transcript"""
         text_scorer = MockTextTrueFalseScorer(return_value=True)
@@ -136,7 +135,6 @@ class TestAudioTrueFalseScorer:
             assert scores[0].score_value == "true"
             assert "Audio transcript scored:" in scores[0].score_rationale
 
-    @pytest.mark.asyncio
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""
         text_scorer = MockTextTrueFalseScorer(return_value=True)
@@ -153,7 +151,6 @@ class TestAudioTrueFalseScorer:
             # Empty transcript returns empty list
             assert len(scores) == 0
 
-    @pytest.mark.asyncio
     async def test_score_piece_false_result(self, audio_message_piece):
         """Test scoring audio that returns false"""
         text_scorer = MockTextTrueFalseScorer(return_value=False)
@@ -192,7 +189,6 @@ class TestAudioFloatScaleScorer:
 
         assert isinstance(identifier, ComponentIdentifier)
 
-    @pytest.mark.asyncio
     async def test_score_piece_with_transcript(self, audio_message_piece):
         """Test scoring audio with a valid transcript"""
         text_scorer = MockTextFloatScaleScorer(return_value=0.75)
@@ -211,7 +207,6 @@ class TestAudioFloatScaleScorer:
             assert float(scores[0].score_value) == 0.75
             assert "Audio transcript scored:" in scores[0].score_rationale
 
-    @pytest.mark.asyncio
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""
         text_scorer = MockTextFloatScaleScorer(return_value=0.8)
@@ -241,7 +236,6 @@ class TestAudioTranscriptHelper:
         with pytest.warns(DeprecationWarning, match="use_entra_auth.*deprecated"):
             AudioTranscriptHelper(text_capable_scorer=text_scorer, use_entra_auth=True)
 
-    @pytest.mark.asyncio
     async def test_transcribe_audio_async_creates_converter(self, audio_message_piece):
         """Test that _transcribe_audio_async creates AzureSpeechAudioToTextConverter and calls convert_async."""
         from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
