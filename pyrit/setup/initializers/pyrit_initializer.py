@@ -79,9 +79,9 @@ class PyRITInitializer(ABC):
         Returns:
             str: A description of the configuration changes this initializer makes.
         """
-        doc = self.__class__.__doc__ or ""
-        cleaned = " ".join(doc.split())
-        return cleaned if cleaned else type(self).__name__
+        from pyrit.registry.base import ClassRegistryEntry
+
+        return ClassRegistryEntry.description_from_docstring(self.__class__, fallback=type(self).__name__)
 
     @property
     def required_env_vars(self) -> list[str]:

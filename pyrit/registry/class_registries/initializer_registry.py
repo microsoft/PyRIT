@@ -187,8 +187,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         initializer_class = entry.registered_class
 
-        doc = initializer_class.__doc__ or ""
-        description = " ".join(doc.split()) if doc else "No description available"
+        description = entry.get_description(fallback="No description available")
 
         try:
             instance = initializer_class()
