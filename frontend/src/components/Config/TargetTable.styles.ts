@@ -13,8 +13,11 @@ export const useTargetTableStyles = makeStyles({
     backgroundColor: tokens.colorBrandBackground2,
   },
   endpointCell: {
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    overflowWrap: 'break-word',
+    wordBreak: 'break-all',
+  },
+  paramsCell: {
+    whiteSpace: 'pre-line',
+    wordBreak: 'break-word',
   },
 })

@@ -9,6 +9,9 @@ import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
+import ConverterPanel from './ConverterPanel'
+import type { PieceConversion } from './converterTypes'
+import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
@@ -65,8 +68,18 @@ export default function ChatWindow({
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  const [chatInputText, setChatInputText] = useState('')
+  const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
+  const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
+  const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
+
+  const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
+    setAttachmentTypes(types)
+    setAttachmentData(data)
+  }, [])
 
   // Auto-open conversation sidebar when loading a historical attack with multiple conversations
   useEffect(() => {
@@ -74,6 +87,10 @@ export default function ChatWindow({
       setIsPanelOpen(true)
     }
   }, [attackResultId, relatedConversationCount])
+  // Set by panel click to bypass the in-flight guard on the next useEffect cycle.
+  // This lets users switch to a sending conversation while still protecting
+  // optimistic messages when handleSend internally updates activeConversationId.
+  const forceLoadRef = useRef(false)
   // Always-current ref of the conversation being viewed so async callbacks can
   // check whether the user navigated away while a request was in-flight.
   const viewedConvRef = useRef(activeConversationId ?? conversationId)
@@ -126,9 +143,12 @@ export default function ChatWindow({
   // Reload messages when activeConversationId changes
   useEffect(() => {
     if (!attackResultId || !activeConversationId) { return }
-    // Skip loading if a send is already in-flight for this conversation —
-    // the send handler will update messages when it completes.
-    if (sendingConvIdsRef.current.has(activeConversationId)) { return }
+    // Allow user-initiated switches (forceLoadRef), but skip re-loading when
+    // handleSend internally updated activeConversationId during an in-flight
+    // send — the optimistic messages are already displayed.
+    const force = forceLoadRef.current
+    forceLoadRef.current = false
+    if (!force && sendingConvIdsRef.current.has(activeConversationId)) { return }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])
 
@@ -143,26 +163,36 @@ export default function ChatWindow({
   // Handle conversation selection from the panel
   // For a different ID the useEffect handles loading; for same ID force a refresh
   const handlePanelSelectConversation = useCallback((convId: string) => {
+    forceLoadRef.current = true
     onSelectConversation(convId)
     if (convId === activeConversationId && attackResultId) {
       loadConversation(attackResultId, convId)
     }
   }, [attackResultId, activeConversationId, onSelectConversation, loadConversation])
 
-  const handleSend = async (originalValue: string, _convertedValue: string | undefined, attachments: MessageAttachment[]) => {
+  const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
     if (!activeTarget) { return }
+
+    // Capture all piece conversions upfront before any async work or state clears
+    const conversions = { ...pieceConversions }
+    const textConversion = conversions['text']
 
     // Track which conversation this send belongs to (may be updated after attack creation)
     let sendConvId = activeConversationId || '__pending__'
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
+    // When a text converter is active, show a preview locally
+    const hasTextConversion = textConversion != null && convertedValue != null
+    const displayContent = hasTextConversion ? convertedValue : originalValue
+
     // Add user message with attachments for display
     const userMessage: Message = {
       role: 'user',
-      content: originalValue,
+      content: displayContent,
       timestamp: new Date().toISOString(),
       attachments: attachments.length > 0 ? attachments : undefined,
+      originalContent: hasTextConversion ? originalValue : undefined,
     }
     setMessages(prev => [...prev, userMessage])
 
@@ -182,8 +212,22 @@ export default function ChatWindow({
     setMessages(prev => [...prev, loadingMessage])
 
     try {
-      // Build message pieces from text + attachments
+      // Build message pieces from text + attachments — always use original text
       const pieces = await buildMessagePieces(originalValue, attachments)
+
+      // Send converter selections to the backend and let it apply conversions per piece.
+      // Avoid setting converted_value client-side because one preview value does not
+      // necessarily correspond to every piece of the same data type, and any locally
+      // preconverted piece may cause the backend to skip converter_ids entirely.
+      const allConverterIds: string[] = []
+      for (const [pieceType, conv] of Object.entries(conversions)) {
+        const dataType = PIECE_TYPE_TO_DATA_TYPE[pieceType]
+        if (!dataType) continue
+        const hasMatchingPiece = pieces.some(piece => piece.data_type === dataType)
+        if (hasMatchingPiece) {
+          allConverterIds.push(conv.converterInstanceId)
+        }
+      }
 
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
@@ -225,6 +269,7 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
+      const converterIds = allConverterIds.length > 0 ? allConverterIds : undefined
       const response = await attacksApi.addMessage(currentAttackResultId!, {
         role: 'user',
         pieces,
@@ -232,7 +277,11 @@ export default function ChatWindow({
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId!,
         labels: labels ?? undefined,
+        converter_ids: converterIds,
       })
+
+      // Clear converter state after successful send
+      setPieceConversions({})
 
       // Only update displayed messages if the user is still viewing this conversation.
       // If they switched away the response is persisted server-side and will appear
@@ -391,6 +440,7 @@ export default function ChatWindow({
 
     try {
       await attacksApi.changeMainConversation(attackResultId, convId)
+      setPanelRefreshKey(k => k + 1)
     } catch (err) {
       console.error('Failed to change main conversation:', err)
     }
@@ -449,6 +499,17 @@ export default function ChatWindow({
 
   return (
     <div className={styles.root}>
+      {isConverterPanelOpen && (
+        <ConverterPanel
+          onClose={() => setIsConverterPanelOpen(false)}
+          previewText={chatInputText}
+          attachmentData={attachmentData}
+          activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
+          onUseConvertedValue={(conversion) => {
+            setPieceConversions((prev) => ({ ...prev, [conversion.pieceType]: conversion }))
+          }}
+        />
+      )}
       <div className={styles.chatArea}>
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
@@ -511,13 +572,33 @@ export default function ChatWindow({
           disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}
-          onNewConversation={attackResultId ? handleNewConversation : undefined}
+          onNewConversation={handleNewConversation}
           operatorLocked={isOperatorLocked}
           crossTargetLocked={isCrossTargetLocked}
-          onUseAsTemplate={(isOperatorLocked || isCrossTargetLocked) ? handleUseAsTemplate : undefined}
+          onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={!activeTarget ? () => onNavigate?.('config') : undefined}
+          onConfigureTarget={() => onNavigate?.('config')}
+          onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
+          isConverterPanelOpen={isConverterPanelOpen}
+          onInputChange={setChatInputText}
+          onAttachmentsChange={handleAttachmentsChange}
+          convertedValue={pieceConversions['text']?.convertedValue ?? null}
+          originalValue={pieceConversions['text']?.originalValue ?? null}
+          onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
+          onConvertedValueChange={(val) => setPieceConversions((prev) => {
+            const existing = prev['text']
+            if (!existing) return prev
+            return { ...prev, text: { ...existing, convertedValue: val } }
+          })}
+          mediaConversions={Object.entries(pieceConversions)
+            .filter(([k]) => k !== 'text')
+            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue }))}
+          onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {
+            const next = { ...prev }
+            delete next[pieceType]
+            return next
+          })}
         />
       </div>
       {isPanelOpen && (
@@ -528,7 +609,12 @@ export default function ChatWindow({
           onNewConversation={handleNewConversation}
           onChangeMainConversation={handleChangeMainConversation}
           onClose={() => setIsPanelOpen(false)}
-          locked={!activeTarget || isOperatorLocked || isCrossTargetLocked}
+          lockedReason={
+            !activeTarget ? 'Configure a target to enable this action.'
+            : isOperatorLocked ? 'Cannot modify — attack belongs to a different operator.'
+            : isCrossTargetLocked ? 'Cannot modify — attack was created with a different target.'
+            : undefined
+          }
           refreshKey={panelRefreshKey}
         />
       )}

@@ -62,9 +62,8 @@ def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats
             raise TypeError(f"Expected AttackResult, got {type(attack).__name__}: {attack!r}")
 
         outcome = attack.outcome
-        attack_type = (
-            attack.get_attack_strategy_identifier().class_name if attack.get_attack_strategy_identifier() else "unknown"
-        )
+        _strategy_id = attack.get_attack_strategy_identifier()
+        attack_type = _strategy_id.class_name if _strategy_id is not None else "unknown"
 
         if outcome == AttackOutcome.SUCCESS:
             overall_counts["successes"] += 1

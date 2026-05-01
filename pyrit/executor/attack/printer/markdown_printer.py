@@ -18,7 +18,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
     markdown formatting that should be properly rendered.
     """
 
-    def __init__(self, *, display_inline: bool = True):
+    def __init__(self, *, display_inline: bool = True) -> None:
         """
         Initialize the markdown printer.
 
@@ -46,7 +46,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
             try:
                 from IPython.display import Markdown, display
 
-                display(Markdown(full_markdown))  # type: ignore[no-untyped-call]
+                display(Markdown(full_markdown))
             except (ImportError, NameError):
                 # Fallback to print if IPython is not available
                 print(full_markdown)
@@ -487,9 +487,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinter):
         markdown_lines.append("|-------|-------|")
         markdown_lines.append(f"| **Objective** | {result.objective} |")
 
-        attack_type = (
-            result.get_attack_strategy_identifier().class_name if result.get_attack_strategy_identifier() else "Unknown"
-        )
+        _strategy_id = result.get_attack_strategy_identifier()
+        attack_type = _strategy_id.class_name if _strategy_id is not None else "Unknown"
 
         markdown_lines.append(f"| **Attack Type** | `{attack_type}` |")
         markdown_lines.append(f"| **Conversation ID** | `{result.conversation_id}` |")

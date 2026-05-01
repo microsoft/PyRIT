@@ -3,8 +3,6 @@
 import logging
 import pathlib
 from collections.abc import Sequence
-
-# Import PyRITInitializer for type checking (with TYPE_CHECKING to avoid circular imports)
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 import dotenv
@@ -157,7 +155,12 @@ def _load_initializers_from_scripts(
                 obj = getattr(module, name)
                 # Check if it's a class, is a subclass of PyRITInitializer,
                 # and is not the base class itself
-                if isinstance(obj, type) and issubclass(obj, PyRITInitializer) and obj is not PyRITInitializer:
+                if (
+                    isinstance(obj, type)
+                    and issubclass(obj, PyRITInitializer)
+                    and obj is not PyRITInitializer
+                    and obj.__module__ == module.__name__
+                ):
                     try:
                         # Instantiate the initializer class
                         initializer = obj()
@@ -271,17 +274,18 @@ async def initialize_pyrit_async(
 
     if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
-        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)
+        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == SQLITE:
         logger.info("Using persistent SQLite database.")
-        memory = SQLiteMemory(**memory_instance_kwargs)
+        memory = SQLiteMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == AZURE_SQL:
         logger.info("Using AzureSQL database.")
-        memory = AzureSQLMemory(**memory_instance_kwargs)
+        memory = AzureSQLMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     else:
         raise ValueError(
             f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
         )
+
     CentralMemory.set_memory_instance(memory)
 
     # Combine directly provided initializers with those loaded from scripts

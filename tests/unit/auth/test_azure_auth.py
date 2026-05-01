@@ -144,3 +144,29 @@ def test_get_speech_config_insufficient_info_raises_error() -> None:
     """Test get_speech_config raises ValueError with insufficient information."""
     with pytest.raises(ValueError, match="Insufficient information provided for Azure Speech service"):
         get_speech_config(resource_id=None, key=None, region="test_region")
+
+
+def test_get_access_token_from_interactive_login_returns_token():
+    from pyrit.auth.azure_auth import get_access_token_from_interactive_login
+
+    with (
+        patch("pyrit.auth.azure_auth.InteractiveBrowserCredential") as mock_cred_cls,
+        patch("pyrit.auth.azure_auth.get_bearer_token_provider") as mock_provider_fn,
+    ):
+        mock_provider_fn.return_value = MagicMock(return_value="test_token_123")
+        result = get_access_token_from_interactive_login(scope="https://cognitiveservices.azure.com/.default")
+
+    assert result == "test_token_123"
+    mock_cred_cls.assert_called_once()
+    mock_provider_fn.assert_called_once()
+
+
+def test_get_access_token_from_interactive_login_propagates_exception():
+    from pyrit.auth.azure_auth import get_access_token_from_interactive_login
+
+    with (
+        patch("pyrit.auth.azure_auth.InteractiveBrowserCredential"),
+        patch("pyrit.auth.azure_auth.get_bearer_token_provider", side_effect=ValueError("auth failed")),
+    ):
+        with pytest.raises(ValueError, match="auth failed"):
+            get_access_token_from_interactive_login(scope="https://test.scope")

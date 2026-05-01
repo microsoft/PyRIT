@@ -47,7 +47,6 @@ await initialize_pyrit_async(memory_db_type=AZURE_SQL)  # type: ignore
 memory = CentralMemory.get_memory_instance()
 memory.print_schema()  # type: ignore
 
-
 # %% [markdown]
 # ## Basic Azure SQL Memory Programming Usage
 #
@@ -77,7 +76,6 @@ message_list = [
 memory.add_message_to_memory(request=Message([message_list[0]]))
 memory.add_message_to_memory(request=Message([message_list[1]]))
 memory.add_message_to_memory(request=Message([message_list[2]]))
-
 
 entries = memory.get_conversation(conversation_id=conversation_id)
 

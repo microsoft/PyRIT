@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -20,7 +20,6 @@
 # Converters can transform prompts in various ways:
 # - **Text-to-Text**: Encoding, obfuscation, translation, and semantic transformations
 # - **Multimodal**: Converting between text, images, audio, video, and files
-# - **Interactive**: Human-in-the-loop review and modification
 #
 # ## Converter Modality Reference Table
 #
@@ -63,7 +62,6 @@ print(df)
 # - **[Video Converters](4_video_converters.ipynb)**: Image-to-Video
 # - **[File Converters](5_file_converters.ipynb)**: Text-to-File (PDF, URL)
 # - **[Selectively Converting](6_selectively_converting.ipynb)**: Advanced techniques for converting portions of prompts
-# - **[Human-in-the-Loop Converter](7_human_converter.ipynb)**: Interactive prompt review and modification
 
 # %% [markdown]
 # ## Simple Converter Example
@@ -72,7 +70,6 @@ print(df)
 # Converters can be used to perform these types of transformations. Here is a simple program that uses Rot13Converter converter, RandomCapitalLettersConverter, and AsciiArtConverter.
 
 # %%
-
 from pyrit.prompt_converter import (
     AsciiArtConverter,
     BinaryConverter,
@@ -82,7 +79,6 @@ from pyrit.prompt_converter import (
 )
 
 prompt = "tell me how to cut down a tree"
-
 
 print(await ROT13Converter().convert_tokens_async(prompt=prompt))  # type: ignore
 print(await RandomCapitalLettersConverter(percentage=25.0).convert_tokens_async(prompt=prompt))  # type: ignore
@@ -95,7 +91,6 @@ print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type:
 #
 # Although converters can be used on their own, they should be thought of as a piece in the pipeline. Typically any attack will have arguments so that prompts can be converted before being sent to the target. They can be stacked, use LLMs, and are a powerful tool.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # ### Stacking Converters with PromptSendingAttack
 #

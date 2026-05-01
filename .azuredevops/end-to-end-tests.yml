@@ -1,0 +1,21 @@
+# Runs end-to-end scenario tests using pyrit_scan CLI
+
+trigger: none  # Disable automatic CI triggers
+
+schedules:
+- cron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8) / Midnight PDT (UTC-7)
+  displayName: Nightly E2E Tests at 11 PM PST
+  branches:
+    include:
+    - main
+  always: true  # Run even if there are no code changes
+
+jobs:
+- template: test-job-template.yml
+  parameters:
+    jobName: EndToEndTests
+    jobDisplayName: "Run end-to-end scenario tests"
+    testAzureSubscription: 'integration-test-service-connection'
+    newDir: e2e_test_directory
+    testsFolder: end_to_end
+    makeTarget: end-to-end-test

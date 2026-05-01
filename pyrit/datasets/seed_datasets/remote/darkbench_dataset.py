@@ -29,7 +29,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         dataset_name: str = "apart/darkbench",
         config: str = "default",
         split: str = "train",
-    ):
+    ) -> None:
         """
         Initialize the DarkBench dataset loader.
 

@@ -14,7 +14,7 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -23,6 +23,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import DataTypeSerializer, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,20 @@ class WebSocketCopilotTarget(PromptTarget):
         The free version of Copilot is not compatible.
     """
 
-    SUPPORTED_DATA_TYPES = {"text", "image_path"}
     RESPONSE_TIMEOUT_SECONDS: int = 60
     CONNECTION_TIMEOUT_SECONDS: int = 30
-    _DEFAULT_CAPABILITIES: TargetCapabilities = TargetCapabilities(supports_multi_turn=True)
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                }
+            ),
+        )
+    )
 
     def __init__(
         self,
@@ -84,7 +95,8 @@ class WebSocketCopilotTarget(PromptTarget):
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
         authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
-        capabilities: Optional[TargetCapabilities] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -98,8 +110,10 @@ class WebSocketCopilotTarget(PromptTarget):
             authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
-            capabilities (TargetCapabilities, Optional): Override the default capabilities for
-                this target instance. If None, uses the class-level defaults. Defaults to None.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -122,7 +136,8 @@ class WebSocketCopilotTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             endpoint=self._websocket_base_url,
             model_name=model_name,
-            capabilities=capabilities,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -569,27 +584,24 @@ class WebSocketCopilotTarget(PromptTarget):
 
             return response
 
-    def _validate_request(self, *, message: Message) -> None:
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
         Validate that the message meets target requirements.
 
         Args:
-            message (Message): The message to validate.
+            normalized_conversation (list[Message]): The normalized conversation to validate.
 
         Raises:
             ValueError: If message contains unsupported data types or invalid image formats.
         """
+        super()._validate_request(normalized_conversation=normalized_conversation)
+        message = normalized_conversation[-1]
         for piece in message.message_pieces:
             piece_type = piece.converted_value_data_type
-            if piece_type not in self.SUPPORTED_DATA_TYPES:
-                supported_types = ", ".join(sorted(self.SUPPORTED_DATA_TYPES))
-                raise ValueError(
-                    f"This target supports only the following data types: {supported_types}. Received: {piece_type}."
-                )
 
             if piece_type == "image_path":
                 mime_type = DataTypeSerializer.get_mime_type(piece.converted_value)
-                if not mime_type.startswith("image/"):
+                if not mime_type or not mime_type.startswith("image/"):
                     raise ValueError(
                         f"Invalid image format for image_path: {piece.converted_value}. "
                         f"Detected MIME type: {mime_type}."
@@ -633,7 +645,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to Microsoft Copilot using WebSocket.
 
@@ -642,7 +654,9 @@ class WebSocketCopilotTarget(PromptTarget):
         state server-side, so only the current message is sent (no explicit history required).
 
         Args:
-            message (Message): A message to be sent to the target.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from Copilot.
@@ -652,7 +666,7 @@ class WebSocketCopilotTarget(PromptTarget):
             InvalidStatus: If the WebSocket handshake fails with an HTTP status error.
             RuntimeError: If any other error occurs during WebSocket communication.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
 
         pyrit_conversation_id = message.message_pieces[0].conversation_id
         is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)

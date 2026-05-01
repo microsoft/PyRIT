@@ -42,7 +42,7 @@ class AddImageVideoConverter(PromptConverter):
         output_path: Optional[str] = None,
         img_position: tuple[int, int] = (10, 10),
         img_resize_size: tuple[int, int] = (500, 500),
-    ):
+    ) -> None:
         """
         Initialize the converter with the video path and image properties.
 
@@ -133,7 +133,7 @@ class AddImageVideoConverter(PromptConverter):
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             file_extension = video_path.split(".")[-1].lower()
             if file_extension in video_encoding_map:
-                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])  # type: ignore[attr-defined, misc, unused-ignore]
+                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])
                 output_video = cv2.VideoWriter(output_path, video_char_code, fps, (width, height))
             else:
                 raise ValueError(f"Unsupported video format: {file_extension}")
@@ -142,8 +142,10 @@ class AddImageVideoConverter(PromptConverter):
 
             input_image_bytes = await input_image_data.read_data()
             image_np_arr = np.frombuffer(input_image_bytes, np.uint8)
-            overlay = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
-            overlay = cv2.resize(overlay, self._img_resize_size)
+            decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
+            if decoded is None:
+                raise ValueError("Failed to decode overlay image")
+            overlay = cv2.resize(decoded, self._img_resize_size)
 
             # Get overlay image dimensions
             image_height, image_width, _ = overlay.shape
@@ -181,7 +183,7 @@ class AddImageVideoConverter(PromptConverter):
             with contextlib.suppress(cv2.error):
                 cv2.destroyAllWindows()  # Not available in headless OpenCV builds
             if azure_storage_flag:
-                os.remove(local_temp_path)
+                os.remove(local_temp_path)  # type: ignore[ty:possibly-unresolved-reference]
 
         logger.info(f"Video saved as {output_path}")
 

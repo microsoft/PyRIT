@@ -20,8 +20,6 @@
 #
 # ## Example Setup
 #
-# Before you begin, ensure you have the correct version of PyRIT installed and any necessary secrets configured as
-# described [here](../../setup/populating_secrets.md).
 #
 # To run the Flask app, you also must [download](https://ollama.com/download) and run Ollama, making sure the flask is using a correct model. For example, `ollama run llama3.2:1b` runs the Llama 3.2 1B model.
 #
@@ -169,7 +167,6 @@ await run()
 
 # if __name__ == "__main__":
 #     asyncio.run(run())
-
 
 # %% [markdown]
 # ## Terminate the Flask App

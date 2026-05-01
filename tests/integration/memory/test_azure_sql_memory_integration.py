@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import numpy as np
-import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
@@ -181,7 +180,6 @@ def cleanup_scenario_data_by_field(
                 print(f"Cleanup failed: {e}")
 
 
-@pytest.mark.asyncio
 async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory):
     """
     Test SQL Azure JSON filtering on seed prompt metadata.
@@ -234,7 +232,6 @@ async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory)
     assert azuresql_instance.get_seeds(metadata={"key2": value1}, added_by=test_id) == []
 
 
-@pytest.mark.asyncio
 async def test_get_attack_results_by_harm_categories(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on targeted harm categories.
@@ -321,7 +318,6 @@ async def test_get_attack_results_by_harm_categories(azuresql_instance: AzureSQL
         assert len(results) == 0
 
 
-@pytest.mark.asyncio
 async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on labels.
@@ -408,7 +404,6 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
         assert len(results) == 0
 
 
-@pytest.mark.asyncio
 async def test_legacy_attack_identifier_compat(azuresql_instance: AzureSQLMemory):
     """
     Legacy integration test verifying the deprecated attack_identifier parameter
@@ -448,7 +443,6 @@ async def test_legacy_attack_identifier_compat(azuresql_instance: AzureSQLMemory
         assert results[0].atomic_attack_identifier is not None
 
 
-@pytest.mark.asyncio
 async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: AzureSQLMemory):
     """
     Integration test for storing and retrieving objective_scorer_identifier in ScenarioResult.
@@ -495,7 +489,6 @@ async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: Az
         assert retrieved.objective_scorer_identifier.hash == scorer_identifier.hash
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on scenario result labels.
@@ -557,7 +550,6 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
         assert len(results) == 0
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_by_target_endpoint(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure case-insensitive endpoint filtering.
@@ -627,7 +619,6 @@ async def test_get_scenario_results_by_target_endpoint(azuresql_instance: AzureS
         assert results[0].scenario_identifier.name == f"Azure Other {test_id}"
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_by_target_model_name(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure case-insensitive model name filtering.
@@ -700,7 +691,6 @@ async def test_get_scenario_results_by_target_model_name(azuresql_instance: Azur
         assert f"GPT-3.5 Test {test_id}" in names
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQLMemory):
     """
     Integration test for combining multiple SQL Azure JSON filters.

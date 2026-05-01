@@ -56,7 +56,7 @@ def _get_deps_info() -> dict[str, str | None]:
 
     from pyrit import __version__
 
-    deps_info = {"pyrit": __version__}
+    deps_info: dict[str, str | None] = {"pyrit": __version__}
 
     from importlib.metadata import PackageNotFoundError, version
 
@@ -78,5 +78,5 @@ def show_versions() -> None:
         print(f"{k:>10}: {stat}")
 
     print("\nPython dependencies:")
-    for k, stat in deps_info.items():
-        print(f"{k:>13}: {stat}")
+    for k, stat_or_none in deps_info.items():
+        print(f"{k:>13}: {stat_or_none}")

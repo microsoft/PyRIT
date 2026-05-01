@@ -14,7 +14,7 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, ClassVar, Optional, Union, cast
 
 from tqdm.auto import tqdm
 
@@ -22,21 +22,21 @@ from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackResult
+from pyrit.models import AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario_strategy import (
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
-)
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.identifiers import ComponentIdentifier
-    from pyrit.models import SeedAttackGroup
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,10 @@ class Scenario(ABC):
     atomic attack tests (AtomicAttacks). It executes each AtomicAttack in sequence and
     aggregates the results into a ScenarioResult.
     """
+
+    #: Capability requirements placed on ``objective_target``. Subclasses override to declare
+    #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     def __init__(
         self,
@@ -112,12 +116,15 @@ class Scenario(ABC):
 
         self._include_baseline = include_default_baseline
 
-        # Store prepared strategy composites for use in _get_atomic_attacks_async
-        self._scenario_composites: list[ScenarioCompositeStrategy] = []
+        # Store prepared strategies for use in _get_atomic_attacks_async
+        self._scenario_strategies: list[ScenarioStrategy] = []
 
         # Store original objectives for each atomic attack (before any mutations)
         # Key: atomic_attack_name, Value: tuple of original objectives
         self._original_objectives_map: dict[str, tuple[str, ...]] = {}
+
+        # Maps atomic_attack_name → display_group for user-facing aggregation
+        self._display_group_map: dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -171,12 +178,103 @@ class Scenario(ABC):
             DatasetConfiguration: The default dataset configuration.
         """
 
+    def _get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+        """
+        Return the attack technique factories for this scenario.
+
+        Each key is a technique name (matching a strategy enum value) and each
+        value is an ``AttackTechniqueFactory`` that can produce an
+        ``AttackTechnique`` for that technique.
+
+        The base implementation lazily populates the
+        ``AttackTechniqueRegistry`` singleton with core techniques (via
+        ``ScenarioTechniqueRegistrar``) and returns all registered factories.
+        Subclasses may override to add, remove, or replace factories.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
+        """
+        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
+
+        register_scenario_techniques()
+
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+
+        return AttackTechniqueRegistry.get_registry_singleton().get_factories()
+
+    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
+        """
+        Build the display-group label for an atomic attack.
+
+        Each ``AtomicAttack`` has a unique ``atomic_attack_name`` (e.g.
+        ``"prompt_sending_airt_hate"``) used for resume tracking.  However,
+        user-facing output (console printer, reports) often needs to
+        aggregate results along a *different* dimension — for example,
+        grouping by harm category rather than by technique.  The display
+        group provides that second grouping axis without affecting resume
+        behaviour.
+
+        The default groups by technique name.  Subclasses override to
+        change the aggregation axis:
+
+        - **By technique** (default): ``return technique_name``
+        - **By harm category / dataset**: ``return seed_group_name``
+        - **Cross-product**: ``return f"{technique_name}_{seed_group_name}"``
+
+        Note: ``seed_group_name`` is the dataset key from
+        ``DatasetConfiguration.get_seed_attack_groups()`` (e.g.
+        ``"airt_hate"``), not a ``SeedGroup`` object.
+
+        Args:
+            technique_name: The name of the attack technique.
+            seed_group_name: The dataset key from the dataset configuration.
+
+        Returns:
+            str: The display-group label.
+        """
+        return technique_name
+
+    def _get_default_objective_scorer(self) -> TrueFalseScorer:
+        # Deferred import to avoid circular dependency:
+        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
+
+        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        if entries and isinstance(entries[0].instance, TrueFalseScorer):
+            scorer = entries[0].instance
+            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
+            return scorer
+        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
+        logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
+        return scorer
+
+    def _prepare_strategies(
+        self,
+        strategies: Optional[Sequence[ScenarioStrategy]],
+    ) -> list[ScenarioStrategy]:
+        """
+        Resolve strategy inputs into a concrete list for this scenario.
+
+        The default implementation calls resolve() on the strategy class, which handles
+        None (use default), empty list (also use default), and aggregate expansion.
+
+        Subclasses with complex composition semantics (e.g., RedTeamAgent with
+        FoundryComposite) should override this to build their own composite types.
+
+        Args:
+            strategies: Strategy inputs from initialize_async. None or [] both mean use
+                default; otherwise a list of strategies to resolve.
+
+        Returns:
+            list[ScenarioStrategy]: Ordered, deduplicated concrete strategies.
+        """
+        return self._strategy_class.resolve(strategies, default=self.get_default_strategy())
+
     @apply_defaults
     async def initialize_async(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
-        scenario_strategies: Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]] = None,
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
         max_concurrency: int = 10,
         max_retries: int = 0,
@@ -195,10 +293,8 @@ class Scenario(ABC):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[ScenarioStrategy | ScenarioCompositeStrategy]]):
-                The strategies to execute. Can be a list of bare ScenarioStrategy enums or
-                ScenarioCompositeStrategy instances for advanced composition. Bare enums are
-                automatically wrapped into composites. If None, uses the default aggregate
+            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The strategies to execute.
+                Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
@@ -224,6 +320,7 @@ class Scenario(ABC):
         # Set instance variables from parameters
         self._objective_target = objective_target
         self._objective_target_identifier = objective_target.get_identifier()
+        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._dataset_config_provided = dataset_config is not None
         self._dataset_config = dataset_config if dataset_config else self.default_dataset_config()
         self._max_concurrency = max_concurrency
@@ -231,11 +328,7 @@ class Scenario(ABC):
         self._memory_labels = memory_labels or {}
 
         # Prepare scenario strategies using the stored configuration
-        # Allow empty strategies when include_baseline is True (baseline-only execution)
-        self._scenario_composites = self._strategy_class.prepare_scenario_strategies(
-            scenario_strategies,
-            default_aggregate=self.get_default_strategy(),
-        )
+        self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
@@ -266,6 +359,9 @@ class Scenario(ABC):
                 )
                 self._scenario_result_id = None
 
+        # Build display group mapping from atomic attacks
+        self._display_group_map = {aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks}
+
         # Create new scenario result
         attack_results: dict[str, list[AttackResult]] = {
             atomic_attack.atomic_attack_name: [] for atomic_attack in self._atomic_attacks
@@ -278,6 +374,7 @@ class Scenario(ABC):
             labels=self._memory_labels,
             attack_results=attack_results,
             scenario_run_state="CREATED",
+            display_group_map=self._display_group_map,
         )
 
         self._memory.add_scenario_results_to_memory(scenario_results=[result])
@@ -308,7 +405,7 @@ class Scenario(ABC):
 
         return AtomicAttack(
             atomic_attack_name="baseline",
-            attack=attack,
+            attack_technique=AttackTechnique(attack=attack),
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
@@ -504,17 +601,91 @@ class Scenario(ABC):
                     f"for atomic attack '{atomic_attack_name}'"
                 )
 
-    @abstractmethod
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
-        Retrieve the list of AtomicAttack instances in this scenario.
+        Build atomic attacks from the cross-product of selected techniques and datasets.
 
-        This method can be overridden by subclasses to perform async operations
-        needed to build or fetch the atomic attacks.
+        Uses ``_get_attack_technique_factories()`` to obtain factories, then
+        iterates over every (technique, dataset) pair to create an
+        ``AtomicAttack`` for each.  Grouping for display is controlled by
+        ``_build_display_group()``.
+
+        Subclasses that do **not** use the factory/registry pattern should
+        override this method entirely.
 
         Returns:
-            List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
+            list[AtomicAttack]: The generated atomic attacks.
+
+        Raises:
+            ValueError: If the scenario has not been initialized.
         """
+        if self._objective_target is None:
+            raise ValueError(
+                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
+            )
+
+        from pyrit.executor.attack import AttackScoringConfig
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+
+        selected_techniques = {s.value for s in self._scenario_strategies}
+
+        factories = self._get_attack_technique_factories()
+        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+
+        scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+
+        atomic_attacks: list[AtomicAttack] = []
+        for technique_name in selected_techniques:
+            factory = factories.get(technique_name)
+            if factory is None:
+                logger.warning(f"No factory for technique '{technique_name}', skipping.")
+                continue
+
+            scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
+
+            for dataset_name, seed_groups in seed_groups_by_dataset.items():
+                if factory.seed_technique is not None:
+                    compatible_groups = SeedAttackGroup.filter_compatible(
+                        seed_groups=seed_groups,
+                        technique=factory.seed_technique,
+                    )
+                    skipped = len(seed_groups) - len(compatible_groups)
+                    if skipped:
+                        logger.info(
+                            f"Skipped {skipped} seed group(s) from '{dataset_name}' for technique "
+                            f"'{technique_name}' (prompt sequences overlap with simulated conversation)."
+                        )
+                    if not compatible_groups:
+                        logger.warning(
+                            f"No compatible seed groups in '{dataset_name}' for technique "
+                            f"'{technique_name}', skipping this (technique, dataset) pair."
+                        )
+                        continue
+                else:
+                    compatible_groups = list(seed_groups)
+
+                attack_technique = factory.create(
+                    objective_target=self._objective_target,
+                    attack_scoring_config_override=scoring_for_technique,
+                )
+                display_group = self._build_display_group(
+                    technique_name=technique_name,
+                    seed_group_name=dataset_name,
+                )
+                atomic_attacks.append(
+                    AtomicAttack(
+                        atomic_attack_name=f"{technique_name}_{dataset_name}",
+                        attack_technique=attack_technique,
+                        seed_groups=list(compatible_groups),
+                        adversarial_chat=factory.adversarial_chat,
+                        objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
+                        memory_labels=self._memory_labels,
+                        display_group=display_group,
+                    )
+                )
+
+        return atomic_attacks
 
     async def run_async(self) -> ScenarioResult:
         """
@@ -612,7 +783,8 @@ class Scenario(ABC):
 
         # Type narrowing: _scenario_result_id is guaranteed to be non-None at this point
         # (verified in run_async before calling this method)
-        assert self._scenario_result_id is not None
+        if self._scenario_result_id is None:
+            raise ValueError("self._scenario_result_id is not initialized")
         scenario_result_id: str = self._scenario_result_id
 
         # Increment number_tries at the start of each run

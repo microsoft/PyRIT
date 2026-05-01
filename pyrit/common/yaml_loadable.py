@@ -38,8 +38,11 @@ class YamlLoadable(abc.ABC):  # noqa: B024
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
 
+        if yaml_data is None:
+            raise ValueError(f"YAML file '{file}' is empty.")
+
         # If this class provides a from_dict factory, use it;
         # otherwise, just instantiate directly with **yaml_data
         if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
-            return cls.from_dict(yaml_data)  # type: ignore[attr-defined, no-any-return]
+            return cls.from_dict(yaml_data)  # type: ignore[ty:call-non-callable]
         return cls(**yaml_data)

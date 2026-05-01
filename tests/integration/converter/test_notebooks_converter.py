@@ -13,7 +13,7 @@ from pyrit.common import path
 nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "converters").resolve()
 
 skipped_files = [
-    "7_human_converter.ipynb",  # requires human input
+    "2_audio_converters.ipynb",  # requires Azure Speech API key
 ]
 
 

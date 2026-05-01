@@ -1,5 +1,5 @@
 ---
-applyTo: 'doc/code/**/*.{py,ipynb}'
+applyTo: 'doc/**/*.{py,ipynb}'
 ---
 
 # Documentation File Synchronization
@@ -8,7 +8,7 @@ applyTo: 'doc/code/**/*.{py,ipynb}'
 
 All Jupyter notebooks (.ipynb) in the `doc/` directory have corresponding Python (.py) files that are **tightly synchronized**. These files MUST always match exactly in content. They represent the same documentation in different formats.
 
-**Locations:** `doc/code/**/*.ipynb` and `doc/code/**/*.py`
+**Locations:** `doc/**/*.ipynb` and `doc/**/*.py`
 
 ## Editing Guidelines
 

@@ -158,7 +158,7 @@ def ensure_async_token_provider(
         """
         result = api_key()
         if inspect.isawaitable(result):
-            return await result
+            return await result  # type: ignore[ty:invalid-return-type]
         return result
 
     return async_token_provider
@@ -172,7 +172,7 @@ class AzureAuth(Authenticator):
     access_token: AccessToken
     _token_scope: str
 
-    def __init__(self, token_scope: str, tenant_id: str = ""):
+    def __init__(self, token_scope: str, tenant_id: str = "") -> None:
         """
         Initialize Azure authentication.
 
@@ -296,7 +296,7 @@ def get_access_token_from_interactive_login(scope: str) -> str:
     """
     try:
         token_provider = get_bearer_token_provider(InteractiveBrowserCredential(), scope)
-        return token_provider()
+        return str(token_provider())
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}': {e}")
         raise
@@ -326,7 +326,7 @@ def get_azure_token_provider(scope: str) -> Callable[[], str]:
         raise
 
 
-def get_azure_async_token_provider(scope: str):  # type: ignore[no-untyped-def]
+def get_azure_async_token_provider(scope: str) -> Callable[[], Awaitable[str]]:
     """
     Get an asynchronous Azure token provider using AsyncDefaultAzureCredential.
 
@@ -370,7 +370,7 @@ def get_default_azure_scope(endpoint: str) -> str:
     return "https://cognitiveservices.azure.com/.default"
 
 
-def get_azure_openai_auth(endpoint: str):  # type: ignore[no-untyped-def]
+def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     """
     Get an async Azure token provider for OpenAI endpoints.
 
@@ -431,6 +431,53 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
             region=region,
         )
     raise ValueError("Insufficient information provided for Azure Speech service.")
+
+
+async def get_speech_config_async(
+    *,
+    token_provider: Callable[[], str | Awaitable[str]] | None,
+    resource_id: Union[str, None],
+    key: Union[str, None],
+    region: str,
+) -> speechsdk.SpeechConfig:
+    """
+    Get the speech config, resolving a callable token provider if one is provided.
+
+    This is the async counterpart to :func:`get_speech_config`. When a callable
+    ``token_provider`` is supplied, it is invoked (and awaited if async) to obtain
+    a token, which is then used with the ``aad#{resource_id}#{token}`` auth format.
+    Otherwise, it delegates to the synchronous :func:`get_speech_config`.
+
+    Args:
+        token_provider (Callable | None): An optional sync or async callable that returns a token string.
+        resource_id (str | None): The resource ID for Entra ID auth.
+        key (str | None): The Azure Speech API key.
+        region (str): The Azure region.
+
+    Returns:
+        speechsdk.SpeechConfig: The speech config based on passed in args.
+
+    Raises:
+        ModuleNotFoundError: If azure.cognitiveservices.speech is not installed.
+        ValueError: If neither key/region nor resource_id/region is provided and no token_provider is given.
+    """
+    if token_provider:
+        try:
+            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+        except ModuleNotFoundError as e:
+            logger.error(
+                "Could not import azure.cognitiveservices.speech. "
+                "You may need to install it via 'pip install pyrit[speech]'"
+            )
+            raise e
+
+        token = token_provider()
+        if inspect.isawaitable(token):
+            token = await token
+        auth_token = f"aad#{resource_id}#{token}"
+        return speechsdk.SpeechConfig(auth_token=auth_token, region=region)
+
+    return get_speech_config(resource_id=resource_id, key=key, region=region)
 
 
 def get_speech_config_from_default_azure_credential(resource_id: str, region: str) -> speechsdk.SpeechConfig:

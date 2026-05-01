@@ -4,17 +4,21 @@
 from __future__ import annotations
 
 import uuid
+import warnings
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 
 if TYPE_CHECKING:
+    from pyrit.models.message import Message
     from pyrit.models.score import Score
 
 Originator = Literal["attack", "converter", "undefined", "scorer"]
+"""Deprecated: The Originator type alias will be removed in a future release."""
 
 
 class MessagePiece:
@@ -51,7 +55,7 @@ class MessagePiece:
         timestamp: Optional[datetime] = None,
         scores: Optional[list[Score]] = None,
         targeted_harm_categories: Optional[list[str]] = None,
-    ):
+    ) -> None:
         """
         Initialize a MessagePiece.
 
@@ -66,6 +70,7 @@ class MessagePiece:
                 Defaults to None.
             sequence: The order of the conversation within a conversation_id. Defaults to -1.
             labels: The labels associated with the memory entry. Several can be standardized. Defaults to None.
+                Deprecated: This parameter will be removed in a release 0.16.0.
             prompt_metadata: The metadata associated with the prompt. This can be specific to any scenarios.
                 Because memory is how components talk with each other, this can be component specific.
                 e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
@@ -74,8 +79,8 @@ class MessagePiece:
                 objects or dicts (deprecated, will be removed in 0.14.0). Defaults to None.
             prompt_target_identifier: The target identifier for the prompt. Defaults to None.
             attack_identifier: The attack identifier for the prompt. Defaults to None.
-            scorer_identifier: The scorer identifier for the prompt. Can be a ComponentIdentifier or a
-                dict (deprecated, will be removed in 0.13.0). Defaults to None.
+            scorer_identifier: The scorer identifier for the prompt. Accepts a ComponentIdentifier.
+                Defaults to None.
             original_value_data_type: The data type of the original prompt (text, image). Defaults to "text".
             converted_value_data_type: The data type of the converted prompt (text, image). Defaults to "text".
             response_error: The response error type. Defaults to "none".
@@ -91,7 +96,7 @@ class MessagePiece:
         """
         self.id = id if id else uuid4()
 
-        if role not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
+        if role not in ChatMessageRole.__args__:
             raise ValueError(f"Role {role} is not a valid role.")
 
         self._role: ChatMessageRole = role
@@ -114,6 +119,12 @@ class MessagePiece:
             self.timestamp = timestamp.replace(tzinfo=timezone.utc)
         else:
             self.timestamp = timestamp
+        if labels is not None:
+            print_deprecation_message(
+                old_item="MessagePiece(..., labels=...)",
+                new_item="MessagePiece(...)",
+                removed_in="0.16.0",
+            )
         self.labels = labels or {}
         self.prompt_metadata = prompt_metadata or {}
 
@@ -135,6 +146,12 @@ class MessagePiece:
         )
 
         # Handle scorer_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
+        if scorer_identifier is not None:
+            warnings.warn(
+                "The 'scorer_identifier' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.scorer_identifier: Optional[ComponentIdentifier] = (
             ComponentIdentifier.normalize(scorer_identifier) if scorer_identifier else None
         )
@@ -161,13 +178,52 @@ class MessagePiece:
             raise ValueError(f"response_error {response_error} is not a valid response error.")
 
         self.response_error = response_error
+
+        if originator != "undefined":
+            warnings.warn(
+                "The 'originator' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.originator = originator
 
         # Original prompt id defaults to id (assumes that this is the original prompt, not a duplicate)
         self.original_prompt_id = original_prompt_id or self.id
 
+        if scores is not None:
+            warnings.warn(
+                "The 'scores' parameter is deprecated and will be removed in a future release. "
+                "Scores are now hydrated by the memory layer.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.scores = scores if scores else []
+
+        if targeted_harm_categories is not None:
+            warnings.warn(
+                "The 'targeted_harm_categories' parameter is deprecated and will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.targeted_harm_categories = targeted_harm_categories if targeted_harm_categories else []
+
+    def copy_lineage_from(self, source: MessagePiece) -> None:
+        """
+        Copy lineage metadata from ``source`` onto this piece.
+
+        Lineage fields are the metadata that tie a piece back to its originating
+        conversation, attack, and target. Mutable containers (``labels``,
+        ``prompt_metadata``) are shallow-copied so that mutations on one piece
+        do not affect others.
+
+        Args:
+            source: The piece whose lineage metadata is authoritative.
+        """
+        self.conversation_id = source.conversation_id
+        self.labels = dict(source.labels)  # deprecated
+        self.attack_identifier = source.attack_identifier
+        self.prompt_target_identifier = source.prompt_target_identifier
+        self.prompt_metadata = dict(source.prompt_metadata)
 
     async def set_sha256_values_async(self) -> None:
         """
@@ -226,41 +282,7 @@ class MessagePiece:
         """
         return self._role
 
-    @property
-    def role(self) -> ChatMessageRole:
-        """
-        Deprecated: Use api_role for comparisons or _role for internal storage.
-
-        This property is deprecated and will be removed in a future version.
-        Returns api_role for backward compatibility.
-        """
-        import warnings
-
-        warnings.warn(
-            "MessagePiece.role getter is deprecated. Use api_role for comparisons. "
-            "This property will be removed in 0.13.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.api_role
-
-    @role.setter
-    def role(self, value: ChatMessageRole) -> None:
-        """
-        Set the role for this message piece.
-
-        Args:
-            value: The role to set (system, user, assistant, simulated_assistant, tool, developer).
-
-        Raises:
-            ValueError: If the role is not a valid ChatMessageRole.
-
-        """
-        if value not in ChatMessageRole.__args__:  # type: ignore[attr-defined]
-            raise ValueError(f"Role {value} is not a valid role.")
-        self._role = value
-
-    def to_message(self) -> Message:  # type: ignore[name-defined] # noqa: F821
+    def to_message(self) -> Message:
         """
         Convert this message piece into a Message.
 
@@ -269,7 +291,7 @@ class MessagePiece:
         """
         from pyrit.models.message import Message
 
-        return Message([self])  # noqa: F821
+        return Message([self])
 
     def has_error(self) -> bool:
         """
@@ -313,7 +335,7 @@ class MessagePiece:
             "conversation_id": self.conversation_id,
             "sequence": self.sequence,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "labels": self.labels,
+            "labels": self.labels,  # deprecated
             "targeted_harm_categories": self.targeted_harm_categories if self.targeted_harm_categories else None,
             "prompt_metadata": self.prompt_metadata,
             "converter_identifiers": [conv.to_dict() for conv in self.converter_identifiers],

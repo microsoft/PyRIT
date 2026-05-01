@@ -190,6 +190,14 @@ silent: true
         finally:
             pathlib.Path(yaml_path).unlink()
 
+    def test_from_empty_yaml_file_raises_value_error(self, tmp_path):
+        """Test that an empty YAML file raises a clear ValueError."""
+        yaml_path = tmp_path / "empty.yaml"
+        yaml_path.write_text("", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="is empty"):
+            ConfigurationLoader.from_yaml_file(yaml_path)
+
     def test_get_default_config_path(self):
         """Test get_default_config_path returns expected path."""
         default_path = ConfigurationLoader.get_default_config_path()
@@ -257,7 +265,6 @@ class TestConfigurationLoaderResolvers:
 class TestConfigurationLoaderInitialization:
     """Tests for ConfigurationLoader.initialize_pyrit_async method."""
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     async def test_initialize_pyrit_async_basic(self, mock_init):
         """Test basic initialization with minimal configuration."""
@@ -273,7 +280,6 @@ class TestConfigurationLoaderInitialization:
         assert call_kwargs["env_files"] is None
         assert call_kwargs["silent"] is False
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     @mock.patch("pyrit.registry.InitializerRegistry")
     async def test_initialize_pyrit_async_with_initializers(self, mock_registry_cls, mock_init):
@@ -303,7 +309,6 @@ class TestConfigurationLoaderInitialization:
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs["initializers"] == [mock_initializer_instance]
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.registry.InitializerRegistry")
     async def test_initialize_pyrit_async_unknown_initializer_raises_error(self, mock_registry_cls):
         """Test that unknown initializer name raises ValueError."""
@@ -325,7 +330,6 @@ class TestConfigurationLoaderInitialization:
 class TestInitializeFromConfigAsync:
     """Tests for initialize_from_config_async function."""
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.initialize_pyrit_async")
     async def test_initialize_from_config_with_path(self, mock_init, mock_from_yaml):
@@ -339,7 +343,6 @@ class TestInitializeFromConfigAsync:
         mock_init.assert_called_once()
         assert result is mock_config
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.initialize_pyrit_async")
     async def test_initialize_from_config_with_string_path(self, mock_init, mock_from_yaml):
@@ -353,7 +356,6 @@ class TestInitializeFromConfigAsync:
         call_args = mock_from_yaml.call_args[0][0]
         assert isinstance(call_args, pathlib.Path)
 
-    @pytest.mark.asyncio
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.get_default_config_path")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
     @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.initialize_pyrit_async")
@@ -502,5 +504,24 @@ initializers:
 
             assert config.memory_db_type == "in_memory"
             assert config._initializer_configs[0].name == "cli_init"
+        finally:
+            config_path.unlink()
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_preserves_silent_from_config_file(self, mock_default_path):
+        """Test that load_with_overrides preserves the silent flag from config files."""
+        mock_default_path.exists.return_value = False
+
+        yaml_content = """
+memory_db_type: sqlite
+silent: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            config_path = pathlib.Path(f.name)
+
+        try:
+            config = ConfigurationLoader.load_with_overrides(config_file=config_path)
+            assert config.silent is True
         finally:
             config_path.unlink()

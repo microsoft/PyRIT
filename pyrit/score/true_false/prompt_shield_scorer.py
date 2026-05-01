@@ -58,7 +58,7 @@ class PromptShieldScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),
@@ -100,10 +100,10 @@ class PromptShieldScorer(TrueFalseScorer):
             score_value=str(result),
             score_value_description="True if an attack or jailbreak has been detected, else False.",
             score_category=["attack_detection"],
-            score_metadata=meta,
+            score_metadata=meta,  # type: ignore[ty:invalid-argument-type]
             score_rationale="",
             scorer_class_identifier=self.get_identifier(),
-            message_piece_id=message_piece.id,
+            message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
             objective=objective,
         )
 
@@ -119,17 +119,16 @@ class PromptShieldScorer(TrueFalseScorer):
         """
         response_json: dict[str, Any] = json.loads(response)
 
-        user_detections = []
-        document_detections = []
-
         user_prompt_attack: dict[str, bool] = response_json.get("userPromptAnalysis", False)
         documents_attack: list[dict[str, Any]] = response_json.get("documentsAnalysis", False)
 
-        user_detections = [False] if not user_prompt_attack else [user_prompt_attack.get("attackDetected")]
+        user_detections: list[bool] = (
+            [False] if not user_prompt_attack else [bool(user_prompt_attack.get("attackDetected"))]
+        )
 
         if not documents_attack:
-            document_detections = [False]
+            document_detections: list[bool] = [False]
         else:
-            document_detections = [document.get("attackDetected") for document in documents_attack]
+            document_detections = [bool(document.get("attackDetected")) for document in documents_attack]
 
         return user_detections + document_detections

@@ -54,12 +54,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         max_attempts_on_failure: int = 0,
-        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
         prepended_conversation_config: Optional[PrependedConversationConfig] = None,
     ) -> None:
         """

@@ -7,14 +7,14 @@ import struct
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast
 
 from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload, sessionmaker
+from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
 from sqlalchemy.orm.session import Session
-from sqlalchemy.sql.expression import TextClause
+from sqlalchemy.sql.expression import ColumnElement, TextClause
 
 from pyrit.auth.azure_auth import AzureAuth
 from pyrit.common import default_values
@@ -54,6 +54,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     TOKEN_URL = "https://database.windows.net/.default"  # The token URL for any Azure SQL database
     AZURE_SQL_DB_CONNECTION_STRING = "AZURE_SQL_DB_CONNECTION_STRING"
 
+    # Azure SQL supports up to 2100 parameters per statement
+    _MAX_BIND_VARS: int = 2000
+
     # Azure Storage Account Container datasets and results environment variables
     AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: str = "AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL"
     AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: str = "AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN"
@@ -65,7 +68,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_container_url: Optional[str] = None,
         results_sas_token: Optional[str] = None,
         verbose: bool = False,
-    ):
+        skip_schema_migration: bool = False,
+    ) -> None:
         """
         Initialize an Azure SQL Memory backend.
 
@@ -77,6 +81,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             results_sas_token (Optional[str]): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
+            skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
         """
         self._connection_string = default_values.get_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING, passed_value=connection_string
@@ -103,7 +108,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._enable_azure_authorization()
 
         self.SessionFactory = sessionmaker(bind=self.engine)
-        self._create_tables_if_not_exist()
+        if not skip_schema_migration:
+            self._run_schema_migration()
 
         super().__init__()
 
@@ -120,7 +126,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             Optional[str]: Resolved SAS token or None if not provided.
         """
         try:
-            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)  # type: ignore[no-any-return]
+            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
         except ValueError:
             return None
 
@@ -142,10 +148,15 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def _refresh_token_if_needed(self) -> None:
         """
         Refresh the access token if it is close to expiry (within 5 minutes).
+
+        Raises:
+            RuntimeError: If auth token expiry was not initialized.
         """
-        if datetime.now(timezone.utc) >= datetime.fromtimestamp(self._auth_token_expiry, tz=timezone.utc) - timedelta(
-            minutes=5
-        ):
+        if self._auth_token_expiry is None:
+            raise RuntimeError("Auth token expiry not initialized; call _create_auth_token() first")
+        if datetime.now(timezone.utc) >= datetime.fromtimestamp(
+            float(self._auth_token_expiry), tz=timezone.utc
+        ) - timedelta(minutes=5):
             logger.info("Refreshing Microsoft Entra ID access token...")
             self._create_auth_token()
 
@@ -201,26 +212,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             cargs[0] = cargs[0].replace(";Trusted_Connection=Yes", "")
 
             # encode the token
+            if self._auth_token is None:
+                raise RuntimeError("Azure auth token is not initialized")
             azure_token = self._auth_token.token
             azure_token_bytes = azure_token.encode("utf-16-le")
             packed_azure_token = struct.pack(f"<I{len(azure_token_bytes)}s", len(azure_token_bytes), azure_token_bytes)
 
             # add the encoded token
             cparams["attrs_before"] = {self.SQL_COPT_SS_ACCESS_TOKEN: packed_azure_token}
-
-    def _create_tables_if_not_exist(self) -> None:
-        """
-        Create all tables defined in the Base metadata, if they don't already exist in the database.
-
-        Raises:
-            Exception: If there's an issue creating the tables in the database.
-        """
-        try:
-            # Using the 'checkfirst=True' parameter to avoid attempting to recreate existing tables
-            Base.metadata.create_all(self.engine, checkfirst=True)
-        except Exception as e:
-            logger.exception(f"Error during table creation: {e}")
-            raise
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
@@ -249,22 +248,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         # for safe parameter passing, preventing SQL injection
         condition = text(conditions).bindparams(**{key: str(value) for key, value in memory_labels.items()})
         return [condition]
-
-    def _get_message_pieces_attack_conditions(self, *, attack_id: str) -> Any:
-        """
-        Generate SQL condition for filtering message pieces by attack ID.
-
-        Uses JSON_VALUE() function specific to SQL Azure to query the attack identifier.
-
-        Args:
-            attack_id (str): The attack identifier to filter by.
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text("ISJSON(attack_identifier) = 1 AND JSON_VALUE(attack_identifier, '$.hash') = :json_id").bindparams(
-            json_id=str(attack_id)
-        )
 
     def _get_metadata_conditions(self, *, prompt_metadata: dict[str, Union[str, int]]) -> list[TextClause]:
         """
@@ -321,6 +304,114 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         return self._get_metadata_conditions(prompt_metadata=metadata)[0]
 
+    def _get_condition_json_property_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        value: str,
+        partial_match: bool = False,
+        case_sensitive: bool = False,
+    ) -> Any:
+        """
+        Return an Azure SQL DB condition for matching a value at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
+            property_path (str): The JSON path for the property to match.
+            value (str): The string value that must match the extracted JSON property value.
+            partial_match (bool): Whether to perform a substring match.
+            case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
+
+        Returns:
+            Any: A SQLAlchemy condition for the backend-specific JSON query.
+        """
+        uid = self._uid()
+        table_name = json_column.class_.__tablename__
+        column_name = json_column.key
+        pp_param = f"pp_{uid}"
+        mv_param = f"mv_{uid}"
+        operator = "LIKE" if partial_match else "="
+        target = value if case_sensitive else value.lower()
+        if partial_match:
+            escaped = target.replace("%", "\\%").replace("_", "\\_")
+            target = f"%{escaped}%"
+
+        json_value_expr = f'JSON_VALUE("{table_name}".{column_name}, :{pp_param})'
+        if not case_sensitive:
+            json_value_expr = f"LOWER({json_value_expr})"
+
+        escape_clause = " ESCAPE '\\'" if partial_match else ""
+        return text(
+            f"""ISJSON("{table_name}".{column_name}) = 1
+                AND {json_value_expr} {operator} :{mv_param}{escape_clause}"""
+        ).bindparams(
+            **{
+                pp_param: property_path,
+                mv_param: target,
+            }
+        )
+
+    def _get_condition_json_array_match(
+        self,
+        *,
+        json_column: InstrumentedAttribute[Any],
+        property_path: str,
+        array_element_path: str | None = None,
+        array_to_match: Sequence[str],
+        match_mode: Literal["all", "any"] = "all",
+    ) -> Any:
+        """
+        Return an Azure SQL DB condition for matching an array at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
+            property_path (str): The JSON path for the target array.
+            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
+                Combination semantics for multiple entries are controlled by ``match_mode``.
+                If ``array_to_match`` is empty, the condition matches only if the target is also an
+                empty array or None (overloaded "absence" semantics, regardless of ``match_mode``).
+            match_mode (Literal["all", "any"]): How to combine multiple entries in ``array_to_match``.
+                ``"all"`` (default) requires every listed value to be present in the JSON array.
+                ``"any"`` requires at least one listed value to be present.
+
+        Returns:
+            Any: A database-specific SQLAlchemy condition.
+        """
+        uid = self._uid()
+        table_name = json_column.class_.__tablename__
+        column_name = json_column.key
+        pp_param = f"pp_{uid}"
+        sp_param = f"sp_{uid}"
+
+        if len(array_to_match) == 0:
+            return text(
+                f"""("{table_name}".{column_name} IS NULL
+                OR JSON_QUERY("{table_name}".{column_name}, :{pp_param}) IS NULL
+                OR JSON_QUERY("{table_name}".{column_name}, :{pp_param}) = '[]')"""
+            ).bindparams(**{pp_param: property_path})
+
+        value_expression = f"LOWER(JSON_VALUE(value, :{sp_param}))" if array_element_path else "LOWER(value)"
+
+        conditions = []
+        bindparams_dict: dict[str, str] = {pp_param: property_path}
+        if array_element_path:
+            bindparams_dict[sp_param] = array_element_path
+
+        for index, match_value in enumerate(array_to_match):
+            mv_param = f"mv_{uid}_{index}"
+            conditions.append(
+                f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("{table_name}".{column_name},
+                    :{pp_param}))
+                    WHERE {value_expression} = :{mv_param})"""
+            )
+            bindparams_dict[mv_param] = match_value.lower()
+
+        joiner = " OR " if match_mode == "any" else " AND "
+        combined = joiner.join(conditions)
+        return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
+
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """
         Get the SQL Azure implementation for filtering AttackResults by targeted harm categories.
@@ -358,96 +449,40 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
         )
 
-    def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
-        Get the SQL Azure implementation for filtering AttackResults by labels.
+        Azure SQL implementation for filtering AttackResults by labels.
 
-        Uses JSON_VALUE() function specific to SQL Azure with parameterized queries.
-
-        Args:
-            labels (dict[str, str]): Dictionary of label key-value pairs to filter by.
+        Uses JSON_VALUE() with parameterized IN clauses. See
+        ``MemoryInterface._get_attack_result_label_condition`` for semantics.
 
         Returns:
             Any: SQLAlchemy exists subquery condition with bound parameters.
         """
-        # Build JSON conditions for all labels with parameterized queries
-        label_conditions = []
-        bindparams_dict = {}
-        for key, value in labels.items():
-            param_name = f"label_{key}"
-            label_conditions.append(f"JSON_VALUE(labels, '$.{key}') = :{param_name}")
-            bindparams_dict[param_name] = str(value)
-
-        combined_conditions = " AND ".join(label_conditions)
-
-        return exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                PromptMemoryEntry.labels.isnot(None),
-                text(f"ISJSON(labels) = 1 AND {combined_conditions}").bindparams(**bindparams_dict),
-            )
-        )
-
-    def _get_attack_result_attack_class_condition(self, *, attack_class: str) -> Any:
-        """
-        Azure SQL implementation for filtering AttackResults by attack class.
-        Uses JSON_VALUE() on the atomic_attack_identifier JSON column.
-
-        Args:
-            attack_class (str): Exact attack class name to match.
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text(
-            """ISJSON("AttackResultEntries".atomic_attack_identifier) = 1
-            AND JSON_VALUE("AttackResultEntries".atomic_attack_identifier,
-                '$.children.attack.class_name') = :attack_class"""
-        ).bindparams(attack_class=attack_class)
-
-    def _get_attack_result_converter_classes_condition(self, *, converter_classes: Sequence[str]) -> Any:
-        """
-        Azure SQL implementation for filtering AttackResults by converter classes.
-
-        Uses JSON_VALUE()/JSON_QUERY()/OPENJSON() on the atomic_attack_identifier
-        JSON column.
-
-        When converter_classes is empty, matches attacks with no converters.
-        When non-empty, uses OPENJSON() to check all specified classes are present
-        (AND logic, case-insensitive).
-
-        Args:
-            converter_classes (Sequence[str]): List of converter class names. Empty list means no converters.
-
-        Returns:
-            Any: SQLAlchemy combined condition with bound parameters.
-        """
-        if len(converter_classes) == 0:
-            # Explicitly "no converters": match attacks where the converter list
-            # is absent, null, or empty in the stored JSON.
-            return text(
-                """("AttackResultEntries".atomic_attack_identifier IS NULL
-                OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.request_converter_identifiers') IS NULL
-                OR JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.request_converter_identifiers') = '[]')"""
-            )
-
-        conditions = []
+        label_conditions: list[str] = []
         bindparams_dict: dict[str, str] = {}
-        for i, cls in enumerate(converter_classes):
-            param_name = f"conv_cls_{i}"
-            conditions.append(
-                f"""EXISTS(SELECT 1 FROM OPENJSON(JSON_QUERY("AttackResultEntries".atomic_attack_identifier,
-                    '$.children.attack.request_converter_identifiers'))
-                    WHERE LOWER(JSON_VALUE(value, '$.class_name')) = :{param_name})"""
-            )
-            bindparams_dict[param_name] = cls.lower()
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            placeholders = []
+            for idx, v in enumerate(values):
+                param_name = f"label_{key}_{idx}"
+                placeholders.append(f":{param_name}")
+                bindparams_dict[param_name] = str(v)
+            label_conditions.append(f"JSON_VALUE(labels, '$.{key}') IN ({', '.join(placeholders)})")
 
-        combined = " AND ".join(conditions)
-        return text(f"""ISJSON("AttackResultEntries".atomic_attack_identifier) = 1 AND {combined}""").bindparams(
-            **bindparams_dict
-        )
+        base = [
+            PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
+            PromptMemoryEntry.labels.isnot(None),
+        ]
+        if label_conditions:
+            combined = " AND ".join(label_conditions)
+            base.append(
+                cast("ColumnElement[bool]", text(f"ISJSON(labels) = 1 AND {combined}").bindparams(**bindparams_dict))
+            )
+
+        return exists().where(and_(*base))
 
     def get_unique_attack_class_names(self) -> list[str]:
         """
@@ -461,11 +496,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             rows = session.execute(
                 text(
                     """SELECT DISTINCT JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack.class_name') AS cls
+                        '$.children.attack_technique.children.attack.class_name') AS cls
                     FROM "AttackResultEntries"
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack.class_name') IS NOT NULL"""
+                        '$.children.attack_technique.children.attack.class_name') IS NOT NULL"""
                 )
             ).fetchall()
         return sorted(row[0] for row in rows)
@@ -473,8 +508,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def get_unique_converter_class_names(self) -> list[str]:
         """
         Azure SQL implementation: extract unique converter class_name values
-        from the request_converter_identifiers array in the atomic_attack_identifier
-        JSON column.
+        from the children.attack_technique.children.attack.children.request_converters array
+        in the atomic_attack_identifier JSON column.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -485,7 +520,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     """SELECT DISTINCT JSON_VALUE(c.value, '$.class_name') AS cls
                     FROM "AttackResultEntries"
                     CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
-                        '$.children.attack.request_converter_identifiers')) AS c
+                        '$.children.attack_technique.children.attack.children.request_converters')) AS c
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL"""
                 )
@@ -593,44 +628,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def _get_scenario_result_target_endpoint_condition(self, *, endpoint: str) -> TextClause:
-        """
-        Get the SQL Azure implementation for filtering ScenarioResults by target endpoint.
-
-        Uses JSON_VALUE() function specific to SQL Azure.
-
-        Args:
-            endpoint (str): The endpoint URL substring to filter by (case-insensitive).
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text(
-            """ISJSON(objective_target_identifier) = 1
-            AND LOWER(JSON_VALUE(objective_target_identifier, '$.endpoint')) LIKE :endpoint"""
-        ).bindparams(endpoint=f"%{endpoint.lower()}%")
-
-    def _get_scenario_result_target_model_condition(self, *, model_name: str) -> TextClause:
-        """
-        Get the SQL Azure implementation for filtering ScenarioResults by target model name.
-
-        Uses JSON_VALUE() function specific to SQL Azure.
-
-        Args:
-            model_name (str): The model name substring to filter by (case-insensitive).
-
-        Returns:
-            Any: SQLAlchemy text condition with bound parameter.
-        """
-        return text(
-            """ISJSON(objective_target_identifier) = 1
-            AND LOWER(JSON_VALUE(objective_target_identifier, '$.model_name')) LIKE :model_name"""
-        ).bindparams(model_name=f"%{model_name.lower()}%")
-
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
+        Args:
+            message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
         """
         self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
@@ -640,7 +643,15 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         if self.engine:
             self.engine.dispose()
-            logger.info("Engine disposed successfully.")
+            # During interpreter shutdown, logging handler streams may already be closed,
+            # causing the framework to print "Logging error" to stderr (GH-1520).
+            # Temporarily suppress logging errors for this teardown message.
+            previous_raise = logging.raiseExceptions
+            logging.raiseExceptions = False
+            try:
+                logger.info("Engine disposed successfully.")
+            finally:
+                logging.raiseExceptions = previous_raise
 
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
         """
@@ -741,7 +752,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     return query.distinct().all()
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[attr-defined]
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
                 raise
 
     def _update_entries(self, *, entries: MutableSequence[Base], update_fields: dict[str, Any]) -> bool:
@@ -769,7 +780,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[attr-defined]
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():
@@ -787,10 +798,3 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 session.rollback()
                 logger.exception(f"Error updating entries: {e}")
                 raise
-
-    def reset_database(self) -> None:
-        """Drop and recreate existing tables."""
-        # Drop all existing tables
-        Base.metadata.drop_all(self.engine)
-        # Recreate the tables
-        Base.metadata.create_all(self.engine, checkfirst=True)

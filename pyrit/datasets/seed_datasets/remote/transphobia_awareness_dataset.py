@@ -38,7 +38,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     QUESTION_RESPONSE_PAIRS_URL = "https://zenodo.org/records/15482694/files/Question_Response_Pairs.xlsx?download=1"
     QUORA_QUESTION_LIST_URL = "https://zenodo.org/records/15482694/files/Quora%20Question%20List.xlsx?download=1"
 
-    def __init__(self, *, source: str = RATINGS_URL):
+    def __init__(self, *, source: str = RATINGS_URL) -> None:
         """
         Initialize the Transphobia-Awareness dataset loader.
 

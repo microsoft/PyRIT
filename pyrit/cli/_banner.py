@@ -255,10 +255,12 @@ def _build_static_banner() -> StaticBannerData:
         "Commands:",
         "  • list-scenarios        - See all available scenarios",
         "  • list-initializers     - See all available initializers",
+        "  • list-targets [opts]   - See all available targets in the registry",
         "  • run <scenario> [opts] - Execute a security scenario",
         "  • scenario-history      - View your session history",
         "  • print-scenario [N]    - Display detailed results",
         "  • help [command]        - Get help on any command",
+        "  • clear                 - Clear the screen",
         "  • exit                  - Quit the shell",
     ]
     cmd_section: list[tuple[str, ColorRole]] = [
@@ -296,7 +298,7 @@ def _build_static_banner() -> StaticBannerData:
     quick_start = [
         "Quick Start:",
         "  pyrit> list-scenarios",
-        "  pyrit> run foundry --initializers openai_objective_target load_default_datasets",
+        "  pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets",
     ]
     for qs in quick_start:
         full_line = _box_line("  " + qs)
@@ -566,11 +568,11 @@ def _render_line_with_segments(
     result: list[str] = []
     current_role: Optional[ColorRole] = None
     for pos, ch in enumerate(line):
-        role = char_roles[pos]
-        if role != current_role:
-            color = _get_color(role, theme) if role else reset
+        char_role = char_roles[pos]
+        if char_role != current_role:
+            color = _get_color(char_role, theme) if char_role else reset
             result.append(color)
-            current_role = role
+            current_role = char_role
         result.append(ch)
     result.append(reset)
     return "".join(result)

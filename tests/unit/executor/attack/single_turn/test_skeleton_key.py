@@ -223,7 +223,6 @@ class TestSkeletonKeyPromptLoading:
 class TestSkeletonKeyPromptSending:
     """Test skeleton key prompt sending functionality."""
 
-    @pytest.mark.asyncio
     async def test_send_skeleton_key_prompt_successful(
         self, mock_target, mock_prompt_normalizer, basic_context, skeleton_key_response
     ):
@@ -252,7 +251,6 @@ class TestSkeletonKeyPromptSending:
         assert message.message_pieces[0].original_value == "Test skeleton key"
         assert message.message_pieces[0].original_value_data_type == "text"
 
-    @pytest.mark.asyncio
     async def test_send_skeleton_key_prompt_filtered_response(self, mock_target, mock_prompt_normalizer, basic_context):
         """Test handling of filtered skeleton key prompt response."""
         attack = SkeletonKeyAttack(
@@ -268,7 +266,6 @@ class TestSkeletonKeyPromptSending:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_send_skeleton_key_prompt_uses_correct_converters(
         self, mock_target, mock_prompt_normalizer, basic_context
     ):
@@ -326,7 +323,6 @@ class TestSkeletonKeyFailureResult:
 class TestSkeletonKeyAttackExecution:
     """Test main skeleton key attack execution logic."""
 
-    @pytest.mark.asyncio
     async def test_perform_attack_skeleton_key_success_objective_success(
         self, mock_target, mock_true_false_scorer, basic_context, skeleton_key_response, sample_response, success_score
     ):
@@ -367,7 +363,6 @@ class TestSkeletonKeyAttackExecution:
                 assert result.last_response == sample_response
                 assert result.last_score == success_score
 
-    @pytest.mark.asyncio
     async def test_perform_attack_skeleton_key_failure(self, mock_target, basic_context):
         """Test attack flow when skeleton key prompt is filtered."""
         attack = SkeletonKeyAttack(objective_target=mock_target, skeleton_key_prompt="Test skeleton key")
@@ -395,7 +390,6 @@ class TestSkeletonKeyAttackExecution:
                 # Verify result is the failure result
                 assert result == expected_result
 
-    @pytest.mark.asyncio
     async def test_perform_attack_skeleton_key_success_objective_failure(
         self, mock_target, mock_true_false_scorer, basic_context, skeleton_key_response, sample_response, failure_score
     ):
@@ -432,7 +426,6 @@ class TestSkeletonKeyAttackExecution:
 class TestSkeletonKeyAttackStateMangement:
     """Test skeleton key attack state management."""
 
-    @pytest.mark.asyncio
     async def test_attack_state_isolation_between_executions(self, mock_target):
         """Test that attacks don't share state between executions."""
         attack = SkeletonKeyAttack(objective_target=mock_target)

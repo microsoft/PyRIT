@@ -37,7 +37,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
         *,
         config: str = "prompts",
         split: str = "base",
-    ):
+    ) -> None:
         """
         Initialize the SALAD-Bench dataset loader.
 
@@ -113,7 +113,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=f"{{% raw %}}{item['prompt']}{{% endraw %}}",
+                value=item["prompt"],
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[self._parse_category(c) for c in item["categories"]],

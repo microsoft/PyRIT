@@ -27,7 +27,7 @@ class QRCodeConverter(PromptConverter):
         finder_dark_color: Optional[tuple[int, int, int]] = None,
         finder_light_color: Optional[tuple[int, int, int]] = None,
         border_color: Optional[tuple[int, int, int]] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with specified parameters for QR code generation.
 

@@ -1,0 +1,76 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""
+Target registry for discovering and managing PyRIT prompt targets.
+
+Targets are registered explicitly via initializers as pre-configured instances.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Optional, Union
+
+from pyrit.registry.object_registries.retrievable_instance_registry import (
+    RetrievableInstanceRegistry,
+)
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
+
+logger = logging.getLogger(__name__)
+
+
+class TargetRegistry(RetrievableInstanceRegistry["PromptTarget"]):
+    """
+    Registry for managing available prompt target instances.
+
+    This registry stores pre-configured PromptTarget instances (not classes).
+    Targets are registered explicitly via initializers after being instantiated
+    with their required parameters (e.g., endpoint, API keys).
+
+    Targets are identified by their snake_case name derived from the class name,
+    or a custom name provided during registration.
+    """
+
+    def register_instance(
+        self,
+        target: PromptTarget,
+        *,
+        name: Optional[str] = None,
+        tags: Optional[Union[dict[str, str], list[str]]] = None,
+    ) -> None:
+        """
+        Register a target instance.
+
+        Note: Unlike ScenarioRegistry and InitializerRegistry which register classes,
+        TargetRegistry registers pre-configured instances.
+
+        Args:
+            target: The pre-configured target instance (not a class).
+            name: Optional custom registry name. If not provided,
+                derived from class name with identifier hash appended
+                (e.g., OpenAIChatTarget -> openai_chat_abc123).
+            tags: Optional tags for categorization. Accepts a ``dict[str, str]``
+                or a ``list[str]`` (each string becomes a key with value ``""``).
+        """
+        if name is None:
+            name = target.get_identifier().unique_name
+
+        self.register(target, name=name, tags=tags)
+        logger.debug(f"Registered target instance: {name} ({target.__class__.__name__})")
+
+    def get_instance_by_name(self, name: str) -> Optional[PromptTarget]:
+        """
+        Get a registered target instance by name.
+
+        Note: This returns an already-instantiated target, not a class.
+
+        Args:
+            name: The registry name of the target.
+
+        Returns:
+            The target instance, or None if not found.
+        """
+        return self.get(name)

@@ -6,10 +6,6 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit-dev
-#     language: python
-#     name: python3
 # ---
 
 # %% [markdown]
@@ -27,7 +23,6 @@
 #
 # This conversation is sent to the `objective_target`.
 #
-# Before you begin, ensure you are set up with the correct version of PyRIT installed and have secrets configured as described [here](../../../setup/populating_secrets.md).
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 

@@ -228,6 +228,6 @@ async def _generate_next_message_async(
     # Change the role from assistant to user since this is a user message to be sent to the target
     response = responses[0]
     for piece in response.message_pieces:
-        piece.role = "user"
+        piece._role = "user"
 
     return response

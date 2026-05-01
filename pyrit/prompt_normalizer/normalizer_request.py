@@ -25,10 +25,10 @@ class NormalizerRequest:
         self,
         *,
         message: Message,
-        request_converter_configurations: list[PromptConverterConfiguration] = None,
-        response_converter_configurations: list[PromptConverterConfiguration] = None,
+        request_converter_configurations: list[PromptConverterConfiguration] | None = None,
+        response_converter_configurations: list[PromptConverterConfiguration] | None = None,
         conversation_id: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a normalizer request.
 

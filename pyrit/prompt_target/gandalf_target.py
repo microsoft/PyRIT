@@ -10,6 +10,8 @@ from pyrit.common import net_utility
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ class GandalfTarget(PromptTarget):
         *,
         level: GandalfLevel,
         max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Gandalf target.
@@ -52,9 +56,18 @@ class GandalfTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for this
+              target instance.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         endpoint = "https://gandalf-api.lakera.ai/api/send-message"
-        super().__init__(max_requests_per_minute=max_requests_per_minute, endpoint=endpoint)
+        super().__init__(
+            max_requests_per_minute=max_requests_per_minute,
+            endpoint=endpoint,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
 
         self._defender = level.value
 
@@ -72,17 +85,19 @@ class GandalfTarget(PromptTarget):
         )
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the Gandalf target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
 
         logger.info(f"Sending the following prompt to the prompt target: {request}")
@@ -92,15 +107,6 @@ class GandalfTarget(PromptTarget):
         response_entry = construct_response_from_request(request=request, response_text_pieces=[response])
 
         return [response_entry]
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
 
     async def check_password(self, password: str) -> bool:
         """

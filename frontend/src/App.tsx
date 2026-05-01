@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
+import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import TargetConfig from './components/Config/TargetConfig'
@@ -36,6 +37,7 @@ function ConnectionBannerContainer() {
 }
 
 function App() {
+  const { instance } = useMsal()
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [currentView, setCurrentView] = useState<ViewName>('chat')
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
@@ -45,16 +47,38 @@ function App() {
   /** Persisted filter state for the history view */
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
 
-  // Fetch default labels from backend configuration on startup
+  // Fetch default labels from backend, then override operator with active account if available
   useEffect(() => {
-    versionApi.getVersion()
-      .then((data) => {
+    let ignore = false
+
+    async function initLabels() {
+      let defaultLabels: Record<string, string> = {}
+      try {
+        const data = await versionApi.getVersion()
         if (data.default_labels && Object.keys(data.default_labels).length > 0) {
-          setGlobalLabels(prev => ({ ...prev, ...data.default_labels }))
+          defaultLabels = data.default_labels
         }
+      } catch {
+        /* version fetch handled elsewhere */
+      }
+
+      if (ignore) return
+
+      const account = instance.getActiveAccount?.()
+      const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
+
+      setGlobalLabels(prev => {
+        const next = { ...prev, ...defaultLabels }
+        if (alias) {
+          next.operator = alias
+        }
+        return next
       })
-      .catch(() => { /* version fetch handled elsewhere */ })
-  }, [])
+    }
+
+    initLabels()
+    return () => { ignore = true }
+  }, [instance])
 
   const handleSetActiveTarget = useCallback((target: TargetInstance) => {
     setActiveTarget(prev => {

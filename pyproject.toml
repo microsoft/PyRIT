@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "0.11.1.dev0"
+version = "0.14.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
@@ -23,12 +23,15 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.10, <3.14"
+requires-python = ">=3.10, <3.15"
 dependencies = [
     "aiofiles>=24,<25",
+    "alembic>=1.16.0",
     "appdirs>=1.4.0",
     "art>=6.5.0",
+    "av>=14.0.0",
     "azure-core>=1.38.0",
     "azure-identity>=1.19.0",
     "azure-ai-contentsafety>=1.0.0",
@@ -42,13 +45,15 @@ dependencies = [
     "fastapi>=0.115.0",
     "httpx[http2]>=0.27.2",
     "jinja2>=3.1.6",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0; python_version < '3.14'",
+    "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
-    "pillow>=12.1.1",
+    "pillow>=12.2.0",
     "pydantic>=2.11.5",
+    "PyJWT[crypto]>=2.8.0",
     "pyodbc>=5.1.0",
-    "pypdf>=6.8.0",
+    "pypdf>=6.10.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.0.1",
     "reportlab>=4.4.4",
@@ -57,16 +62,15 @@ dependencies = [
     "SQLAlchemy>=2.0.41",
     "termcolor>=2.4.0",
     "tenacity>=9.1.2",
-    "tinytag>=2.1.1",
+    "tinytag>=2.2.1",
     "tqdm>=4.67.1",
-    "transformers>=4.52.4",
+    "transformers>=4.55.0",
     "treelib>=1.7.1",
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
 ]
 
-[project.optional-dependencies]
-# always make sure the individual ones are in sync with the all group
+[dependency-groups]
 dev = [
     "feedgen>=1.0.0",
     "griffe>=2.0.0",
@@ -75,12 +79,13 @@ dev = [
     "jupyter-book>=2.0.0",
     "jupytext>=1.17.1",
     "matplotlib>=3.10.0",
-    "mypy>=1.16.0",
+    "ty>=0.0.32",
     "mock-alchemy>=0.2.6",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
+    "diff-cover>=9.0.0",
     "pytest-cov>=6.1.1",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.6.1",
@@ -99,6 +104,9 @@ dev = [
     "types-tabulate>=0.9.0",
     "types-ujson>=5.10.0",
 ]
+
+[project.optional-dependencies]
+# always make sure the individual ones are in sync with the all group
 huggingface = [
     "torch>=2.7.0",
 ]
@@ -106,7 +114,7 @@ gcg = [
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.27.1",
     "azureml-mlflow>=1.60.0",
-    "mlflow>=2.22.0",
+    "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "sentencepiece>=0.2.0",
     "torch>=2.7.0",
@@ -116,13 +124,8 @@ playwright = [
     "ollama>=0.5.1",
     "playwright>=1.49.0",
 ]
-gradio = [
-    "gradio>=6.7.0",
-    "rpyc>=6.0.1",
-    "pywebview>=5.4"
-]
 fairness_bias = [
-    "spacy>=3.8.7",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
 ]
 opencv = [
     "opencv-python>=4.11.0.86",
@@ -132,24 +135,22 @@ speech = [
     "azure-cognitiveservices-speech>=1.46.0",
 ]
 
-# all includes all functional dependencies excluding the ones from the "dev" extra
+# all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
+    "av>=14.0.0",
     "azure-ai-ml>=1.27.1",
     "azure-cognitiveservices-speech>=1.44.0",
     "azureml-mlflow>=1.60.0",
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "gradio>=6.7.0",
-    "mlflow>=2.22.0",
+    "mlflow>=3.11.1",
     "ml-collections>=1.1.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
-    "pywebview>=5.4",
-    "spacy>=3.8.7",
-    "rpyc>=6.0.1",
+    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
     "torch>=2.7.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
@@ -168,19 +169,43 @@ pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 
-[tool.mypy]
-plugins = []
-ignore_missing_imports = true
-strict = false
-follow_imports = "silent"
-strict_optional = false
-disable_error_code = ["empty-body"]
+[tool.ty]
+[tool.ty.rules]
+all = "error"
+# Suppress errors for missing third-party stubs
+unresolved-import = "ignore"
+# Tolerate None attribute access
+possibly-missing-attribute = "ignore"
+# Allow existing type: ignore comments without matching errors
+unused-ignore-comment = "warn"
+unused-type-ignore-comment = "warn"
+# Allow empty function bodies during development
+empty-body = "ignore"
+
+[tool.ty.analysis]
+respect-type-ignore-comments = true
+# Treat colorama as Any — it has no type stubs and uses a dynamic pattern
+# (class attrs are int, __init__ converts to str via setattr) that ty can't follow
+replace-imports-with-any = ["colorama.**"]
+
+[tool.ty.src]
 exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
+
+# Relax type checking for HuggingFace module
+[[tool.ty.overrides]]
+include = ["pyrit/prompt_target/hugging_face/**"]
+[tool.ty.overrides.rules]
+invalid-argument-type = "warn"
 
 [tool.uv]
 constraint-dependencies = [
-    "cryptography>=46.0.5",
+    "aiohttp>=3.13.4",
+    "pyasn1>=0.6.3",
+    "cryptography>=46.0.7",
     "orjson>=3.11.6",
+    "Pygments>=2.20.0",
+    "PyJWT>=2.12.0",
+    "requests>=2.33.0",
     "tornado>=6.5.5",
     "werkzeug>=3.1.6",
 ]
@@ -195,6 +220,8 @@ include = ["pyrit", "pyrit.*"]
 [tool.setuptools.package-data]
 pyrit = [
     "backend/frontend/**/*",
+    "memory/alembic/**/*",
+    "memory/alembic.ini",
     "py.typed"
 ]
 
@@ -288,8 +315,10 @@ select = [
     "UP",  # https://docs.astral.sh/ruff/rules/#pyupgrade-up
     "W",  # https://docs.astral.sh/ruff/rules/#pycodestyle-w
     "YTT",  # https://docs.astral.sh/ruff/rules/#flake8-2020-ytt
+    "ANN",  # https://docs.astral.sh/ruff/rules/#flake8-annotations-ann
 ]
 ignore = [
+    "ANN401",  # any-type (too strict — many legitimate uses of Any)
     "B903",  # class-as-data-structure (test helper classes use @apply_defaults pattern)
     "D100",  # Missing docstring in public module
     "D200",  # One-line docstring should fit on one line
@@ -322,12 +351,12 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 # Ignore copyright, import-location (E402), line length (E501), type-checking, and blanket type-ignore (PGH003) rules in doc/ directory
 # E402: notebooks have imports in code cells, not at top of file
 # E501: markdown comments in notebooks can exceed line length
-# PGH003: blanket type: ignore in notebooks (not mypy-checked)
+# PGH003: blanket type: ignore in notebooks (not type-checked)
 # A: notebook code commonly uses builtins like id, dir, display
 # ERA001: jupytext markdown cells look like commented-out code
 # LOG: notebooks use root logger for convenience
 # PLE1142: top-level await is valid in Jupyter notebooks
-"doc/**" = ["CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
+"doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
 "pyrit/{auxiliary_attacks,ui}/**/*.py" = ["B905", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D401", "D404", "D417", "D418", "DOC102", "DOC201", "DOC202", "DOC402", "DOC501", "N", "PERF", "SIM101", "SIM108"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
@@ -337,7 +366,11 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "pyrit/ui/**/*.py" = ["D", "DOC201", "DOC501"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
-"tests/**/*.py" = ["B017"]
+"tests/**/*.py" = ["ANN", "B017"]
+# Infrastructure/utility scripts — not part of the library API
+"build_scripts/**/*.py" = ["ANN"]
+"docker/**/*.py" = ["ANN"]
+"frontend/dev.py" = ["ANN"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

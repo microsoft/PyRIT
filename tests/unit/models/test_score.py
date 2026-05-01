@@ -4,13 +4,10 @@
 import uuid
 from datetime import datetime, timezone
 
-import pytest
-
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 
 
-@pytest.mark.asyncio
 async def test_score_to_dict():
     scorer_identifier = ComponentIdentifier(
         class_name="TestScorer",

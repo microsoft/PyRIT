@@ -14,7 +14,7 @@ class CentralMemory:
     The provided memory instance will be reused for future calls.
     """
 
-    _memory_instance: MemoryInterface = None
+    _memory_instance: MemoryInterface | None = None
 
     @classmethod
     def set_memory_instance(cls, passed_memory: MemoryInterface) -> None:

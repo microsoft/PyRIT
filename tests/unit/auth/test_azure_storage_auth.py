@@ -14,7 +14,6 @@ from pyrit.auth import AzureStorageAuth
 MOCK_CONTAINER_URL = "https://storageaccountname.blob.core.windows.net/containername"
 
 
-@pytest.mark.asyncio
 async def test_get_user_delegation_key():
     mock_blob_service_client = AsyncMock(spec=BlobServiceClient)
     expected_start_time = datetime.now(tz=timezone.utc)
@@ -40,7 +39,6 @@ async def test_get_user_delegation_key():
     assert actual_delegation_key.signed_version == mock_user_delegation_key.signed_version
 
 
-@pytest.mark.asyncio
 @patch("pyrit.auth.AzureStorageAuth.get_user_delegation_key", new_callable=AsyncMock)
 @patch("azure.storage.blob.aio.BlobServiceClient")
 @patch("azure.storage.blob.aio.ContainerClient")
@@ -73,7 +71,6 @@ async def test_get_sas_token(
     mock_sas_instance.generate_container.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_get_sas_token_no_url():
     # Test with no container URL
     with pytest.raises(
@@ -84,7 +81,6 @@ async def test_get_sas_token_no_url():
         await AzureStorageAuth.get_sas_token("")
 
 
-@pytest.mark.asyncio
 async def test_get_sas_token_invalid_url_scheme():
     # Test with invalid container URL (no scheme)
     invalid_url = "mockaccount.blob.core.windows.net/mockcontainer"
@@ -96,7 +92,6 @@ async def test_get_sas_token_invalid_url_scheme():
         await AzureStorageAuth.get_sas_token(invalid_url)
 
 
-@pytest.mark.asyncio
 async def test_get_sas_token_invalid_url_netloc():
     # Test with invalid container URL (no netloc)
     invalid_url = "https:///mockcontainer"
@@ -108,7 +103,6 @@ async def test_get_sas_token_invalid_url_netloc():
         await AzureStorageAuth.get_sas_token(invalid_url)
 
 
-@pytest.mark.asyncio
 async def test_get_sas_token_invalid_url_path():
     # Test with invalid container URL (no path)
     invalid_url = "https://storageaccountname.core.windows.net"
