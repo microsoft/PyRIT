@@ -81,7 +81,6 @@ def false_scorer(patch_central_database):
     return MockScorer(False, "This is a false score")
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_and_all_true(mock_request, true_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer, true_scorer])
 
@@ -92,7 +91,6 @@ async def test_composite_scorer_and_all_true(mock_request, true_scorer):
     assert "All constituent scorers returned True in an AND composite scorer." in scores[0].score_value_description
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_and_one_false(mock_request, true_scorer, false_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer, false_scorer])
 
@@ -103,7 +101,6 @@ async def test_composite_scorer_and_one_false(mock_request, true_scorer, false_s
     assert "This is a true score" in scores[0].score_rationale
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_or_all_false(mock_request, false_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[false_scorer, false_scorer])
 
@@ -114,7 +111,6 @@ async def test_composite_scorer_or_all_false(mock_request, false_scorer):
     assert "All constituent scorers returned False in an OR composite scorer." in scores[0].score_value_description
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_or_one_true(mock_request, true_scorer, false_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, false_scorer])
 
@@ -124,7 +120,6 @@ async def test_composite_scorer_or_one_true(mock_request, true_scorer, false_sco
     assert "This is a true score" in scores[0].score_rationale
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_majority_true(mock_request, true_scorer, false_scorer):
     scorer = TrueFalseCompositeScorer(
         aggregator=TrueFalseScoreAggregator.MAJORITY, scorers=[true_scorer, true_scorer, false_scorer]
@@ -140,7 +135,6 @@ async def test_composite_scorer_majority_true(mock_request, true_scorer, false_s
     )
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_majority_false(mock_request, true_scorer, false_scorer):
     scorer = TrueFalseCompositeScorer(
         aggregator=TrueFalseScoreAggregator.MAJORITY, scorers=[true_scorer, false_scorer, false_scorer]
@@ -170,7 +164,6 @@ def test_composite_scorer_invalid_scorer_type():
         TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[InvalidScorer()])  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_with_task(mock_request, true_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
 
@@ -186,7 +179,6 @@ def test_composite_scorer_empty_scorers_list():
         TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[])
 
 
-@pytest.mark.asyncio
 async def test_composite_scorer_raises_when_message_piece_id_is_none(true_scorer, patch_central_database):
     """Test that _score_async raises ValueError when message piece has no ID."""
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])

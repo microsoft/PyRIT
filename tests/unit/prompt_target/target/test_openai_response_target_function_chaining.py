@@ -62,7 +62,6 @@ def create_mock_text_response(text: str) -> MagicMock:
     return mock_response
 
 
-@pytest.mark.asyncio
 async def test_single_function_call_preserves_history(response_target, patch_central_database):
     """Test that a single function call maintains proper conversation history."""
     conversation_id = str(uuid.uuid4())
@@ -132,7 +131,6 @@ async def test_single_function_call_preserves_history(response_target, patch_cen
         assert "temperature" in function_output_item["output"]
 
 
-@pytest.mark.asyncio
 async def test_chained_function_calls_preserve_all_history(response_target, patch_central_database):
     """Test that multiple chained function calls maintain complete conversation history."""
     conversation_id = str(uuid.uuid4())
@@ -209,7 +207,6 @@ async def test_chained_function_calls_preserve_all_history(response_target, patc
         assert call_history[2][4]["call_id"] == "call_2"
 
 
-@pytest.mark.asyncio
 async def test_function_call_memory_persistence(response_target, patch_central_database):
     """Test that all intermediate function calls are stored in memory."""
     conversation_id = str(uuid.uuid4())
@@ -254,7 +251,6 @@ async def test_function_call_memory_persistence(response_target, patch_central_d
         assert len(conversation) == 0
 
 
-@pytest.mark.asyncio
 async def test_call_id_consistency_across_chain(response_target, patch_central_database):
     """Test that call_ids are correctly maintained throughout the function call chain."""
     conversation_id = str(uuid.uuid4())
@@ -316,7 +312,6 @@ async def test_call_id_consistency_across_chain(response_target, patch_central_d
                     assert item["call_id"] == next_item["call_id"]
 
 
-@pytest.mark.asyncio
 async def test_no_duplicate_messages_in_conversation(response_target, patch_central_database):
     """Test that messages aren't duplicated when building conversation history."""
     conversation_id = str(uuid.uuid4())

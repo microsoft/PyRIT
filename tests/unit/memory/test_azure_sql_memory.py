@@ -31,7 +31,6 @@ def sample_conversation_entries() -> Sequence[PromptMemoryEntry]:
     return get_sample_conversation_entries()
 
 
-@pytest.mark.asyncio
 async def test_insert_entry(memory_interface):
     message_piece = MessagePiece(
         id=uuid.uuid4(),

@@ -124,7 +124,6 @@ _MOCK_DATA = {
 }
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "loader_class",
     _MOCK_DATA.keys(),

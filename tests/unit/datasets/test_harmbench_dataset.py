@@ -17,7 +17,6 @@ def mock_harmbench_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset(mock_harmbench_data):
     loader = _HarmBenchDataset()
 
@@ -31,7 +30,6 @@ async def test_fetch_dataset(mock_harmbench_data):
     assert dataset.seeds[0].harm_categories == ["cybercrime"]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_missing_keys_raises():
     loader = _HarmBenchDataset()
     bad_data = [{"Behavior": "Something"}]  # Missing SemanticCategory

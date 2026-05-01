@@ -172,7 +172,6 @@ class TestPlaywrightCopilotTarget:
         # Should not raise any exception
         target._validate_request(normalized_conversation=[multimodal_request])
 
-    @pytest.mark.asyncio
     async def test_send_text_async(self, mock_page):
         """Test sending text input."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -191,7 +190,6 @@ class TestPlaywrightCopilotTarget:
         mock_locator.click.assert_awaited_once()
         mock_locator.type.assert_awaited_once_with("Hello world")
 
-    @pytest.mark.asyncio
     async def test_click_dropdown_button_async_success_first_try(self, mock_page):
         """Test successful dropdown button click on first attempt."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -205,7 +203,6 @@ class TestPlaywrightCopilotTarget:
         mock_locator.count.assert_awaited_once()
         mock_locator.click.assert_awaited_once()
 
-    @pytest.mark.asyncio
     async def test_click_dropdown_button_async_success_after_retry(self, mock_page):
         """Test successful dropdown button click after retries."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -221,7 +218,6 @@ class TestPlaywrightCopilotTarget:
         # Should have waited twice before success
         assert mock_page.wait_for_timeout.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_click_dropdown_button_async_failure(self, mock_page):
         """Test dropdown button click failure after all retries."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -236,7 +232,6 @@ class TestPlaywrightCopilotTarget:
         assert mock_locator.count.call_count == 5
         mock_locator.click.assert_not_awaited()
 
-    @pytest.mark.asyncio
     async def test_check_login_requirement_async_no_login_needed(self, mock_page):
         """Test no login requirement check."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -249,7 +244,6 @@ class TestPlaywrightCopilotTarget:
 
         mock_page.locator.assert_called_once_with('h1:has-text("Sign in for the full experience")')
 
-    @pytest.mark.asyncio
     async def test_check_login_requirement_async_login_required(self, mock_page):
         """Test login requirement detected."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -260,7 +254,6 @@ class TestPlaywrightCopilotTarget:
         with pytest.raises(RuntimeError, match="Login required to access advanced features in Consumer Copilot"):
             await target._check_login_requirement_async()
 
-    @pytest.mark.asyncio
     async def test_upload_image_async_success(self, mock_page):
         """Test successful image upload."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -310,7 +303,6 @@ class TestPlaywrightCopilotTarget:
         file_picker_locator.click.assert_awaited_once()
         mock_file_chooser.set_files.assert_awaited_once_with("/path/to/image.jpg")
 
-    @pytest.mark.asyncio
     async def test_wait_for_response_async_success(self, mock_page):
         """Test successful response waiting."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -329,7 +321,6 @@ class TestPlaywrightCopilotTarget:
         mock_page.click.assert_awaited_once_with(selectors.send_button_selector)
         mock_extract.assert_awaited_once()
 
-    @pytest.mark.asyncio
     async def test_wait_for_response_async_timeout(self, mock_page):
         """Test response waiting timeout."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -346,7 +337,6 @@ class TestPlaywrightCopilotTarget:
             with pytest.raises(TimeoutError, match="Timed out waiting for AI response"):
                 await target._wait_for_response_async(selectors)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_text_only(self, mock_page, text_request_piece):
         """Test sending text-only prompt."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -361,13 +351,11 @@ class TestPlaywrightCopilotTarget:
         assert response[0].message_pieces[0].converted_value == "AI response"
         assert response[0].message_pieces[0].api_role == "assistant"
 
-    @pytest.mark.asyncio
     async def test_no_page(self, text_request_piece):
         """Test error when page is not initialized."""
         with pytest.raises(RuntimeError, match="Playwright page is not initialized"):
             PlaywrightCopilotTarget(page=None)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_interaction_error(self, mock_page, text_request_piece):
         """Test error handling during interaction."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -378,7 +366,6 @@ class TestPlaywrightCopilotTarget:
             with pytest.raises(RuntimeError, match="An error occurred during interaction: Interaction failed"):
                 await target.send_prompt_async(message=request)
 
-    @pytest.mark.asyncio
     async def test_interact_with_copilot_async_multimodal(self, mock_page, multimodal_request):
         """Test multimodal interaction with both text and image."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -488,7 +475,6 @@ class TestPlaywrightCopilotTargetMultimodal:
             converted_value_data_type="image_path",
         )
 
-    @pytest.mark.asyncio
     async def test_extract_text_from_message_groups(self, mock_page):
         """Test extracting text from message groups."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -514,7 +500,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert mock_group1.query_selector_all.call_count == 1
         assert mock_group2.query_selector_all.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_extract_text_from_message_groups_empty(self, mock_page):
         """Test extracting text when no text elements found."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -526,7 +511,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_extract_text_from_message_groups_with_none_content(self, mock_page):
         """Test extracting text when elements return None content."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -566,7 +550,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_count_images_in_groups_with_iframes(self, mock_page):
         """Test counting images in message groups with iframes."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -586,7 +569,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == 2
 
-    @pytest.mark.asyncio
     async def test_count_images_in_groups_direct_images(self, mock_page):
         """Test counting direct images without iframes."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -605,7 +587,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == 3
 
-    @pytest.mark.asyncio
     async def test_count_images_in_groups_no_images(self, mock_page):
         """Test counting when no images found."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -617,7 +598,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == 0
 
-    @pytest.mark.asyncio
     async def test_count_images_in_groups_iframe_error(self, mock_page):
         """Test counting images when iframe access fails."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -632,7 +612,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == 0
 
-    @pytest.mark.asyncio
     async def test_wait_minimum_time(self, mock_page):
         """Test minimum wait time function."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -643,7 +622,6 @@ class TestPlaywrightCopilotTargetMultimodal:
             assert mock_sleep.call_count == 3
             mock_sleep.assert_has_calls([call(1), call(1), call(1)])
 
-    @pytest.mark.asyncio
     async def test_extract_images_from_iframes(self, mock_page):
         """Test extracting images from iframes."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -665,7 +643,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert len(result) == 2
         assert result == [mock_img1, mock_img2]
 
-    @pytest.mark.asyncio
     async def test_extract_images_from_iframes_no_content_frame(self, mock_page):
         """Test extracting images when iframe has no content frame."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -681,7 +658,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_extract_images_from_iframes_exception(self, mock_page):
         """Test extracting images when iframe access raises exception."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -696,7 +672,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_extract_images_from_message_groups(self, mock_page):
         """Test extracting images directly from message groups."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -714,7 +689,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert len(result) == 2
         assert result == [mock_img1, mock_img2]
 
-    @pytest.mark.asyncio
     async def test_extract_images_from_message_groups_fallback_ai_messages(self, mock_page):
         """Test fallback to AI messages selector when no images in groups."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -736,7 +710,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert len(result) == 1
         assert result == [mock_img]
 
-    @pytest.mark.asyncio
     async def test_extract_images_from_message_groups_generic_selector(self, mock_page):
         """Test fallback to generic img selector."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -757,7 +730,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert len(result) == 1
 
-    @pytest.mark.asyncio
     async def test_process_image_elements_with_data_url(self, mock_page):
         """Test processing image elements with data URLs."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -781,7 +753,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert result[0] == ("/saved/image/path.png", "image_path")
         mock_serializer.save_b64_image.assert_awaited_once()
 
-    @pytest.mark.asyncio
     async def test_process_image_elements_non_data_url(self, mock_page):
         """Test processing image elements with non-data URLs."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -793,7 +764,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_process_image_elements_no_src(self, mock_page):
         """Test processing image elements with no src attribute."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -805,7 +775,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_process_image_elements_exception(self, mock_page):
         """Test processing image elements when exception occurs."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -823,7 +792,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_wait_for_images_to_stabilize_images_found(self, mock_page):
         """Test waiting for images when images appear."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -848,7 +816,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         mock_min_wait.assert_awaited_once_with(3)
         assert len(result) == 2
 
-    @pytest.mark.asyncio
     async def test_wait_for_images_to_stabilize_dom_stabilizes(self, mock_page):
         """Test waiting when DOM stabilizes without finding images."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -868,7 +835,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert len(result) == 1
 
-    @pytest.mark.asyncio
     async def test_extract_multimodal_content_text_only(self, mock_page):
         """Test extracting multimodal content with text only."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -889,7 +855,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == "Hello world"
 
-    @pytest.mark.asyncio
     async def test_extract_multimodal_content_text_and_images(self, mock_page):
         """Test extracting multimodal content with both text and images."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -916,7 +881,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert result[0] == ("Check this image", "text")
         assert result[1] == ("/path/image.png", "image_path")
 
-    @pytest.mark.asyncio
     async def test_extract_multimodal_content_images_only(self, mock_page):
         """Test extracting multimodal content with images only."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -940,7 +904,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert len(result) == 1
         assert result[0] == ("/path/image.png", "image_path")
 
-    @pytest.mark.asyncio
     async def test_extract_multimodal_content_placeholder_text(self, mock_page):
         """Test extracting content when only placeholder text exists."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -965,7 +928,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert isinstance(result, str)
         assert result == "Fallback text content"
 
-    @pytest.mark.asyncio
     async def test_extract_multimodal_content_no_groups(self, mock_page):
         """Test extracting content when no message groups found."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -977,7 +939,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == ""
 
-    @pytest.mark.asyncio
     async def test_extract_multimodal_content_with_initial_group_count(self, mock_page):
         """Test extracting content with initial group count filtering."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -1001,7 +962,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == "New response"
 
-    @pytest.mark.asyncio
     async def test_send_prompt_async_multimodal_response(self, mock_page):
         """Test sending prompt and receiving multimodal response."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -1030,7 +990,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         assert response[0].message_pieces[1].converted_value_data_type == "image_path"
         assert response[0].message_pieces[1].api_role == "assistant"
 
-    @pytest.mark.asyncio
     async def test_wait_for_response_with_placeholder_content(self, mock_page):
         """Test waiting for response when content initially has placeholders."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -1061,7 +1020,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         # Should have been called twice - once for placeholder, once for real content
         assert mock_extract.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_wait_for_response_with_multimodal_list_ready(self, mock_page):
         """Test waiting for response when multimodal list is ready."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -1077,7 +1035,6 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert result == multimodal_result
 
-    @pytest.mark.asyncio
     async def test_click_dropdown_button_visibility_check(self, mock_page):
         """Test dropdown button click with visibility and enabled checks."""
         target = PlaywrightCopilotTarget(page=mock_page)
@@ -1097,7 +1054,6 @@ class TestPlaywrightCopilotTargetMultimodal:
         mock_first.is_enabled.assert_awaited_once()
         mock_locator.click.assert_awaited_once()
 
-    @pytest.mark.asyncio
     async def test_click_dropdown_button_not_visible(self, mock_page):
         """Test dropdown button click when button never becomes visible."""
         target = PlaywrightCopilotTarget(page=mock_page)

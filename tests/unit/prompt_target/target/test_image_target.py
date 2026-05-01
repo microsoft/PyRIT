@@ -65,7 +65,6 @@ def test_initialization_with_required_parameters(image_target: OpenAIImageTarget
     assert image_target._model_name == "gpt-image-1"
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_generate(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -95,7 +94,6 @@ async def test_send_prompt_async_generate(
         os.remove(path)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_edit(
     image_target: OpenAIImageTarget,
 ):
@@ -133,7 +131,6 @@ async def test_send_prompt_async_edit(
     os.remove(image_piece.original_value)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_edit_multiple_images(
     image_target: OpenAIImageTarget,
 ):
@@ -172,7 +169,6 @@ async def test_send_prompt_async_edit_multiple_images(
     os.remove(image_piece.original_value)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_invalid_image_path(
     image_target: OpenAIImageTarget,
 ):
@@ -198,7 +194,6 @@ async def test_send_prompt_async_invalid_image_path(
         await image_target.send_prompt_async(message=Message([text_piece, image_piece]))
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_empty_response(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -221,7 +216,6 @@ async def test_send_prompt_async_empty_response(
             await image_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_rate_limit_exception(
     image_target: OpenAIImageTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -238,7 +232,6 @@ async def test_send_prompt_async_rate_limit_exception(
             await image_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_bad_request_error(
     image_target: OpenAIImageTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -265,7 +258,6 @@ async def test_send_prompt_async_bad_request_error(
             await image_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_empty_response_adds_memory(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -292,7 +284,6 @@ async def test_send_prompt_async_empty_response_adds_memory(
             await image_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_rate_limit_adds_memory(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -315,7 +306,6 @@ async def test_send_prompt_async_rate_limit_adds_memory(
             await image_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_bad_request_content_filter(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -345,7 +335,6 @@ async def test_send_prompt_async_bad_request_content_filter(
         assert "content_filter" in result[0].message_pieces[0].converted_value
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_bad_request_content_policy_violation(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -375,7 +364,6 @@ async def test_send_prompt_async_bad_request_content_policy_violation(
         assert result[0].message_pieces[0].converted_value_data_type == "error"
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_url_response_downloads_image(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -424,7 +412,6 @@ async def test_send_prompt_async_url_response_downloads_image(
             os.remove(path)
 
 
-@pytest.mark.asyncio
 async def test_validate_no_text_piece(image_target: OpenAIImageTarget):
     image_piece = get_image_message_piece()
 
@@ -437,7 +424,6 @@ async def test_validate_no_text_piece(image_target: OpenAIImageTarget):
             os.remove(image_piece.original_value)
 
 
-@pytest.mark.asyncio
 async def test_validate_multiple_text_pieces(image_target: OpenAIImageTarget):
     request = Message(
         message_pieces=[
@@ -464,7 +450,6 @@ async def test_validate_multiple_text_pieces(image_target: OpenAIImageTarget):
         await image_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_validate_image_pieces(image_target: OpenAIImageTarget):
     image_piece = get_image_message_piece()
     image_pieces = [image_piece for _ in range(OpenAIImageTarget._MAX_INPUT_IMAGES + 1)]
@@ -489,7 +474,6 @@ async def test_validate_image_pieces(image_target: OpenAIImageTarget):
             os.remove(image_piece.original_value)
 
 
-@pytest.mark.asyncio
 async def test_validate_piece_type(image_target: OpenAIImageTarget):
     audio_piece = get_audio_message_piece()
     text_piece = MessagePiece(
@@ -513,7 +497,6 @@ async def test_validate_piece_type(image_target: OpenAIImageTarget):
             os.remove(audio_piece.original_value)
 
 
-@pytest.mark.asyncio
 async def test_validate_previous_conversations(
     image_target: OpenAIImageTarget, sample_conversations: MutableSequence[MessagePiece]
 ):

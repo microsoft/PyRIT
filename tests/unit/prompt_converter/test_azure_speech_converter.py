@@ -20,7 +20,6 @@ def is_speechsdk_installed():
 
 @pytest.mark.skipif(not is_speechsdk_installed(), reason="Azure Speech SDK is not installed.")
 class TestAzureSpeechTextToAudioConverter:
-    @pytest.mark.asyncio
     @patch("azure.cognitiveservices.speech.SpeechSynthesizer")
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
@@ -65,7 +64,6 @@ class TestAzureSpeechTextToAudioConverter:
             MockSpeechConfig.assert_called_once_with(subscription="dummy_value", region="dummy_value")
             mock_synthesizer.speak_text_async.assert_called_once_with(prompt)
 
-    @pytest.mark.asyncio
     async def test_send_prompt_to_audio_file_raises_value_error(self) -> None:
         converter = AzureSpeechTextToAudioConverter(output_format="mp3")
         # testing empty space string
@@ -141,7 +139,6 @@ class TestAzureSpeechTextToAudioConverter:
                 use_entra_auth=True,
             )
 
-    @pytest.mark.asyncio
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
         "pyrit.common.default_values.get_required_value",
@@ -166,7 +163,6 @@ class TestAzureSpeechTextToAudioConverter:
         )
         MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="test_region")
 
-    @pytest.mark.asyncio
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
         "pyrit.common.default_values.get_required_value",

@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, UnicodeSubstitutionConverter
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_basic():
     converter = UnicodeSubstitutionConverter()
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -15,7 +14,6 @@ async def test_unicode_sub_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_custom_start():
     converter = UnicodeSubstitutionConverter(start_value=0x1F600)
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -24,7 +22,6 @@ async def test_unicode_sub_custom_start():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_empty():
     converter = UnicodeSubstitutionConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -33,7 +30,6 @@ async def test_unicode_sub_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_multiple_chars():
     converter = UnicodeSubstitutionConverter()
     result = await converter.convert_async(prompt="ab", input_type="text")
@@ -43,7 +39,6 @@ async def test_unicode_sub_multiple_chars():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_input_not_supported():
     converter = UnicodeSubstitutionConverter()
     with pytest.raises(ValueError):

@@ -49,7 +49,6 @@ def test_converter_init_templates_not_null(converter_class, sqlite_instance) -> 
     assert converter.system_prompt
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "converted_value",
     [

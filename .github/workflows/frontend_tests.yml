@@ -93,7 +93,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd ..
-          uv sync --extra dev
+          uv sync
 
       - name: Install frontend dependencies
         run: npm ci

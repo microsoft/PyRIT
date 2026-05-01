@@ -8,7 +8,6 @@ pytest.importorskip("art")
 from pyrit.prompt_converter import AsciiArtConverter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_ascii_art_converter_basic():
     converter = AsciiArtConverter(font="block")
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -18,7 +17,6 @@ async def test_ascii_art_converter_basic():
     assert "\n" in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_ascii_art_converter_default_random_font():
     converter = AsciiArtConverter()
     result = await converter.convert_async(prompt="test", input_type="text")
@@ -26,7 +24,6 @@ async def test_ascii_art_converter_default_random_font():
     assert len(result.output_text) > 0
 
 
-@pytest.mark.asyncio
 async def test_ascii_art_converter_empty():
     converter = AsciiArtConverter(font="block")
     result = await converter.convert_async(prompt="", input_type="text")
@@ -34,7 +31,6 @@ async def test_ascii_art_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_ascii_art_converter_input_not_supported():
     converter = AsciiArtConverter()
     with pytest.raises(ValueError, match="Input type not supported"):

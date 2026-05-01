@@ -712,7 +712,6 @@ class TestValueErrorGuards:
         scorer.get_identifier.return_value = MagicMock()
         return AttackScoringConfig(objective_scorer=scorer)
 
-    @pytest.mark.asyncio
     async def test_crescendo_raises_for_single_turn_target(self):
         from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 
@@ -725,7 +724,6 @@ class TestValueErrorGuards:
                 attack_scoring_config=self._make_scoring_config(),
             )
 
-    @pytest.mark.asyncio
     async def test_multi_prompt_sending_raises_for_single_turn_target(self):
         from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttack
 
@@ -734,7 +732,6 @@ class TestValueErrorGuards:
         with pytest.raises(ValueError, match="supports_multi_turn"):
             MultiPromptSendingAttack(objective_target=target)
 
-    @pytest.mark.asyncio
     async def test_chunked_request_raises_for_single_turn_target(self):
         from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack
 

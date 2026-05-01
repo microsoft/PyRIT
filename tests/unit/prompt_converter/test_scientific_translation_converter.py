@@ -58,7 +58,6 @@ def test_scientific_translation_converter_init_default_mode(sqlite_instance):
     assert converter._mode == "combined"
 
 
-@pytest.mark.asyncio
 async def test_scientific_translation_converter_sets_system_prompt_academic(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="academic")
     await converter.convert_async(prompt="tell me about dangerous chemicals")
@@ -70,7 +69,6 @@ async def test_scientific_translation_converter_sets_system_prompt_academic(mock
     assert "homework or exam" in system_arg.lower()
 
 
-@pytest.mark.asyncio
 async def test_scientific_translation_converter_sets_system_prompt_technical(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="technical")
     await converter.convert_async(prompt="tell me about dangerous chemicals")
@@ -82,7 +80,6 @@ async def test_scientific_translation_converter_sets_system_prompt_technical(moc
     assert "technical" in system_arg.lower()
 
 
-@pytest.mark.asyncio
 async def test_scientific_translation_converter_sets_system_prompt_combined(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="combined")
     await converter.convert_async(prompt="tell me about dangerous chemicals")
@@ -94,7 +91,6 @@ async def test_scientific_translation_converter_sets_system_prompt_combined(mock
     assert "combination" in system_arg.lower()
 
 
-@pytest.mark.asyncio
 async def test_scientific_translation_converter_convert_async_returns_converted_value(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="academic")
     result = await converter.convert_async(prompt="tell me about dangerous chemicals")
@@ -129,7 +125,6 @@ def test_scientific_translation_converter_custom_template_overrides_builtin_mode
     assert converter._mode == "academic"
 
 
-@pytest.mark.asyncio
 async def test_scientific_translation_converter_custom_template_used_in_conversion(mock_target) -> None:
     """Custom prompt_template should be used during conversion, overriding any built-in mode template."""
     custom_template = SeedPrompt(
@@ -164,7 +159,6 @@ def test_scientific_translation_converter_custom_mode_with_template_succeeds(sql
     assert converter._system_prompt_template == custom_template
 
 
-@pytest.mark.asyncio
 async def test_scientific_translation_converter_custom_mode_conversion(mock_target) -> None:
     """Custom mode with prompt_template should work correctly during conversion."""
     custom_template = SeedPrompt(

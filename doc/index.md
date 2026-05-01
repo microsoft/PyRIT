@@ -98,7 +98,7 @@ Get started immediately with a pre-configured environment:
 **Custom Setup**
 
 Install PyRIT directly on your machine:
-- ✅ Pip, uv, or conda
+- ✅ Pip or uv
 - ✅ Full Python environment control
 - ✅ Easy integration with existing workflows
 ::::

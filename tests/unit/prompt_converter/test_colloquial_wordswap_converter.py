@@ -11,7 +11,6 @@ from pyrit.prompt_converter.colloquial_wordswap_converter import (
 
 
 # Test for deterministic mode
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,expected_output",
     [
@@ -27,7 +26,6 @@ async def test_colloquial_deterministic(input_text, expected_output):
 
 
 # Test for non-deterministic mode
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text",
     [
@@ -62,7 +60,6 @@ async def test_colloquial_non_deterministic(input_text):
 
 
 # Test for custom substitutions dict
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,custom_substitutions,expected_output",
     [
@@ -77,7 +74,6 @@ async def test_colloquial_custom_substitutions(input_text, custom_substitutions,
 
 
 # Test for non-default wordswap YAML paths
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,wordswap_path,expected_output",
     [
@@ -94,7 +90,6 @@ async def test_colloquial_wordswap_path(input_text, wordswap_path, expected_outp
 
 
 # Test multiple word prompts for non-default wordswap paths
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,wordswap_path,expected_output",
     [
@@ -110,7 +105,6 @@ async def test_multiple_words_custom_colloquialisms(input_text, wordswap_path, e
 
 
 # Test default behavior when no wordswap_path or custom_substitutions given
-@pytest.mark.asyncio
 async def test_colloquial_default_singaporean():
     converter = ColloquialWordswapConverter(deterministic=True)
     result = await converter.convert_async(prompt="mother and father")
@@ -118,7 +112,6 @@ async def test_colloquial_default_singaporean():
 
 
 # Test that empty custom_substitutions falls through to defaults
-@pytest.mark.asyncio
 async def test_colloquial_empty_custom_substitutions():
     converter = ColloquialWordswapConverter(deterministic=True, custom_substitutions={})
     result = await converter.convert_async(prompt="mother and father")
@@ -126,7 +119,6 @@ async def test_colloquial_empty_custom_substitutions():
 
 
 # Test multiple word prompts
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,expected_output",
     [
@@ -142,7 +134,6 @@ async def test_multiple_words(input_text, expected_output):
 
 
 # Test for awkward spacing
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,expected_output",
     [
@@ -157,7 +148,6 @@ async def test_awkward_spacing(input_text, expected_output):
 
 
 # Test for punctuation handling
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "input_text,expected_output",
     [

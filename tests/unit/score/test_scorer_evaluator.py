@@ -65,7 +65,6 @@ def test_from_scorer_objective(mock_objective_scorer):
     assert isinstance(evaluator2, ObjectiveScorerEvaluator)
 
 
-@pytest.mark.asyncio
 async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
@@ -91,7 +90,6 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     assert metrics.mae_standard_error == 0.0
 
 
-@pytest.mark.asyncio
 async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
@@ -110,7 +108,6 @@ async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     assert metrics.accuracy_standard_error == 0.0
 
 
-@pytest.mark.asyncio
 async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_scorer):
     """Test that evaluate_dataset_async returns metrics without registry or file side effects."""
     responses = [
@@ -552,7 +549,6 @@ def test_should_skip_evaluation_harm_definition_version_none_in_existing_runs_ev
     assert result is None
 
 
-@pytest.mark.asyncio
 async def test_evaluate_dataset_async_harm_passes_harm_definition_version(mock_harm_scorer):
     """Test that harm_definition_version from dataset is passed through to metrics."""
     responses = [
@@ -579,7 +575,6 @@ async def test_evaluate_dataset_async_harm_passes_harm_definition_version(mock_h
     assert metrics.dataset_version == "1.0"
 
 
-@pytest.mark.asyncio
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
 async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
@@ -654,7 +649,6 @@ async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
     assert metrics.harm_definition_version == "1.0"
 
 
-@pytest.mark.asyncio
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
 async def test_run_evaluation_async_combines_mixed_dataset_versions(
@@ -720,7 +714,6 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
     assert metrics.harm_definition_version == "1.0"
 
 
-@pytest.mark.asyncio
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
 async def test_run_evaluation_async_raises_on_mismatched_harm_definition_versions(
@@ -774,7 +767,6 @@ async def test_run_evaluation_async_raises_on_mismatched_harm_definition_version
         )
 
 
-@pytest.mark.asyncio
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
 async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition(

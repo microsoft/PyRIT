@@ -22,7 +22,6 @@ def target(sqlite_instance):
     return RealtimeTarget(api_key="test_key", endpoint="wss://test_url", model_name="test")
 
 
-@pytest.mark.asyncio
 async def test_connect_success(target):
     mock_connection = AsyncMock()
     mock_client = MagicMock()
@@ -36,7 +35,6 @@ async def test_connect_success(target):
     await target.cleanup_target()
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async(target):
     # Mock the necessary methods
     target.connect = AsyncMock(return_value=AsyncMock())
@@ -72,7 +70,6 @@ async def test_send_prompt_async(target):
     await target.cleanup_target()
 
 
-@pytest.mark.asyncio
 async def test_get_system_prompt_from_conversation_with_system_message(target):
     """Test that system prompt is extracted from conversation history when present."""
 
@@ -94,7 +91,6 @@ async def test_get_system_prompt_from_conversation_with_system_message(target):
     assert system_prompt == "You are a helpful assistant specialized in security."
 
 
-@pytest.mark.asyncio
 async def test_get_system_prompt_from_conversation_default(target):
     """Test that default system prompt is returned when no system message in conversation."""
 
@@ -116,7 +112,6 @@ async def test_get_system_prompt_from_conversation_default(target):
     assert system_prompt == "You are a helpful AI assistant"
 
 
-@pytest.mark.asyncio
 async def test_get_system_prompt_empty_conversation(target):
     """Test that default system prompt is returned for empty conversation."""
 
@@ -126,7 +121,6 @@ async def test_get_system_prompt_empty_conversation(target):
     assert system_prompt == "You are a helpful AI assistant"
 
 
-@pytest.mark.asyncio
 async def test_multiple_websockets_created_for_multiple_conversations(target):
     # Mock the necessary methods
     target.connect = AsyncMock(return_value=AsyncMock())
@@ -168,7 +162,6 @@ async def test_multiple_websockets_created_for_multiple_conversations(target):
     assert target._existing_conversation == {}
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_invalid_request(target):
     # Create a mock Message with an invalid data type
     message_piece = MessagePiece(
@@ -186,7 +179,6 @@ async def test_send_prompt_async_invalid_request(target):
     assert "image_path" in str(excinfo.value)
 
 
-@pytest.mark.asyncio
 async def test_receive_events_empty_output(target: RealtimeTarget):
     """Test handling of response.done event with empty output array."""
     mock_connection = AsyncMock()
@@ -216,7 +208,6 @@ async def test_receive_events_empty_output(target: RealtimeTarget):
         await target.receive_events(conversation_id)
 
 
-@pytest.mark.asyncio
 async def test_receive_events_response_done_no_transcript_validation(target):
     """Test that response.done completes normally even with no audio or transcript,
     as long as it belongs to the current turn (preceded by other events)."""
@@ -243,7 +234,6 @@ async def test_receive_events_response_done_no_transcript_validation(target):
     assert result.audio_bytes == b""
 
 
-@pytest.mark.asyncio
 async def test_receive_events_audio_buffer_only(target):
     """Test receiving only audio data with no transcript."""
     mock_connection = AsyncMock()
@@ -269,7 +259,6 @@ async def test_receive_events_audio_buffer_only(target):
     assert result.audio_bytes == b"dummyaudio"
 
 
-@pytest.mark.asyncio
 async def test_receive_events_error_event(target):
     """Test handling of direct error event."""
     mock_connection = AsyncMock()
@@ -290,7 +279,6 @@ async def test_receive_events_error_event(target):
         await target.receive_events(conversation_id)
 
 
-@pytest.mark.asyncio
 async def test_receive_events_connection_closed(target):
     """Test handling of connection closing unexpectedly."""
     mock_connection = AsyncMock()
@@ -305,7 +293,6 @@ async def test_receive_events_connection_closed(target):
     assert result.audio_bytes == b""
 
 
-@pytest.mark.asyncio
 async def test_receive_events_with_audio_and_transcript(target):
     """Test successful processing of both audio data and transcript."""
     mock_connection = AsyncMock()
@@ -353,7 +340,6 @@ async def test_receive_events_with_audio_and_transcript(target):
     assert result.transcripts[1] == "this is a test transcript."
 
 
-@pytest.mark.asyncio
 async def test_multi_turn_reuses_connection(target):
     """Test that multiple turns in the same conversation reuse the same connection.
 
@@ -402,7 +388,6 @@ async def test_multi_turn_reuses_connection(target):
     await target.cleanup_target()
 
 
-@pytest.mark.asyncio
 async def test_receive_events_skips_stale_response_done(target):
     """Test that a stale response.done (with no audio) from a prior turn's soft-finish
     is skipped, and the current turn's events are processed normally."""

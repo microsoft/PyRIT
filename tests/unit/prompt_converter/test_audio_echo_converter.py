@@ -12,7 +12,6 @@ from scipy.io import wavfile
 from pyrit.prompt_converter.audio_echo_converter import AudioEchoConverter
 
 
-@pytest.mark.asyncio
 async def test_echo_adds_delayed_signal(sqlite_instance):
     """Echo should modify samples after the delay point."""
     sample_rate = 44100
@@ -44,7 +43,6 @@ async def test_echo_adds_delayed_signal(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_echo_preserves_sample_count(sqlite_instance):
     """Output should have the same number of samples as input."""
     sample_rate = 44100
@@ -67,7 +65,6 @@ async def test_echo_preserves_sample_count(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_echo_stereo(sqlite_instance):
     """Converter should handle stereo (2-channel) audio correctly."""
     sample_rate = 44100
@@ -90,7 +87,6 @@ async def test_echo_stereo(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_echo_file_not_found():
     """Non-existent file should raise FileNotFoundError."""
     converter = AudioEchoConverter(delay=0.3, decay=0.5)
@@ -128,7 +124,6 @@ def test_echo_invalid_decay_above_one():
         AudioEchoConverter(delay=0.3, decay=1.5)
 
 
-@pytest.mark.asyncio
 async def test_echo_unsupported_input_type(sqlite_instance):
     """Passing an unsupported input_type should raise ValueError."""
     converter = AudioEchoConverter(delay=0.3, decay=0.5)
