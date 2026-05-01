@@ -60,21 +60,15 @@ class TestScenarioTechniqueInitializerBasic:
     def test_can_be_created(self):
         init = ScenarioTechniqueInitializer()
         assert init is not None
-        assert init.name == "Scenario Technique Initializer"
 
     def test_required_env_vars_is_empty(self):
         init = ScenarioTechniqueInitializer()
         assert init.required_env_vars == []
 
-    def test_description_is_non_empty(self):
+    def test_description_from_docstring(self):
         init = ScenarioTechniqueInitializer()
         assert isinstance(init.description, str)
-        assert len(init.description) > 0
-
-    def test_execution_order_is_three(self):
-        """Runs after target (1) and scorer (2) initializers."""
-        init = ScenarioTechniqueInitializer()
-        assert init.execution_order == 3
+        assert "persona-driven crescendo" in init.description
 
 
 # ---------------------------------------------------------------------------

@@ -114,44 +114,6 @@ class ScenarioTechniqueInitializer(PyRITInitializer):
     ``AttackTechniqueRegistry`` are not overwritten.
     """
 
-    @property
-    def name(self) -> str:
-        """Get the human-readable name for this initializer."""
-        return "Scenario Technique Initializer"
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Registers persona-driven crescendo scenario techniques (movie director, "
-            "history lecture, journalist interview) into the AttackTechniqueRegistry, "
-            "on top of the core single_turn_crescendo technique."
-        )
-
-    @property
-    def execution_order(self) -> int:
-        """
-        Get the execution order for this initializer.
-
-        Returns 3 to ensure this runs after both ``TargetInitializer`` (order 1)
-        and ``ScorerInitializer`` (order 2). The default adversarial chat target,
-        if present, is resolved from ``TargetRegistry`` at registration time.
-        """
-        return 3
-
-    @property
-    def required_env_vars(self) -> list[str]:
-        """
-        Get list of required environment variables.
-
-        Returns an empty list. The default adversarial chat target is resolved
-        from ``TargetRegistry`` if available, otherwise falls back to a plain
-        ``OpenAIChatTarget`` via ``@apply_defaults``. Either path is acceptable
-        here since registration only stores the target reference; the target is
-        not invoked at registration time.
-        """
-        return []
-
     async def initialize_async(self) -> None:
         """
         Register the persona-driven crescendo specs into the singleton registry.
