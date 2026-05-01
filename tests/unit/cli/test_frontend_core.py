@@ -393,8 +393,6 @@ class TestPrintFunctions:
                 class_module="test.initializers",
                 class_description="Test initializer",
                 registry_name="test",
-                display_name="test",
-                execution_order=100,
                 required_env_vars=(),
             )
         ]
@@ -495,9 +493,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="",
             registry_name="test",
-            display_name="test",
             required_env_vars=(),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -505,7 +501,6 @@ class TestFormatFunctions:
         captured = capsys.readouterr()
         assert "test" in captured.out
         assert "TestInit" in captured.out
-        assert "100" in captured.out
 
     def test_format_initializer_metadata_with_env_vars(self, capsys) -> None:
         """Test format_initializer_metadata with environment variables."""
@@ -514,9 +509,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="",
             registry_name="test",
-            display_name="test",
             required_env_vars=("VAR1", "VAR2"),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -532,9 +525,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="Test description",
             registry_name="test",
-            display_name="test",
             required_env_vars=(),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)

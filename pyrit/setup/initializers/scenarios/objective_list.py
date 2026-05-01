@@ -16,17 +16,14 @@ from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 
 class ScenarioObjectiveListInitializer(PyRITInitializer):
-    """Configure default seed groups for use in PyRIT scenarios."""
+    """
+    Simple objective list configuration for scenarios.
 
-    @property
-    def name(self) -> str:
-        """Return the display name of this initializer."""
-        return "Simple Objective List Configuration for Scenarios"
-
-    @property
-    def execution_order(self) -> int:
-        """Return the execution order, ensuring this initializer runs after most others."""
-        return 10
+    Configures default seed groups (objectives) for use in PyRIT scenarios.
+    Uses the deprecated 'objectives' parameter to set a default list of adversarial
+    objectives on the Scenario class. Scenarios should prefer using dataset_config
+    in initialize_async for more flexibility.
+    """
 
     @property
     def required_env_vars(self) -> list[str]:

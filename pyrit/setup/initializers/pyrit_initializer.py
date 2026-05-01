@@ -47,9 +47,9 @@ class PyRITInitializer(ABC):
     and global settings during PyRIT initialization. They replace the need for
     initialization scripts with type-safe, validated, and discoverable classes.
 
-    All initializers must implement the `name`, `description`, and `initialize`
-    properties/methods. The `validate` method can be overridden if custom
-    validation logic is needed.
+    Subclasses must implement `initialize_async`. Description is automatically
+    derived from the class docstring. Initializers execute in the order they
+    are provided — no explicit execution_order is needed.
     """
 
     def __init__(self) -> None:  # noqa: B027
@@ -69,27 +69,19 @@ class PyRITInitializer(ABC):
         self.params = {k: [str(i) for i in v] if isinstance(v, list) else [str(v)] for k, v in args.items()}
 
     @property
-    @abstractmethod
-    def name(self) -> str:
-        """
-        Get the human-readable name for this initializer.
-
-        Returns:
-            str: A clear, descriptive name for this initializer.
-        """
-
-    @property
     def description(self) -> str:
         """
         Get a description of what this initializer configures.
 
-        Override this property to provide a custom description.
-        Defaults to returning the name of the initializer.
+        By default, extracts the description from the class docstring.
+        Falls back to the class name if no docstring is available.
 
         Returns:
             str: A description of the configuration changes this initializer makes.
         """
-        return self.name
+        doc = self.__class__.__doc__ or ""
+        cleaned = " ".join(doc.split())
+        return cleaned if cleaned else type(self).__name__
 
     @property
     def required_env_vars(self) -> list[str]:
@@ -103,26 +95,6 @@ class PyRITInitializer(ABC):
             List[str]: List of required environment variable names. Defaults to empty list.
         """
         return []
-
-    @property
-    def execution_order(self) -> int:
-        """
-        Get the execution order for this initializer.
-
-        Initializers are executed in ascending order (lower numbers first).
-        This allows control over dependency ordering - for example, basic
-        configuration can run before more specialized setup.
-
-        Returns:
-            int: The execution order. Defaults to 1. Lower numbers execute first.
-
-        Example:
-            - execution_order = 0: Very early setup (environment, logging)
-            - execution_order = 1: Standard configuration (default)
-            - execution_order = 2: Advanced/specialized setup
-            - execution_order = 10: Final cleanup or overrides
-        """
-        return 1
 
     @property
     def supported_parameters(self) -> list[InitializerParameter]:
@@ -167,7 +139,7 @@ class PyRITInitializer(ABC):
         missing_vars = [var for var in self.required_env_vars if not os.getenv(var)]
         if missing_vars:
             raise ValueError(
-                f"Initializer '{self.name}' requires the following environment variables to be set: "
+                f"Initializer '{type(self).__name__}' requires the following environment variables to be set: "
                 f"{', '.join(missing_vars)}"
             )
 
@@ -195,7 +167,7 @@ class PyRITInitializer(ABC):
         unknown = set(params.keys()) - supported_names
         if unknown:
             raise ValueError(
-                f"Initializer '{self.name}' received unknown parameter(s): {', '.join(sorted(unknown))}. "
+                f"Initializer '{type(self).__name__}' received unknown parameter(s): {', '.join(sorted(unknown))}. "
                 f"Supported parameters: {', '.join(sorted(supported_names)) if supported_names else 'none'}"
             )
 
@@ -203,7 +175,8 @@ class PyRITInitializer(ABC):
         for param_def in self.supported_parameters:
             if param_def.required and param_def.name not in params:
                 raise ValueError(
-                    f"Initializer '{self.name}' requires parameter '{param_def.name}': {param_def.description}"
+                    f"Initializer '{type(self).__name__}' requires parameter "
+                    f"'{param_def.name}': {param_def.description}"
                 )
 
     async def initialize_with_tracking_async(self) -> None:
@@ -347,10 +320,8 @@ class PyRITInitializer(ABC):
         instance = cls()
 
         base_info = {
-            "name": instance.name,
             "description": instance.description,
             "class": cls.__name__,
-            "execution_order": instance.execution_order,
         }
 
         # Add supported parameters if any are declared

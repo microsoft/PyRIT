@@ -42,14 +42,8 @@ class InitializerMetadata(ClassRegistryEntry):
     Use get_class() to get the actual class.
     """
 
-    # Human-readable display name (e.g., "Objective Target Setup").
-    display_name: str = field(kw_only=True)
-
     # Environment variables required by the initializer.
     required_env_vars: tuple[str, ...] = field(kw_only=True)
-
-    # Execution order priority (lower = earlier).
-    execution_order: int = field(kw_only=True)
 
     # Supported parameters as tuples of (name, description, required, default).
     supported_parameters: tuple[tuple[str, str, bool, Optional[list[str]]], ...] = field(kw_only=True, default=())
@@ -193,16 +187,17 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         initializer_class = entry.registered_class
 
+        doc = initializer_class.__doc__ or ""
+        description = " ".join(doc.split()) if doc else "No description available"
+
         try:
             instance = initializer_class()
             return InitializerMetadata(
                 class_name=initializer_class.__name__,
                 class_module=initializer_class.__module__,
-                class_description=instance.description,
+                class_description=description,
                 registry_name=name,
-                display_name=instance.name,
                 required_env_vars=tuple(instance.required_env_vars),
-                execution_order=instance.execution_order,
                 supported_parameters=tuple(
                     (p.name, p.description, p.required, p.default) for p in instance.supported_parameters
                 ),
@@ -214,9 +209,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 class_module=initializer_class.__module__,
                 class_description="Error loading initializer metadata",
                 registry_name=name,
-                display_name=name,
                 required_env_vars=(),
-                execution_order=100,
             )
 
     @staticmethod

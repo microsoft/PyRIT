@@ -18,8 +18,6 @@ class TestSimpleInitializer:
         """Test that SimpleInitializer can be instantiated."""
         init = SimpleInitializer()
         assert init is not None
-        assert init.name == "Simple Complete Configuration"
-        assert init.execution_order == 1
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -78,7 +76,7 @@ class TestSimpleInitializerInitialize:
 
         # Verify basic structure
         assert isinstance(info, dict)
-        assert "name" in info
+        assert "description" in info
         assert "default_values" in info
         assert "global_variables" in info
 
@@ -109,7 +107,6 @@ class TestSimpleInitializerGetInfo:
         info = await SimpleInitializer.get_info_async()
 
         assert isinstance(info, dict)
-        assert info["name"] == "Simple Complete Configuration"
         assert info["class"] == "SimpleInitializer"
         assert "required_env_vars" in info
         assert "OPENAI_CHAT_ENDPOINT" in info["required_env_vars"]
