@@ -292,7 +292,6 @@ class TestScamMaxTurnsParameter:
         names = [p.name for p in params]
         assert "max_turns" in names
 
-    @pytest.mark.asyncio
     async def test_max_turns_default_used_when_unset_async(
         self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
     ):
@@ -311,7 +310,6 @@ class TestScamMaxTurnsParameter:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
             assert run.attack_technique.attack._max_turns == 5
 
-    @pytest.mark.asyncio
     async def test_max_turns_override_flows_into_attack_async(
         self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
     ):

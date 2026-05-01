@@ -60,7 +60,7 @@ def _assert_json_serializable(*, params: dict[str, Any]) -> None:
     """
     try:
         json.dumps(params)
-    except TypeError as exc:
+    except (TypeError, ValueError) as exc:
         raise ValueError(
             f"Scenario params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
             f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for scenario parameters."
