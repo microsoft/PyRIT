@@ -240,6 +240,9 @@ class Scenario(ABC):
         into ``self.params`` before ``initialize_async()`` runs. Implemented as
         a classmethod so ``--list-scenarios`` can introspect without instantiating.
 
+        Note: ``PyRITInitializer.supported_parameters`` is an instance ``@property``;
+        this asymmetry is intentional pending a future alignment.
+
         Returns:
             list[Parameter]: Declared parameters (default: empty list).
         """
@@ -353,8 +356,10 @@ class Scenario(ABC):
 
         for param in declared:
             if param.name not in coerced and param.default is not None:
-                # Deep-copy so mutable defaults like [] aren't shared across instances.
-                coerced[param.name] = copy.deepcopy(param.default)
+                # Coerce defaults too so user-supplied and default-supplied values share
+                # the declared type. Deep-copy guards against shared mutable instances
+                # (e.g. list/dict defaults under param_type=None).
+                coerced[param.name] = copy.deepcopy(coerce_value(param=param, raw_value=param.default))
 
         self.params = coerced
 
@@ -551,6 +556,13 @@ class Scenario(ABC):
             atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
         }
 
+        # Snapshot params onto the identifier before the resume branch so the identifier
+        # is fully populated regardless of which branch we take. Deep-copy avoids sharing
+        # mutable state with self.params.
+        params_snapshot = copy.deepcopy(self.params)
+        _assert_json_serializable(params=params_snapshot)
+        self._identifier.init_data = params_snapshot
+
         # Check if we're resuming an existing scenario
         if self._scenario_result_id:
             existing_results = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
@@ -571,12 +583,6 @@ class Scenario(ABC):
 
         # Build display group mapping from atomic attacks
         self._display_group_map = {aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks}
-
-        # Snapshot params onto the identifier for resume validation. Deep-copy
-        # to avoid sharing mutable state with self.params.
-        params_snapshot = copy.deepcopy(self.params)
-        _assert_json_serializable(params=params_snapshot)
-        self._identifier.init_data = params_snapshot
 
         # Create new scenario result
         attack_results: dict[str, list[AttackResult]] = {

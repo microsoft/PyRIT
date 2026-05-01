@@ -573,6 +573,15 @@ class TestScenarioConfig:
         with pytest.raises(ValueError, match="must be a string or dict"):
             ConfigurationLoader.from_dict({"scenario": 123})
 
+    def test_scenario_config_property_returns_normalized_block(self):
+        """The public ``scenario_config`` property mirrors the private attribute."""
+        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
+        assert loader.scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+
+    def test_scenario_config_property_none_when_unset(self):
+        loader = ConfigurationLoader()
+        assert loader.scenario_config is None
+
     def test_load_with_overrides_passes_scenario_through_explicit_config(self):
         yaml_content = "scenario:\n  name: scam\n  args:\n    max_turns: 10\n"
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:

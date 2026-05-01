@@ -14,7 +14,7 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, get_origin
 
 from pyrit.cli import frontend_core
 from pyrit.common.parameter import Parameter, coerce_bool, coerce_scalar
@@ -283,8 +283,6 @@ def _argparse_type_for(*, param: Parameter) -> Optional[Any]:
 
 def _is_list_param(param_type: Any) -> bool:
     """Return True when ``param_type`` is a parameterized list generic (e.g. ``list[str]``)."""
-    from typing import get_origin
-
     return get_origin(param_type) is list
 
 

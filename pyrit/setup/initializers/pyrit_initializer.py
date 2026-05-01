@@ -123,6 +123,9 @@ class PyRITInitializer(ABC):
         Override this property to declare what parameters the initializer
         supports. Parameters are set on self.params before initialize_async() is called.
 
+        Note: ``Scenario.supported_parameters`` is a classmethod (so ``--list-scenarios``
+        can introspect without instantiating). Aligning these is a future improvement.
+
         Returns:
             list[Parameter]: List of supported parameters. Defaults to empty list.
         """

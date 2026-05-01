@@ -13,7 +13,7 @@ import pytest
 
 from pyrit.cli import frontend_core
 from pyrit.cli._cli_args import _ArgSpec, _parse_shell_arguments
-from pyrit.registry import InitializerMetadata, ScenarioMetadata
+from pyrit.registry import InitializerMetadata, ScenarioMetadata, ScenarioParameterMetadata
 
 
 class TestFrontendCore:
@@ -501,9 +501,9 @@ class TestFormatFunctions:
             default_datasets=(),
             max_dataset_size=None,
             supported_parameters=(
-                ("max_turns", "Conversation turn cap", False, 5, "int", None),
-                ("mode", "Run mode", False, "fast", "str", "'fast', 'slow'"),
-                ("required_param", "Required input", True, None, "str", None),
+                ScenarioParameterMetadata("max_turns", "Conversation turn cap", False, 5, "int", None),
+                ScenarioParameterMetadata("mode", "Run mode", False, "fast", "str", "'fast', 'slow'"),
+                ScenarioParameterMetadata("required_param", "Required input", True, None, "str", None),
             ),
         )
 

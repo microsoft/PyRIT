@@ -236,6 +236,11 @@ class ConfigurationLoader(YamlLoadable):
 
         raise ValueError(f"Scenario entry must be a string or dict, got: {type(self.scenario).__name__}")
 
+    @property
+    def scenario_config(self) -> Optional[ScenarioConfig]:
+        """The normalized ``scenario:`` block, or ``None`` when not configured."""
+        return self._scenario_config
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
         """

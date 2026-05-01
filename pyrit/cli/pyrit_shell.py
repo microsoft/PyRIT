@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from pyrit.cli import _banner as banner
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.registry import ScenarioRegistry
 
 
 class PyRITShell(cmd.Cmd):
@@ -355,8 +356,6 @@ class PyRITShell(cmd.Cmd):
         declared_params = None
         scenario_name_token = line.split(maxsplit=1)[0] if line.strip() else ""
         if scenario_name_token:
-            from pyrit.registry import ScenarioRegistry
-
             try:
                 scenario_class = ScenarioRegistry.get_registry_singleton().get_class(scenario_name_token)
             except KeyError:

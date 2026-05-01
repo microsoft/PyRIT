@@ -242,6 +242,31 @@ class TestDefaultMaterialization:
         scenario.set_params_from_args(args={})
         assert scenario.params == {}
 
+    def test_default_value_is_coerced_to_param_type(self) -> None:
+        """A declared default value is coerced to param_type so user-supplied
+        and default-supplied values share a type."""
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default="5")]
+        )
+        scenario.set_params_from_args(args={})
+        assert scenario.params == {"max_turns": 5}
+        assert isinstance(scenario.params["max_turns"], int)
+
+    def test_default_list_value_is_coerced_per_item(self) -> None:
+        """list[str] default deep-copies and re-coerces (a fresh list per instance)."""
+        shared = ["a", "b"]
+        scenario_a = _make_scenario(
+            declared_params=[Parameter(name="tags", description="d", param_type=list[str], default=shared)]
+        )
+        scenario_b = _make_scenario(
+            declared_params=[Parameter(name="tags", description="d", param_type=list[str], default=shared)]
+        )
+        scenario_a.set_params_from_args(args={})
+        scenario_b.set_params_from_args(args={})
+        scenario_a.params["tags"].append("c")
+        assert scenario_b.params["tags"] == ["a", "b"]
+        assert shared == ["a", "b"]
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestParamValidation:

@@ -146,9 +146,10 @@ config_data = {
 }
 
 config = ConfigurationLoader.from_dict(config_data)
-assert config._scenario_config is not None  # narrows the type after parsing
-print(f"scenario name: {config._scenario_config.name}")
-print(f"scenario args: {config._scenario_config.args}")
+scenario_config = config.scenario_config
+assert scenario_config is not None  # narrows the type after parsing
+print(f"scenario name: {scenario_config.name}")
+print(f"scenario args: {scenario_config.args}")
 
 # %% [markdown]
 # A few invocation shapes from the CLI:
@@ -193,25 +194,17 @@ for metadata in ScenarioRegistry.get_registry_singleton().list_metadata():
 # result. On mismatch, a new scenario result is created (the original is
 # preserved) and a warning is logged. The diff lists key names only, never
 # values, so sensitive parameters don't leak into log output.
-
-# %%
-from pyrit.scenario.core.scenario import _format_param_key_diff
-
-# Simulate a stored run with max_turns=5 and a current run with max_turns=10.
-stored_params = {"max_turns": 5}
-current_params = {"max_turns": 10}
-
-diff = _format_param_key_diff(stored=stored_params, current=current_params)
-warning = (
-    f"Scenario result ID xxx has mismatched parameters ({diff}). "
-    f"Either CLI/config args differ from the original run, or a scenario default "
-    f"changed between releases. Creating new scenario result."
-)
-print(warning)
-
-# Confirm parameter values do not appear in the warning string:
-assert "10" not in warning and "5" not in warning
-print("\nValues redacted from log output.")
+#
+# A typical mismatch warning looks like this:
+#
+# ```text
+# Scenario result ID 7c3f... has mismatched parameters (changed: max_turns).
+# Either CLI/config args differ from the original run, or a scenario default
+# changed between releases. Creating new scenario result.
+# ```
+#
+# Notice the diff names the changed key (`max_turns`) but never prints the
+# stored or current value.
 
 # %% [markdown]
 # `Scam.max_turns` was previously hardcoded to `5` in
