@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack import (
-    RolePlayAttack,
-    TreeOfAttacksWithPruningAttack,
-)
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -22,6 +18,13 @@ from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 from pyrit.scenario.scenarios.benchmark.benchmark import Benchmark
 from pyrit.score import TrueFalseScorer
+
+# Pin the technique count to whatever production currently considers benchmarkable.
+# Self-pinning: any change to ``_get_benchmarkable_specs`` is reflected here, but
+# count-based assertions stay correct without hard-coding a magic number.
+_NUM_ADVERSARIAL_TECHNIQUES = len(Benchmark._get_benchmarkable_specs())
+_BENCHMARKABLE_TECHNIQUE_NAMES = {spec.name for spec in Benchmark._get_benchmarkable_specs()}
+_BENCHMARKABLE_ATTACK_CLASSES = {spec.attack_class for spec in Benchmark._get_benchmarkable_specs()}
 
 # ---------------------------------------------------------------------------
 # Synthetic many-shot examples — prevents reading the real JSON during tests
@@ -60,6 +63,12 @@ def _make_seed_groups(name: str) -> list[SeedAttackGroup]:
 
 
 @pytest.fixture
+def all_supported_attacks():
+    """All attacks that currently support adversarial models (computed from production)."""
+    return _BENCHMARKABLE_TECHNIQUE_NAMES
+
+
+@pytest.fixture
 def mock_objective_target():
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_id("MockObjectiveTarget")
@@ -68,14 +77,14 @@ def mock_objective_target():
 
 @pytest.fixture
 def two_adversarial_models():
-    """Two mock adversarial models for benchmark permutation tests."""
-    return [_make_adversarial_target("model_a"), _make_adversarial_target("model_b")]
+    """Two mock adversarial models for benchmark permutation"""
+    return {"model_a": _make_adversarial_target("model_a"), "model_b": _make_adversarial_target("model_b")}
 
 
 @pytest.fixture
 def single_adversarial_model():
     """Single mock adversarial model."""
-    return [_make_adversarial_target("model_a")]
+    return {"model_a": _make_adversarial_target("model_a")}
 
 
 @pytest.fixture(autouse=True)
@@ -129,9 +138,14 @@ class TestBenchmarkTypes:
     """Unit tests for types, validation, and basic construction."""
 
     def test_empty_adversarial_models_raises(self):
-        """Passing an empty list must raise ValueError."""
+        """Passing an empty dict must raise ValueError."""
         with pytest.raises(ValueError, match="non-empty"):
-            Benchmark(adversarial_models=[])
+            Benchmark(adversarial_models={})
+
+    def test_non_dict_adversarial_models_raises(self):
+        """Passing a list (legacy 1662 shape) must raise ValueError."""
+        with pytest.raises(ValueError, match="non-empty"):
+            Benchmark(adversarial_models=[MagicMock(spec=PromptChatTarget)])  # type: ignore[arg-type]
 
     def test_version_is_1(self):
         assert Benchmark.VERSION == 1
@@ -150,15 +164,12 @@ class TestBenchmarkTypes:
         """AttackTechniqueSpec is frozen — direct mutation must raise."""
         spec = SCENARIO_TECHNIQUES[0]
         with pytest.raises(FrozenInstanceError):
-            spec.name = "mutated"
+            spec.name = "mutated"  # type: ignore[misc]
 
 
 # ===========================================================================
 # Strategy construction tests
 # ===========================================================================
-
-
-_NUM_ADVERSARIAL_TECHNIQUES = 2
 
 
 def _make_benchmark(adversarial_models):
@@ -170,116 +181,69 @@ def _make_benchmark(adversarial_models):
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestBenchmarkStrategy:
-    """Tests for strategy class construction, permutation, and the
-    class-level vs instance-level split."""
+    """Tests for the (static) BenchmarkStrategy enum and instance-level wiring."""
 
-    def test_classmethod_strategy_has_unpermuted_techniques(self):
-        """get_strategy_class() returns a strategy with role_play and tap (no model suffix)."""
+    def test_strategy_includes_all_adversarial_techniques(self, all_supported_attacks):
+        """get_strategy_class() concrete members match the adversarial-capable spec set."""
         strat = Benchmark.get_strategy_class()
         values = {s.value for s in strat.get_all_strategies()}
-        assert "role_play" in values
-        assert "tap" in values
+        assert values == all_supported_attacks
+
+    def test_strategy_has_no_permuted_members(self):
+        """No ``__model`` suffixes — models are a runtime parameter, not a strategy axis."""
+        strat = Benchmark.get_strategy_class()
+        values = {s.value for s in strat.get_all_strategies()}
         assert not any("__" in v for v in values)
 
-    def test_classmethod_strategy_excludes_non_adversarial(self):
-        """get_strategy_class() must not include prompt_sending or many_shot."""
+    def test_strategy_excludes_non_adversarial_techniques(self):
+        """prompt_sending and many_shot don't accept an adversarial chat and must be excluded."""
         strat = Benchmark.get_strategy_class()
         values = {s.value for s in strat.get_all_strategies()}
         assert "prompt_sending" not in values
         assert "many_shot" not in values
 
-    def test_instance_strategy_has_permuted_techniques(self, two_adversarial_models):
-        """Instance strategy should have technique__model members for each (technique x model) pair."""
-        scenario = _make_benchmark(two_adversarial_models)
-        strat = scenario._strategy_class
-        values = {s.value for s in strat.get_all_strategies()}
-        assert "role_play__model_a" in values
-        assert "role_play__model_b" in values
-        assert "tap__model_a" in values
-        assert "tap__model_b" in values
-        assert len(values) == _NUM_ADVERSARIAL_TECHNIQUES * 2
+    def test_strategy_class_is_static(self, single_adversarial_model, two_adversarial_models):
+        """All instances share the same strategy class — no per-instance permutation."""
+        s1 = _make_benchmark(single_adversarial_model)
+        s2 = _make_benchmark(two_adversarial_models)
+        assert s1._strategy_class is s2._strategy_class
+        assert s1._strategy_class is Benchmark.get_strategy_class()
 
-    def test_permuted_spec_names_are_unique(self, two_adversarial_models):
-        """Each permuted AttackTechniqueSpec must have a unique name."""
-        scenario = _make_benchmark(two_adversarial_models)
-        names = [s.name for s in scenario._benchmark_specs]
-        assert len(names) == len(set(names))
+    def test_default_strategy_is_all(self):
+        """Default expands to every benchmarkable technique via the ``all`` aggregate."""
+        default = Benchmark.get_default_strategy()
+        assert default.value == "all"
+
+    def test_benchmarkable_specs_have_no_adversarial_chat(self):
+        """Filtered specs must leave adversarial_chat unset — the scenario injects its own."""
+        for spec in Benchmark._get_benchmarkable_specs():
+            assert spec.adversarial_chat is None
+
+    def test_benchmarkable_specs_accept_adversarial(self):
+        """All filtered specs must accept attack_adversarial_config."""
+        for spec in Benchmark._get_benchmarkable_specs():
+            assert AttackTechniqueRegistry._accepts_adversarial(spec.attack_class)
 
     def test_original_scenario_techniques_unmodified(self, two_adversarial_models):
-        """SCENARIO_TECHNIQUES global must not be mutated by permutation."""
+        """SCENARIO_TECHNIQUES global must not be mutated by spec filtering."""
         original = copy.deepcopy([(s.name, s.attack_class) for s in SCENARIO_TECHNIQUES])
         _make_benchmark(two_adversarial_models)
         current = [(s.name, s.attack_class) for s in SCENARIO_TECHNIQUES]
         assert current == original
 
-    def test_non_adversarial_techniques_excluded_from_specs(self, two_adversarial_models):
-        """prompt_sending and many_shot should not appear in permuted specs."""
-        scenario = _make_benchmark(two_adversarial_models)
-        spec_names = {s.name for s in scenario._benchmark_specs}
-        assert not any("prompt_sending" in n for n in spec_names)
-        assert not any(n.startswith("many_shot") for n in spec_names)
-
     def test_singleton_registry_not_polluted(self, two_adversarial_models):
-        """Creating a Benchmark must not register permuted techniques in the global singleton."""
+        """Building atomic attacks must not register anything in the global singleton."""
         _make_benchmark(two_adversarial_models)
         registry = AttackTechniqueRegistry.get_registry_singleton()
         factories = registry.get_factories()
         assert not any("__" in name for name in factories)
 
-    def test_permuted_specs_have_adversarial_chat_set(self, two_adversarial_models):
-        """Every permuted spec must have adversarial_chat pointing to the correct model."""
-        scenario = _make_benchmark(two_adversarial_models)
-        for spec in scenario._benchmark_specs:
-            assert spec.adversarial_chat is not None
-
-    def test_model_label_fallback_to_unique_name(self):
-        """When _model_name is empty, label should fall back to unique_name."""
+    def test_empty_label_in_dict_raises(self):
+        """An empty user-chosen label must raise ValueError."""
         model = MagicMock(spec=PromptChatTarget)
-        model._model_name = ""
-        model.get_identifier.return_value = _mock_id("FallbackTarget")
-        scenario = _make_benchmark([model])
-        for name in scenario._technique_to_model:
-            assert "__" in name
-            assert name.split("__")[1] != ""
-
-
-# ===========================================================================
-# Post-init property tests
-# ===========================================================================
-
-
-@pytest.mark.usefixtures(*FIXTURES)
-class TestBenchmarkProperties:
-    """Tests for post-init instance properties."""
-
-    def test_technique_to_model_mapping_populated(self, two_adversarial_models):
-        """_technique_to_model should map every permuted technique name to its model label."""
-        scenario = _make_benchmark(two_adversarial_models)
-        assert len(scenario._technique_to_model) == _NUM_ADVERSARIAL_TECHNIQUES * 2
-        for name, label in scenario._technique_to_model.items():
-            assert label in ("model_a", "model_b")
-            assert label in name
-
-    def test_benchmark_specs_count(self, two_adversarial_models):
-        """_benchmark_specs should have |adversarial_models| x |adversarial_techniques| entries."""
-        scenario = _make_benchmark(two_adversarial_models)
-        assert len(scenario._benchmark_specs) == _NUM_ADVERSARIAL_TECHNIQUES * 2
-
-    def test_prepare_strategies_resolves_default(self, single_adversarial_model):
-        """_prepare_strategies(None) must resolve from the instance strategy class."""
-        scenario = _make_benchmark(single_adversarial_model)
-        strategies = scenario._prepare_strategies(None)
-        # Neither role_play nor tap has the "default" tag in SCENARIO_TECHNIQUES,
-        # so DEFAULT aggregate expands to an empty set. This is a known limitation
-        # documented for follow-up: the benchmark's default should use ALL instead.
-        assert isinstance(strategies, list)
-
-    def test_prepare_strategies_accepts_all_aggregate(self, single_adversarial_model):
-        """_prepare_strategies with ALL should return all permuted techniques."""
-        scenario = _make_benchmark(single_adversarial_model)
-        all_strat = scenario._strategy_class("all")
-        strategies = scenario._prepare_strategies([all_strat])
-        assert len(strategies) == _NUM_ADVERSARIAL_TECHNIQUES
+        model.get_identifier.return_value = _mock_id("AnyTarget")
+        with pytest.raises(ValueError, match="Empty user-chosen label"):
+            _make_benchmark({"": model})
 
     def test_scenario_name(self, single_adversarial_model):
         """Scenario name should be 'Benchmark'."""
@@ -320,20 +284,17 @@ class TestBenchmarkRuntime:
             return scenario, attacks
 
     @pytest.mark.asyncio
-    async def test_default_strategy_attack_count(self, mock_objective_target, two_adversarial_models):
-        """DEFAULT expands to techniques tagged 'default' among adversarial-capable ones."""
+    async def test_default_strategy_runs_all_techniques(self, mock_objective_target, two_adversarial_models):
+        """With no strategies passed, default ``all`` produces N_techniques x N_models attacks."""
         _, attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=two_adversarial_models,
         )
-        # role_play has tag "single_turn" (no "default"), tap has tag "multi_turn" (no "default")
-        # So DEFAULT may expand to 0 techniques — use ALL instead for count validation
-        # This test validates the default behavior, whatever it is
-        assert isinstance(attacks, list)
+        assert len(attacks) == _NUM_ADVERSARIAL_TECHNIQUES * 2
 
     @pytest.mark.asyncio
     async def test_all_strategy_produces_full_cross_product(self, mock_objective_target, two_adversarial_models):
-        """ALL strategy: 2 models x 2 techniques x 1 dataset = 4 atomic attacks."""
+        """ALL strategy: N_techniques x 2 models x 1 dataset attacks."""
         with (
             patch.object(
                 DatasetConfiguration,
@@ -416,59 +377,27 @@ class TestBenchmarkRuntime:
 
     @pytest.mark.asyncio
     async def test_multiple_datasets_multiplies_attacks(self, mock_objective_target, single_adversarial_model):
-        """With 2 datasets and 1 model, ALL strategy (2 techniques) -> 4 atomic attacks."""
+        """1 model x N_techniques x 2 datasets = 2 * N_techniques atomic attacks."""
         two_datasets = {
             "harmbench": _make_seed_groups("harmbench"),
             "extra": _make_seed_groups("extra"),
         }
-        with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=two_datasets),
-            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
-        ):
-            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=single_adversarial_model)
-            all_strat = scenario._strategy_class("all")
-            await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
-            attacks = await scenario._get_atomic_attacks_async()
-            # 1 model x 2 techniques x 2 datasets = 4
-            assert len(attacks) == _NUM_ADVERSARIAL_TECHNIQUES * 2
+        _, attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            adversarial_models=single_adversarial_model,
+            seed_groups=two_datasets,
+        )
+        assert len(attacks) == _NUM_ADVERSARIAL_TECHNIQUES * 2
 
     @pytest.mark.asyncio
-    async def test_all_strategy_with_multiple_datasets(self, mock_objective_target, single_adversarial_model):
-        """ALL + 2 datasets: 1 model x 2 techniques x 2 datasets = 4."""
-        two_datasets = {
-            "harmbench": _make_seed_groups("harmbench"),
-            "extra": _make_seed_groups("extra"),
-        }
-        with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=two_datasets),
-            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
-        ):
-            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=single_adversarial_model)
-            all_strat = scenario._strategy_class("all")
-            await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
-            attacks = await scenario._get_atomic_attacks_async()
-            assert len(attacks) == _NUM_ADVERSARIAL_TECHNIQUES * 2
-
-    @pytest.mark.asyncio
-    async def test_attacks_have_correct_technique_types(self, mock_objective_target, single_adversarial_model):
-        """Atomic attacks should use ManyShotJailbreakAttack and TreeOfAttacksWithPruningAttack."""
-        with (
-            patch.object(
-                DatasetConfiguration,
-                "get_seed_attack_groups",
-                return_value={"harmbench": _make_seed_groups("harmbench")},
-            ),
-            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
-        ):
-            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=single_adversarial_model)
-            all_strat = scenario._strategy_class("all")
-            await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
-            attacks = await scenario._get_atomic_attacks_async()
-            technique_classes = {type(a.attack_technique.attack) for a in attacks}
-            assert technique_classes == {RolePlayAttack, TreeOfAttacksWithPruningAttack}
+    async def test_attacks_use_all_benchmarkable_attack_classes(self, mock_objective_target, single_adversarial_model):
+        """Atomic attacks must cover every adversarial-capable attack class."""
+        _, attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            adversarial_models=single_adversarial_model,
+        )
+        technique_classes = {type(a.attack_technique.attack) for a in attacks}
+        assert technique_classes == _BENCHMARKABLE_ATTACK_CLASSES
 
     @pytest.mark.asyncio
     async def test_attacks_carry_seed_groups(self, mock_objective_target, single_adversarial_model):
@@ -479,32 +408,3 @@ class TestBenchmarkRuntime:
         )
         for a in attacks:
             assert len(a.objectives) > 0
-
-
-# ===========================================================================
-# Display group tests
-# ===========================================================================
-
-
-@pytest.mark.usefixtures(*FIXTURES)
-class TestBuildDisplayGroup:
-    """Tests for _build_display_group in isolation."""
-
-    def test_returns_model_label(self, single_adversarial_model):
-        """_build_display_group should return the model label from _technique_to_model."""
-        scenario = _make_benchmark(single_adversarial_model)
-        result = scenario._build_display_group(technique_name="role_play__model_a", seed_group_name="harmbench")
-        assert result == "model_a"
-
-    def test_ignores_seed_group_name(self, single_adversarial_model):
-        """Changing seed_group_name should not affect the result."""
-        scenario = _make_benchmark(single_adversarial_model)
-        r1 = scenario._build_display_group(technique_name="role_play__model_a", seed_group_name="harmbench")
-        r2 = scenario._build_display_group(technique_name="role_play__model_a", seed_group_name="other")
-        assert r1 == r2 == "model_a"
-
-    def test_unknown_technique_raises_key_error(self, single_adversarial_model):
-        """Unknown technique_name should raise KeyError."""
-        scenario = _make_benchmark(single_adversarial_model)
-        with pytest.raises(KeyError):
-            scenario._build_display_group(technique_name="nonexistent__model", seed_group_name="harmbench")
