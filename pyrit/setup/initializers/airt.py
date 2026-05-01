@@ -80,18 +80,6 @@ class AIRTInitializer(PyRITInitializer):
         super().__init__()
 
     @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "AIRT Default Configuration"
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "AI Red Team setup with Azure OpenAI converters, composite harm/objective scorers, and adversarial targets"
-        )
-
-    @property
     def required_env_vars(self) -> list[str]:
         """Get list of required environment variables."""
         return [

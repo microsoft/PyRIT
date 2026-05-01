@@ -496,24 +496,6 @@ class TargetInitializer(PyRITInitializer):
         ]
 
     @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "Target Initializer"
-
-    @property
-    def execution_order(self) -> int:
-        """Get the execution order. Runs before ScorerInitializer (order=2)."""
-        return 1
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Instantiates a collection of targets from "
-            "available environment variables and adds them to the TargetRegistry"
-        )
-
-    @property
     def required_env_vars(self) -> list[str]:
         """
         Get list of required environment variables.
