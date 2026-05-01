@@ -106,7 +106,6 @@ def sample_attack_result() -> AttackResult:
 class TestQuestionAnsweringBenchmark:
     """Test class for QuestionAnsweringBenchmark core functionality."""
 
-    @pytest.mark.asyncio
     async def test_validate_context_valid_entry(
         self, mock_prompt_target: MagicMock, sample_benchmark_context: QuestionAnsweringBenchmarkContext
     ) -> None:
@@ -116,7 +115,6 @@ class TestQuestionAnsweringBenchmark:
         # Should not raise any exception
         benchmark._validate_context(context=sample_benchmark_context)
 
-    @pytest.mark.asyncio
     async def test_validate_context_empty_question(
         self, mock_prompt_target: MagicMock, empty_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -127,7 +125,6 @@ class TestQuestionAnsweringBenchmark:
         with pytest.raises(ValueError, match="Question text cannot be empty"):
             benchmark._validate_context(context=context)
 
-    @pytest.mark.asyncio
     async def test_validate_context_invalid_correct_answer(
         self, mock_prompt_target: MagicMock, invalid_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -138,7 +135,6 @@ class TestQuestionAnsweringBenchmark:
         with pytest.raises(ValueError, match="choice index=5"):
             benchmark._validate_context(context=context)
 
-    @pytest.mark.asyncio
     async def test_setup_async_generates_objective_and_prompt(
         self, mock_prompt_target: MagicMock, sample_benchmark_context: QuestionAnsweringBenchmarkContext
     ) -> None:
@@ -167,7 +163,6 @@ class TestQuestionAnsweringBenchmark:
         assert message_piece.prompt_metadata["correct_answer_index"] == "1"
         assert message_piece.prompt_metadata["correct_answer"] == "Paris"
 
-    @pytest.mark.asyncio
     async def test_format_question_prompt(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -183,7 +178,6 @@ class TestQuestionAnsweringBenchmark:
         assert "Option 2: Berlin" in formatted_prompt
         assert "Option 3: Madrid" in formatted_prompt
 
-    @pytest.mark.asyncio
     async def test_format_options(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -201,7 +195,6 @@ class TestQuestionAnsweringBenchmark:
         options_lines = options_text.strip().split("\n")
         assert len(options_lines) == 4
 
-    @pytest.mark.asyncio
     async def test_create_message(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -219,7 +212,6 @@ class TestQuestionAnsweringBenchmark:
         assert message_piece.prompt_metadata["correct_answer_index"] == "1"
         assert message_piece.prompt_metadata["correct_answer"] == "Paris"
 
-    @pytest.mark.asyncio
     async def test_perform_async_calls_prompt_sending_attack(
         self,
         mock_prompt_target: MagicMock,
@@ -253,7 +245,6 @@ class TestQuestionAnsweringBenchmark:
             # Verify result is returned correctly
             assert result == sample_attack_result
 
-    @pytest.mark.asyncio
     async def test_teardown_async_completes_successfully(
         self, mock_prompt_target: MagicMock, sample_benchmark_context: QuestionAnsweringBenchmarkContext
     ) -> None:
@@ -268,7 +259,6 @@ class TestQuestionAnsweringBenchmark:
 class TestQuestionAnsweringBenchmarkCustomFormatting:
     """Test class for custom formatting options in QuestionAnsweringBenchmark."""
 
-    @pytest.mark.asyncio
     async def test_custom_objective_format_string(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -286,7 +276,6 @@ class TestQuestionAnsweringBenchmarkCustomFormatting:
         assert "What is the capital of France?" in context.generated_objective
         assert "Paris" in context.generated_objective
 
-    @pytest.mark.asyncio
     async def test_custom_question_format_string(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -304,7 +293,6 @@ class TestQuestionAnsweringBenchmarkCustomFormatting:
         assert "What is the capital of France?" in context.generated_question_prompt
         assert "Choices:" in context.generated_question_prompt
 
-    @pytest.mark.asyncio
     async def test_custom_options_format_string(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -328,7 +316,6 @@ class TestQuestionAnsweringBenchmarkCustomFormatting:
 class TestQuestionAnsweringBenchmarkExecuteAsync:
     """Test class for execute_async method in QuestionAnsweringBenchmark."""
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_required_parameters(
         self,
         mock_prompt_target: MagicMock,
@@ -348,7 +335,6 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
             assert result == sample_attack_result
             mock_attack_instance.execute_async.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_optional_parameters(
         self,
         mock_prompt_target: MagicMock,
@@ -379,7 +365,6 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
             assert call_kwargs["prepended_conversation"] == prepended_conversation
             assert call_kwargs["memory_labels"] == memory_labels
 
-    @pytest.mark.asyncio
     async def test_execute_async_validates_parameters(self, mock_prompt_target: MagicMock) -> None:
         """Test that execute_async validates required parameters."""
         benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
@@ -393,7 +378,6 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
 class TestQuestionAnsweringBenchmarkContextIntegration:
     """Test class for context handling and integration scenarios."""
 
-    @pytest.mark.asyncio
     async def test_context_with_prepended_conversation(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -422,7 +406,6 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         # Verify context maintains prepended conversation
         assert context.prepended_conversation == prepended_conversation
 
-    @pytest.mark.asyncio
     async def test_context_with_memory_labels(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -442,7 +425,6 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         # Verify context maintains memory labels
         assert context.memory_labels == memory_labels
 
-    @pytest.mark.asyncio
     async def test_context_generated_fields_initially_empty(
         self, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
@@ -453,7 +435,6 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         assert context.generated_question_prompt == ""
         assert context.generated_message is None
 
-    @pytest.mark.asyncio
     async def test_full_workflow_integration(
         self,
         mock_prompt_target: MagicMock,
@@ -488,7 +469,6 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
 class TestQuestionAnsweringBenchmarkErrorHandling:
     """Test class for error handling scenarios."""
 
-    @pytest.mark.asyncio
     async def test_question_with_no_choices(self, mock_prompt_target: MagicMock) -> None:
         """Test handling of questions with no choices."""
         entry = QuestionAnsweringEntry(question="What is 2+2?", answer_type="int", correct_answer=4, choices=[])
@@ -499,7 +479,6 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
         with pytest.raises(ValueError, match="Question must have at least one choice"):
             benchmark._validate_context(context=context)
 
-    @pytest.mark.asyncio
     async def test_single_choice_question(self, mock_prompt_target: MagicMock) -> None:
         """Test handling of questions with only one choice."""
         entry = QuestionAnsweringEntry(
@@ -519,7 +498,6 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
         # Check formatting works with single choice
         assert "Option 0: True" in context.generated_question_prompt
 
-    @pytest.mark.asyncio
     async def test_attack_execution_failure(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:

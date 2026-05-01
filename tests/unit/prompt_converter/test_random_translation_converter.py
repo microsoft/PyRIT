@@ -32,7 +32,6 @@ def mock_target() -> PromptTarget:
     return target
 
 
-@pytest.mark.asyncio
 async def test_random_translation_converter_sets_system_prompt(mock_target) -> None:
     converter = RandomTranslationConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")

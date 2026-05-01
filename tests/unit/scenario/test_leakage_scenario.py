@@ -181,7 +181,6 @@ class TestLeakageInitialization:
 class TestLeakageAttackGeneration:
     """Tests for Leakage attack generation."""
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_all(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seeds, mock_dataset_config
     ):
@@ -195,7 +194,6 @@ class TestLeakageAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_attack_runs_include_objectives(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seeds, mock_dataset_config
     ):
@@ -211,7 +209,6 @@ class TestLeakageAttackGeneration:
             for run in atomic_attacks:
                 assert len(run.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_get_atomic_attacks_async_returns_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seeds, mock_dataset_config
     ):
@@ -226,7 +223,6 @@ class TestLeakageAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_unknown_strategy_raises_value_error(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seeds, mock_dataset_config
     ):
@@ -247,7 +243,6 @@ class TestLeakageLifecycle:
     Tests for Leakage lifecycle, including initialize_async and execution.
     """
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_max_concurrency(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seeds, mock_dataset_config
     ):
@@ -259,7 +254,6 @@ class TestLeakageLifecycle:
             )
             assert scenario._max_concurrency == 20
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_memory_labels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seeds, mock_dataset_config
     ):
@@ -306,7 +300,6 @@ class TestLeakageProperties:
         """Test that required_datasets returns airt_leakage."""
         assert Leakage.required_datasets() == ["airt_leakage"]
 
-    @pytest.mark.asyncio
     async def test_no_target_duplication(self, mock_objective_target, mock_memory_seeds, mock_dataset_config):
         """Test that all three targets (adversarial, object, scorer) are distinct."""
         with patch.object(Leakage, "_get_default_objectives", return_value=[seed.value for seed in mock_memory_seeds]):

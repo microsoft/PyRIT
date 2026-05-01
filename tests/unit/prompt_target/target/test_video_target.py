@@ -93,7 +93,6 @@ def test_video_validate_prompt_type_image_only(video_target: OpenAIVideoTarget):
         video_target._validate_request(normalized_conversation=[Message([msg])])
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_success(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -143,7 +142,6 @@ async def test_video_send_prompt_async_success(
         assert response[0].message_pieces[0].converted_value_data_type == "video_path"
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_failed_content_filter(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -180,7 +178,6 @@ async def test_video_send_prompt_async_failed_content_filter(
         )
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_failed_processing_error(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -206,7 +203,6 @@ async def test_video_send_prompt_async_failed_processing_error(
         assert response[0].message_pieces[0].response_error == "processing"
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_bad_request_exception(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -237,7 +233,6 @@ async def test_video_send_prompt_async_bad_request_exception(
         assert response[0].message_pieces[0].response_error == "blocked"
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_rate_limit_exception(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -259,7 +254,6 @@ async def test_video_send_prompt_async_rate_limit_exception(
             await video_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_api_error(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -282,7 +276,6 @@ async def test_video_send_prompt_async_api_error(
             await video_target.send_prompt_async(message=Message([request]))
 
 
-@pytest.mark.asyncio
 async def test_video_send_prompt_async_unexpected_status(
     video_target: OpenAIVideoTarget, sample_conversations: MutableSequence[MessagePiece]
 ):
@@ -477,7 +470,6 @@ class TestVideoTargetImageToVideo:
             model_name="sora-2",
         )
 
-    @pytest.mark.asyncio
     async def test_image_to_video_calls_create_with_input_reference(self, video_target: OpenAIVideoTarget):
         """Test that image-to-video mode passes input_reference to create_and_poll."""
         conversation_id = str(uuid.uuid4())
@@ -556,7 +548,6 @@ class TestVideoTargetRemix:
             custom_configuration=_VIDEO_PATH_CONFIGURATION,
         )
 
-    @pytest.mark.asyncio
     async def test_remix_calls_remix_and_poll(self, video_target: OpenAIVideoTarget):
         """Test that remix mode calls remix() and poll()."""
         msg = MessagePiece(
@@ -608,7 +599,6 @@ class TestVideoTargetRemix:
             assert len(response) == 1
             assert response[0].message_pieces[0].converted_value_data_type == "video_path"
 
-    @pytest.mark.asyncio
     async def test_remix_skips_poll_if_completed(self, video_target: OpenAIVideoTarget):
         """Test that remix mode skips poll() if already completed."""
         msg = MessagePiece(
@@ -649,7 +639,6 @@ class TestVideoTargetRemix:
             # Verify poll was NOT called since status was already completed
             mock_poll.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_remix_with_text_and_video_path_pieces(self, video_target: OpenAIVideoTarget):
         """Test full send_prompt_async with text + video_path pieces (UI remix flow).
 
@@ -721,7 +710,6 @@ class TestVideoTargetMetadata:
             model_name="sora-2",
         )
 
-    @pytest.mark.asyncio
     async def test_response_includes_video_id_metadata(self, video_target: OpenAIVideoTarget):
         """Test that response includes video_id in prompt_metadata for chaining."""
         msg = MessagePiece(
@@ -791,7 +779,6 @@ class TestVideoTargetEdgeCases:
         with pytest.raises(ValueError, match="Expected exactly 1 text piece"):
             video_target._validate_request(normalized_conversation=[Message([msg])])
 
-    @pytest.mark.asyncio
     async def test_image_to_video_with_jpeg(self, video_target: OpenAIVideoTarget):
         """Test image-to-video with JPEG image format."""
         conversation_id = str(uuid.uuid4())
@@ -845,7 +832,6 @@ class TestVideoTargetEdgeCases:
             input_ref = call_kwargs["input_reference"]
             assert input_ref[2] == "image/jpeg"
 
-    @pytest.mark.asyncio
     async def test_image_to_video_with_webp_uses_guess_type_fallback(self, video_target: OpenAIVideoTarget):
         """Test image-to-video correctly identifies .webp via guess_type fallback."""
         conversation_id = str(uuid.uuid4())
@@ -903,7 +889,6 @@ class TestVideoTargetEdgeCases:
             input_ref = call_kwargs["input_reference"]
             assert input_ref[2] == "image/webp"
 
-    @pytest.mark.asyncio
     async def test_image_to_video_with_unknown_mime_raises_error(self, video_target: OpenAIVideoTarget):
         """Test image-to-video raises ValueError when image format is unsupported."""
         conversation_id = str(uuid.uuid4())
@@ -934,7 +919,6 @@ class TestVideoTargetEdgeCases:
 
             await video_target.send_prompt_async(message=Message([msg_text, msg_image]))
 
-    @pytest.mark.asyncio
     async def test_remix_with_failed_status(self, video_target: OpenAIVideoTarget):
         """Test remix mode handles failed video generation."""
         msg = MessagePiece(
@@ -1168,7 +1152,6 @@ class TestVideoTargetRemixValidation:
             OpenAIVideoTarget._validate_video_remix_pieces(message=message)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_raises_when_no_text_piece(patch_central_database):
     """Guard at line 210: text_piece is None raises ValueError."""
     target = OpenAIVideoTarget(

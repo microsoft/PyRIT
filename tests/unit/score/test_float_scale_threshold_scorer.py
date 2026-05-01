@@ -41,7 +41,6 @@ def create_mock_float_scorer(score_value: float):
 
 @pytest.mark.parametrize("threshold", [0.3, 0.5, 0.7])
 @pytest.mark.parametrize("score_value", [0.1, 0.3, 0.5, 0.7, 0.9])
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_value):
     memory = MagicMock(MemoryInterface)
 
@@ -57,7 +56,6 @@ async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_valu
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_returns_single_score_with_multi_category_scorer():
     """
     Test that FloatScaleThresholdScorer returns exactly one score even when the underlying scorer
@@ -133,7 +131,6 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
         assert len(added_scores) == 1
 
 
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_handles_empty_scores():
     """
     Test that FloatScaleThresholdScorer gracefully handles when the underlying scorer
@@ -167,7 +164,6 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     """
     Test that FloatScaleThresholdScorer raises ValueError when using RAISE_ON_EMPTY aggregator

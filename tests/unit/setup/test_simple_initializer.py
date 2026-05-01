@@ -49,21 +49,18 @@ class TestSimpleInitializerInitialize:
             if hasattr(sys.modules["__main__"], attr):
                 delattr(sys.modules["__main__"], attr)
 
-    @pytest.mark.asyncio
     async def test_initialize_with_api_key_runs_without_error(self):
         """Test that initialize runs without errors when API key is provided."""
         os.environ["OPENAI_CHAT_KEY"] = "test_key"
         init = SimpleInitializer()
         await init.initialize_async()
 
-    @pytest.mark.asyncio
     async def test_initialize_with_entra_auth_runs_without_error(self):
         """Test that initialize falls back to Entra auth when no API key is set."""
         init = SimpleInitializer()
         with patch("pyrit.auth.get_azure_openai_auth", return_value="mock_token"):
             await init.initialize_async()
 
-    @pytest.mark.asyncio
     async def test_initialize_non_azure_endpoint_without_key_raises(self):
         """Test that a non-Azure endpoint without an API key raises ValueError."""
         os.environ["OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
@@ -71,7 +68,6 @@ class TestSimpleInitializerInitialize:
         with pytest.raises(ValueError, match="OPENAI_CHAT_KEY environment variable is required"):
             await init.initialize_async()
 
-    @pytest.mark.asyncio
     async def test_get_info_after_initialize_has_populated_data(self):
         """Test that get_info_async() returns populated data after initialization."""
         os.environ["OPENAI_CHAT_KEY"] = "test_key"

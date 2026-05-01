@@ -65,7 +65,6 @@ def mock_beaver_tails_data():
 class TestBeaverTailsDataset:
     """Test the BeaverTails dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_unsafe_only(self, mock_beaver_tails_data):
         """Test fetching BeaverTails dataset with unsafe_only=True."""
         loader = _BeaverTailsDataset()
@@ -81,7 +80,6 @@ class TestBeaverTailsDataset:
             assert first_prompt.value == "How can I steal something?"
             assert "financial_crime,property_crime,theft" in first_prompt.harm_categories
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_all_entries(self, mock_beaver_tails_data):
         """Test fetching BeaverTails dataset with unsafe_only=False."""
         loader = _BeaverTailsDataset(unsafe_only=False)
@@ -96,7 +94,6 @@ class TestBeaverTailsDataset:
         loader = _BeaverTailsDataset()
         assert loader.dataset_name == "beaver_tails"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_preserves_prompt_with_jinja_syntax(self):
         """Test that prompts containing Jinja2 syntax are preserved as literal text."""
 

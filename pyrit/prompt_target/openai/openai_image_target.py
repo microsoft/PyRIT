@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 import base64
 import logging
+import warnings
 from typing import Any, Literal, Optional
 
 import httpx
@@ -47,14 +48,27 @@ class OpenAIImageTarget(OpenAITarget):
         )
     )
 
+    # DALL-E-only image sizes that are deprecated in favor of GPT image model sizes.
+    _DEPRECATED_SIZES = {"256x256", "512x512", "1792x1024", "1024x1792"}
+    # DALL-E-only quality values that are deprecated in favor of GPT image model values.
+    _DEPRECATED_QUALITY_VALUES = {"standard", "hd"}
+
     def __init__(
         self,
         image_size: Literal[
-            "256x256", "512x512", "1024x1024", "1536x1024", "1024x1536", "1792x1024", "1024x1792"
+            "auto",
+            "1024x1024",
+            "1536x1024",
+            "1024x1536",
+            "256x256",
+            "512x512",
+            "1792x1024",
+            "1024x1792",
         ] = "1024x1024",
         output_format: Optional[Literal["png", "jpeg", "webp"]] = None,
-        quality: Optional[Literal["standard", "hd", "low", "medium", "high"]] = None,
+        quality: Optional[Literal["auto", "low", "medium", "high", "standard", "hd"]] = None,
         style: Optional[Literal["natural", "vivid"]] = None,
+        background: Optional[Literal["transparent", "opaque", "auto"]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
@@ -76,25 +90,27 @@ class OpenAIImageTarget(OpenAITarget):
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
             image_size (Literal, Optional): The size of the generated image.
-                Accepts "256x256", "512x512", "1024x1024", "1536x1024",
-                "1024x1536", "1792x1024", or "1024x1792".
-                Different models support different image sizes.
-                GPT image models support "1024x1024", "1536x1024" and "1024x1536".
-                DALL-E-3 supports "1024x1024", "1792x1024" and "1024x1792".
-                DALL-E-2 supports "256x256", "512x512" and "1024x1024".
+                GPT image models support "auto", "1024x1024", "1536x1024", and "1024x1536".
                 Defaults to "1024x1024".
+
+                **Deprecated sizes (will be removed in v0.15.0):**
+                "256x256", "512x512" (DALL-E-2 only), "1792x1024", "1024x1792" (DALL-E-3 only).
             output_format (Literal["png", "jpeg", "webp"], Optional): The output format of the generated images.
-                This parameter is only supported for GPT image models.
-                Default is to not specify (which will use the model's default format, e.g. PNG for OpenAI image models).
-            quality (Literal["standard", "hd", "low", "medium", "high"], Optional): The quality of the generated images.
-                Different models support different quality settings.
-                GPT image models support "high", "medium" and "low".
-                DALL-E-3 supports "hd" and "standard".
-                DALL-E-2 supports "standard" only.
-                Default is to not specify.
-            style (Literal["natural", "vivid"], Optional): The style of the generated images.
-                This parameter is only supported for DALL-E-3.
-                Default is to not specify.
+                Default is to not specify (which will use the model's default format, e.g. PNG).
+            quality (Literal["auto", "low", "medium", "high"], Optional): The quality of the generated images.
+                GPT image models support "auto", "high", "medium", and "low".
+                Default is to not specify, which will use "auto" behavior for platform OpenAI endpoints
+                and "high" behavior for Azure OpenAI endpoints.
+
+                **Deprecated values (will be removed in v0.15.0):**
+                "standard", "hd" (DALL-E only).
+            style (Literal["natural", "vivid"], Optional): **Deprecated.** This parameter was only
+                supported for DALL-E-3 and is not supported by GPT image models.
+                Will be removed in v0.15.0.
+            background (Literal["transparent", "opaque", "auto"], Optional): Background behavior for
+                the generated image. When "transparent", the output format must support transparency
+                ("png" or "webp"). When "auto", the model automatically determines the best background.
+                Default is to not specify, which will use "auto" behavior.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
@@ -104,11 +120,49 @@ class OpenAIImageTarget(OpenAITarget):
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
                 `httpx.AsyncClient()` constructor.
                 For example, to specify a 3 minutes timeout: httpx_client_kwargs={"timeout": 180}
+
+        Raises:
+            ValueError: If background is "transparent" and output_format is "jpeg",
+                since JPEG does not support transparency.
         """
+        # Emit deprecation warnings for DALL-E-only parameters
+        if style is not None:
+            warnings.warn(
+                "The 'style' parameter is deprecated and will be removed in v0.15.0. "
+                "It was only supported for DALL-E-3, which is being shut down on 2026-05-12.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if image_size in self._DEPRECATED_SIZES:
+            warnings.warn(
+                f"image_size='{image_size}' is a DALL-E-only value and is deprecated. "
+                f"It will be removed in v0.15.0. DALL-E models are being shut down on 2026-05-12. "
+                f"GPT image models support 'auto', '1024x1024', '1536x1024', and '1024x1536'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if quality is not None and quality in self._DEPRECATED_QUALITY_VALUES:
+            warnings.warn(
+                f"quality='{quality}' is a DALL-E-only value and is deprecated. "
+                f"It will be removed in v0.15.0. DALL-E models are being shut down on 2026-05-12. "
+                f"GPT image models support 'auto', 'low', 'medium', and 'high'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if background == "transparent" and output_format == "jpeg":
+            raise ValueError(
+                "background='transparent' requires an output format that supports transparency ('png' or 'webp'). "
+                "Got output_format='jpeg'."
+            )
+
         self.output_format = output_format
         self.quality = quality
         self.style = style
         self.image_size = image_size
+        self.background = background
 
         super().__init__(
             *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
@@ -142,6 +196,7 @@ class OpenAIImageTarget(OpenAITarget):
                 "image_size": self.image_size,
                 "quality": self.quality,
                 "style": self.style,
+                "background": self.background,
             },
         )
 
@@ -204,6 +259,8 @@ class OpenAIImageTarget(OpenAITarget):
             image_generation_args["quality"] = self.quality
         if self.style:
             image_generation_args["style"] = self.style
+        if self.background:
+            image_generation_args["background"] = self.background
 
         # Use unified error handler for consistent error handling
         return await self._handle_openai_request(
@@ -255,6 +312,8 @@ class OpenAIImageTarget(OpenAITarget):
             image_edit_args["quality"] = self.quality
         if self.style:
             image_edit_args["style"] = self.style
+        if self.background:
+            image_edit_args["background"] = self.background
 
         return await self._handle_openai_request(
             api_call=lambda: self._client.images.edit(**image_edit_args),
@@ -294,8 +353,7 @@ class OpenAIImageTarget(OpenAITarget):
         """
         Extract image bytes from the API response.
 
-        Handles both base64-encoded data and URL responses. Some models (like gpt-image-1)
-        return base64 directly, while others (like dall-e) may return URLs.
+        GPT image models always return base64-encoded data.
 
         Args:
             image_data: The image data object from the API response.
@@ -306,15 +364,18 @@ class OpenAIImageTarget(OpenAITarget):
         Raises:
             EmptyResponseException: If neither base64 data nor URL is available.
         """
-        # Try base64 first (preferred format)
         b64_data = getattr(image_data, "b64_json", None)
         if b64_data:
             return base64.b64decode(b64_data)
 
-        # Fall back to URL download
+        # Legacy fallback for DALL-E models that may return URLs instead of base64.
+        # This code path is deprecated and will be removed in v0.15.0.
         image_url = getattr(image_data, "url", None)
         if image_url:
-            logger.info("Image model returned URL. Downloading image.")
+            logger.warning(
+                "Image model returned a URL instead of base64 data. "
+                "This is a DALL-E behavior that is deprecated. Downloading image from URL."
+            )
             async with httpx.AsyncClient() as http_client:
                 image_response = await http_client.get(image_url)
                 image_response.raise_for_status()

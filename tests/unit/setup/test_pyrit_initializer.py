@@ -794,7 +794,6 @@ class TestSupportedParameters:
         with pytest.raises(ValueError, match="unknown parameter"):
             init.validate()
 
-    @pytest.mark.asyncio
     async def test_params_available_in_initialize_async(self) -> None:
         """Test that self.params is available inside initialize_async."""
 
@@ -814,7 +813,6 @@ class TestSupportedParameters:
 
         assert received_params == {"tags": ["default", "scorer"]}
 
-    @pytest.mark.asyncio
     async def test_empty_params_remains_empty_dict(self) -> None:
         """Test that self.params is empty dict when not set."""
 

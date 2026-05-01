@@ -148,7 +148,6 @@ class MockFloatScorer(Scorer):
         return None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("bad_json", [BAD_JSON, KEY_ERROR_JSON, KEY_ERROR2_JSON])
 async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json: str):
     chat_target = MagicMock(PromptChatTarget)
@@ -173,7 +172,6 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
     assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_value_with_llm_exception_display_prompt_id():
     chat_target = MagicMock(PromptChatTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -193,7 +191,6 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
         )
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_json):
     scorer = MockScorer()
 
@@ -228,7 +225,6 @@ async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_j
     assert set_sys_prompt_args["attack_identifier"] is expected_attack_identifier
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empty_attack_identifier(good_json):
     scorer = MockScorer()
 
@@ -260,7 +256,6 @@ async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empt
     assert not set_sys_prompt_args["attack_identifier"]
 
 
-@pytest.mark.asyncio
 async def test_scorer_send_chat_target_async_good_response(good_json):
     chat_target = MagicMock(PromptChatTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -285,7 +280,6 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
     assert chat_target.send_prompt_async.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_scorer_remove_markdown_json_called(good_json):
     chat_target = MagicMock(PromptChatTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -310,7 +304,6 @@ async def test_scorer_remove_markdown_json_called(good_json):
         mock_remove_markdown_json.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_prepended_text_message_piece_creates_multipiece_message(good_json):
     """Test that prepended_text_message_piece creates a multi-piece message (text context + main content)."""
     chat_target = MagicMock(PromptChatTarget)
@@ -354,7 +347,6 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
     assert main_piece.original_value == "test_image.png"
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_no_prepended_text_creates_single_piece_message(good_json):
     """Test that without prepended_text_message_piece, only a single piece message is created."""
     chat_target = MagicMock(PromptChatTarget)
@@ -390,7 +382,6 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
     assert "response: some text" in text_piece.original_value
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
     """Test that prepended_text_message_piece works with audio content (type-independent)."""
     chat_target = MagicMock(PromptChatTarget)
@@ -457,7 +448,6 @@ def test_scorer_extract_task_from_response(patch_central_database):
         assert "User's question about the universe" in extracted_task
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_responses_batch_async(patch_central_database):
     """
     Test that score_responses_batch_async filters to only assistant pieces,
@@ -491,7 +481,6 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
         assert len(fake_scores) == 2
 
 
-@pytest.mark.asyncio
 async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
     """Test explicit empty objectives are rejected for non-empty message batches."""
     scorer = MockScorer()
@@ -501,7 +490,6 @@ async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
         await scorer.score_prompts_batch_async(messages=[message], objectives=[])
 
 
-@pytest.mark.asyncio
 async def test_score_image_batch_async_rejects_explicit_empty_objectives():
     """Test explicit empty objectives are rejected for non-empty image batches."""
     scorer = MockScorer()
@@ -510,7 +498,6 @@ async def test_score_image_batch_async_rejects_explicit_empty_objectives():
         await scorer.score_image_batch_async(image_paths=["test_image.png"], objectives=[])
 
 
-@pytest.mark.asyncio
 async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_central_database):
     """Test that objectives=None defaults to empty-string objectives matching message count."""
     scorer = MockScorer()
@@ -525,7 +512,6 @@ async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_cen
         assert call_kwargs["objective"] == ""
 
 
-@pytest.mark.asyncio
 async def test_score_image_batch_async_works_when_objectives_none(patch_central_database):
     """Test that objectives=None omits objectives from the batch call."""
     scorer = MockScorer()
@@ -540,7 +526,6 @@ async def test_score_image_batch_async_works_when_objectives_none(patch_central_
         assert "objective" not in call_kwargs
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_empty_scorers():
     """Test that score_response_async returns empty list when no scorers provided."""
     response = Message(
@@ -551,7 +536,6 @@ async def test_score_response_async_empty_scorers():
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_no_matching_role():
     """Test that score_response_async returns empty list when no pieces match role filter."""
     response = Message(
@@ -575,7 +559,6 @@ async def test_score_response_async_no_matching_role():
     scorer.score_async.assert_called()
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_parallel_execution():
     """Test that score_response_async runs all scorers in parallel on all filtered pieces."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -611,7 +594,6 @@ async def test_score_response_async_parallel_execution():
     )
 
 
-@pytest.mark.asyncio
 async def test_score_response_select_first_success_async_empty_scorers():
     """Test that score_response_select_first_success_async returns None when no scorers provided."""
     response = Message(
@@ -623,7 +605,6 @@ async def test_score_response_select_first_success_async_empty_scorers():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_score_async_no_matching_role():
     """Test that score_response_select_first_success_async returns None when no pieces match role filter."""
     response = Message(message_pieces=[MessagePiece(role="user", original_value="test", conversation_id="test-convo")])
@@ -633,7 +614,6 @@ async def test_score_async_no_matching_role():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_finds_success():
     """Test that score_response_async returns first successful score."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -672,7 +652,6 @@ async def test_score_response_async_finds_success():
     assert scorer2.score_async.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_score_response_success_async_no_success_returns_first():
     """Test that score_response_success_async returns first score when no success found."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -711,7 +690,6 @@ async def test_score_response_success_async_no_success_returns_first():
     assert scorer2.score_async.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_score_response_success_async_parallel_scoring_per_piece():
     """Test that score_response_success_async runs scorers in parallel for each piece."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -750,7 +728,6 @@ async def test_score_response_success_async_parallel_scoring_per_piece():
     assert ("scorer2", "response1") in call_order[:2]
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_no_scorers():
     """Test score_response_async with no scorers provided."""
     response = Message(message_pieces=[MessagePiece(role="assistant", original_value="test")])
@@ -762,7 +739,6 @@ async def test_score_response_async_no_scorers():
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_auxiliary_only():
     """Test score_response_async with only auxiliary scorers."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -790,7 +766,6 @@ async def test_score_response_async_auxiliary_only():
     assert result["objective_scores"] == []
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_objective_only():
     """Test score_response_async with only objective scorers."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -814,7 +789,6 @@ async def test_score_response_async_objective_only():
     assert result["objective_scores"][0] == obj_score
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_both_types():
     """Test score_response_async with both auxiliary and objective scorers."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -843,7 +817,6 @@ async def test_score_response_async_both_types():
     assert result["objective_scores"][0] == obj_score
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_multiple_pieces():
     """Test score_response_async with multiple response pieces."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -887,7 +860,6 @@ async def test_score_response_async_multiple_pieces():
     assert result["objective_scores"][0] == obj_score
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_skip_on_error_true():
     """Test score_response_async skips error pieces when skip_on_error_result=True."""
     piece1 = MessagePiece(role="assistant", original_value="good response", conversation_id="test-convo")
@@ -925,7 +897,6 @@ async def test_score_response_async_skip_on_error_true():
     obj_scorer.score_async.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_skip_on_error_false():
     """Test score_response_async includes error pieces when skip_on_error_result=False."""
     piece1 = MessagePiece(role="assistant", original_value="good response", conversation_id="test-convo")
@@ -967,7 +938,6 @@ async def test_score_response_async_skip_on_error_false():
     # assert aux_scorer.score_async.call_count == 2  # noqa: ERA001
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_objective_failure():
     """Test score_response_async when no objective succeeds."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -997,7 +967,6 @@ async def test_score_response_async_objective_failure():
     assert result["objective_scores"][0] == obj_score1
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_concurrent_execution():
     """Test that auxiliary and objective scoring happen concurrently."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -1037,7 +1006,6 @@ async def test_score_response_async_concurrent_execution():
     assert call_order.index("obj_start") < call_order.index("aux_end")
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_empty_lists():
     """Test score_response_async with empty scorer lists."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -1050,7 +1018,6 @@ async def test_score_response_async_empty_lists():
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
-@pytest.mark.asyncio
 async def test_get_supported_pieces_filters_unsupported_data_types(patch_central_database):
     """Test that _get_supported_pieces only returns pieces with supported data types."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1103,7 +1070,6 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
     assert scores[0].message_piece_id == "text-1"
 
 
-@pytest.mark.asyncio
 async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(patch_central_database):
     """Test that unsupported pieces don't cause errors when enforce_all_pieces_valid=False."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1135,7 +1101,6 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
     assert scorer.scored_piece_ids[0] == "text-1"
 
 
-@pytest.mark.asyncio
 async def test_all_unsupported_pieces_raises_error(patch_central_database):
     """Test that having no supported pieces raises a clear error when raise_on_no_valid_pieces=True."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False, raise_on_no_valid_pieces=True)
@@ -1167,7 +1132,6 @@ async def test_all_unsupported_pieces_raises_error(patch_central_database):
     assert len(scorer.scored_piece_ids) == 0
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_uses_supported_pieces_only(patch_central_database):
     """Test that TrueFalseScorer also uses _get_supported_pieces via base implementation."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1230,7 +1194,6 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
     assert scores[0].score_value == "true"
 
 
-@pytest.mark.asyncio
 async def test_base_scorer_score_async_implementation(patch_central_database):
     """Test that the base Scorer._score_async implementation works correctly."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1373,7 +1336,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
 
         return TestTrueFalseScorer(validator=no_valid_pieces_validator)
 
-    @pytest.mark.asyncio
     async def test_blocked_response_returns_specific_rationale(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
@@ -1396,7 +1358,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "blocked" in scores[0].score_rationale.lower()
         assert "blocked" in scores[0].score_value_description.lower()
 
-    @pytest.mark.asyncio
     async def test_error_response_returns_specific_rationale(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
@@ -1420,7 +1381,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "error" in scores[0].score_rationale.lower()
         assert "unknown" in scores[0].score_rationale
 
-    @pytest.mark.asyncio
     async def test_filtered_pieces_returns_generic_rationale(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
@@ -1445,7 +1405,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "blocked" not in scores[0].score_rationale.lower()
         assert "error" not in scores[0].score_rationale.lower()
 
-    @pytest.mark.asyncio
     async def test_blocked_takes_precedence_over_generic_error(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
@@ -1470,7 +1429,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "blocked" in scores[0].score_value_description.lower()
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_skips_reasoning_piece(good_json):
     """Test that _score_value_with_llm extracts JSON from the text piece, not a reasoning piece."""
     chat_target = MagicMock(PromptChatTarget)

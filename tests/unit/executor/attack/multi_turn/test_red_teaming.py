@@ -357,7 +357,6 @@ class TestRedTeamingAttackInitialization:
 class TestContextCreation:
     """Tests for context creation from parameters"""
 
-    @pytest.mark.asyncio
     async def test_execute_async_creates_context_properly(
         self, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, mock_adversarial_chat: MagicMock
     ):
@@ -410,7 +409,6 @@ class TestContextCreation:
                         # Verify that validation was called
                         mock_validate.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_custom_prompt(
         self, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, mock_adversarial_chat: MagicMock
     ):
@@ -454,7 +452,6 @@ class TestContextCreation:
                         assert captured_context.next_message is not None
                         assert captured_context.next_message.message_pieces[0].original_value == "My custom prompt"
 
-    @pytest.mark.asyncio
     async def test_execute_async_invalid_message_type(
         self, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock, mock_adversarial_chat: MagicMock
     ):
@@ -553,7 +550,6 @@ class TestContextValidation:
                 max_turns=0,
             )
 
-    @pytest.mark.asyncio
     async def test_max_turns_validation_with_prepended_conversation(
         self,
         mock_objective_scorer: MagicMock,
@@ -596,7 +592,6 @@ class TestContextValidation:
 class TestSetupPhase:
     """Tests for the setup phase of the attack."""
 
-    @pytest.mark.asyncio
     async def test_setup_initializes_conversation_session(
         self,
         mock_objective_target: MagicMock,
@@ -622,7 +617,6 @@ class TestSetupPhase:
         assert basic_context.session is not None
         assert isinstance(basic_context.session, ConversationSession)
 
-    @pytest.mark.asyncio
     async def test_setup_updates_turn_count_from_prepended_conversation(
         self,
         mock_objective_target: MagicMock,
@@ -650,7 +644,6 @@ class TestSetupPhase:
 
         assert basic_context.executed_turns == 3
 
-    @pytest.mark.asyncio
     async def test_setup_merges_memory_labels_correctly(
         self,
         mock_objective_target: MagicMock,
@@ -689,7 +682,6 @@ class TestSetupPhase:
             "common": "context",
         }
 
-    @pytest.mark.asyncio
     async def test_setup_sets_adversarial_chat_system_prompt(
         self,
         mock_objective_target: MagicMock,
@@ -718,7 +710,6 @@ class TestSetupPhase:
         assert "Test objective" in call_args.kwargs["system_prompt"]
         assert call_args.kwargs["conversation_id"] == basic_context.session.adversarial_chat_conversation_id
 
-    @pytest.mark.asyncio
     async def test_setup_retrieves_last_score_matching_scorer_type(
         self,
         mock_objective_target: MagicMock,
@@ -775,7 +766,6 @@ class TestSetupPhase:
 class TestPromptGeneration:
     """Tests for prompt generation logic"""
 
-    @pytest.mark.asyncio
     async def test_generate_next_prompt_uses_custom_prompt_on_first_turn(
         self,
         mock_objective_target: MagicMock,
@@ -806,7 +796,6 @@ class TestPromptGeneration:
         # Should not call adversarial chat
         mock_prompt_normalizer.send_prompt_async.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_generate_next_prompt_uses_custom_prompt_regardless_of_turn(
         self,
         mock_objective_target: MagicMock,
@@ -837,7 +826,6 @@ class TestPromptGeneration:
         # Should not call adversarial chat
         mock_prompt_normalizer.send_prompt_async.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_generate_next_prompt_uses_adversarial_chat_after_first_turn(
         self,
         mock_objective_target: MagicMock,
@@ -869,7 +857,6 @@ class TestPromptGeneration:
         assert result.get_value() == sample_response.get_value()
         mock_prompt_normalizer.send_prompt_async.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_generate_next_prompt_raises_on_none_response(
         self,
         mock_objective_target: MagicMock,
@@ -902,7 +889,6 @@ class TestPromptGeneration:
 class TestAdversarialPromptBuilding:
     """Tests for building adversarial prompts."""
 
-    @pytest.mark.asyncio
     async def test_build_adversarial_prompt_returns_seed_when_no_response(
         self,
         mock_objective_target: MagicMock,
@@ -979,7 +965,6 @@ class TestAdversarialPromptBuilding:
 
         assert result == expected_result
 
-    @pytest.mark.asyncio
     async def test_handle_adversarial_text_response_with_feedback(
         self,
         mock_objective_target: MagicMock,
@@ -1148,7 +1133,6 @@ class TestAdversarialPromptBuilding:
 class TestResponseScoring:
     """Tests for response scoring logic."""
 
-    @pytest.mark.asyncio
     async def test_score_response_successful(
         self,
         mock_objective_target: MagicMock,
@@ -1178,7 +1162,6 @@ class TestResponseScoring:
 
         assert result == success_score
 
-    @pytest.mark.asyncio
     async def test_score_response_returns_none_for_blocked(
         self,
         mock_objective_target: MagicMock,
@@ -1209,7 +1192,6 @@ class TestResponseScoring:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_score_response_returns_none_when_no_response(
         self,
         mock_objective_target: MagicMock,
@@ -1238,7 +1220,6 @@ class TestResponseScoring:
 class TestAttackExecution:
     """Tests for the main attack execution logic."""
 
-    @pytest.mark.asyncio
     async def test_perform_attack_with_message_bypasses_adversarial_chat_on_first_turn(
         self,
         mock_objective_target: MagicMock,
@@ -1282,7 +1263,6 @@ class TestAttackExecution:
         # Verify the message was cleared after use
         assert basic_context.next_message is None
 
-    @pytest.mark.asyncio
     async def test_perform_async_sets_atomic_attack_identifier(
         self,
         mock_objective_target: MagicMock,
@@ -1315,7 +1295,6 @@ class TestAttackExecution:
         assert result.atomic_attack_identifier.class_name == "AtomicAttack"
         assert result.get_attack_strategy_identifier() == attack.get_identifier()
 
-    @pytest.mark.asyncio
     async def test_perform_attack_with_multi_piece_message_uses_first_piece(
         self,
         mock_objective_target: MagicMock,
@@ -1375,7 +1354,6 @@ class TestAttackExecution:
             ("false", False),
         ],
     )
-    @pytest.mark.asyncio
     async def test_perform_attack_with_different_score_outcomes(
         self,
         mock_objective_target: MagicMock,
@@ -1428,7 +1406,6 @@ class TestAttackExecution:
 
         assert (result.outcome == AttackOutcome.SUCCESS) == expected_achieved
 
-    @pytest.mark.asyncio
     async def test_perform_attack_reaches_max_turns(
         self,
         mock_objective_target: MagicMock,
@@ -1479,7 +1456,6 @@ class TestAttackExecution:
 class TestAttackLifecycle:
     """Tests for the complete attack lifecycle (execute_async)"""
 
-    @pytest.mark.asyncio
     async def test_execute_async_successful_lifecycle(
         self,
         mock_objective_target: MagicMock,
@@ -1523,7 +1499,6 @@ class TestAttackLifecycle:
         assert isinstance(result, AttackResult)
         assert result.outcome == AttackOutcome.SUCCESS
 
-    @pytest.mark.asyncio
     async def test_execute_async_validation_failure_prevents_execution(
         self,
         mock_objective_target: MagicMock,
@@ -1560,7 +1535,6 @@ class TestAttackLifecycle:
         mock_perform.assert_not_called()
         mock_teardown.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_async_successful(
         self,
         mock_objective_target: MagicMock,
@@ -1603,7 +1577,6 @@ class TestAttackLifecycle:
         assert result.outcome == AttackOutcome.SUCCESS
         assert result.objective == basic_context.objective
 
-    @pytest.mark.asyncio
     async def test_teardown_async_is_noop(
         self,
         mock_objective_target: MagicMock,
@@ -1630,7 +1603,6 @@ class TestAttackLifecycle:
 class TestRedTeamingConversationTracking:
     """Test that adversarial chat conversation IDs are properly tracked."""
 
-    @pytest.mark.asyncio
     async def test_setup_tracks_adversarial_chat_conversation_id(
         self,
         mock_objective_target: MagicMock,
@@ -1661,7 +1633,6 @@ class TestRedTeamingConversationTracking:
                 in basic_context.related_conversations
             )
 
-    @pytest.mark.asyncio
     async def test_attack_result_includes_adversarial_chat_conversation_ids(
         self,
         mock_objective_target: MagicMock,
@@ -1705,7 +1676,6 @@ class TestRedTeamingConversationTracking:
                 in result.related_conversations
             )
 
-    @pytest.mark.asyncio
     async def test_adversarial_chat_conversation_id_uniqueness(
         self,
         mock_objective_target: MagicMock,
@@ -1793,7 +1763,6 @@ class TestScoreLastTurnOnly:
 
         assert attack._score_last_turn_only is True
 
-    @pytest.mark.asyncio
     async def test_score_last_turn_only_skips_intermediate_scoring(
         self,
         mock_objective_target: MagicMock,
@@ -1831,7 +1800,6 @@ class TestScoreLastTurnOnly:
                     # Should only score the last turn (turn 3)
                     assert mock_score.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_score_last_turn_only_false_scores_every_turn(
         self,
         mock_objective_target: MagicMock,
@@ -1869,7 +1837,6 @@ class TestScoreLastTurnOnly:
                     # Should score all 3 turns
                     assert mock_score.call_count == 3
 
-    @pytest.mark.asyncio
     async def test_score_last_turn_only_runs_all_turns(
         self,
         mock_objective_target: MagicMock,
@@ -1909,7 +1876,6 @@ class TestScoreLastTurnOnly:
                     # Prompt should have been sent 5 times
                     assert mock_send.call_count == 5
 
-    @pytest.mark.asyncio
     async def test_score_last_turn_only_sets_intermediate_scores_to_none(
         self,
         mock_objective_target: MagicMock,
@@ -1957,7 +1923,6 @@ class TestScoreLastTurnOnly:
                     # The final result should have a score
                     assert result.last_score == failure_score
 
-    @pytest.mark.asyncio
     async def test_score_last_turn_only_can_still_succeed_on_last_turn(
         self,
         mock_objective_target: MagicMock,

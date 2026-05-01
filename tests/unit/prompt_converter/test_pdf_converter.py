@@ -48,7 +48,6 @@ def pdf_converter_nonexistent_template():
     return PDFConverter(prompt_template=None)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_no_template(pdf_converter_no_template):
     """Test converting a prompt without a template."""
     prompt = "Hello, PDF!"
@@ -76,7 +75,6 @@ async def test_convert_async_no_template(pdf_converter_no_template):
         assert result.output_text == "mock_url"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_with_template(pdf_converter_with_template):
     """Test converting a prompt using a provided template."""
     prompt = {"prompt": "TemplateTest"}
@@ -107,7 +105,6 @@ async def test_convert_async_with_template(pdf_converter_with_template):
         assert result.output_text == "mock_url"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_nonexistent_template(pdf_converter_nonexistent_template):
     """Test behavior when the template file does not exist."""
     with patch.object(pdf_converter_nonexistent_template, "_prepare_content", side_effect=FileNotFoundError):
@@ -115,7 +112,6 @@ async def test_convert_async_nonexistent_template(pdf_converter_nonexistent_temp
             await pdf_converter_nonexistent_template.convert_async(prompt="This will fail")
 
 
-@pytest.mark.asyncio
 async def test_convert_async_custom_font_and_size():
     """Test PDF generation with custom font and size parameters."""
     converter = PDFConverter(
@@ -144,7 +140,6 @@ def test_input_supported(pdf_converter_no_template):
     assert pdf_converter_no_template.input_supported("image") is False
 
 
-@pytest.mark.asyncio
 async def test_convert_async_end_to_end_no_reader(tmp_path, sqlite_instance):
     prompt = "Test for PDF generation."
     pdf_file_path = tmp_path / "output.pdf"
@@ -182,7 +177,6 @@ def mock_pdf_path(tmp_path):
     return pdf_path
 
 
-@pytest.mark.asyncio
 async def test_injection_into_mock_pdf(mock_pdf_path):
     """Test injecting text into a generic mock PDF."""
     # Define injection items
@@ -218,7 +212,6 @@ async def test_injection_into_mock_pdf(mock_pdf_path):
     modified_pdf_path.unlink()  # Clean up after the test
 
 
-@pytest.mark.asyncio
 async def test_multiple_injections_into_mock_pdf(mock_pdf_path):
     """Test injecting text into multiple pages of a generic mock PDF."""
     # Define multiple injection items
@@ -359,7 +352,6 @@ def test_pdf_reader_repeated_access():
     assert first_access == second_access, "Repeated access should return consistent data"
 
 
-@pytest.mark.asyncio
 async def test_empty_injection_items(mock_pdf_path):
     """Test that an empty list of injection items raises a ValueError."""
     converter = PDFConverter(existing_pdf=mock_pdf_path, injection_items=[])
@@ -367,7 +359,6 @@ async def test_empty_injection_items(mock_pdf_path):
         await converter.convert_async(prompt="")
 
 
-@pytest.mark.asyncio
 async def test_injection_items_non_existent_page_number(mock_pdf_path):
     """
     Test the PDFConverter's handling of injection items with a non-existent page number.
@@ -402,7 +393,6 @@ async def test_injection_items_non_existent_page_number(mock_pdf_path):
     modified_pdf_path.unlink()
 
 
-@pytest.mark.asyncio
 async def test_non_standard_font_usage():
     """
     Test the ability to use a non-standard font (Times) in PDF generation.
@@ -431,7 +421,6 @@ async def test_non_standard_font_usage():
     output_path.unlink()
 
 
-@pytest.mark.asyncio
 async def test_injection_on_last_page(mock_pdf_path):
     """
     Test injecting text on the last page of a multi-page PDF
@@ -465,7 +454,6 @@ async def test_injection_on_last_page(mock_pdf_path):
     modified_pdf_path.unlink()
 
 
-@pytest.mark.asyncio
 async def test_filename_extension_default(sqlite_instance):
     converter = PDFConverter(
         prompt_template=None,
@@ -479,7 +467,6 @@ async def test_filename_extension_default(sqlite_instance):
     assert result.output_text.endswith(".pdf"), "The output file should have a .pdf extension"
 
 
-@pytest.mark.asyncio
 async def test_filename_extension_existing_pdf(sqlite_instance):
     import tempfile
 

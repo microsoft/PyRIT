@@ -19,13 +19,11 @@ def test_supported_image_formats_contains_common_types():
     assert ".gif" in AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS
 
 
-@pytest.mark.asyncio
 async def test_convert_raises_file_not_found():
     with pytest.raises(FileNotFoundError):
         await convert_local_image_to_data_url("nonexistent_image.jpg")
 
 
-@pytest.mark.asyncio
 async def test_convert_raises_for_unsupported_format():
     with NamedTemporaryFile(suffix=".svg", delete=False) as f:
         tmp = f.name
@@ -36,7 +34,6 @@ async def test_convert_raises_for_unsupported_format():
         os.remove(tmp)
 
 
-@pytest.mark.asyncio
 async def test_convert_returns_data_url():
     with NamedTemporaryFile(suffix=".png", delete=False) as f:
         tmp = f.name

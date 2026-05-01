@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, UrlConverter
 
 
-@pytest.mark.asyncio
 async def test_url_converter_basic():
     converter = UrlConverter()
     result = await converter.convert_async(prompt="hello world", input_type="text")
@@ -15,7 +14,6 @@ async def test_url_converter_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_url_converter_special_chars():
     converter = UrlConverter()
     result = await converter.convert_async(prompt="a&b=c", input_type="text")
@@ -24,7 +22,6 @@ async def test_url_converter_special_chars():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_url_converter_already_safe():
     converter = UrlConverter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -33,7 +30,6 @@ async def test_url_converter_already_safe():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_url_converter_empty():
     converter = UrlConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -42,7 +38,6 @@ async def test_url_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_url_converter_input_not_supported():
     converter = UrlConverter()
     with pytest.raises(ValueError):

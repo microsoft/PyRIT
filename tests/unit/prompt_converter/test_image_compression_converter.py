@@ -178,7 +178,6 @@ def test_image_compression_converter_quality_warning():
         ("WEBP", "PNG", "PNG"),
     ],
 )
-@pytest.mark.asyncio
 async def test_image_compression_converter_format_preservation_and_conversion(
     sqlite_instance, sample_image_bytes, input_format, output_format, expected_output_format
 ):
@@ -218,7 +217,6 @@ async def test_image_compression_converter_format_preservation_and_conversion(
         ("TIFF", "JPEG", (255, 0, 0), "JPEG"),
     ],
 )
-@pytest.mark.asyncio
 async def test_image_compression_converter_transparency_handling(
     sqlite_instance,
     sample_transparent_image_bytes,
@@ -242,7 +240,6 @@ async def test_image_compression_converter_transparency_handling(
     assert output_image.has_transparency_data is False  # after compression, the image should not have transparency
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_skip(sqlite_instance, sample_image_bytes):
     """Test cases for skipping compression and fallback to original image."""
 
@@ -283,7 +280,6 @@ async def test_image_compression_converter_skip(sqlite_instance, sample_image_by
             mock_compress.assert_called_once()  # compression was attempted but resulted in larger size
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_actually_compresses(sqlite_instance, sample_image_bytes):
     """Test that compression actually reduces file size for appropriate images."""
     converter = ImageCompressionConverter(compress_level=9)
@@ -299,7 +295,6 @@ async def test_image_compression_converter_actually_compresses(sqlite_instance, 
     assert compressed_size < original_size
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_url_format_conversion(sqlite_instance, sample_image_bytes):
     """Test successful compression of image from URL."""
     converter = ImageCompressionConverter(output_format="WEBP", min_compression_threshold=100)
@@ -325,7 +320,6 @@ async def test_image_compression_converter_url_format_conversion(sqlite_instance
             mock_serializer.save_b64_image.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_instance, sample_image_bytes):
     """Test URL input fallback scenarios (small image size)."""
     converter = ImageCompressionConverter(min_compression_threshold=5000, fallback_to_original=True)
@@ -351,7 +345,6 @@ async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_i
             mock_serializer.save_b64_image.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_invalid_url():
     """Test handling of invalid URLs."""
     converter = ImageCompressionConverter()
@@ -361,7 +354,6 @@ async def test_image_compression_converter_invalid_url():
             await converter.convert_async(prompt=invalid_url, input_type="url")
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_corrupted_image_bytes():
     """Test handling of corrupted image bytes."""
     converter = ImageCompressionConverter()
@@ -374,7 +366,6 @@ async def test_image_compression_converter_corrupted_image_bytes():
             await converter.convert_async(prompt="corrupted.png", input_type="image_path")
 
 
-@pytest.mark.asyncio
 async def test_image_compression_converter_output_format_fallback(sample_image_bytes):
     """Test fallback to JPEG when original format is unsupported (and no output_format specified)."""
     img = Image.new("RGB", (100, 100), color=(123, 123, 123))

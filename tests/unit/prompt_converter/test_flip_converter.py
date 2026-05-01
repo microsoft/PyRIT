@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, FlipConverter
 
 
-@pytest.mark.asyncio
 async def test_flip_converter_basic():
     converter = FlipConverter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_flip_converter_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_flip_converter_sentence():
     converter = FlipConverter()
     result = await converter.convert_async(prompt="hello world", input_type="text")
@@ -24,7 +22,6 @@ async def test_flip_converter_sentence():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_flip_converter_empty():
     converter = FlipConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -33,7 +30,6 @@ async def test_flip_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_flip_converter_single_char():
     converter = FlipConverter()
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -42,7 +38,6 @@ async def test_flip_converter_single_char():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_flip_converter_palindrome():
     converter = FlipConverter()
     result = await converter.convert_async(prompt="racecar", input_type="text")
@@ -51,7 +46,6 @@ async def test_flip_converter_palindrome():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_flip_converter_input_not_supported():
     converter = FlipConverter()
     with pytest.raises(ValueError):

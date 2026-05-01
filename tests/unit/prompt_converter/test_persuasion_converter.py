@@ -49,7 +49,6 @@ def test_prompt_persuasion_init_misrepresentation_template_not_null(sqlite_insta
     assert prompt_persuasion.system_prompt
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "converted_value",
     [

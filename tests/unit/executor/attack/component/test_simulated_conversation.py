@@ -114,7 +114,6 @@ class TestSimulatedTargetSystemPromptPaths:
 class TestGenerateSimulatedConversationAsync:
     """Tests for generate_simulated_conversation_async function."""
 
-    @pytest.mark.asyncio
     async def test_raises_error_for_zero_turns(
         self,
         mock_adversarial_chat: MagicMock,
@@ -131,7 +130,6 @@ class TestGenerateSimulatedConversationAsync:
                 num_turns=0,
             )
 
-    @pytest.mark.asyncio
     async def test_raises_error_for_negative_turns(
         self,
         mock_adversarial_chat: MagicMock,
@@ -148,7 +146,6 @@ class TestGenerateSimulatedConversationAsync:
                 num_turns=-1,
             )
 
-    @pytest.mark.asyncio
     async def test_uses_adversarial_chat_as_simulated_target(
         self,
         mock_adversarial_chat: MagicMock,
@@ -194,7 +191,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["objective_target"] == mock_adversarial_chat
 
-    @pytest.mark.asyncio
     async def test_creates_attack_with_score_last_turn_only_true(
         self,
         mock_adversarial_chat: MagicMock,
@@ -238,7 +234,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["score_last_turn_only"] is True
 
-    @pytest.mark.asyncio
     async def test_creates_attack_with_correct_max_turns(
         self,
         mock_adversarial_chat: MagicMock,
@@ -282,7 +277,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["max_turns"] == 5
 
-    @pytest.mark.asyncio
     async def test_returns_simulated_conversation_result(
         self,
         mock_adversarial_chat: MagicMock,
@@ -335,7 +329,6 @@ class TestGenerateSimulatedConversationAsync:
                 for seed_prompt in result:
                     assert isinstance(seed_prompt, SeedPrompt)
 
-    @pytest.mark.asyncio
     async def test_passes_system_prompt_via_prepended_conversation(
         self,
         mock_adversarial_chat: MagicMock,
@@ -385,7 +378,6 @@ class TestGenerateSimulatedConversationAsync:
                 assert len(prepended) == 1
                 assert prepended[0].api_role == "system"
 
-    @pytest.mark.asyncio
     async def test_passes_memory_labels_to_execute(
         self,
         mock_adversarial_chat: MagicMock,
@@ -432,7 +424,6 @@ class TestGenerateSimulatedConversationAsync:
                 execute_kwargs = mock_attack.execute_async.call_args.kwargs
                 assert execute_kwargs["memory_labels"] == memory_labels
 
-    @pytest.mark.asyncio
     async def test_passes_converter_config_to_attack(
         self,
         mock_adversarial_chat: MagicMock,
@@ -479,7 +470,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["attack_converter_config"] == converter_config
 
-    @pytest.mark.asyncio
     async def test_prepends_system_message_to_conversation(
         self,
         mock_adversarial_chat: MagicMock,
@@ -528,7 +518,6 @@ class TestGenerateSimulatedConversationAsync:
                 assert len(prepended) == 1
                 assert prepended[0].message_pieces[0].api_role == "system"
 
-    @pytest.mark.asyncio
     async def test_uses_default_num_turns_of_3(
         self,
         mock_adversarial_chat: MagicMock,
@@ -572,7 +561,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["max_turns"] == 3
 
-    @pytest.mark.asyncio
     async def test_next_message_system_prompt_path_generates_final_user_message(
         self,
         mock_adversarial_chat: MagicMock,
@@ -642,7 +630,6 @@ class TestGenerateSimulatedConversationAsync:
                 assert result[-1].value == "Generated next user message"
                 assert result[-1].role == "user"
 
-    @pytest.mark.asyncio
     async def test_next_message_system_prompt_path_sets_system_prompt(
         self,
         mock_adversarial_chat: MagicMock,
@@ -703,7 +690,6 @@ class TestGenerateSimulatedConversationAsync:
                 # Verify set_system_prompt was called on adversarial_chat
                 mock_adversarial_chat.set_system_prompt.assert_called()
 
-    @pytest.mark.asyncio
     async def test_starting_sequence_sets_first_sequence_number(
         self,
         mock_adversarial_chat: MagicMock,

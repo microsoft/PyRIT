@@ -10,8 +10,6 @@ from real remote sources, and stores them in in-memory CentralMemory.
 
 import logging
 
-import pytest
-
 from pyrit.memory import CentralMemory
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 
@@ -21,7 +19,6 @@ logger = logging.getLogger(__name__)
 class TestLoadDefaultDatasetsIntegration:
     """Integration test that LoadDefaultDatasets loads real datasets into memory."""
 
-    @pytest.mark.asyncio
     async def test_initialize_loads_datasets_into_memory(self, sqlite_instance):
         """
         Verify that LoadDefaultDatasets.initialize_async() successfully fetches

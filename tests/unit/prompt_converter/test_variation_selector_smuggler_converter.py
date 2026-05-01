@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, VariationSelectorSmugglerConverter
 
 
-@pytest.mark.asyncio
 async def test_variation_selector_encode_basic():
     converter = VariationSelectorSmugglerConverter(action="encode")
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -15,7 +14,6 @@ async def test_variation_selector_encode_basic():
     assert len(result.output_text) > 0
 
 
-@pytest.mark.asyncio
 async def test_variation_selector_decode_roundtrip():
     encoder = VariationSelectorSmugglerConverter(action="encode")
     encoded = await encoder.convert_async(prompt="test", input_type="text")
@@ -25,7 +23,6 @@ async def test_variation_selector_decode_roundtrip():
     assert decoded.output_text == "test"
 
 
-@pytest.mark.asyncio
 async def test_variation_selector_no_embed():
     converter = VariationSelectorSmugglerConverter(action="encode", embed_in_base=False)
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -34,7 +31,6 @@ async def test_variation_selector_no_embed():
     assert result.output_text.startswith(base_char + " ")
 
 
-@pytest.mark.asyncio
 async def test_variation_selector_empty():
     converter = VariationSelectorSmugglerConverter(action="encode")
     result = await converter.convert_async(prompt="", input_type="text")
@@ -47,7 +43,6 @@ def test_variation_selector_invalid_action():
         VariationSelectorSmugglerConverter(action="invalid")
 
 
-@pytest.mark.asyncio
 async def test_variation_selector_input_not_supported():
     converter = VariationSelectorSmugglerConverter(action="encode")
     with pytest.raises(ValueError, match="Input type not supported"):

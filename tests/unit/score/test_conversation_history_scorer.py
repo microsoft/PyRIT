@@ -74,7 +74,6 @@ class MockUnsupportedScorer(Scorer):
         return None
 
 
-@pytest.mark.asyncio
 async def test_conversation_history_scorer_score_async_success(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
@@ -154,7 +153,6 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
     assert called_piece.converted_value == expected_conversation
 
 
-@pytest.mark.asyncio
 async def test_conversation_history_scorer_conversation_not_found(patch_central_database):
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
@@ -173,7 +171,6 @@ async def test_conversation_history_scorer_conversation_not_found(patch_central_
         await scorer.score_async(message)
 
 
-@pytest.mark.asyncio
 async def test_conversation_history_scorer_filters_roles_correctly(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
@@ -232,7 +229,6 @@ async def test_conversation_history_scorer_filters_roles_correctly(patch_central
     assert "System message" not in called_piece.original_value
 
 
-@pytest.mark.asyncio
 async def test_conversation_history_scorer_preserves_metadata(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
@@ -283,7 +279,6 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
     assert called_piece.attack_identifier == message_piece.attack_identifier
 
 
-@pytest.mark.asyncio
 async def test_conversation_scorer_regenerates_score_ids_to_prevent_collisions(patch_central_database):
     """Test that ConversationScorer regenerates score IDs to prevent database UNIQUE constraint violations."""
     memory = CentralMemory.get_memory_instance()
