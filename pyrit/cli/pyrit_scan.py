@@ -242,15 +242,18 @@ def _add_scenario_params(*, parser: ArgumentParser, declared: list[Parameter]) -
         declared (list[Parameter]): Scenario's declared parameters.
 
     Raises:
-        ValueError: If a scenario-derived flag collides with a built-in flag.
+        ValueError: If a scenario-derived flag collides with a built-in flag or
+            with another scenario param that normalizes to the same kebab form.
     """
-    existing_flags = {action_str for action in parser._actions for action_str in action.option_strings}
+    # Seed from existing flags so we catch built-in collisions; grow as we add.
+    seen_flags: set[str] = set(parser._option_string_actions.keys())
     for param in declared:
         flag = f"--{param.name.replace('_', '-')}"
-        if flag in existing_flags:
+        if flag in seen_flags:
             raise ValueError(
-                f"Scenario parameter '{param.name}' collides with built-in flag {flag!r}. "
-                f"Rename the parameter to avoid the collision."
+                f"Scenario parameter '{param.name}' collides with an existing flag {flag!r}. "
+                f"This is either a built-in CLI flag or another scenario parameter that "
+                f"normalizes to the same kebab-case form. Rename the parameter."
             )
         kwargs: dict[str, Any] = {
             "dest": f"{_SCENARIO_DEST_PREFIX}{param.name}",
@@ -265,6 +268,7 @@ def _add_scenario_params(*, parser: ArgumentParser, declared: list[Parameter]) -
         if param.choices is not None:
             kwargs["choices"] = list(param.choices)
         parser.add_argument(flag, **kwargs)
+        seen_flags.add(flag)
 
 
 def _argparse_type_for(*, param: Parameter) -> Optional[Any]:

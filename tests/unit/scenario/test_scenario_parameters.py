@@ -201,6 +201,14 @@ class TestSetParamsFromArgsChoices:
         scenario.set_params_from_args(args={"count": "5"})
         assert scenario.params == {"count": 5}
 
+    def test_stringy_choices_accept_typed_user_input(self) -> None:
+        """Author declares choices as strings; user input is coerced and accepted."""
+        scenario = _make_scenario(
+            declared_params=[Parameter(name="count", description="d", param_type=int, choices=("1", "5", "10"))]
+        )
+        scenario.set_params_from_args(args={"count": "5"})
+        assert scenario.params == {"count": 5}
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDefaultMaterialization:

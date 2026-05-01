@@ -61,6 +61,32 @@ class TestParameter:
 
         assert p.choices is None
 
+    def test_choices_coerced_to_int_param_type(self) -> None:
+        """Stringy int choices are coerced so argparse and runtime both see ints."""
+        p = Parameter(name="x", description="d", param_type=int, choices=("1", "5", "10"))
+
+        assert p.choices == (1, 5, 10)
+        assert all(isinstance(c, int) for c in p.choices)
+
+    def test_choices_coerced_to_bool_param_type(self) -> None:
+        p = Parameter(name="x", description="d", param_type=bool, choices=("true", "false"))
+
+        assert p.choices == (True, False)
+
+    def test_choices_uncoercible_left_unchanged(self) -> None:
+        """Uncoercible choices are left as-is so _validate_declarations can surface a clear error."""
+        p = Parameter(name="x", description="d", param_type=int, choices=("not-a-number", "5"))
+
+        # Original tuple preserved. The downstream validator emits the friendly
+        # "scenario X parameter Y choice Z is not coercible" error.
+        assert p.choices == ("not-a-number", "5")
+
+    def test_choices_skipped_for_none_param_type(self) -> None:
+        """When param_type is None (raw passthrough) choices stay as-declared."""
+        p = Parameter(name="x", description="d", choices=("a", "b"))
+
+        assert p.choices == ("a", "b")
+
     def test_list_param_type_accepted(self) -> None:
         """``param_type=list[str]`` is accepted (GenericAlias, not type)."""
         p = Parameter(name="datasets", description="d", param_type=list[str])

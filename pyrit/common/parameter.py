@@ -21,14 +21,14 @@ class Parameter:
         description (str): Human-readable description shown in ``--help`` and
             ``--list-*`` output.
         required (bool): Whether the parameter must be provided. Defaults to False.
-        default (Any): Default value when not supplied. Initializers should pass
-            ``list[str]`` until typed coercion is added on that path. Defaults to None.
+        default (Any): Default value when not supplied. Defaults to None. Must not
+            contain secrets; defaults are rendered verbatim by ``--list-scenarios``.
         param_type (type | GenericAlias | None): Type for scenario-side coercion.
             Supported: ``str``, ``int``, ``float``, ``bool``, ``list[str]``. None
             means no coercion (the initializer convention). Defaults to None.
-        choices (tuple[Any, ...] | None): Optional allowed values, validated after
-            coercion. Lists are normalized to tuples to keep the dataclass hashable.
-            Defaults to None.
+        choices (tuple[Any, ...] | None): Optional allowed values. Coerced to
+            ``param_type`` and tuple-normalized so argparse, YAML, and runtime
+            membership checks see the same Python type. Defaults to None.
     """
 
     name: str
@@ -39,9 +39,44 @@ class Parameter:
     choices: tuple[Any, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Normalize ``choices`` to a tuple to keep the frozen dataclass hashable."""
+        """Tuple-ify ``choices`` and coerce them to ``param_type`` for scalar types."""
         if self.choices is not None and not isinstance(self.choices, tuple):
             object.__setattr__(self, "choices", tuple(self.choices))
+        # Lists with choices are rejected at declaration time, so list[T] is skipped here.
+        if self.choices is not None and self.param_type in (bool, int, float, str):
+            try:
+                coerced = tuple(
+                    _coerce_choice_value(name=self.name, param_type=self.param_type, raw_value=c) for c in self.choices
+                )
+            except ValueError:
+                # Leave choices alone; _validate_declarations surfaces the error.
+                return
+            object.__setattr__(self, "choices", coerced)
+
+
+def _coerce_choice_value(*, name: str, param_type: Any, raw_value: Any) -> Any:
+    """
+    Coerce one declared choice to ``param_type``.
+
+    Helper for ``Parameter.__post_init__``. ``param_type`` is typed ``Any``
+    because the dataclass field is ``type | GenericAlias | None``; the caller
+    gates on scalar types before invoking this helper.
+
+    Args:
+        name (str): Parameter name (used only in error messages).
+        param_type (Any): One of ``bool``, ``int``, ``float``, ``str``.
+        raw_value (Any): The choice value as declared by the author.
+
+    Returns:
+        Any: The coerced choice value.
+    """
+    if param_type is bool:
+        return coerce_bool(param_name=name, raw_value=raw_value)
+    if param_type is int:
+        return coerce_scalar(param_name=name, scalar_type=int, raw_value=raw_value)
+    if param_type is float:
+        return coerce_scalar(param_name=name, scalar_type=float, raw_value=raw_value)
+    return str(raw_value)
 
 
 def validate_param_type(*, param: Parameter) -> None:

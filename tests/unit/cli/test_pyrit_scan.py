@@ -559,8 +559,22 @@ class TestTwoPassParsing:
             [Parameter(name="max_concurrency", description="d", param_type=int, default=10)]
         )
         with self._patch_resolve(scenario_class):
-            with pytest.raises(ValueError, match="collides with built-in flag"):
+            with pytest.raises(ValueError, match="collides with an existing flag"):
                 pyrit_scan.parse_args(["fake_scenario", "--max-concurrency", "5"])
+
+    def test_two_scenario_params_with_same_kebab_form_raise(self):
+        """Two declared parameters that normalize to the same kebab-case flag fail with our ValueError."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [
+                Parameter(name="foo_bar", description="d", param_type=str),
+                Parameter(name="foo-bar", description="d", param_type=str),
+            ]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(ValueError, match="collides with an existing flag"):
+                pyrit_scan.parse_args(["fake_scenario", "--foo-bar", "x"])
 
     def test_scenario_flag_works_before_positional(self):
         """Pass 1 uses the full base parser so option order does not break positional ID."""

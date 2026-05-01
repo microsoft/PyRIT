@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, get_origin
 
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
@@ -255,7 +255,11 @@ def _param_type_display(param_type: Any) -> str:
     """
     if param_type is None:
         return "any"
-    # Parameterized generics like list[str] have __name__ == 'list', so str() is what we want.
+    # Detect parameterized generics (list[str], dict[str, int], ...) reliably across Python
+    # versions: get_origin returns the unparameterized type for GenericAlias, None otherwise.
+    # On some 3.10 builds GenericAlias passes isinstance(_, type), so we can't rely on that.
+    if get_origin(param_type) is not None:
+        return str(param_type)
     if isinstance(param_type, type):
         return param_type.__name__
     return str(param_type)
