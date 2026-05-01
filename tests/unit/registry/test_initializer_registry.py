@@ -20,7 +20,7 @@ def test_initializer_registry_default_discovery_path():
 
 def test_initializer_registry_custom_discovery_path():
     """Test that InitializerRegistry uses a custom discovery path when provided."""
-    custom_path = Path(PYRIT_PATH) / "setup" / "initializers" / "scenarios"
+    custom_path = Path(PYRIT_PATH) / "setup" / "initializers" / "components"
     registry = InitializerRegistry(discovery_path=custom_path, lazy_discovery=True)
     assert registry._discovery_path == custom_path
 

@@ -67,7 +67,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         Args:
             discovery_path: The path to discover initializers from.
                 If None, defaults to pyrit/setup/initializers (discovers all).
-                To discover only scenarios, pass pyrit/setup/initializers/scenarios.
             lazy_discovery: If True, discovery is deferred until first access.
                 Defaults to False for backwards compatibility.
 
