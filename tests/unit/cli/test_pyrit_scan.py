@@ -577,6 +577,22 @@ class TestTwoPassParsing:
         assert args.scenario_name == "fake_scenario"
         assert pyrit_scan._extract_scenario_args(parsed=args) == {"max_turns": 7}
 
+    def test_help_after_scenario_lists_declared_flags(self, capsys):
+        """`pyrit_scan <scenario> --help` shows scenario-declared flags inline."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="Conversation turn cap", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(SystemExit) as exc_info:
+                pyrit_scan.parse_args(["fake_scenario", "--help"])
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--max-turns" in captured.out
+        assert "Conversation turn cap" in captured.out
+
 
 class TestExtractScenarioArgs:
     """Tests for the namespaced-dest extraction helper."""

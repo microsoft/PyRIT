@@ -105,6 +105,11 @@ for p in example_declarations:
 #     max_turns=self.params["max_turns"],
 # )
 # ```
+#
+# Programmatic users (constructing the scenario in Python rather than going
+# through the CLI) get the same behavior: `initialize_async()` materializes
+# declared defaults the first time it runs, so `self.params["max_turns"]`
+# is populated even when no explicit `set_params_from_args` call was made.
 
 # %% [markdown]
 # ## Setting a parameter from the CLI
@@ -125,6 +130,15 @@ for p in example_declarations:
 #
 # ```text
 # pyrit_shell> run airt.scam --target my_target --initializers target --max-turns 10
+# ```
+#
+# Declared flags also show up in `pyrit_scan <scenario> --help`, alongside
+# the built-in options:
+#
+# ```bash
+# pyrit_scan airt.scam --help
+# # ...
+# #   --max-turns MAX_TURNS  Conversation turn cap
 # ```
 
 # %% [markdown]
