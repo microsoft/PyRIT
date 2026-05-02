@@ -24,7 +24,6 @@ def test_gandalf_sets_endpoint_and_rate_limit():
     assert target._max_requests_per_minute == 15
 
 
-@pytest.mark.asyncio
 async def test_gandalf_validate_request_length(gandalf_target: GandalfTarget):
     request = Message(
         message_pieces=[
@@ -40,7 +39,6 @@ async def test_gandalf_validate_request_length(gandalf_target: GandalfTarget):
         await gandalf_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_gandalf_validate_prompt_type(gandalf_target: GandalfTarget):
     request = Message(message_pieces=[get_image_message_piece()])
     with pytest.raises(

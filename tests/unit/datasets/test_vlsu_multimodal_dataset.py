@@ -52,7 +52,6 @@ class TestVLSUMultimodalDataset:
         dataset = _VLSUMultimodalDataset(unsafe_grades=["unsafe"])
         assert dataset.unsafe_grades == ["unsafe"]
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_combined_unsafe_creates_pair(self):
         """Test that text+image pair is created when combined_grade is unsafe."""
         test_uuid = str(uuid.uuid4())
@@ -110,7 +109,6 @@ class TestVLSUMultimodalDataset:
             assert image_prompt.harm_categories == ["C1: Slurs, Hate Speech, Hate Symbols"]
             assert image_prompt.metadata["original_image_url"] == "https://example.com/image.jpg"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_combined_borderline_creates_pair(self):
         """Test that text+image pair is created when combined_grade is borderline."""
         mock_data = [
@@ -147,7 +145,6 @@ class TestVLSUMultimodalDataset:
             assert text_prompt.prompt_group_id == image_prompt.prompt_group_id
             assert text_prompt.metadata["combined_grade"] == "borderline"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_combined_safe_no_prompts(self):
         """Test that no prompts are created when combined_grade is safe."""
         mock_data = [
@@ -170,7 +167,6 @@ class TestVLSUMultimodalDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await dataset_loader.fetch_dataset(cache=False)
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_multiple_pairs(self):
         """Test that multiple text+image pairs are created correctly."""
         mock_data = [
@@ -223,7 +219,6 @@ class TestVLSUMultimodalDataset:
                 data_types = {s.data_type for s in pair}
                 assert data_types == {"text", "image_path"}
 
-    @pytest.mark.asyncio
     async def test_category_filtering(self):
         """Test that category filtering works correctly."""
         mock_data = [
@@ -268,7 +263,6 @@ class TestVLSUMultimodalDataset:
             for seed in dataset.seeds:
                 assert "C1: Slurs" in str(seed.harm_categories)
 
-    @pytest.mark.asyncio
     async def test_handles_failed_image_downloads(self):
         """Test that entire pair is skipped when image download fails."""
         mock_data = [
@@ -299,7 +293,6 @@ class TestVLSUMultimodalDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await dataset_loader.fetch_dataset(cache=False)
 
-    @pytest.mark.asyncio
     async def test_custom_unsafe_grades(self):
         """Test that custom unsafe_grades parameter works correctly."""
         mock_data = [
@@ -345,7 +338,6 @@ class TestVLSUMultimodalDataset:
             for seed in dataset.seeds:
                 assert seed.metadata["combined_grade"] == "unsafe"
 
-    @pytest.mark.asyncio
     async def test_both_prompts_use_combined_category(self):
         """Test that both text and image prompts use the combined_category."""
         mock_data = [
@@ -379,7 +371,6 @@ class TestVLSUMultimodalDataset:
                 assert seed.harm_categories == ["C1: Slurs, Hate Speech, Hate Symbols"]
 
 
-@pytest.mark.asyncio
 async def test_fetch_and_save_image_raises_when_memory_not_configured():
     """Test that _fetch_and_save_image_async raises RuntimeError when serializer memory is not configured."""
     from unittest.mock import MagicMock
@@ -399,7 +390,6 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
             await loader._fetch_and_save_image_async(group_id="test_group", image_url="https://example.com/img.png")
 
 
-@pytest.mark.asyncio
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
     from unittest.mock import AsyncMock, MagicMock

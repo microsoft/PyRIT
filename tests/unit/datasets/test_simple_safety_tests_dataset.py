@@ -33,7 +33,6 @@ def mock_simple_safety_tests_data():
 class TestSimpleSafetyTestsDataset:
     """Test the SimpleSafetyTests dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_simple_safety_tests_data):
         """Test fetching SimpleSafetyTests dataset."""
         loader = _SimpleSafetyTestsDataset()

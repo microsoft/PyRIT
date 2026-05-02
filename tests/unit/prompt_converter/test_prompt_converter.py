@@ -86,7 +86,6 @@ def test_prompt_converter_requires_both_modality_attributes() -> None:
                 return ConverterResult(output_text=prompt, output_type="text")
 
 
-@pytest.mark.asyncio
 async def test_convert_tokens_two_tokens_async() -> None:
     converter = Base64Converter()
     prompt = "Base 64 encode this piece ⟪test⟫ and this ⟪test2⟫"
@@ -95,7 +94,6 @@ async def test_convert_tokens_two_tokens_async() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_tokens_entire_string_async() -> None:
     converter = Base64Converter()
     prompt = "By default the whole string should be converted"
@@ -104,7 +102,6 @@ async def test_convert_tokens_entire_string_async() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_tokens_raises_with_non_text_input_type():
     prompt = "This is a test ⟪to convert⟪ and ⟫another part⟫."
     converter = Base64Converter()
@@ -112,7 +109,6 @@ async def test_convert_tokens_raises_with_non_text_input_type():
         await converter.convert_tokens_async(prompt=prompt, input_type="non-text")
 
 
-@pytest.mark.asyncio
 async def test_convert_tokens_raises_uneven_tokens():
     converter = Base64Converter()
     prompt = "This is a test ⟪to convert⟫ and ⟪another part."
@@ -120,7 +116,6 @@ async def test_convert_tokens_raises_uneven_tokens():
         await converter.convert_tokens_async(prompt=prompt)
 
 
-@pytest.mark.asyncio
 async def test_base64_prompt_converter() -> None:
     converter = Base64Converter()
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -128,7 +123,6 @@ async def test_base64_prompt_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_rot13_converter_init() -> None:
     converter = ROT13Converter()
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -136,7 +130,6 @@ async def test_rot13_converter_init() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_default_prompt_converter() -> None:
     converter = UnicodeSubstitutionConverter()
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -144,7 +137,6 @@ async def test_unicode_sub_default_prompt_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_sub_ascii_prompt_converter() -> None:
     converter = UnicodeSubstitutionConverter(start_value=0x00000)
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -152,7 +144,6 @@ async def test_unicode_sub_ascii_prompt_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_converter_default() -> None:
     converter = UnicodeReplacementConverter()
     output = await converter.convert_async(prompt="t e s t", input_type="text")
@@ -160,7 +151,6 @@ async def test_unicode_replacement_converter_default() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_converter() -> None:
     converter = UnicodeReplacementConverter(encode_spaces=True)
     output = await converter.convert_async(prompt="t e s t", input_type="text")
@@ -168,7 +158,6 @@ async def test_unicode_replacement_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_str_join_converter_default() -> None:
     converter = StringJoinConverter()
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -176,7 +165,6 @@ async def test_str_join_converter_default() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_str_join_converter_init() -> None:
     converter = StringJoinConverter(join_value="***")
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -184,28 +172,24 @@ async def test_str_join_converter_init() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_str_join_converter_none_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(TypeError):
         assert await converter.convert_async(prompt=None, input_type="text")
 
 
-@pytest.mark.asyncio
 async def test_str_join_converter_invalid_type_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(ValueError):
         assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type] # noqa: PGH003
 
 
-@pytest.mark.asyncio
 async def test_str_join_converter_unsupported_type_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(ValueError):
         assert await converter.convert_async(prompt="test", input_type="image_path")
 
 
-@pytest.mark.asyncio
 async def test_ascii_art() -> None:
     converter = AsciiArtConverter(font="block")
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -216,7 +200,6 @@ async def test_ascii_art() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_search_replace_converter() -> None:
     converter = SearchReplaceConverter(pattern=" ", replace="_")
     output = await converter.convert_async(prompt="Hello World !", input_type="text")
@@ -224,7 +207,6 @@ async def test_search_replace_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_search_replace_converter_replace_single_string() -> None:
     converter = SearchReplaceConverter(pattern=r"^.*\Z", replace="new string", regex_flags=re.DOTALL)
     output = await converter.convert_async(prompt="Hello World !\n\nmy name is Tim", input_type="text")
@@ -232,7 +214,6 @@ async def test_search_replace_converter_replace_single_string() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_leetcode_converter() -> None:
     converter = LeetspeakConverter()
     output = await converter.convert_async(prompt="mood", input_type="text")
@@ -240,7 +221,6 @@ async def test_leetcode_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_capital_letter_converter() -> None:
     converter = RandomCapitalLettersConverter()
     output = await converter.convert_async(
@@ -256,7 +236,6 @@ async def test_capital_letter_converter() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_suffix_append_converter() -> None:
     converter = SuffixAppendConverter(suffix="!!!")
     output = await converter.convert_async(prompt="test", input_type="text")
@@ -264,7 +243,6 @@ async def test_suffix_append_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_capital_letter_converter_with_twentyfive_percent() -> None:
     percentage = 25.0
     prompt = "welc"
@@ -282,7 +260,6 @@ async def test_capital_letter_converter_with_twentyfive_percent() -> None:
     assert expected_percentage == percentage
 
 
-@pytest.mark.asyncio
 async def test_atbash_converter() -> None:
     converter = AtbashConverter()
     output = await converter.convert_async(prompt="Test.", input_type="text")
@@ -290,7 +267,6 @@ async def test_atbash_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_atbash_converter_with_appended_description() -> None:
     converter = AtbashConverter(append_description=True)
     output = await converter.convert_async(prompt="Test.", input_type="text")
@@ -318,7 +294,6 @@ async def test_atbash_converter_with_appended_description() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter() -> None:
     converter = CaesarConverter(caesar_offset=3)
     output = await converter.convert_async(prompt="Test.", input_type="text")
@@ -326,7 +301,6 @@ async def test_caesar_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_with_appended_description() -> None:
     converter = CaesarConverter(caesar_offset=3, append_description=True)
     output = await converter.convert_async(prompt="Test.", input_type="text")
@@ -357,7 +331,6 @@ async def test_caesar_converter_with_appended_description() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_morse_converter() -> None:
     converter = MorseConverter()
     output = await converter.convert_async(prompt="test test", input_type="text")
@@ -365,7 +338,6 @@ async def test_morse_converter() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_morse_converter_with_appended_description() -> None:
     converter = MorseConverter(append_description=True)
     output = await converter.convert_async(prompt="test test", input_type="text")
@@ -398,7 +370,6 @@ async def test_morse_converter_with_appended_description() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_emoji_converter() -> None:
     converter = EmojiConverter()
     output = await converter.convert_async(prompt="Hello world I should be converted", input_type="text")
@@ -406,7 +377,6 @@ async def test_emoji_converter() -> None:
     assert output.output_text[0] in ["🄷", "🅗", "🅷"]
 
 
-@pytest.mark.asyncio
 async def test_character_space_converter_basic() -> None:
     converter = CharacterSpaceConverter()
     output = await converter.convert_async(prompt="Hello world", input_type="text")
@@ -414,7 +384,6 @@ async def test_character_space_converter_basic() -> None:
     assert output.output_text == "H e l l o   w o r l d"
 
 
-@pytest.mark.asyncio
 async def test_character_space_converter_empty_prompt() -> None:
     converter = CharacterSpaceConverter()
     output = await converter.convert_async(prompt="", input_type="text")
@@ -422,7 +391,6 @@ async def test_character_space_converter_empty_prompt() -> None:
     assert output.output_text == ""
 
 
-@pytest.mark.asyncio
 async def test_character_space_converter_punctuation() -> None:
     converter = CharacterSpaceConverter()
     output = await converter.convert_async(prompt="Hello, world! How's everything?", input_type="text")
@@ -430,7 +398,6 @@ async def test_character_space_converter_punctuation() -> None:
     assert output.output_text == "H e l l o    w o r l d    H o w  s   e v e r y t h i n g "
 
 
-@pytest.mark.asyncio
 async def test_url_converter() -> None:
     converter = UrlConverter()
     output = await converter.convert_async(prompt="Test Prompt")
@@ -438,7 +405,6 @@ async def test_url_converter() -> None:
     assert output.output_text == "Test%20Prompt"
 
 
-@pytest.mark.asyncio
 async def test_convert_async():
     converter = FlipConverter()
     prompt = "hello me"
@@ -450,7 +416,6 @@ async def test_convert_async():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_unsupported_input_type():
     converter = FlipConverter()
     prompt = "hello me"

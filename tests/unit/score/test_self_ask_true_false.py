@@ -33,7 +33,6 @@ def scorer_true_false_response() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_score(patch_central_database, scorer_true_false_response: Message):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -52,7 +51,6 @@ async def test_true_false_scorer_score(patch_central_database, scorer_true_false
     assert score[0].scorer_class_identifier.class_name == "SelfAskTrueFalseScorer"
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_set_system_prompt(patch_central_database, scorer_true_false_response: Message):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -71,7 +69,6 @@ async def test_true_false_scorer_set_system_prompt(patch_central_database, score
     assert "Semantic Alignment:" in scorer._system_prompt
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_adds_to_memory(scorer_true_false_response: Message):
     memory = MagicMock(MemoryInterface)
     chat_target = MagicMock()
@@ -87,7 +84,6 @@ async def test_true_false_scorer_adds_to_memory(scorer_true_false_response: Mess
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_self_ask_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -105,7 +101,6 @@ async def test_self_ask_scorer_bad_json_exception_retries(patch_central_database
     assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
 

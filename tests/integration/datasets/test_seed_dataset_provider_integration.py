@@ -37,7 +37,6 @@ class TestSeedDatasetSmoke:
     The exhaustive test over all providers lives in tests/end_to_end/test_all_datasets.py.
     """
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("name,provider_cls", _SMOKE_PROVIDERS, ids=[p[0] for p in _SMOKE_PROVIDERS])
     async def test_fetch_dataset_smoke(self, name, provider_cls):
         """
@@ -108,7 +107,6 @@ class TestRemoteFilteringIntegration:
 
         return type(f"_Mock_{name}", (_RemoteDatasetLoader,), attrs)
 
-    @pytest.mark.asyncio
     async def test_filter_matches_correct_remote_provider(self):
         """Filter by size returns only providers that match."""
         large_cls = self._make_remote_provider_cls(
@@ -136,7 +134,6 @@ class TestRemoteFilteringIntegration:
             )
             assert names == ["large_ds"]
 
-    @pytest.mark.asyncio
     async def test_filter_all_tag_returns_everything(self):
         """tags={'all'} bypasses filtering and returns every provider."""
         cls1 = self._make_remote_provider_cls(
@@ -164,7 +161,6 @@ class TestRemoteFilteringIntegration:
             )
             assert sorted(names) == ["ds_a", "ds_b"]
 
-    @pytest.mark.asyncio
     async def test_multi_axis_filter(self):
         """Multiple filter axes are ANDed together."""
         cls1 = self._make_remote_provider_cls(
@@ -220,7 +216,6 @@ class TestLocalFilteringIntegration:
             {"__init__": make_init(yaml_path), "should_register": False, "__module__": __name__},
         )
 
-    @pytest.mark.asyncio
     async def test_local_filter_by_size(self, tmp_path):
         """Local YAML with size metadata is correctly coerced and filtered."""
         large_yaml = tmp_path / "large_ds.prompt"
@@ -263,7 +258,6 @@ class TestLocalFilteringIntegration:
             # rejects extra keys like "size" during __init__ pre-loading
             assert names == ["large_ds"]
 
-    @pytest.mark.asyncio
     async def test_local_filter_by_tags(self, tmp_path):
         """Local YAML tags (list) are coerced to set for intersection."""
         yaml_path = tmp_path / "tagged.prompt"
@@ -299,7 +293,6 @@ class TestLocalFilteringIntegration:
             )
             assert not_matched == []
 
-    @pytest.mark.asyncio
     async def test_local_no_metadata_skipped(self, tmp_path):
         """Local YAML without metadata fields is skipped when filters are provided."""
         yaml_path = tmp_path / "bare.prompt"
@@ -355,7 +348,6 @@ class TestEndToEndLocalDatasetWorkflow:
             {"__init__": make_init(yaml_path), "should_register": False, "__module__": __name__},
         )
 
-    @pytest.mark.asyncio
     async def test_user_discovers_and_fetches_filtered_dataset(self, tmp_path):
         """
         Simulate a user who wants small text datasets about cybercrime:
@@ -420,7 +412,6 @@ class TestEndToEndLocalDatasetWorkflow:
             assert metadata is not None
             assert metadata.harm_categories == {"cybercrime"}
 
-    @pytest.mark.asyncio
     async def test_user_fetches_unfiltered(self, tmp_path):
         """
         Without filters, get_all_dataset_names returns everything,
@@ -486,7 +477,6 @@ class TestAllTagBypassIntegration:
             {"__init__": make_init(yaml_path), "should_register": False, "__module__": __name__},
         )
 
-    @pytest.mark.asyncio
     async def test_all_tag_includes_datasets_without_metadata(self, tmp_path):
         """
         A dataset whose YAML has no metadata fields at all is normally
@@ -520,7 +510,6 @@ class TestAllTagBypassIntegration:
             )
             assert "bare_dataset" in all_names
 
-    @pytest.mark.asyncio
     async def test_all_tag_ignores_other_filter_axes(self, tmp_path):
         """
         tags={'all'} returns everything even when other filter axes
@@ -557,7 +546,6 @@ class TestAllTagBypassIntegration:
             )
             assert "small" in all_names
 
-    @pytest.mark.asyncio
     async def test_all_tag_with_mixed_metadata_and_bare_datasets(self, tmp_path):
         """
         With a mix of metadata-rich and metadata-bare datasets,
@@ -612,7 +600,6 @@ class TestHarmbenchMetadataInScenario:
     memory storage → scenario initialization.
     """
 
-    @pytest.mark.asyncio
     async def test_harmbench_metadata_parses_correctly(self):
         """HarmBench's class-level metadata is correctly parsed into sets."""
         from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
@@ -629,7 +616,6 @@ class TestHarmbenchMetadataInScenario:
         assert isinstance(metadata.harm_categories, set)
         assert "cybercrime" in metadata.harm_categories
 
-    @pytest.mark.asyncio
     async def test_harmbench_discoverable_via_filter(self):
         """HarmBench can be found via tag and harm_category filters."""
         names_by_safety = await SeedDatasetProvider.get_all_dataset_names_async(
@@ -642,7 +628,6 @@ class TestHarmbenchMetadataInScenario:
         )
         assert "harmbench" in names_by_harm
 
-    @pytest.mark.asyncio
     async def test_harmbench_loads_and_stores_in_memory(self, sqlite_instance):
         """HarmBench can be fetched and stored in memory for scenario use."""
         datasets = await SeedDatasetProvider.fetch_datasets_async(
@@ -662,7 +647,6 @@ class TestHarmbenchMetadataInScenario:
         assert seed_groups is not None
         assert len(list(seed_groups)) > 0
 
-    @pytest.mark.asyncio
     async def test_red_team_agent_initializes_with_harmbench(self, sqlite_instance):
         """
         RedTeamAgent can initialize with harmbench dataset loaded in memory.

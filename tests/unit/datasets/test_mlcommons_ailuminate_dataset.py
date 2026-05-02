@@ -17,7 +17,6 @@ def mock_ailuminate_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset(mock_ailuminate_data):
     loader = _MLCommonsAILuminateDataset()
 

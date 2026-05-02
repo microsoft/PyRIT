@@ -608,8 +608,6 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
     """
     _print_header(text=initializer_metadata.registry_name)
     print(f"    Class: {initializer_metadata.class_name}")
-    print(f"    Name: {initializer_metadata.display_name}")
-    print(f"    Execution Order: {initializer_metadata.execution_order}")
 
     if initializer_metadata.required_env_vars:
         print("    Required Environment Variables:")

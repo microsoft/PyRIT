@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import EcojiConverter
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_encode_simple_text() -> None:
     """Test encoding simple text to Ecoji format."""
     converter = EcojiConverter()
@@ -20,7 +19,6 @@ async def test_ecoji_converter_encode_simple_text() -> None:
     assert result.output_text != prompt
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_encode_empty_string() -> None:
     """Test encoding an empty string."""
     converter = EcojiConverter()
@@ -32,7 +30,6 @@ async def test_ecoji_converter_encode_empty_string() -> None:
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_encode_with_special_characters() -> None:
     """Test encoding text with special characters."""
     converter = EcojiConverter()
@@ -45,7 +42,6 @@ async def test_ecoji_converter_encode_with_special_characters() -> None:
     assert result.output_text != prompt
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_encode_unicode() -> None:
     """Test encoding Unicode text."""
     converter = EcojiConverter()
@@ -57,7 +53,6 @@ async def test_ecoji_converter_encode_unicode() -> None:
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_encode_multiline() -> None:
     """Test encoding multiline text."""
     converter = EcojiConverter()
@@ -69,7 +64,6 @@ async def test_ecoji_converter_encode_multiline() -> None:
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_unsupported_input_type() -> None:
     """Test that unsupported input types raise ValueError."""
     converter = EcojiConverter()
@@ -100,7 +94,6 @@ def test_ecoji_converter_input_supported_audio() -> None:
     assert converter.input_supported(input_type="audio_path") is False
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_deterministic() -> None:
     """Test that encoding the same text produces the same result."""
     converter = EcojiConverter()
@@ -112,7 +105,6 @@ async def test_ecoji_converter_deterministic() -> None:
     assert result1.output_text == result2.output_text
 
 
-@pytest.mark.asyncio
 async def test_ecoji_converter_different_inputs_produce_different_outputs() -> None:
     """Test that different inputs produce different outputs."""
     converter = EcojiConverter()

@@ -64,14 +64,12 @@ def test_get_token_returns_access_token():
     assert auth.get_token() == VALID_TOKEN
 
 
-@pytest.mark.asyncio
 async def test_get_token_async_returns_access_token():
     auth = ManualCopilotAuthenticator(access_token=VALID_TOKEN)
     result = await auth.get_token_async()
     assert result == VALID_TOKEN
 
 
-@pytest.mark.asyncio
 async def test_get_claims_returns_decoded_claims():
     auth = ManualCopilotAuthenticator(access_token=VALID_TOKEN)
     claims = await auth.get_claims()
@@ -85,7 +83,6 @@ def test_refresh_token_raises_runtime_error():
         auth.refresh_token()
 
 
-@pytest.mark.asyncio
 async def test_refresh_token_async_raises_runtime_error():
     auth = ManualCopilotAuthenticator(access_token=VALID_TOKEN)
     with pytest.raises(RuntimeError, match="Manual token cannot be refreshed"):

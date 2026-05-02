@@ -47,6 +47,10 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.backend.models.scenarios import (
+    ScenarioListResponse,
+    ScenarioSummary,
+)
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
     TargetInstance,
@@ -91,6 +95,9 @@ __all__ = [
     "CreateConverterRequest",
     "CreateConverterResponse",
     "PreviewStep",
+    # Scenarios
+    "ScenarioListResponse",
+    "ScenarioSummary",
     # Targets
     "CreateTargetRequest",
     "TargetInstance",

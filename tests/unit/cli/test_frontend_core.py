@@ -393,8 +393,6 @@ class TestPrintFunctions:
                 class_module="test.initializers",
                 class_description="Test initializer",
                 registry_name="test",
-                display_name="test",
-                execution_order=100,
                 required_env_vars=(),
             )
         ]
@@ -495,9 +493,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="",
             registry_name="test",
-            display_name="test",
             required_env_vars=(),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -505,7 +501,6 @@ class TestFormatFunctions:
         captured = capsys.readouterr()
         assert "test" in captured.out
         assert "TestInit" in captured.out
-        assert "100" in captured.out
 
     def test_format_initializer_metadata_with_env_vars(self, capsys) -> None:
         """Test format_initializer_metadata with environment variables."""
@@ -514,9 +509,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="",
             registry_name="test",
-            display_name="test",
             required_env_vars=("VAR1", "VAR2"),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -532,9 +525,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="Test description",
             registry_name="test",
-            display_name="test",
             required_env_vars=(),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -860,7 +851,6 @@ class TestParseListTargetsArguments:
             frontend_core.parse_list_targets_arguments(args_string="--unknown-flag")
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsync:
     """Tests for run_scenario_async function."""
@@ -1253,7 +1243,6 @@ class TestWithOverrides:
         assert result["target"] is None
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsyncTarget:
     """Tests for target resolution in run_scenario_async."""
@@ -1390,7 +1379,6 @@ class TestRunScenarioAsyncTarget:
         assert "objective_target" not in call_kwargs
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestPrintTargetsList:
     """Tests for print_targets_list_async function."""

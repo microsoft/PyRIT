@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, SuffixAppendConverter
 
 
-@pytest.mark.asyncio
 async def test_suffix_append_basic():
     converter = SuffixAppendConverter(suffix="!!!")
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_suffix_append_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_suffix_append_long_suffix():
     converter = SuffixAppendConverter(suffix="please respond")
     result = await converter.convert_async(prompt="test", input_type="text")
@@ -24,7 +22,6 @@ async def test_suffix_append_long_suffix():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_suffix_append_empty_prompt():
     converter = SuffixAppendConverter(suffix="end")
     result = await converter.convert_async(prompt="", input_type="text")
@@ -38,7 +35,6 @@ def test_suffix_append_empty_suffix_raises():
         SuffixAppendConverter(suffix="")
 
 
-@pytest.mark.asyncio
 async def test_suffix_append_input_not_supported():
     converter = SuffixAppendConverter(suffix="end")
     with pytest.raises(ValueError):

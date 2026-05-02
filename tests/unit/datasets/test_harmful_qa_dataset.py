@@ -35,7 +35,6 @@ def mock_harmful_qa_data():
 class TestHarmfulQADataset:
     """Test the HarmfulQA dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_harmful_qa_data):
         """Test fetching HarmfulQA dataset."""
         loader = _HarmfulQADataset()

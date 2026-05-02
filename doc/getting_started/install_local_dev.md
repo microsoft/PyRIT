@@ -6,13 +6,13 @@ Set up a PyRIT development environment on your local machine.
 **Development Version:** Contributor installations use the **latest development code** from the `main` branch, not a stable release. The notebooks in your cloned repository will match your code version.
 ```
 
-## Option 1: uv (Recommended)
+## Setup with uv
 
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. We recommend it for PyRIT development.
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver that we use for PyRIT development.
 
 **Why uv?**
 - **Much faster** than pip (10-100x faster dependency resolution)
-- **Simpler** than conda/mamba for pure Python projects
+- **Simpler** environment management for pure Python projects
 - **Native Windows support** — no WSL required, although if using a devcontainer, WSL is recommended
 - **Automatic virtual environment management**
 - **Compatible with existing pyproject.toml**
@@ -49,18 +49,15 @@ Set up a PyRIT development environment on your local machine.
 2. The repository includes a `.python-version` file that pins Python 3.12. Run:
 
 ```bash
-uv sync --extra dev
+uv sync
 ```
 
 This command will:
 - Create a `.venv` directory with a virtual environment
 - Install Python 3.12 if not already available
 - Install PyRIT in editable mode; `uv sync` by default installs in editable mode so no extra flag is necessary
-- Install all dependencies including dev tools (pytest, black, ruff, etc.)
+- Install all dependencies including dev tools (pytest, ruff, etc.) via the `dev` dependency group
 - Create a `uv.lock` file for reproducible builds
-
-
-If you are having problems getting pip to install, try this link for details here: [this post](https://stackoverflow.com/questions/77134272/pip-install-dev-with-pyproject-toml-not-working) for more details.
 
 
 3. Verify Installation
@@ -80,11 +77,7 @@ VS Code should automatically detect the `.venv` virtual environment. If not:
 3. Choose `.venv\Scripts\python.exe`
 
 #### Running Jupyter Notebooks
-You can create a Jupyter kernel by first installing ipykernel:
-```bash
-uv add --dev ipykernel
-```
-then, create the kernel using:
+You can create a Jupyter kernel using:
 ```bash
 uv run ipython kernel install --user --env VIRTUAL_ENV $(pwd)/.venv --name=pyrit-dev
 ```
@@ -141,8 +134,8 @@ uv sync --extra huggingface
 # For all extras
 uv sync --extra all
 
-# Multiple extras
-uv sync --extra dev --extra playwright --extra gcg
+# Multiple extras (dev dependencies are always included automatically)
+uv sync --extra playwright --extra gcg
 ```
 
 ### Development Workflow
@@ -165,7 +158,7 @@ uv sync
 #### Running Code Formatters
 
 ```bash
-uv run black .
+uv run ruff format .
 uv run ruff check --fix .
 ```
 
@@ -180,57 +173,6 @@ uv run ty check pyrit/
 ```bash
 uv run pre-commit install
 uv run pre-commit run --all-files
-```
-
-## Option 2: Conda
-
-If you prefer conda for environment management, you can use it to create a Python environment and install PyRIT for development.
-
-### Prerequisites
-
-1. **Conda or Miniconda**: Download from [https://docs.anaconda.com/free/miniconda/](https://docs.anaconda.com/free/miniconda/)
-
-2. **Git**: Clone the repository:
-    ```bash
-    git clone https://github.com/microsoft/PyRIT
-    ```
-
-3. **Node.js and npm**: Required for building the frontend. Download [Node.js](https://nodejs.org/) (version 18+).
-
-### Installation
-
-1. Create a conda environment with the correct Python version:
-
-```bash
-conda create -y -n pyrit-dev python=3.12
-conda activate pyrit-dev
-```
-
-2. Navigate to the cloned PyRIT directory and install in editable mode with dev dependencies:
-
-```bash
-pip install -e .[dev]
-```
-
-3. Verify installation:
-
-```bash
-pip show pyrit
-```
-
-### Jupyter Kernel Setup
-
-Create a Jupyter kernel for the conda environment:
-
-```bash
-pip install ipykernel
-python -m ipykernel install --user --name=pyrit-dev --display-name "PyRIT Dev"
-```
-
-Then start Jupyter:
-
-```bash
-jupyter lab
 ```
 
 ## Next Step: Configure PyRIT

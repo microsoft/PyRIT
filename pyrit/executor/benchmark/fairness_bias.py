@@ -200,6 +200,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 atomic_attack_identifier=build_atomic_attack_identifier(
                     attack_identifier=ComponentIdentifier.of(self),
                 ),
+                labels=context.memory_labels,
             )
 
         return last_attack_result

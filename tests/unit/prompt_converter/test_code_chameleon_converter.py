@@ -3,12 +3,9 @@
 
 import re
 
-import pytest
-
 from pyrit.prompt_converter import CodeChameleonConverter
 
 
-@pytest.mark.asyncio
 async def test_codechameleon_converter_custom_encrypt_decrypt() -> None:
     def custom_encrypt_function(text: str) -> str:
         return "ENCRYPTED<" + text + ">"
@@ -29,7 +26,6 @@ async def test_codechameleon_converter_custom_encrypt_decrypt() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_codechameleon_converter_reverse_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="reverse")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
@@ -50,7 +46,6 @@ def decryption(encrypted_problem):
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_codechameleon_converter_binary_tree_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="binary_tree")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
@@ -105,7 +100,6 @@ def decryption(encrypted_problem):
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_codechameleon_converter_odd_even_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="odd_even")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
@@ -136,7 +130,6 @@ def decryption(encrypted_problem):
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_codechameleon_converter_length_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="length")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")

@@ -136,21 +136,18 @@ def test_image_text_converter_add_text_to_image(image_text_converter_sample_imag
     assert pixels_before != pixels_after
 
 
-@pytest.mark.asyncio
 async def test_add_image_text_converter_invalid_input_text(image_text_converter_sample_image) -> None:
     converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image)
     with pytest.raises(ValueError):
         assert await converter.convert_async(prompt="", input_type="text")  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 async def test_add_image_text_converter_invalid_file_path():
     converter = AddImageTextConverter(img_to_add="nonexistent_image.png", font_name="helvetica.ttf")
     with pytest.raises(FileNotFoundError):
         assert await converter.convert_async(prompt="Sample Text!", input_type="text")  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 async def test_add_image_text_converter_convert_async(
     image_text_converter_sample_image, patch_central_database
 ) -> None:
@@ -168,7 +165,6 @@ def test_text_image_converter_input_supported(image_text_converter_sample_image)
     assert converter.input_supported("text") is True
 
 
-@pytest.mark.asyncio
 async def test_add_image_text_converter_equal_to_add_text_image(
     image_text_converter_sample_image, patch_central_database
 ) -> None:
@@ -264,7 +260,6 @@ def test_add_image_text_converter_bounding_box_identifier(large_sample_image):
     assert params["font_size_max"] == 15
 
 
-@pytest.mark.asyncio
 async def test_add_image_text_converter_bounding_box_convert_async(large_sample_image, patch_central_database) -> None:
     converter = AddImageTextConverter(
         img_to_add=large_sample_image,

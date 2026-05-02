@@ -21,7 +21,6 @@ from pyrit.prompt_converter.text_selection_strategy import (
 )
 
 
-@pytest.mark.asyncio
 class TestSelectiveTextConverter:
     async def test_initialization_valid(self):
         converter = SelectiveTextConverter(

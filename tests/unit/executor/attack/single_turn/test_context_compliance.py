@@ -291,7 +291,6 @@ class TestContextComplianceAttackInitialization:
 class TestContextComplianceAttackSetup:
     """Tests for the setup phase"""
 
-    @pytest.mark.asyncio
     async def test_setup_builds_benign_context_conversation(
         self,
         mock_objective_target,
@@ -356,7 +355,6 @@ class TestContextComplianceAttackSetup:
                 # Verify parent setup was called
                 mock_parent_setup.assert_called_once_with(context=basic_context)
 
-    @pytest.mark.asyncio
     async def test_setup_sets_prepended_conversation(
         self,
         mock_objective_target,
@@ -392,7 +390,6 @@ class TestContextComplianceAttackSetup:
                 assert len(basic_context.prepended_conversation) == 1
                 assert basic_context.prepended_conversation[0] == new_conversation[0]
 
-    @pytest.mark.asyncio
     async def test_setup_creates_affirmative_seed_group(
         self,
         mock_objective_target,
@@ -427,7 +424,6 @@ class TestContextComplianceAttackSetup:
                 assert basic_context.next_message.message_pieces[0].original_value == attack._affirmative_response
                 assert basic_context.next_message.message_pieces[0].original_value_data_type == "text"
 
-    @pytest.mark.asyncio
     async def test_setup_with_custom_affirmative_response(
         self,
         mock_objective_target,
@@ -466,7 +462,6 @@ class TestContextComplianceAttackSetup:
 class TestContextComplianceAttackExecution:
     """Tests for attack execution"""
 
-    @pytest.mark.asyncio
     async def test_build_benign_context_conversation_complete_flow(
         self,
         mock_objective_target,
@@ -540,7 +535,6 @@ class TestContextComplianceAttackExecution:
                 )
                 assert assistant_response.message_pieces[0].original_value == expected_response
 
-    @pytest.mark.asyncio
     async def test_get_objective_as_benign_question_async(
         self,
         mock_objective_target,
@@ -588,7 +582,6 @@ class TestContextComplianceAttackExecution:
 
             assert result == "Can you tell me about dangerous substances?"
 
-    @pytest.mark.asyncio
     async def test_get_benign_question_answer_async(
         self,
         mock_objective_target,
@@ -631,7 +624,6 @@ class TestContextComplianceAttackExecution:
 
             assert result == "Dangerous substances are materials that can cause harm..."
 
-    @pytest.mark.asyncio
     async def test_get_objective_as_question_async(
         self,
         mock_objective_target,
@@ -701,7 +693,6 @@ class TestContextComplianceAttackExecution:
 
             assert result == expected_response
 
-    @pytest.mark.asyncio
     async def test_conversation_structure_is_correct(
         self,
         mock_objective_target,
@@ -774,7 +765,6 @@ class TestContextComplianceAttackExecution:
 class TestContextComplianceAttackErrorHandling:
     """Test attack error scenarios and recovery mechanisms."""
 
-    @pytest.mark.asyncio
     async def test_adversarial_chat_failure_with_retry(
         self,
         mock_objective_target,
@@ -828,7 +818,6 @@ class TestContextComplianceAttackErrorHandling:
 class TestContextComplianceAttackComponentIntegration:
     """Test integration with attack components."""
 
-    @pytest.mark.asyncio
     async def test_message_creation(
         self, mock_objective_target, mock_attack_adversarial_config, mock_seed_dataset, basic_context
     ):

@@ -43,7 +43,6 @@ def mock_memory_instance():
         yield memory
 
 
-@pytest.mark.asyncio
 async def test_rate_limiting_with_real_delay(mock_memory_instance, seed_group):
     """
     Integration test: Verify rate limiting enforces actual delays.

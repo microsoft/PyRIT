@@ -114,7 +114,7 @@ Most users should enable the following initializers. These are what the `.pyrit_
 | `load_default_datasets` | Seed datasets for all registered scenarios into memory | **Required for `pyrit_scan` scenarios** — they need data to run |
 
 ```{note}
-**Execution order is automatic.** Initializers are sorted by their built-in `execution_order` regardless of how you list them in the config: `simple`/`target` run first (order 1), then `scorer` (order 2), then `load_default_datasets` (order 10). This ensures dependencies are satisfied — for example, `scorer` needs targets to be registered first.
+**Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
 ```
 
 The recommended config:
@@ -192,7 +192,7 @@ The 3-layer model above determines **which config values are selected**. Once re
 1. Environment files are loaded
 2. Default values are reset
 3. Memory database is configured (from `memory_db_type`)
-4. Initializers are executed (sorted by `execution_order`)
+4. Initializers are executed in listed order
 
 Because initializers run last, they can modify anything set up in earlier steps — including environment variables and the memory instance. In practice, built-in initializers like `simple` and `airt` only call `set_default_value` and `set_global_variable` and do not touch memory or environment variables. However, a custom initializer could override those if needed. When this happens, the initializer's changes take effect because it runs after the other settings have been applied.
 

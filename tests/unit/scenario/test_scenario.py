@@ -88,6 +88,7 @@ def sample_attack_results():
             objective=f"objective{i}",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
+            labels={"test_label": f"value{i}"},
         )
         for i in range(5)
     ]
@@ -199,7 +200,6 @@ class TestScenarioInitialization:
 class TestScenarioInitialization2:
     """Tests for Scenario initialize_async method."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_populates_atomic_attacks(self, mock_atomic_attacks, mock_objective_target):
         """Test that initialize_async populates atomic attacks."""
         scenario = ConcreteScenario(
@@ -215,7 +215,6 @@ class TestScenarioInitialization2:
         assert scenario.atomic_attack_count == len(mock_atomic_attacks)
         assert scenario._atomic_attacks == mock_atomic_attacks
 
-    @pytest.mark.asyncio
     async def test_initialize_async_sets_objective_target(self, mock_objective_target):
         """Test that initialize_async sets objective_target properly."""
         scenario = ConcreteScenario(
@@ -230,7 +229,6 @@ class TestScenarioInitialization2:
         assert scenario._objective_target_identifier.class_name == "MockTarget"
         assert scenario._objective_target_identifier.class_module == "test"
 
-    @pytest.mark.asyncio
     async def test_initialize_async_requires_objective_target(self):
         """Test that initialize_async raises ValueError when objective_target is None."""
         scenario = ConcreteScenario(
@@ -241,7 +239,6 @@ class TestScenarioInitialization2:
         with pytest.raises(ValueError, match="objective_target is required"):
             await scenario.initialize_async()
 
-    @pytest.mark.asyncio
     async def test_initialize_async_sets_max_retries(self, mock_objective_target):
         """Test that initialize_async sets max_retries."""
         scenario = ConcreteScenario(
@@ -253,7 +250,6 @@ class TestScenarioInitialization2:
 
         assert scenario._max_retries == 3
 
-    @pytest.mark.asyncio
     async def test_initialize_async_sets_max_concurrency(self, mock_objective_target):
         """Test that initialize_async sets max_concurrency."""
         scenario = ConcreteScenario(
@@ -265,7 +261,6 @@ class TestScenarioInitialization2:
 
         assert scenario._max_concurrency == 5
 
-    @pytest.mark.asyncio
     async def test_initialize_async_sets_memory_labels(self, mock_objective_target):
         """Test that initialize_async sets memory_labels."""
         labels = {"test": "scenario", "category": "encoding"}
@@ -278,7 +273,6 @@ class TestScenarioInitialization2:
 
         assert scenario._memory_labels == labels
 
-    @pytest.mark.asyncio
     async def test_initialize_async_uses_default_values(self, mock_objective_target):
         """Test that initialize_async uses default values when not provided."""
         scenario = ConcreteScenario(
@@ -327,7 +321,6 @@ class TestScenarioInitialization2:
 class TestScenarioExecution:
     """Tests for Scenario execution methods."""
 
-    @pytest.mark.asyncio
     async def test_run_async_executes_all_runs(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
         """Test that run_async executes all atomic attacks sequentially."""
         # Configure each run to return different results
@@ -359,7 +352,6 @@ class TestScenarioExecution:
         assert result.attack_results["attack_run_2"][0] == sample_attack_results[1]
         assert result.attack_results["attack_run_3"][0] == sample_attack_results[2]
 
-    @pytest.mark.asyncio
     async def test_run_async_with_custom_concurrency(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
@@ -384,7 +376,6 @@ class TestScenarioExecution:
         assert isinstance(result, ScenarioResult)
         assert len(result.attack_results) == 3
 
-    @pytest.mark.asyncio
     async def test_run_async_aggregates_multiple_results(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
@@ -410,7 +401,6 @@ class TestScenarioExecution:
         assert len(result.attack_results["attack_run_2"]) == 2
         assert len(result.attack_results["attack_run_3"]) == 1
 
-    @pytest.mark.asyncio
     async def test_run_async_stops_on_error(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
         """Test that execution stops when an atomic attack fails."""
         mock_atomic_attacks[0].run_async = create_mock_run_async([sample_attack_results[0]])
@@ -434,7 +424,6 @@ class TestScenarioExecution:
         # Third run should not have been executed
         mock_atomic_attacks[2].run_async.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_run_async_fails_without_initialization(self, mock_objective_target):
         """Test that run_async fails if initialize_async was not called."""
         scenario = ConcreteScenario(
@@ -445,7 +434,6 @@ class TestScenarioExecution:
         with pytest.raises(ValueError, match="Cannot run scenario with no atomic attacks"):
             await scenario.run_async()
 
-    @pytest.mark.asyncio
     async def test_run_async_returns_scenario_result_with_identifier(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
@@ -487,7 +475,6 @@ class TestScenarioProperties:
 
         assert scenario.name == "My Test Scenario"
 
-    @pytest.mark.asyncio
     async def test_atomic_attack_count_property(self, mock_atomic_attacks, mock_objective_target):
         """Test that atomic_attack_count returns the correct count."""
         scenario = ConcreteScenario(
@@ -502,7 +489,6 @@ class TestScenarioProperties:
 
         assert scenario.atomic_attack_count == 3
 
-    @pytest.mark.asyncio
     async def test_atomic_attack_count_with_different_sizes(self, mock_objective_target):
         """Test atomic_attack_count with different numbers of atomic attacks."""
         # Create mock attack strategy
@@ -721,7 +707,6 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
 class TestScenarioBaselineOnlyExecution:
     """Tests for baseline-only execution (empty strategies with include_baseline=True)."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_empty_strategies_and_baseline(self, mock_objective_target):
         """Test that baseline is included when include_baseline=True, regardless of strategies."""
         from pyrit.models import SeedAttackGroup, SeedObjective
@@ -751,7 +736,6 @@ class TestScenarioBaselineOnlyExecution:
         assert scenario.atomic_attack_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
 
-    @pytest.mark.asyncio
     async def test_baseline_only_execution_runs_successfully(self, mock_objective_target, sample_attack_results):
         """Test that baseline-only scenario can run successfully."""
         from pyrit.models import SeedAttackGroup, SeedObjective
@@ -787,7 +771,6 @@ class TestScenarioBaselineOnlyExecution:
         assert "baseline" in result.attack_results
         assert len(result.attack_results["baseline"]) == 1
 
-    @pytest.mark.asyncio
     async def test_empty_strategies_without_baseline_allows_initialization(self, mock_objective_target):
         """Test that no strategies + no baseline allows initialization but fails at run time."""
         scenario = ConcreteScenario(
@@ -809,7 +792,6 @@ class TestScenarioBaselineOnlyExecution:
         with pytest.raises(ValueError, match="Cannot run scenario with no atomic attacks"):
             await scenario.run_async()
 
-    @pytest.mark.asyncio
     async def test_standalone_baseline_uses_dataset_config_seeds(self, mock_objective_target):
         """Test that standalone baseline uses seed groups from dataset_config."""
         from pyrit.models import SeedAttackGroup, SeedObjective
@@ -889,7 +871,6 @@ class TestGetDefaultObjectiveScorer:
         assert isinstance(result, TrueFalseInverterScorer)
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_execute_scenario_raises_when_scenario_result_id_is_none():
     """Test that _execute_scenario_async raises ValueError when _scenario_result_id is None."""

@@ -63,7 +63,6 @@ def test_http_target_sets_endpoint_and_rate_limit(mock_callback_function, sqlite
     assert target._max_requests_per_minute == 25
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async(mock_request, mock_http_target, mock_http_response):
     message = MagicMock()
@@ -110,7 +109,6 @@ def test_parse_raw_http_respects_url_path(patch_central_database):
     assert headers == {"host": "example.com", "content-type": "application/json"}
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_client_kwargs(patch_central_database):
     with patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request:
         # Create httpx_client_kwargs to test
@@ -144,14 +142,12 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
         assert http_target._client is None
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_validation(mock_http_target):
     # Creating a Message with no pieces raises immediately
     with pytest.raises(ValueError, match="must have at least one message piece"):
         Message(message_pieces=[])
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
     callback_function = get_http_target_regex_matching_callback_function(key=r"Match: (\d+)")
@@ -184,7 +180,6 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
     )
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_keeps_original_template(mock_request, mock_http_target, mock_http_response):
     original_http_request = mock_http_target.http_request
@@ -249,7 +244,6 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     )
 
 
-@pytest.mark.asyncio
 async def test_http_target_with_injected_client(patch_central_database):
     custom_client = httpx.AsyncClient(timeout=30.0, verify=False, headers={"X-Custom-Header": "test_value"})
 

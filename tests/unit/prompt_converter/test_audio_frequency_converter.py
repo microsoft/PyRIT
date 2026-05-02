@@ -12,7 +12,6 @@ from scipy.io import wavfile
 from pyrit.prompt_converter.audio_frequency_converter import AudioFrequencyConverter
 
 
-@pytest.mark.asyncio
 async def test_convert_async_success(sqlite_instance):
     # Simulate WAV data
     sample_rate = 44100
@@ -39,7 +38,6 @@ async def test_convert_async_success(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_file_not_found():
     # Create an instance of the converter
     converter = AudioFrequencyConverter(shift_value=20000)

@@ -188,10 +188,9 @@ def _load_initializers_from_scripts(
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
     """
-    Execute PyRITInitializer instances in execution order.
+    Execute PyRITInitializer instances in the order provided.
 
-    Initializers are sorted by their execution_order property before execution.
-    Lower execution_order values run first.
+    Initializers are executed in the order they appear in the sequence.
 
     Args:
         initializers: Sequence of PyRITInitializer instances to execute.
@@ -203,18 +202,15 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
     # Import here to avoid circular imports
     from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
-    # Validate all initializers first before sorting
+    # Validate all initializers first
     for initializer in initializers:
         if not isinstance(initializer, PyRITInitializer):
             raise ValueError(
                 f"All initializers must be PyRITInitializer instances. Got {type(initializer).__name__}: {initializer}"
             )
 
-    # Sort initializers by execution_order (lower numbers first)
-    sorted_initializers = sorted(initializers, key=lambda x: x.execution_order)
-
-    for initializer in sorted_initializers:
-        logger.info(f"Executing initializer: {initializer.name}")
+    for initializer in initializers:
+        logger.info(f"Executing initializer: {type(initializer).__name__}")
         logger.debug(f"Description: {initializer.description}")
 
         try:
@@ -224,10 +220,10 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
             # Then initialize with tracking to capture what was configured
             await initializer.initialize_with_tracking_async()
 
-            logger.debug(f"Successfully executed initializer: {initializer.name}")
+            logger.debug(f"Successfully executed initializer: {type(initializer).__name__}")
 
         except Exception as e:
-            logger.error(f"Error executing initializer {initializer.name}: {e}")
+            logger.error(f"Error executing initializer {type(initializer).__name__}: {e}")
             raise
 
 
@@ -296,6 +292,6 @@ async def initialize_pyrit_async(
         script_initializers = _load_initializers_from_scripts(script_paths=initialization_scripts)
         all_initializers.extend(script_initializers)
 
-    # Execute all initializers (sorted by execution_order)
+    # Execute all initializers in order
     if all_initializers:
         await _execute_initializers_async(initializers=all_initializers)

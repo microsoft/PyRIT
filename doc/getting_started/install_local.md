@@ -18,16 +18,6 @@ Or with uv:
 uv pip install pyrit
 ```
 
-## Install with Conda
-
-If you prefer conda for managing environments:
-
-```bash
-conda create -y -n pyrit python=3.11
-conda activate pyrit
-pip install pyrit
-```
-
 ## Matching Notebooks to Your Version
 
 ```{important}
