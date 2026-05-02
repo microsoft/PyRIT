@@ -79,7 +79,6 @@ def test_template_segment_converter_input_output_support():
     assert converter.output_supported("image_path") is False
 
 
-@pytest.mark.asyncio
 async def test_template_segment_converter_convert_basic():
     """Test basic conversion functionality."""
     template = SeedPrompt(value="First: {{ part1 }}\nSecond: {{ part2 }}", parameters=["part1", "part2"])
@@ -94,7 +93,6 @@ async def test_template_segment_converter_convert_basic():
     assert result.output_text == "First: Hello\nSecond: world"
 
 
-@pytest.mark.asyncio
 async def test_template_segment_converter_convert_long_prompt():
     """Test conversion with a longer prompt that should be split into multiple segments."""
     template = SeedPrompt(
@@ -117,7 +115,6 @@ async def test_template_segment_converter_convert_long_prompt():
     assert len(result.output_text.split("\n")) == 5
 
 
-@pytest.mark.asyncio
 async def test_template_segment_converter_convert_short_prompt():
     """Test conversion with a short prompt that will result in empty segments."""
     template = SeedPrompt(
@@ -141,7 +138,6 @@ async def test_template_segment_converter_convert_short_prompt():
     assert len(result.output_text.split("\n")) == 5
 
 
-@pytest.mark.asyncio
 async def test_template_segment_converter_invalid_input_type():
     """Test conversion with invalid input type."""
     converter = TemplateSegmentConverter()

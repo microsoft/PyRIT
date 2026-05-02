@@ -405,7 +405,7 @@ class TestGetKnownCapabilities:
         caps = TargetCapabilities.get_known_capabilities("gpt-4o")
         assert caps is not None
         assert caps.supports_json_schema is False
-        assert caps.supports_editable_history is False
+        assert caps.supports_editable_history is True
 
     def test_gpt_4o_input_modalities_include_text_image_and_combined(self):
         caps = TargetCapabilities.get_known_capabilities("gpt-4o")

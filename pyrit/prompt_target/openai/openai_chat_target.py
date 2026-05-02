@@ -8,7 +8,7 @@ from collections.abc import MutableSequence
 from dataclasses import replace
 from typing import Any, Optional
 
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -72,6 +72,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
+            supports_editable_history=True,
             input_modalities=frozenset(
                 {frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}
             ),
@@ -622,7 +623,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                 elif message_piece.converted_value_data_type == "image_path":
                     data_base64_encoded_url = await convert_local_image_to_data_url(message_piece.converted_value)
                     image_url_entry = {"url": data_base64_encoded_url}
-                    entry = {"type": "image_url", "image_url": image_url_entry}  # type: ignore[dict-item]
+                    entry = {"type": "image_url", "image_url": image_url_entry}
                     content.append(entry)
                 elif message_piece.converted_value_data_type == "audio_path":
                     ext = DataTypeSerializer.get_extension(message_piece.converted_value)
@@ -643,7 +644,7 @@ class OpenAIChatTarget(OpenAITarget, PromptChatTarget):
                     base64_data = await audio_serializer.read_data_base64()
                     audio_format = ext.lower().lstrip(".")
                     input_audio_entry = {"data": base64_data, "format": audio_format}
-                    entry = {"type": "input_audio", "input_audio": input_audio_entry}  # type: ignore[dict-item]
+                    entry = {"type": "input_audio", "input_audio": input_audio_entry}
                     content.append(entry)
                 else:
                     raise ValueError(

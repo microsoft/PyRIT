@@ -309,7 +309,6 @@ class TestExcluding:
             )
 
 
-@pytest.mark.asyncio
 async def test_from_seed_group_async_raises_when_objective_is_none():
     """Test that from_seed_group_async raises ValueError when seed_group.objective is None."""
     seed_group = MagicMock(spec=SeedAttackGroup)

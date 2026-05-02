@@ -6,7 +6,7 @@
 from typing import Any
 
 from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
-from pyrit.scenario.scenarios.airt.cyber import Cyber, CyberStrategy
+from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
 from pyrit.scenario.scenarios.airt.leakage import Leakage, LeakageStrategy
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial, PsychosocialStrategy
@@ -28,6 +28,8 @@ def __getattr__(name: str) -> Any:
         return RapidResponse.get_strategy_class()
     if name == "ContentHarmsStrategy":
         return ContentHarms.get_strategy_class()
+    if name == "CyberStrategy":
+        return Cyber.get_strategy_class()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

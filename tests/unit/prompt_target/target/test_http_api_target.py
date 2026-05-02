@@ -10,7 +10,6 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_file_upload(mock_request, patch_central_database):
     # Create a temporary file to simulate a PDF.
@@ -45,7 +44,6 @@ async def test_send_prompt_async_file_upload(mock_request, patch_central_databas
     os.unlink(file_path)
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_file_upload_preserves_query_params(mock_request, patch_central_database):
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -73,7 +71,6 @@ async def test_send_prompt_async_file_upload_preserves_query_params(mock_request
     os.unlink(file_path)
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_no_file(mock_request, patch_central_database):
     # Create a MessagePiece with converted_value that does not point to a valid file.
@@ -98,7 +95,6 @@ async def test_send_prompt_async_no_file(mock_request, patch_central_database):
     assert "Sample JSON response" in response_text
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_preserves_query_params_for_post(mock_request, patch_central_database):
     message_piece = MessagePiece(role="user", original_value="mock", converted_value="non_existent_file.pdf")
@@ -128,7 +124,6 @@ async def test_send_prompt_async_preserves_query_params_for_post(mock_request, p
     )
 
 
-@pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_missing_explicit_file_path_raises(mock_request, patch_central_database):
     message_piece = MessagePiece(role="user", original_value="mock", converted_value="trigger")
@@ -147,7 +142,6 @@ async def test_send_prompt_async_missing_explicit_file_path_raises(mock_request,
     mock_request.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_validation(patch_central_database):
     # Creating a Message with no pieces raises immediately
     with pytest.raises(ValueError, match="must have at least one message piece"):

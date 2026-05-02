@@ -2,8 +2,8 @@
 
 Testing plays a crucial role in PyRIT development. Ensuring robust tests in PyRIT is crucial for verifying that functionalities are implemented correctly and for preventing unintended alterations to these functionalities when changes are made to PyRIT.
 
-For running PyRIT tests, you need to have `pytest` package installed, but if you've already set up your development dependencies with the command
-`pip install -e .[dev]`, `pytest` should be included in that setup.
+For running PyRIT tests, you need to have `pytest` package installed, but if you've already set up your development environment with
+`uv sync`, `pytest` should be included in that setup.
 
 
 ## Running PyRIT test files

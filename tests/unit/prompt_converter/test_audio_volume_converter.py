@@ -12,7 +12,6 @@ from scipy.io import wavfile
 from pyrit.prompt_converter.audio_volume_converter import AudioVolumeConverter
 
 
-@pytest.mark.asyncio
 async def test_volume_increase(sqlite_instance):
     """Increasing volume should scale sample amplitudes up."""
     sample_rate = 44100
@@ -42,7 +41,6 @@ async def test_volume_increase(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_volume_decrease(sqlite_instance):
     """Decreasing volume should scale sample amplitudes down."""
     sample_rate = 44100
@@ -69,7 +67,6 @@ async def test_volume_decrease(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_volume_factor_one_preserves_audio(sqlite_instance):
     """A volume factor of 1.0 should leave the audio unchanged."""
     sample_rate = 44100
@@ -92,7 +89,6 @@ async def test_volume_factor_one_preserves_audio(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_volume_clips_to_valid_range(sqlite_instance):
     """Volume increase should clip values to the int16 range."""
     sample_rate = 44100
@@ -116,7 +112,6 @@ async def test_volume_clips_to_valid_range(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_stereo_audio(sqlite_instance):
     """Converter should handle stereo (2-channel) audio correctly."""
     sample_rate = 44100
@@ -139,7 +134,6 @@ async def test_stereo_audio(sqlite_instance):
         os.remove(result.output_text)
 
 
-@pytest.mark.asyncio
 async def test_convert_async_file_not_found():
     """Non-existent file should raise FileNotFoundError."""
     converter = AudioVolumeConverter(volume_factor=1.5)
@@ -161,7 +155,6 @@ def test_invalid_volume_factor_negative():
         AudioVolumeConverter(volume_factor=-1.0)
 
 
-@pytest.mark.asyncio
 async def test_unsupported_input_type(sqlite_instance):
     """Passing an unsupported input_type should raise ValueError."""
     converter = AudioVolumeConverter(volume_factor=1.5)

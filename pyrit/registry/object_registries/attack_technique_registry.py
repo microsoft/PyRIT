@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         AttackConverterConfig,
         AttackScoringConfig,
     )
+    from pyrit.models import SeedAttackTechniqueGroup
     from pyrit.prompt_target import PromptChatTarget, PromptTarget
     from pyrit.registry.tag_query import TagQuery
     from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -83,6 +84,9 @@ class AttackTechniqueSpec:
         accepts_scorer_override: Whether the technique accepts a scenario-level
             scorer override. Set to ``False`` for techniques (e.g. TAP) that
             manage their own scoring. Defaults to ``True``.
+        seed_technique: Optional ``SeedAttackTechniqueGroup`` to attach to
+            the created ``AttackTechnique``. Seeds are merged into each
+            ``SeedAttackGroup`` at execution time via ``with_technique()``.
     """
 
     name: str
@@ -92,6 +96,7 @@ class AttackTechniqueSpec:
     adversarial_chat_key: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     accepts_scorer_override: bool = True
+    seed_technique: SeedAttackTechniqueGroup | None = None
 
     @property
     def tags(self) -> list[str]:
@@ -263,26 +268,26 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             members[spec.name] = (spec.name, spec_tags | matched_agg_tags)
 
         # Build the enum class dynamically
-        strategy_cls = ScenarioStrategy(class_name, members)  # type: ignore[arg-type]
+        strategy_cls = ScenarioStrategy(class_name, members)
 
         # Override get_aggregate_tags on the generated class
-        @classmethod  # type: ignore[misc]
+        @classmethod
         def _get_aggregate_tags(cls: type) -> set[str]:
             return set(all_aggregate_tag_names)
 
-        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[method-assign, assignment]
+        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment]
 
-        return strategy_cls  # type: ignore[return-value]
+        return strategy_cls  # type: ignore[ty:invalid-return-type]
 
     @staticmethod
     def build_factory_from_spec(spec: AttackTechniqueSpec) -> AttackTechniqueFactory:
         """
         Build an ``AttackTechniqueFactory`` from an ``AttackTechniqueSpec``.
 
-        Injects ``AttackAdversarialConfig`` when both ``spec.adversarial_chat``
-        is set and the attack class accepts ``attack_adversarial_config`` as a
-        constructor parameter.  If ``adversarial_chat`` is set but the class
-        does not accept it, a warning is logged and the field is ignored.
+        The adversarial chat target (``spec.adversarial_chat``) is stored on the
+        factory as an ``AttackAdversarialConfig``.  The factory injects it into
+        the attack constructor at ``create()`` time if the attack class accepts
+        ``attack_adversarial_config``.
 
         Args:
             spec: The technique specification. Must not contain
@@ -307,20 +312,15 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
 
         kwargs: dict[str, Any] = dict(spec.extra_kwargs)
 
-        if spec.adversarial_chat is not None:
-            if AttackTechniqueRegistry._accepts_adversarial(spec.attack_class):
-                kwargs["attack_adversarial_config"] = AttackAdversarialConfig(target=spec.adversarial_chat)
-            else:
-                logger.warning(
-                    "Spec '%s': adversarial_chat is set but %s does not accept "
-                    "'attack_adversarial_config'. The adversarial_chat will be ignored.",
-                    spec.name,
-                    spec.attack_class.__name__,
-                )
+        adversarial_config = (
+            AttackAdversarialConfig(target=spec.adversarial_chat) if spec.adversarial_chat is not None else None
+        )
 
         return AttackTechniqueFactory(
-            attack_class=spec.attack_class,
+            attack_class=spec.attack_class,  # type: ignore[ty:invalid-argument-type]
             attack_kwargs=kwargs or None,
+            adversarial_config=adversarial_config,
+            seed_technique=spec.seed_technique,
         )
 
     @staticmethod
@@ -331,7 +331,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Returns:
             bool: Whether the parameter is present in the class constructor.
         """
-        sig = inspect.signature(attack_class.__init__)  # type: ignore[misc]
+        sig = inspect.signature(attack_class.__init__)
         return "attack_adversarial_config" in sig.parameters
 
     def register_from_specs(

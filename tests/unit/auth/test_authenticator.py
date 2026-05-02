@@ -28,7 +28,6 @@ def test_refresh_token_raises_not_implemented(authenticator):
         authenticator.refresh_token()
 
 
-@pytest.mark.asyncio
 async def test_refresh_token_async_raises_not_implemented(authenticator):
     with pytest.raises(NotImplementedError, match="refresh_token"):
         await authenticator.refresh_token_async()
@@ -39,7 +38,6 @@ def test_get_token_raises_not_implemented(authenticator):
         authenticator.get_token()
 
 
-@pytest.mark.asyncio
 async def test_get_token_async_raises_not_implemented(authenticator):
     with pytest.raises(NotImplementedError, match="get_token"):
         await authenticator.get_token_async()

@@ -1,13 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import pytest
 
 from pyrit.prompt_converter import FirstLetterConverter
 
 
 # Test that the default converter settings produce the expected result
-@pytest.mark.asyncio
 async def test_first_letter_converter_default():
     converter = FirstLetterConverter()
     prompt = "Lorem ipsum dolor sit amet"
@@ -17,7 +15,6 @@ async def test_first_letter_converter_default():
 
 
 # Test that the converter produces the expected result with whitespace
-@pytest.mark.asyncio
 async def test_first_letter_converter_whitespace():
     converter = FirstLetterConverter()
     prompt = "Lorem\nipsum\tdolor\nsit\tamet"
@@ -27,7 +24,6 @@ async def test_first_letter_converter_whitespace():
 
 
 # Test that the converter produces the expected result with a different separator
-@pytest.mark.asyncio
 async def test_first_letter_converter_dashes():
     converter = FirstLetterConverter(letter_separator="-")
     prompt = "Lorem ipsum dolor sit amet"
@@ -37,7 +33,6 @@ async def test_first_letter_converter_dashes():
 
 
 # Test that the converter produces the expected result with French punctuation
-@pytest.mark.asyncio
 async def test_first_letter_converter_french():
     converter = FirstLetterConverter()
     prompt = """
@@ -50,7 +45,6 @@ async def test_first_letter_converter_french():
 
 
 # Test that the converter produces the expected result with non-Latin alphabets
-@pytest.mark.asyncio
 async def test_first_letter_converter_japanese():
     converter = FirstLetterConverter()
     prompt = """

@@ -86,11 +86,11 @@ class AzureStorageAuth:
                     account_name=storage_account_name,
                     container_name=container_name,
                     user_delegation_key=user_delegation_key,
-                    permission=ContainerSasPermissions(read=True, write=True, create=True, list=True, delete=True),  # type: ignore[no-untyped-call, unused-ignore]
+                    permission=ContainerSasPermissions(read=True, write=True, create=True, list=True, delete=True),
                     expiry=expiry_time,
                     start=start_time,
                 )
         finally:
             await credential.close()
 
-        return sas_token  # type: ignore[return-value, no-any-return, unused-ignore]
+        return sas_token

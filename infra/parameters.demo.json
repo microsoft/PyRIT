@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "_usage": "This template is for manual 'az deployment group create' runs. The deploy_instance.py script passes parameters directly via CLI args and does not use this file.",
+  "parameters": {
+    "appName": {
+      "value": "copyrit-INSTANCE_NAME"
+    },
+    "containerImage": {
+      "value": "REPLACE_ACR.azurecr.io/pyrit:REPLACE_COMMIT_SHA"
+    },
+    "entraTenantId": {
+      "value": "REPLACE_TENANT_ID"
+    },
+    "entraClientId": {
+      "value": "REPLACE_ENTRA_CLIENT_ID"
+    },
+    "allowedGroupObjectIds": {
+      "value": "REPLACE_GROUP_OBJECT_IDS"
+    },
+    "allowedCidr": {
+      "value": ""
+    },
+    "sqlServerFqdn": {
+      "value": "REPLACE_SQL_SERVER.database.windows.net"
+    },
+    "sqlDatabaseName": {
+      "value": "REPLACE_SQL_DATABASE"
+    },
+    "pyritInitializer": {
+      "value": "target airt"
+    },
+    "envSecretName": {
+      "value": "env-global"
+    },
+    "logRetentionDays": {
+      "value": 90
+    },
+    "enableOtel": {
+      "value": false
+    },
+    "enablePrivateEndpoint": {
+      "value": false
+    },
+    "tags": {
+      "value": {
+        "Service": "pyrit-gui",
+        "Owner": "AI Red Team",
+        "DataClass": "Confidential",
+        "Instance": "INSTANCE_NAME"
+      }
+    },
+    "acrName": {
+      "value": "REPLACE_ACR_NAME"
+    },
+    "keyVaultResourceId": {
+      "value": "REPLACE_KEY_VAULT_RESOURCE_ID"
+    },
+    "infrastructureSubnetId": {
+      "value": ""
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": ""
+    },
+    "logAnalyticsCustomerId": {
+      "value": ""
+    },
+    "logAnalyticsSharedKey": {
+      "value": ""
+    }
+  }
+}

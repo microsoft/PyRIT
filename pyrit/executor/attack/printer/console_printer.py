@@ -25,7 +25,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
 
     def __init__(
         self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True, safe_outputs: bool = False
-    ):
+    ) -> None:
         """
         Initialize the console printer.
 

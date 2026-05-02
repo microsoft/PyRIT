@@ -36,7 +36,6 @@ def mock_pku_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=True)
 
@@ -48,7 +47,6 @@ async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
     assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=False)
 
@@ -60,7 +58,6 @@ async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):
     assert "What is the weather today?" not in values
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_filters_by_harm_category(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=True, filter_harm_categories=["Cybercrime"])
 

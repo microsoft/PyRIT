@@ -357,7 +357,6 @@ class TestNextMessageSentFirst:
     2. Preserve multi-modal content in the message
     """
 
-    @pytest.mark.asyncio
     async def test_prompt_sending_attack_sends_next_message_multimodal(
         self, mock_chat_target: MagicMock, sample_response: Message, multimodal_image_message: Message
     ) -> None:
@@ -384,7 +383,6 @@ class TestNextMessageSentFirst:
         assert sent_message.message_pieces[1].original_value_data_type == "image_path"
         assert "This objective should NOT be sent" not in sent_message.get_value()
 
-    @pytest.mark.asyncio
     async def test_red_teaming_attack_uses_next_message_first_turn(
         self,
         mock_chat_target: MagicMock,
@@ -429,7 +427,6 @@ class TestNextMessageSentFirst:
             "Image content must be preserved"
         )
 
-    @pytest.mark.asyncio
     async def test_crescendo_attack_uses_next_message_first_turn(
         self,
         mock_chat_target: MagicMock,
@@ -492,7 +489,6 @@ class TestNextMessageSentFirst:
             "Image content must be preserved"
         )
 
-    @pytest.mark.asyncio
     async def test_tree_of_attacks_uses_next_message_first_turn(
         self,
         mock_chat_target: MagicMock,
@@ -602,7 +598,6 @@ class TestPrependedConversationInMemory:
         ]
         assert len(raw_assistant_in_prepended) == 0, "Prepended assistant messages should have is_simulated=True"
 
-    @pytest.mark.asyncio
     async def test_prompt_sending_attack_adds_prepended_to_memory(
         self,
         mock_chat_target: MagicMock,
@@ -646,7 +641,6 @@ class TestPrependedConversationInMemory:
             prepended_count=len(prepended_conversation_multimodal),
         )
 
-    @pytest.mark.asyncio
     async def test_red_teaming_attack_adds_prepended_to_memory(
         self,
         red_teaming_attack: RedTeamingAttack,
@@ -680,7 +674,6 @@ class TestPrependedConversationInMemory:
             prepended_count=len(prepended_conversation_multimodal),
         )
 
-    @pytest.mark.asyncio
     async def test_crescendo_attack_adds_prepended_to_memory(
         self,
         crescendo_attack: CrescendoAttack,
@@ -716,7 +709,6 @@ class TestPrependedConversationInMemory:
             prepended_count=len(prepended_conversation_multimodal),
         )
 
-    @pytest.mark.asyncio
     async def test_tap_attack_adds_prepended_to_memory(
         self,
         mock_chat_target: MagicMock,
@@ -798,7 +790,6 @@ class TestMultiTurnTurnCounting:
     2. max_turns validation should account for prepended turns
     """
 
-    @pytest.mark.asyncio
     async def test_red_teaming_starts_with_prepended_turn_count(
         self,
         red_teaming_attack: RedTeamingAttack,
@@ -815,7 +806,6 @@ class TestMultiTurnTurnCounting:
         # Total turns = prepended (2) + executed (1) = 3
         assert result.executed_turns >= 2, "Turn count should include prepended turns"
 
-    @pytest.mark.asyncio
     async def test_crescendo_starts_with_prepended_turn_count(
         self,
         crescendo_attack: CrescendoAttack,
@@ -833,7 +823,6 @@ class TestMultiTurnTurnCounting:
         # Total turns = prepended (2) + executed (1) = 3
         assert result.executed_turns >= 2, "Turn count should include prepended turns"
 
-    @pytest.mark.asyncio
     async def test_tap_starts_with_prepended_turn_count(
         self,
         tap_attack: TreeOfAttacksWithPruningAttack,
@@ -865,7 +854,6 @@ class TestMemoryLabelsPropagation:
     memory_labels should be passed to all prompts sent via the target.
     """
 
-    @pytest.mark.asyncio
     async def test_prompt_sending_attack_propagates_memory_labels(
         self, mock_chat_target: MagicMock, sample_response: Message, sqlite_instance
     ) -> None:
@@ -980,7 +968,6 @@ class TestAdversarialChatContextInjection:
     appear in adversarial chat's memory (either as history or in the system prompt).
     """
 
-    @pytest.mark.asyncio
     async def test_red_teaming_injects_prepended_into_adversarial_context(
         self,
         red_teaming_attack: RedTeamingAttack,
@@ -1006,7 +993,6 @@ class TestAdversarialChatContextInjection:
             adversarial_chat_mock=mock_adversarial_chat,
         )
 
-    @pytest.mark.asyncio
     async def test_crescendo_injects_prepended_into_adversarial_context(
         self,
         crescendo_attack: CrescendoAttack,
@@ -1034,7 +1020,6 @@ class TestAdversarialChatContextInjection:
             adversarial_chat_mock=mock_adversarial_chat,
         )
 
-    @pytest.mark.asyncio
     async def test_tap_injects_prepended_into_adversarial_context(
         self,
         tap_attack: TreeOfAttacksWithPruningAttack,

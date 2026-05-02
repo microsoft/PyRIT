@@ -62,7 +62,6 @@ def test_category_scorer_set_no_category_found():
     assert "intended to harm an individual" in scorer._system_prompt
 
 
-@pytest.mark.asyncio
 async def test_category_scorer_set_system_prompt(scorer_category_response_bullying: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -78,7 +77,6 @@ async def test_category_scorer_set_system_prompt(scorer_category_response_bullyi
     chat_target.set_system_prompt.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_category_scorer_score(scorer_category_response_bullying: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -101,7 +99,6 @@ async def test_category_scorer_score(scorer_category_response_bullying: Message,
     assert score[0].message_piece_id is None
 
 
-@pytest.mark.asyncio
 async def test_category_scorer_score_false(scorer_category_response_false: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -123,7 +120,6 @@ async def test_category_scorer_score_false(scorer_category_response_false: Messa
     assert score[0].message_piece_id is None
 
 
-@pytest.mark.asyncio
 async def test_category_scorer_adds_to_memory(scorer_category_response_false: Message, patch_central_database):
     memory = MagicMock(MemoryInterface)
     chat_target = MagicMock()
@@ -140,7 +136,6 @@ async def test_category_scorer_adds_to_memory(scorer_category_response_false: Me
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -159,7 +154,6 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
         assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_self_ask_objective_scorer_json_missing_key_exception_retries(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -190,7 +184,6 @@ async def test_self_ask_objective_scorer_json_missing_key_exception_retries(patc
         assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("max_requests_per_minute", [None, 10])
 @pytest.mark.parametrize("batch_size", [1, 10])
 async def test_score_prompts_batch_async(

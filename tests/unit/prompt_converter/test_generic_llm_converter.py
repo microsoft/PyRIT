@@ -33,7 +33,6 @@ def mock_target() -> PromptTarget:
     return target
 
 
-@pytest.mark.asyncio
 async def test_noise_converter_sets_system_prompt_default(mock_target) -> None:
     converter = NoiseConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
@@ -45,7 +44,6 @@ async def test_noise_converter_sets_system_prompt_default(mock_target) -> None:
     assert "Grammar error, Delete random letter" in system_arg
 
 
-@pytest.mark.asyncio
 async def test_noise_converter_sets_system_prompt(mock_target) -> None:
     converter = NoiseConverter(converter_target=mock_target, noise="extra random periods")
     await converter.convert_async(prompt="being awesome")
@@ -57,7 +55,6 @@ async def test_noise_converter_sets_system_prompt(mock_target) -> None:
     assert "extra random periods" in system_arg
 
 
-@pytest.mark.asyncio
 async def test_tone_converter_sets_system_prompt(mock_target) -> None:
     converter = ToneConverter(tone="formal", converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
@@ -69,7 +66,6 @@ async def test_tone_converter_sets_system_prompt(mock_target) -> None:
     assert "formal" in system_arg
 
 
-@pytest.mark.asyncio
 async def test_tense_converter_sets_system_prompt(mock_target) -> None:
     converter = TenseConverter(tense="past", converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
@@ -81,7 +77,6 @@ async def test_tense_converter_sets_system_prompt(mock_target) -> None:
     assert "past" in system_arg
 
 
-@pytest.mark.asyncio
 async def test_malicious_question_converter_sets_system_prompt(mock_target) -> None:
     converter = MaliciousQuestionGeneratorConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")

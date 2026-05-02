@@ -120,11 +120,11 @@ _PREFERRED_BEST: dict[str, tuple[str, str]] = {
 
 class ScorerInitializer(PyRITInitializer):
     """
-    Scorer Initializer for registering pre-configured scorers.
+    Instantiates a collection of scorers using targets from the TargetRegistry and adds them to the ScorerRegistry.
 
     This initializer registers all evaluation scorers into the ScorerRegistry.
     Targets are pulled from the TargetRegistry (populated by TargetInitializer),
-    so this initializer must run after the target initializer (enforced via execution_order).
+    so this initializer should be listed after TargetInitializer in the initializers list.
     Scorers that fail to initialize (e.g., due to missing targets) are skipped with a warning.
 
     Every scorer category follows the same pattern:
@@ -143,29 +143,6 @@ class ScorerInitializer(PyRITInitializer):
                 default=["default"],
             ),
         ]
-
-    @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "Scorer Initializer"
-
-    @property
-    def execution_order(self) -> int:
-        """
-        Get the execution order for this initializer.
-
-        Returns 2 to ensure this runs after TargetInitializer (order=1),
-        which populates the TargetRegistry that scorers depend on.
-        """
-        return 2
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Instantiates a collection of scorers using targets from "
-            "the TargetRegistry and adds them to the ScorerRegistry"
-        )
 
     @property
     def required_env_vars(self) -> list[str]:
@@ -387,7 +364,7 @@ class ScorerInitializer(PyRITInitializer):
                 scorer_name = f"likert_{scale.name.lower().removesuffix('_scale')}_gpt4o"
                 self._try_register(
                     name=scorer_name,
-                    factory=lambda s=scale: SelfAskLikertScorer(  # type: ignore[misc]
+                    factory=lambda s=scale: SelfAskLikertScorer(
                         chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
                         likert_scale=s,
                     ),
@@ -491,13 +468,10 @@ class ScorerInitializer(PyRITInitializer):
             name=ACS_WITH_REFUSAL,
             factory=lambda: TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=cast(
-                    "list[TrueFalseScorer]",
-                    [
-                        self._require_dependency(acs, name="acs_threshold"),
-                        TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
-                    ],
-                ),
+                scorers=[
+                    self._require_dependency(acs, name="acs_threshold"),
+                    TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
+                ],
             ),
             required_targets=[acs, refusal],
             tags=composite_tag,
@@ -506,13 +480,10 @@ class ScorerInitializer(PyRITInitializer):
             name=SCALE_AND_REFUSAL,
             factory=lambda: TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=cast(
-                    "list[TrueFalseScorer]",
-                    [
-                        self._require_dependency(scale, name="scale"),
-                        TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
-                    ],
-                ),
+                scorers=[
+                    self._require_dependency(scale, name="scale"),
+                    TrueFalseInverterScorer(scorer=self._require_dependency(refusal, name="refusal")),
+                ],
             ),
             required_targets=[scale, refusal],
             tags=composite_tag,
@@ -608,7 +579,7 @@ class ScorerInitializer(PyRITInitializer):
             PromptChatTarget | None: The chat target instance if found, otherwise None.
         """
         target_registry = TargetRegistry.get_registry_singleton()
-        return target_registry.get_instance_by_name(target_name)  # type: ignore[return-value]
+        return target_registry.get_instance_by_name(target_name)
 
     def _require_dependency(self, value: RequiredDependencyT | None, *, name: str) -> RequiredDependencyT:
         """

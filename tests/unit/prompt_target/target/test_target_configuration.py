@@ -161,7 +161,6 @@ def test_ensure_can_handle_raises_valueerror_for_non_normalizable_capability():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_normalize_async_passthrough_when_all_supported(adapt_all_policy, make_message):
     caps = TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True)
     config = TargetConfiguration(capabilities=caps, policy=adapt_all_policy)
@@ -171,7 +170,6 @@ async def test_normalize_async_passthrough_when_all_supported(adapt_all_policy, 
     assert result[0].message_pieces[0].converted_value == "hello"
 
 
-@pytest.mark.asyncio
 async def test_normalize_async_adapts_system_prompt(adapt_all_policy, make_message):
     caps = TargetCapabilities(supports_multi_turn=True, supports_system_prompt=False)
     config = TargetConfiguration(capabilities=caps, policy=adapt_all_policy)
@@ -187,7 +185,6 @@ async def test_normalize_async_adapts_system_prompt(adapt_all_policy, make_messa
             assert piece.api_role != "system"
 
 
-@pytest.mark.asyncio
 async def test_normalize_async_adapts_multi_turn(adapt_all_policy, make_message):
     caps = TargetCapabilities(supports_multi_turn=False, supports_system_prompt=True)
     config = TargetConfiguration(capabilities=caps, policy=adapt_all_policy)

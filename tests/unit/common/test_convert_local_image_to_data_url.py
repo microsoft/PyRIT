@@ -7,17 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url
 from pyrit.memory.sqlite_memory import SQLiteMemory
 
 
-@pytest.mark.asyncio()
 async def test_convert_image_to_data_url_file_not_found():
     with pytest.raises(FileNotFoundError):
         await convert_local_image_to_data_url("nonexistent.jpg")
 
 
-@pytest.mark.asyncio()
 async def test_convert_image_with_unsupported_extension():
     with NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
@@ -32,7 +30,6 @@ async def test_convert_image_with_unsupported_extension():
     os.remove(tmp_file_name)
 
 
-@pytest.mark.asyncio
 async def test_convert_local_image_to_data_url_unsupported_format():
     # Should raise ValueError for unsupported extension
     with NamedTemporaryFile(suffix=".webp", delete=False) as tmp_file:
@@ -45,14 +42,12 @@ async def test_convert_local_image_to_data_url_unsupported_format():
         os.remove(tmp_file_name)
 
 
-@pytest.mark.asyncio
 async def test_convert_local_image_to_data_url_missing_file():
     # Should raise FileNotFoundError for missing file
     with pytest.raises(FileNotFoundError):
         await convert_local_image_to_data_url("not_a_real_file.jpg")
 
 
-@pytest.mark.asyncio()
 @patch("os.path.exists", return_value=True)
 @patch("mimetypes.guess_type", return_value=("image/jpg", None))
 @patch("pyrit.models.data_type_serializer.ImagePathDataTypeSerializer")

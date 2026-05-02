@@ -71,8 +71,6 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
     assert chats[0].converted_value == "system prompt"
 
 
-@pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_set_system_prompt_adds_memory(
     azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy
 ):
@@ -88,7 +86,6 @@ async def test_set_system_prompt_adds_memory(
     assert chats[0].api_role == "system"
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_with_system_calls_chat_complete(
     azure_openai_target: OpenAIChatTarget,
     openai_response_json: dict,
@@ -127,7 +124,6 @@ async def test_send_prompt_with_system_calls_chat_complete(
         mock_create.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_with_delay(
     azure_openai_target: OpenAIChatTarget,
     openai_response_json: dict,
@@ -206,7 +202,6 @@ def _make_mock_chat_completion(content: str = "response") -> MagicMock:
     return mock
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_history_squash_preserves_metadata_on_normalized_message():
     """
@@ -253,7 +248,6 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_response_preserves_metadata_after_history_squash():
     """
@@ -303,7 +297,6 @@ async def test_response_preserves_metadata_after_history_squash():
     assert response_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_system_squash_preserves_metadata():
     """
@@ -351,7 +344,6 @@ async def test_system_squash_preserves_metadata():
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_history_squash_propagates_lineage_to_all_pieces():
     """
@@ -403,7 +395,6 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
         assert piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
     """
@@ -471,7 +462,6 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
         mock_warn.assert_called_once()
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_no_warning_when_message_count_unchanged():
     """

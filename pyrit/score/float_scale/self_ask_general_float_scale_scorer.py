@@ -5,13 +5,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.models import MessagePiece, Score, UnvalidatedScore
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 
 class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
@@ -24,11 +25,12 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         system_prompt_format_string: str,
         prompt_format_string: Optional[str] = None,
         category: Optional[str] = None,
@@ -52,7 +54,9 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         in the response, the provided `category` argument will be applied.
 
         Args:
-            chat_target (PromptChatTarget): The chat target used to score.
+            chat_target (PromptTarget): The chat target used to score. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
             prompt_format_string (Optional[str]): User prompt template with the same placeholders.
@@ -71,7 +75,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             ValueError: If system_prompt_format_string is not provided or empty.
             ValueError: If min_value is greater than max_value.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
         self._prompt_target = chat_target
         if not system_prompt_format_string:
             raise ValueError("system_prompt_format_string must be provided and non-empty.")
@@ -142,7 +146,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             system_prompt=system_prompt,
             message_value=user_prompt,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
+            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
             category=self._score_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,

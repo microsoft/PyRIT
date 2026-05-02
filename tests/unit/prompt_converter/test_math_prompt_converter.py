@@ -11,7 +11,6 @@ from pyrit.prompt_converter import ConverterResult
 from pyrit.prompt_converter.math_prompt_converter import MathPromptConverter
 
 
-@pytest.mark.asyncio
 async def test_math_prompt_converter_convert_async():
     # Mock the converter target - use MagicMock for synchronous methods
     mock_converter_target = MagicMock()
@@ -69,7 +68,6 @@ async def test_math_prompt_converter_convert_async():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_math_prompt_converter_handles_disallowed_content():
     # Mock the converter target - use MagicMock for synchronous methods
     mock_converter_target = MagicMock()
@@ -124,7 +122,6 @@ async def test_math_prompt_converter_handles_disallowed_content():
     assert result.output_text == expected_output
 
 
-@pytest.mark.asyncio
 async def test_math_prompt_converter_invalid_input_type():
     # Mock the converter target - use MagicMock for synchronous methods
     mock_converter_target = MagicMock()
@@ -147,7 +144,6 @@ async def test_math_prompt_converter_invalid_input_type():
         await converter.convert_async(prompt="Test prompt", input_type="unsupported")  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 async def test_math_prompt_converter_error_handling():
     # Mock the converter target - use MagicMock for synchronous methods
     mock_converter_target = MagicMock()

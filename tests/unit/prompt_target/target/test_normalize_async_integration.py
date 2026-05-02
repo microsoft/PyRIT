@@ -64,7 +64,6 @@ def _create_mock_chat_completion(content: str = "hi") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_openai_chat_target_calls_normalize_async():
     target = OpenAIChatTarget(
@@ -92,7 +91,6 @@ async def test_openai_chat_target_calls_normalize_async():
         assert call_messages[0].get_value() == "hello"
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_openai_chat_target_sends_normalized_to_construct_request():
     """Verify that the normalized (not original) conversation is used for the API body."""
@@ -126,7 +124,6 @@ async def test_openai_chat_target_sends_normalized_to_construct_request():
         assert call_conv[0].get_value() == "adapted"
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_openai_chat_target_memory_not_mutated():
     """Memory-backed conversation must not be altered by normalize_async."""
@@ -175,7 +172,6 @@ async def test_openai_chat_target_memory_not_mutated():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_openai_response_target_calls_normalize_async():
     target = OpenAIResponseTarget(
@@ -218,7 +214,6 @@ async def test_openai_response_target_calls_normalize_async():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_azure_ml_target_calls_normalize_async():
     target = AzureMLChatTarget(
@@ -242,7 +237,6 @@ async def test_azure_ml_target_calls_normalize_async():
         mock_normalize.assert_called_once()
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_azure_ml_target_sends_normalized_to_complete_chat():
     """Normalized (not original) messages should be passed to _complete_chat_async."""
@@ -269,7 +263,6 @@ async def test_azure_ml_target_sends_normalized_to_complete_chat():
         assert call_messages[0].get_value() == "adapted"
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_azure_ml_target_memory_not_mutated():
     """Memory should retain original messages after normalization."""
@@ -363,7 +356,6 @@ def test_azure_ml_message_normalizer_and_custom_config_raises():
         )
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_azure_ml_system_squash_via_configuration_pipeline():
     """End-to-end: GenericSystemSquashNormalizer-equivalent behavior via TargetConfiguration pipeline."""
@@ -410,7 +402,6 @@ async def test_azure_ml_system_squash_via_configuration_pipeline():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_get_normalized_conversation_fetches_history_and_appends_message():
     """The method should fetch history from memory, append the current message, and return them."""
@@ -435,7 +426,6 @@ async def test_get_normalized_conversation_fetches_history_and_appends_message()
     assert result[1].get_value() == "new question"
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_get_normalized_conversation_empty_history():
     """When memory has no history, the result should contain only the current message."""
@@ -457,7 +447,6 @@ async def test_get_normalized_conversation_empty_history():
     assert result[0].get_value() == "hello"
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_get_normalized_conversation_does_not_mutate_memory():
     """The original memory-backed list must not be modified by the method."""
@@ -482,7 +471,6 @@ async def test_get_normalized_conversation_does_not_mutate_memory():
     assert memory_list[0].get_value() == "old"
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_get_normalized_conversation_runs_pipeline():
     """The method should invoke the normalization pipeline on the assembled conversation."""
@@ -522,7 +510,6 @@ async def test_get_normalized_conversation_runs_pipeline():
     assert "system" not in roles
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_get_normalized_conversation_passthrough_when_no_adaptation_needed():
     """When the target supports all capabilities, the pipeline should pass messages through unchanged."""

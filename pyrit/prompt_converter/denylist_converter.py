@@ -10,7 +10,7 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -19,22 +19,22 @@ class DenylistConverter(LLMGenericTextConverter):
     """
     Replaces forbidden words or phrases in a prompt with synonyms using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the conversion (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
     """
 
     @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         system_prompt_template: Optional[SeedPrompt] = None,
         denylist: list[str] | None = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with a target, an optional system prompt template, and a denylist.
 
         Args:
-            converter_target (PromptChatTarget): The target for the prompt conversion.
+            converter_target (PromptTarget): The target for the prompt conversion.
                 Can be omitted if a default has been configured via PyRIT initialization.
             system_prompt_template (Optional[SeedPrompt]): The system prompt template to use for the conversion.
                 If not provided, a default template will be used.

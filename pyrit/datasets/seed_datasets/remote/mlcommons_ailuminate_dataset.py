@@ -49,7 +49,7 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
             "airr_official_1.0_demo_en_us_prompt_set_release.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-    ):
+    ) -> None:
         """
         Initialize the AILuminate dataset loader.
 

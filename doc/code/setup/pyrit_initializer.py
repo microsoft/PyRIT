@@ -20,7 +20,7 @@
 # When `initialize_pyrit_async` is called:
 # 1. Environment files are loaded (`.env`, `.env.local`)
 # 2. Memory database is configured
-# 3. All initializers are sorted by `execution_order` and executed
+# 3. Initializers execute in the order they are passed
 #
 # ## Creating an Initializer
 
@@ -34,20 +34,10 @@ from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 
 class CustomInitializer(PyRITInitializer):
-    @property
-    def name(self) -> str:
-        return "Custom Configuration"
-
-    @property
-    def execution_order(self) -> int:
-        return 2  # Lower numbers run first (default is 1)
+    """Sets custom temperature for OpenAI targets."""
 
     async def initialize_async(self) -> None:
         set_default_value(class_type=OpenAIChatTarget, parameter_name="temperature", value=0.9)
-
-    @property
-    def description(self) -> str:
-        return "Sets custom temperature for OpenAI targets"
 
 
 CustomInitializer()
@@ -100,20 +90,10 @@ from pyrit.common.apply_defaults import set_default_value
 from pyrit.prompt_target import OpenAIChatTarget
 
 class CustomInitializer(PyRITInitializer):
-    @property
-    def name(self) -> str:
-        return "Custom Configuration"
-
-    @property
-    def execution_order(self) -> int:
-        return 2  # Lower numbers run first (default is 1)
+    \"\"\"Sets custom temperature for OpenAI targets.\"\"\"
 
     async def initialize_async(self) -> None:
         set_default_value(class_type=OpenAIChatTarget, parameter_name="temperature", value=0.9)
-
-    @property
-    def description(self) -> str:
-        return "Sets custom temperature for OpenAI targets"
 
 """
 

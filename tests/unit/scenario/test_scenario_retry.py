@@ -210,7 +210,6 @@ def sample_attack_results():
 class TestScenarioRetry:
     """Tests for Scenario retry functionality."""
 
-    @pytest.mark.asyncio
     async def test_no_retry_on_success(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
         """Test that scenario doesn't retry when execution succeeds."""
         # Configure successful execution
@@ -237,7 +236,6 @@ class TestScenarioRetry:
         assert isinstance(result, ScenarioResult)
         assert len(result.attack_results) == 2
 
-    @pytest.mark.asyncio
     async def test_retry_on_failure(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
         """Test that scenario retries on failure up to max_retries."""
         # Configure first run to fail, second to succeed
@@ -271,7 +269,6 @@ class TestScenarioRetry:
         assert isinstance(result, ScenarioResult)
         assert call_count[0] == 2  # Initial attempt + 1 retry
 
-    @pytest.mark.asyncio
     async def test_exhausts_retries_and_fails(self, mock_atomic_attacks, mock_objective_target):
         """Test that scenario fails after exhausting all retries."""
         # Configure all attempts to fail
@@ -295,7 +292,6 @@ class TestScenarioRetry:
         # Verify it attempted max_retries + 1 times (initial + retries)
         assert mock_atomic_attacks[0].run_async.call_count == 3
 
-    @pytest.mark.asyncio
     async def test_no_retry_when_max_retries_zero(self, mock_atomic_attacks, mock_objective_target):
         """Test that scenario doesn't retry when max_retries is 0 (default)."""
         # Configure to fail
@@ -318,7 +314,6 @@ class TestScenarioRetry:
         # Verify it was only called once (no retries)
         mock_atomic_attacks[0].run_async.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_number_tries_increments_on_retry(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
@@ -353,7 +348,6 @@ class TestScenarioRetry:
         assert isinstance(result, ScenarioResult)
         assert result.number_tries == 3  # Failed twice, succeeded on third
 
-    @pytest.mark.asyncio
     async def test_retry_logs_error_with_exception(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target, caplog
     ):
@@ -398,7 +392,6 @@ class TestScenarioRetry:
 class TestScenarioResumption:
     """Tests for Scenario resumption after partial failure."""
 
-    @pytest.mark.asyncio
     async def test_resumes_from_partial_completion_single_attack(self, mock_objective_target):
         """Test that scenario resumes from where it left off when an atomic attack partially completes."""
         objectives = ["obj1", "obj2", "obj3", "obj4"]
@@ -442,7 +435,6 @@ class TestScenarioResumption:
         # All objectives should be executed across both attempts
         assert "obj1" in executed_objectives or "obj3" in executed_objectives
 
-    @pytest.mark.asyncio
     async def test_resumes_skipping_completed_atomic_attacks(self, mock_objective_target):
         """Test that scenario skips completed atomic attacks on retry."""
         # Create 3 atomic attacks
@@ -506,7 +498,6 @@ class TestScenarioResumption:
         assert "attack_2" in result.attack_results
         assert "attack_3" in result.attack_results
 
-    @pytest.mark.asyncio
     async def test_resumes_with_multiple_failures_across_attacks(self, mock_objective_target):
         """Test resumption when multiple atomic attacks fail at different stages."""
         # Create 4 atomic attacks

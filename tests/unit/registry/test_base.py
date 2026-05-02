@@ -4,6 +4,7 @@
 from dataclasses import dataclass, field
 
 from pyrit.registry.base import ClassRegistryEntry, _matches_filters
+from pyrit.registry.class_registries.base_class_registry import ClassEntry
 
 
 @dataclass(frozen=True)
@@ -11,6 +12,56 @@ class MetadataWithTags(ClassRegistryEntry):
     """Test metadata with a tags field for list filtering tests."""
 
     tags: tuple[str, ...] = field(kw_only=True)
+
+
+class TestDescriptionFromDocstring:
+    """Tests for ClassRegistryEntry.description_from_docstring."""
+
+    def test_extracts_docstring_and_normalizes_whitespace(self):
+        class MyClass:
+            """This  is\n  a   docstring."""
+
+        result = ClassRegistryEntry.description_from_docstring(MyClass)
+        assert result == "This is a docstring."
+
+    def test_returns_fallback_when_no_docstring(self):
+        class NoDoc:
+            pass
+
+        result = ClassRegistryEntry.description_from_docstring(NoDoc, fallback="default")
+        assert result == "default"
+
+    def test_returns_fallback_when_empty_docstring(self):
+        class EmptyDoc:
+            """ """
+
+        result = ClassRegistryEntry.description_from_docstring(EmptyDoc, fallback="fallback")
+        assert result == "fallback"
+
+    def test_returns_empty_string_when_no_docstring_and_no_fallback(self):
+        class NoDoc:
+            pass
+
+        result = ClassRegistryEntry.description_from_docstring(NoDoc)
+        assert result == ""
+
+
+class TestClassEntryGetDescription:
+    """Tests for ClassEntry.get_description."""
+
+    def test_returns_docstring_description(self):
+        class Documented:
+            """A documented class."""
+
+        entry = ClassEntry(registered_class=Documented)
+        assert entry.get_description() == "A documented class."
+
+    def test_returns_fallback_when_no_docstring(self):
+        class Undocumented:
+            pass
+
+        entry = ClassEntry(registered_class=Undocumented)
+        assert entry.get_description(fallback="No description available") == "No description available"
 
 
 class TestMatchesFilters:

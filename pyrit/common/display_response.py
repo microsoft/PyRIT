@@ -60,6 +60,6 @@ async def display_image_response(response_piece: MessagePiece, safe_outputs: boo
             image = image.rotate(90.0, expand=True, fillcolor=(255, 255, 255))
 
         # Jupyter built-in display function only works in notebooks.
-        display(image)  # type: ignore[name-defined] # noqa: F821
+        display(image)  # type: ignore[ty:unresolved-reference] # noqa: F821
     if response_piece.response_error == "blocked":
         logger.info("---\nContent blocked, cannot show a response.\n---")

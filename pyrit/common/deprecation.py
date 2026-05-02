@@ -26,13 +26,13 @@ def print_deprecation_message(
     """
     # Get the qualified name for old item
     if callable(old_item) or isinstance(old_item, type):
-        old_name = f"{old_item.__module__}.{old_item.__qualname__}"
+        old_name = f"{old_item.__module__}.{old_item.__qualname__}"  # type: ignore[ty:unresolved-attribute]
     else:
         old_name = old_item
 
     # Get the qualified name for new item
     if callable(new_item) or isinstance(new_item, type):
-        new_name = f"{new_item.__module__}.{new_item.__qualname__}"
+        new_name = f"{new_item.__module__}.{new_item.__qualname__}"  # type: ignore[ty:unresolved-attribute]
     else:
         new_name = new_item
 

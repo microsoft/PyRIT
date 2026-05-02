@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import Base64Converter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_base64_converter_default():
     converter = Base64Converter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_base64_converter_default():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_base64_converter_urlsafe():
     converter = Base64Converter(encoding_func="urlsafe_b64encode")
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -24,7 +22,6 @@ async def test_base64_converter_urlsafe():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_base64_converter_b16():
     converter = Base64Converter(encoding_func="b16encode")
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -33,7 +30,6 @@ async def test_base64_converter_b16():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_base64_converter_empty():
     converter = Base64Converter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -42,7 +38,6 @@ async def test_base64_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_base64_converter_input_not_supported():
     converter = Base64Converter()
     with pytest.raises(ValueError):

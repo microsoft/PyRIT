@@ -161,23 +161,29 @@ async function mockHistoryAPIs(
         return;
       }
       const url = new URL(route.request().url());
-      const attackType = url.searchParams.get("attack_type");
+      const attackTypeParams = url.searchParams.getAll("attack_types");
       const outcome = url.searchParams.get("outcome");
       const labelParams = url.searchParams.getAll("label");
 
       let filtered = [...attacks];
-      if (attackType) {
-        filtered = filtered.filter((a) => a.attack_type === attackType);
+      if (attackTypeParams.length > 0) {
+        filtered = filtered.filter((a) => attackTypeParams.includes(a.attack_type));
       }
       if (outcome) {
         filtered = filtered.filter((a) => a.outcome === outcome);
       }
       if (labelParams.length > 0) {
+        // Group repeated label keys into OR-sets; combine across keys with AND.
+        const grouped = new Map<string, string[]>();
+        for (const lp of labelParams) {
+          const [key, val] = lp.split(":");
+          if (!key) continue;
+          const bucket = grouped.get(key) ?? [];
+          bucket.push(val ?? "");
+          grouped.set(key, bucket);
+        }
         filtered = filtered.filter((a) =>
-          labelParams.every((lp) => {
-            const [key, val] = lp.split(":");
-            return a.labels[key] === val;
-          }),
+          Array.from(grouped.entries()).every(([key, vals]) => vals.includes(a.labels[key] ?? "")),
         );
       }
 
@@ -210,10 +216,11 @@ test.describe("Attack History Filters", () => {
     await expect(page.getByTestId("attack-row-atk-alice-a")).toBeVisible();
     await expect(page.getByTestId("attack-row-atk-bob-b")).toBeVisible();
 
-    // Open the attack class dropdown and select SingleTurnAttack
-    const dropdown = page.getByTestId("attack-class-filter");
+    // Open the attack type combobox. Multiselect Combobox renders items as
+    // role="menuitemcheckbox", not role="option".
+    const dropdown = page.getByTestId("attack-type-filter");
     await dropdown.click();
-    await page.getByRole("option", { name: "SingleTurnAttack" }).click();
+    await page.getByRole("menuitemcheckbox", { name: "SingleTurnAttack" }).click();
 
     // Only SingleTurnAttack attacks should be visible
     await expect(page.getByTestId("attack-row-atk-alice-a")).toBeVisible({ timeout: 5_000 });
@@ -243,10 +250,11 @@ test.describe("Attack History Filters", () => {
     await mockHistoryAPIs(page);
     await goToHistory(page);
 
-    // Open operator dropdown and select "bob"
+    // Open the operator combobox. Multiselect Combobox renders items as
+    // role="menuitemcheckbox", not role="option".
     const operatorDropdown = page.getByTestId("operator-filter");
     await operatorDropdown.click();
-    await page.getByRole("option", { name: "bob" }).click();
+    await page.getByRole("menuitemcheckbox", { name: "bob" }).click();
 
     // Only bob's attacks
     await expect(page.getByTestId("attack-row-atk-bob-b")).toBeVisible({ timeout: 5_000 });

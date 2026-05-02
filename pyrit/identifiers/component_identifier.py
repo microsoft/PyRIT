@@ -267,7 +267,7 @@ class ComponentIdentifier:
                 new_item="ComponentIdentifier",
                 removed_in="0.14.0",
             )
-            return cls.from_dict(value)
+            return cls.from_dict(value)  # type: ignore[ty:invalid-argument-type]
         raise TypeError(f"Expected ComponentIdentifier or dict, got {type(value).__name__}")
 
     def to_dict(self, *, max_value_length: Optional[int] = None) -> dict[str, Any]:
@@ -437,9 +437,9 @@ class ComponentIdentifier:
         for child_val in self.children.values():
             children_list = child_val if isinstance(child_val, list) else [child_val]
             for child in children_list:
-                if child.eval_hash:
-                    hashes.add(child.eval_hash)
-                hashes.update(child._collect_child_eval_hashes())
+                if child.eval_hash:  # type: ignore[ty:unresolved-attribute]
+                    hashes.add(child.eval_hash)  # type: ignore[ty:unresolved-attribute]
+                hashes.update(child._collect_child_eval_hashes())  # type: ignore[ty:unresolved-attribute]
         return hashes
 
     @classmethod

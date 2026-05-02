@@ -10,7 +10,6 @@ from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.score import MarkdownInjectionScorer
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "text",
     [
@@ -25,7 +24,6 @@ async def test_md_injection_detected(text: str, patch_central_database):
     assert score.get_value() is True
 
 
-@pytest.mark.asyncio
 async def test_md_injection_not_detected(patch_central_database):
     classifier = MarkdownInjectionScorer()
     text = "this is a test"
@@ -33,7 +31,6 @@ async def test_md_injection_not_detected(patch_central_database):
     assert score[0].get_value() is False
 
 
-@pytest.mark.asyncio
 async def test_md_injection_adds_to_memory():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):

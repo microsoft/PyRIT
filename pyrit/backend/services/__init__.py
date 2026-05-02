@@ -15,6 +15,10 @@ from pyrit.backend.services.converter_service import (
     ConverterService,
     get_converter_service,
 )
+from pyrit.backend.services.scenario_service import (
+    ScenarioService,
+    get_scenario_service,
+)
 from pyrit.backend.services.target_service import (
     TargetService,
     get_target_service,
@@ -25,6 +29,8 @@ __all__ = [
     "get_attack_service",
     "ConverterService",
     "get_converter_service",
+    "ScenarioService",
+    "get_scenario_service",
     "TargetService",
     "get_target_service",
 ]

@@ -221,7 +221,7 @@ class PromptMemoryEntry(Base):
         foreign_keys="ScoreEntry.prompt_request_response_id",
     )
 
-    def __init__(self, *, entry: MessagePiece):
+    def __init__(self, *, entry: MessagePiece) -> None:
         """
         Initialize a PromptMemoryEntry from a MessagePiece.
 
@@ -252,14 +252,14 @@ class PromptMemoryEntry(Base):
         )
 
         self.original_value = entry.original_value
-        self.original_value_data_type = entry.original_value_data_type  # type: ignore[assignment]
+        self.original_value_data_type = entry.original_value_data_type
         self.original_value_sha256 = entry.original_value_sha256
 
         self.converted_value = entry.converted_value
-        self.converted_value_data_type = entry.converted_value_data_type  # type: ignore[assignment]
+        self.converted_value_data_type = entry.converted_value_data_type
         self.converted_value_sha256 = entry.converted_value_sha256
 
-        self.response_error = entry.response_error  # type: ignore[assignment]
+        self.response_error = entry.response_error
 
         self.original_prompt_id = entry.original_prompt_id
         self.pyrit_version = pyrit.__version__
@@ -387,7 +387,7 @@ class ScoreEntry(Base):
     pyrit_version = mapped_column(String, nullable=True)
     prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
 
-    def __init__(self, *, entry: Score):
+    def __init__(self, *, entry: Score) -> None:
         """
         Initialize a ScoreEntry from a Score object.
 
@@ -400,7 +400,7 @@ class ScoreEntry(Base):
         self.score_type = entry.score_type
         self.score_category = entry.score_category
         self.score_rationale = entry.score_rationale
-        self.score_metadata = entry.score_metadata  # type: ignore[assignment]
+        self.score_metadata = entry.score_metadata
         # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
         normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
@@ -441,7 +441,7 @@ class ScoreEntry(Base):
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
-            scorer_class_identifier=scorer_identifier,  # type: ignore[arg-type]
+            scorer_class_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
             message_piece_id=self.prompt_request_response_id,
             timestamp=_ensure_utc(self.timestamp),
             objective=self.objective,
@@ -565,7 +565,7 @@ class SeedEntry(Base):
     role: Mapped[ChatMessageRole] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
 
-    def __init__(self, *, entry: Seed):
+    def __init__(self, *, entry: Seed) -> None:
         """
         Initialize a SeedEntry from a Seed object.
 
@@ -586,14 +586,14 @@ class SeedEntry(Base):
         self.data_type = entry.data_type
         self.name = entry.name
         self.dataset_name = entry.dataset_name
-        self.harm_categories = entry.harm_categories  # type: ignore[assignment]
+        self.harm_categories = entry.harm_categories
         self.description = entry.description
         self.authors = list(entry.authors) if entry.authors else None
         self.groups = list(entry.groups) if entry.groups else None
         self.source = entry.source
         self.date_added = entry.date_added
         self.added_by = entry.added_by
-        self.prompt_metadata = entry.metadata  # type: ignore[assignment]
+        self.prompt_metadata = entry.metadata
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
 
@@ -601,11 +601,11 @@ class SeedEntry(Base):
         if isinstance(entry, SeedPrompt):
             self.parameters = list(entry.parameters) if entry.parameters else None
             self.sequence = entry.sequence
-            self.role = entry.role  # type: ignore[assignment]
+            self.role = entry.role
         else:
             self.parameters = None
             self.sequence = None
-            self.role = None  # type: ignore[assignment]
+            self.role = None
 
     def get_seed(self) -> Seed:
         """
@@ -697,6 +697,7 @@ class AttackResultEntry(Base):
         outcome (AttackOutcome): The outcome of the attack, indicating success, failure, or undetermined.
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
+        labels (dict[str, str]): Optional labels associated with the attack result entry.
         pruned_conversation_ids (List[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (List[str]): List of conversation IDs used for adversarial chat.
         timestamp (DateTime): The timestamp of the attack result entry.
@@ -728,6 +729,7 @@ class AttackResultEntry(Base):
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, Union[str, int, float, bool]]] = mapped_column(JSON, nullable=True)
+    labels: Mapped[dict[str, str]] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)
@@ -744,7 +746,7 @@ class AttackResultEntry(Base):
         foreign_keys=[last_score_id],
     )
 
-    def __init__(self, *, entry: AttackResult):
+    def __init__(self, *, entry: AttackResult) -> None:
         """
         Initialize an AttackResultEntry from an AttackResult object.
 
@@ -783,6 +785,7 @@ class AttackResultEntry(Base):
         self.outcome = entry.outcome.value
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
+        self.labels = entry.labels or {}
 
         # Persist conversation references by type
         self.pruned_conversation_ids = [
@@ -793,7 +796,7 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
-        self.timestamp = datetime.now(tz=timezone.utc)
+        self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
         self.pyrit_version = pyrit.__version__
 
     @staticmethod
@@ -894,6 +897,8 @@ class AttackResultEntry(Base):
             outcome_reason=self.outcome_reason,
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
+            timestamp=_ensure_utc(self.timestamp) or datetime.now(tz=timezone.utc),
+            labels=self.labels or {},
         )
 
 
@@ -955,7 +960,7 @@ class ScenarioResultEntry(Base):
     completion_time = mapped_column(DateTime, nullable=False)
     timestamp = mapped_column(DateTime, nullable=False)
 
-    def __init__(self, *, entry: ScenarioResult):
+    def __init__(self, *, entry: ScenarioResult) -> None:
         """
         Initialize a ScenarioResultEntry from a ScenarioResult object.
 
@@ -1046,7 +1051,7 @@ class ScenarioResultEntry(Base):
             scenario_identifier=scenario_identifier,
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
-            objective_scorer_identifier=scorer_identifier,  # type: ignore[arg-type]
+            objective_scorer_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
             scenario_run_state=self.scenario_run_state,
             labels=self.labels,
             number_tries=self.number_tries,

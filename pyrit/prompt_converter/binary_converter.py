@@ -30,7 +30,7 @@ class BinaryConverter(WordLevelConverter):
         *,
         bits_per_char: BinaryConverter.BitsPerChar = BitsPerChar.BITS_16,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified bits per character and selection strategy.
 

@@ -135,7 +135,6 @@ class TestTransparencyAttackConverter:
         assert la_image[0, 0, 0] == expected_gray_value  # L (Luminance)
         assert la_image[0, 0, 1] == int(0.8 * 255)  # A (Alpha)
 
-    @pytest.mark.asyncio
     async def test_save_blended_image(self, sample_benign_image):
         with patch("pyrit.prompt_converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
             mock_serializer = MagicMock()
@@ -154,7 +153,6 @@ class TestTransparencyAttackConverter:
             mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path")
             mock_serializer.save_b64_image.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_convert_async_successful(self, sample_benign_image, sample_attack_image):
         with patch("pyrit.prompt_converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
             mock_serializer = MagicMock()
@@ -176,7 +174,6 @@ class TestTransparencyAttackConverter:
             assert result.output_type == "image_path"
             mock_serializer.save_b64_image.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_convert_async_early_convergence(self, sample_benign_image, sample_attack_image):
         with patch("pyrit.prompt_converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
             mock_serializer = MagicMock()

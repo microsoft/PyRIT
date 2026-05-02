@@ -19,7 +19,6 @@ def azure_blob_storage_io():
     return AzureBlobStorageIO(container_url="dummy")
 
 
-@pytest.mark.asyncio
 async def test_disk_storage_io_read_file():
     storage = DiskStorageIO()
     path = "sample.txt"
@@ -34,7 +33,6 @@ async def test_disk_storage_io_read_file():
         mock_open.assert_called_once_with(Path(path), "rb")
 
 
-@pytest.mark.asyncio
 async def test_disk_storage_io_write_file():
     storage = DiskStorageIO()
     path = "sample.txt"
@@ -49,7 +47,6 @@ async def test_disk_storage_io_write_file():
         mock_file.write.assert_called_once_with(content)
 
 
-@pytest.mark.asyncio
 async def test_disk_storage_io_path_exists():
     storage = DiskStorageIO()
     path = "sample.txt"
@@ -60,7 +57,6 @@ async def test_disk_storage_io_path_exists():
         mock_exists.assert_called_once_with(Path(path))
 
 
-@pytest.mark.asyncio
 async def test_disk_storage_io_is_file():
     storage = DiskStorageIO()
     path = "sample.txt"
@@ -71,7 +67,6 @@ async def test_disk_storage_io_is_file():
         mock_isfile.assert_called_once_with(Path(path))
 
 
-@pytest.mark.asyncio
 async def test_disk_storage_io_create_directory_if_not_exists():
     storage = DiskStorageIO()
     directory_path = "sample_dir"
@@ -82,7 +77,6 @@ async def test_disk_storage_io_create_directory_if_not_exists():
         mock_mkdir.assert_called_once_with(Path(directory_path), exist_ok=True)
 
 
-@pytest.mark.asyncio
 async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):
     azure_blob_storage_io._client_async = AsyncMock()  # Use Mock since get_blob_client is sync
 
@@ -101,7 +95,6 @@ async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):
     assert result == b"Test file content"
 
 
-@pytest.mark.asyncio
 async def test_azure_blob_storage_io_read_file_with_relative_path(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     azure_blob_storage_io._client_async = mock_container_client
@@ -120,7 +113,6 @@ async def test_azure_blob_storage_io_read_file_with_relative_path(azure_blob_sto
     mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/sample.png")
 
 
-@pytest.mark.asyncio
 async def test_azure_blob_storage_io_write_file():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     azure_blob_storage_io = AzureBlobStorageIO(
@@ -148,7 +140,6 @@ async def test_azure_blob_storage_io_write_file():
         )
 
 
-@pytest.mark.asyncio
 async def test_azure_blob_storage_io_write_file_with_relative_path():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     azure_blob_storage_io = AzureBlobStorageIO(
@@ -171,7 +162,6 @@ async def test_azure_blob_storage_io_write_file_with_relative_path():
         )
 
 
-@pytest.mark.asyncio
 async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_token():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     sas_token = "explicit-sas-token"
@@ -180,9 +170,9 @@ async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_t
     mock_container_client = AsyncMock()
 
     with (
-        patch("pyrit.models.storage_io.AzureStorageAuth.get_sas_token", new_callable=AsyncMock) as mock_get_sas_token,
+        patch("pyrit.auth.AzureStorageAuth.get_sas_token", new_callable=AsyncMock) as mock_get_sas_token,
         patch(
-            "pyrit.models.storage_io.AsyncContainerClient.from_container_url", return_value=mock_container_client
+            "azure.storage.blob.aio.ContainerClient.from_container_url", return_value=mock_container_client
         ) as mock_from_container_url,
     ):
         await azure_blob_storage_io._create_container_client_async()
@@ -192,7 +182,6 @@ async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_t
     assert azure_blob_storage_io._client_async is mock_container_client
 
 
-@pytest.mark.asyncio
 async def test_azure_storage_io_path_exists(azure_blob_storage_io):
     azure_blob_storage_io._client_async = AsyncMock()
 
@@ -206,7 +195,6 @@ async def test_azure_storage_io_path_exists(azure_blob_storage_io):
     assert exists is True
 
 
-@pytest.mark.asyncio
 async def test_azure_storage_io_path_exists_with_relative_path(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     azure_blob_storage_io._client_async = mock_container_client
@@ -223,7 +211,6 @@ async def test_azure_storage_io_path_exists_with_relative_path(azure_blob_storag
     mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/blob_name.txt")
 
 
-@pytest.mark.asyncio
 async def test_azure_storage_io_is_file(azure_blob_storage_io):
     azure_blob_storage_io._client_async = AsyncMock()
 
@@ -238,7 +225,6 @@ async def test_azure_storage_io_is_file(azure_blob_storage_io):
     assert is_file is True
 
 
-@pytest.mark.asyncio
 async def test_azure_storage_io_is_file_with_relative_path(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     azure_blob_storage_io._client_async = mock_container_client
@@ -303,7 +289,6 @@ def test_resolve_blob_name_with_path_object(azure_blob_storage_io):
     assert result == "dir1/dir2/file.txt"
 
 
-@pytest.mark.asyncio
 async def test_upload_blob_raises_when_client_async_none():
     obj = AzureBlobStorageIO.__new__(AzureBlobStorageIO)
     obj._client_async = None
@@ -311,7 +296,6 @@ async def test_upload_blob_raises_when_client_async_none():
         await obj._upload_blob_async(file_name="test.txt", data=b"data", content_type="text/plain")
 
 
-@pytest.mark.asyncio
 async def test_read_file_lazy_initializes_client(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     mock_blob_client = AsyncMock()
@@ -335,7 +319,6 @@ async def test_read_file_lazy_initializes_client(azure_blob_storage_io):
     assert result == b"content"
 
 
-@pytest.mark.asyncio
 async def test_write_file_lazy_initializes_client(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     mock_container_client.close = AsyncMock()
@@ -353,7 +336,6 @@ async def test_write_file_lazy_initializes_client(azure_blob_storage_io):
     mock_create.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_path_exists_lazy_initializes_client(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     mock_blob_client = AsyncMock()
@@ -375,7 +357,6 @@ async def test_path_exists_lazy_initializes_client(azure_blob_storage_io):
     assert result is True
 
 
-@pytest.mark.asyncio
 async def test_is_file_lazy_initializes_client(azure_blob_storage_io):
     mock_container_client = AsyncMock()
     mock_blob_client = AsyncMock()

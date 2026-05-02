@@ -97,7 +97,6 @@ class TestAzureSpeechAudioToTextConverter:
         assert converter.input_supported("image_path") is False
         assert converter.input_supported("audio_path") is True
 
-    @pytest.mark.asyncio
     @patch(
         "pyrit.common.default_values.get_required_value",
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
@@ -108,7 +107,6 @@ class TestAzureSpeechAudioToTextConverter:
         with pytest.raises(FileNotFoundError):
             assert await converter.convert_async(prompt=prompt, input_type="audio_path")
 
-    @pytest.mark.asyncio
     @patch(
         "pyrit.common.default_values.get_required_value",
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
@@ -175,7 +173,6 @@ class TestAzureSpeechAudioToTextConverter:
         assert converter._azure_speech_key is None
         assert converter._azure_speech_resource_id == "test_resource_id"
 
-    @pytest.mark.asyncio
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
         "pyrit.common.default_values.get_required_value",
@@ -200,7 +197,6 @@ class TestAzureSpeechAudioToTextConverter:
         )
         MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="test_region")
 
-    @pytest.mark.asyncio
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
         "pyrit.common.default_values.get_required_value",
@@ -234,7 +230,6 @@ class TestAzureSpeechAudioToTextConverter:
         with pytest.raises(ValueError, match="AZURE_SPEECH_RESOURCE_ID"):
             AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key=my_provider)
 
-    @pytest.mark.asyncio
     @patch(
         "pyrit.prompt_converter.azure_speech_audio_to_text_converter.get_speech_config_async",
         new_callable=AsyncMock,

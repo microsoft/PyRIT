@@ -166,7 +166,6 @@ class TestFlipAttackParamsType:
 class TestFlipAttackSetup:
     """Tests for the setup phase"""
 
-    @pytest.mark.asyncio
     async def test_setup_adds_system_prompt_to_context(self, flip_attack, basic_context):
         """Test that setup adds the system prompt to prepended conversation"""
         flip_attack._conversation_manager = MagicMock()
@@ -178,7 +177,6 @@ class TestFlipAttackSetup:
         assert len(basic_context.prepended_conversation) == 1
         assert basic_context.prepended_conversation[0] == flip_attack._system_prompt
 
-    @pytest.mark.asyncio
     async def test_setup_updates_conversation_without_converters(self, flip_attack, basic_context):
         """Test that conversation state is updated without converters for system prompt"""
         flip_attack._conversation_manager = MagicMock()
@@ -203,7 +201,6 @@ class TestFlipAttackSetup:
 class TestFlipAttackExecution:
     """Tests for attack execution"""
 
-    @pytest.mark.asyncio
     async def test_perform_attack_formats_objective_correctly(self, flip_attack, basic_context):
         """Test that the objective is formatted with the special TASK format"""
         # basic_context fixture already has objective="How can I kill a Python process?"
@@ -239,7 +236,6 @@ class TestFlipAttackExecution:
 class TestAttackLifecycle:
     """Tests for the complete FlipAttack lifecycle (execute_async)"""
 
-    @pytest.mark.asyncio
     async def test_execute_async_successful_lifecycle(self, mock_objective_target, basic_context):
         attack = FlipAttack(objective_target=mock_objective_target)
 

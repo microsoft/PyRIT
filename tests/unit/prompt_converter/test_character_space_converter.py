@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import CharacterSpaceConverter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_character_space_basic():
     converter = CharacterSpaceConverter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -15,7 +14,6 @@ async def test_character_space_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_character_space_removes_punctuation():
     converter = CharacterSpaceConverter()
     result = await converter.convert_async(prompt="hello!", input_type="text")
@@ -26,7 +24,6 @@ async def test_character_space_removes_punctuation():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_character_space_with_spaces():
     converter = CharacterSpaceConverter()
     result = await converter.convert_async(prompt="hi there", input_type="text")
@@ -36,7 +33,6 @@ async def test_character_space_with_spaces():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_character_space_empty():
     converter = CharacterSpaceConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -45,7 +41,6 @@ async def test_character_space_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_character_space_input_not_supported():
     converter = CharacterSpaceConverter()
     with pytest.raises(ValueError):

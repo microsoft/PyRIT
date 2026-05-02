@@ -9,7 +9,6 @@ the pre-defined datasets in PyRIT. These are meant as a starting point only.
 """
 
 import logging
-import textwrap
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
@@ -20,30 +19,15 @@ logger = logging.getLogger(__name__)
 
 
 class LoadDefaultDatasets(PyRITInitializer):
-    """Load default datasets for all registered scenarios."""
+    """
+    Default dataset loader for scenarios.
 
-    @property
-    def name(self) -> str:
-        """Return the name of this initializer."""
-        return "Default Dataset Loader for Scenarios"
+    Uses the DatasetLoader to load default datasets into memory for all registered scenarios.
+    This will enable all scenarios to run. Datasets can be customized in memory.
 
-    @property
-    def execution_order(self) -> int:
-        """Should be executed after most initializers."""
-        return 10
-
-    @property
-    def description(self) -> str:
-        """Return a description of this initializer."""
-        return textwrap.dedent(
-            """
-                This configuration uses the DatasetLoader to load default datasets into memory.
-                This will enable all scenarios to run. Datasets can be customized in memory.
-
-                Note: if you are using persistent memory, avoid calling this every time as datasets
-                can take time to load.
-            """
-        ).strip()
+    Note: if you are using persistent memory, avoid calling this every time as datasets
+    can take time to load.
+    """
 
     @property
     def required_env_vars(self) -> list[str]:
