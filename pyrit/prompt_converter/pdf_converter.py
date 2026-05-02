@@ -80,7 +80,7 @@ class PDFConverter(PromptConverter):
 
         # Keeping the user's path here
         self._existing_pdf_path: Optional[Path] = existing_pdf
-        # We store the file data in a separate BytesIO because of a mypy error
+        # We store the file data in a separate BytesIO for type checker compatibility
         self._existing_pdf_bytes: Optional[BytesIO] = None
 
         self._injection_items = injection_items or []

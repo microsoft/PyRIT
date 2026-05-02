@@ -8,9 +8,9 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union, cast
+from typing import Any, Literal, Optional, TypeVar, Union, cast
 
-from sqlalchemy import and_, create_engine, func, or_, text
+from sqlalchemy import and_, create_engine, exists, func, or_, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
@@ -61,7 +61,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         db_path: Optional[Union[Path, str]] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the SQLiteMemory instance.
 
@@ -142,21 +142,37 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
         return result
 
-    def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[TextClause]:
+    def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[Any]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by memory labels.
         For SQLite, we use JSON_EXTRACT function to handle JSON fields.
 
+        Matches if labels are on the PromptMemoryEntry itself OR on any
+        AttackResultEntry that shares the same conversation_id.
+
         Returns:
             list: A list of SQLAlchemy conditions.
         """
-        # For SQLite, we use JSON_EXTRACT with text() and bindparams similar to Azure SQL approach
-        json_conditions = " AND ".join([f"JSON_EXTRACT(labels, '$.{key}') = :{key}" for key in memory_labels])
+        per_key_pme_conditions = []
+        per_key_are_conditions = []
+        for key, value in memory_labels.items():
+            pme_col = func.json_extract(PromptMemoryEntry.labels, f"$.{key}")
+            per_key_pme_conditions.append(pme_col == str(value))
+            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            per_key_are_conditions.append(are_col == str(value))
 
-        # Create SQL condition using SQLAlchemy's text() with bindparams
-        # for safe parameter passing, preventing SQL injection
-        condition = text(json_conditions).bindparams(**{key: str(value) for key, value in memory_labels.items()})
-        return [condition]
+        pme_match = and_(
+            PromptMemoryEntry.labels.isnot(None),
+            *per_key_pme_conditions,
+        )
+        are_match = exists().where(
+            and_(
+                AttackResultEntry.conversation_id == PromptMemoryEntry.conversation_id,
+                AttackResultEntry.labels.isnot(None),
+                *per_key_are_conditions,
+            )
+        )
+        return [or_(pme_match, are_match)]
 
     def _get_message_pieces_prompt_metadata_conditions(
         self, *, prompt_metadata: dict[str, Union[str, int]]
@@ -228,6 +244,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         property_path: str,
         array_element_path: str | None = None,
         array_to_match: Sequence[str],
+        match_mode: Literal["all", "any"] = "all",
     ) -> Any:
         """
         Return a SQLite DB condition for matching an array at a given path within a JSON object.
@@ -237,8 +254,12 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             property_path (str): The JSON path for the target array.
             array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
-                For a match, ALL values in this array must be present in the JSON array.
-                If `array_to_match` is empty, the condition matches only if the target is also an empty array or None.
+                Combination semantics for multiple entries are controlled by ``match_mode``.
+                If ``array_to_match`` is empty, the condition matches only if the target is also an
+                empty array or None (overloaded "absence" semantics, regardless of ``match_mode``).
+            match_mode (Literal["all", "any"]): How to combine multiple entries in ``array_to_match``.
+                ``"all"`` (default) requires every listed value to be present in the JSON array.
+                ``"any"`` requires at least one listed value to be present.
 
         Returns:
             Any: A database-specific SQLAlchemy condition.
@@ -272,8 +293,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             )
             bindparams_dict[mv_param] = match_value.lower()
 
-        combined = " AND ".join(conditions)
-        return text(combined).bindparams(**bindparams_dict)
+        joiner = " OR " if match_mode == "any" else " AND "
+        combined = joiner.join(conditions)
+        return text(f"({combined})").bindparams(**bindparams_dict)
 
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
@@ -336,7 +358,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     return query.distinct().all()
                 return query.all()
             except SQLAlchemyError as e:
-                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[attr-defined]
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
                 raise
 
     def _insert_entry(self, entry: Base) -> None:
@@ -399,7 +421,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[attr-defined]
+                    entry_in_session = session.get(type(entry), entry.id)
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():
@@ -563,7 +585,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             file_extension = f".{export_type}"
             file_path = DB_DATA_PATH / f"{table_name}{file_extension}"
             # Convert to list for exporter compatibility
-            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore[arg-type]
+            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """
@@ -573,10 +595,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: A SQLAlchemy subquery for filtering by targeted harm categories.
         """
-        from sqlalchemy import and_, exists, func
-
-        from pyrit.memory.memory_models import AttackResultEntry, PromptMemoryEntry
-
         targeted_harm_categories_subquery = exists().where(
             and_(
                 PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
@@ -594,28 +612,44 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         )
         return targeted_harm_categories_subquery  # noqa: RET504
 
-    def _get_attack_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         SQLite implementation for filtering AttackResults by labels.
         Uses json_extract() function specific to SQLite.
 
+        Matches if labels are on any associated PromptMemoryEntry OR directly
+        on the AttackResultEntry itself.
+
+        Keys are AND-combined. For each key, a string value is an equality match;
+        a sequence value is an OR-within-key match (any listed value matches).
+        Empty sequences are no-ops (no constraint on that key).
+
         Returns:
-            Any: A SQLAlchemy subquery for filtering by labels.
+            Any: A SQLAlchemy condition for filtering by labels.
         """
-        from sqlalchemy import and_, exists, func
+        per_key_pme_conditions = []
+        per_key_are_conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            pme_col = func.json_extract(PromptMemoryEntry.labels, f"$.{key}")
+            per_key_pme_conditions.append(pme_col.in_(values))
+            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            per_key_are_conditions.append(are_col.in_(values))
 
-        from pyrit.memory.memory_models import AttackResultEntry, PromptMemoryEntry
-
-        labels_subquery = exists().where(
+        pme_match = exists().where(
             and_(
                 PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
                 PromptMemoryEntry.labels.isnot(None),
-                and_(
-                    *[func.json_extract(PromptMemoryEntry.labels, f"$.{key}") == value for key, value in labels.items()]
-                ),
+                and_(*per_key_pme_conditions),
             )
         )
-        return labels_subquery  # noqa: RET504
+        are_match = and_(
+            AttackResultEntry.labels.isnot(None),
+            *per_key_are_conditions,
+        )
+        return or_(pme_match, are_match)
 
     def get_unique_attack_class_names(self) -> list[str]:
         """

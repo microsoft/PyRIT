@@ -88,7 +88,6 @@ def test_image_rotation_converter_initialization_fill_color_validation():
         ("WEBP", "PNG", "PNG"),
     ],
 )
-@pytest.mark.asyncio
 async def test_image_rotation_converter_format_preservation_and_conversion(
     sample_image_bytes,
     input_format,
@@ -128,7 +127,6 @@ async def test_image_rotation_converter_format_preservation_and_conversion(
         ("TIFF", "JPEG", "JPEG"),
     ],
 )
-@pytest.mark.asyncio
 async def test_image_rotation_converter_transparency_handling(
     sample_transparent_image_bytes,
     input_format,
@@ -150,7 +148,6 @@ async def test_image_rotation_converter_transparency_handling(
     assert output_image.has_transparency_data is False  # after conversion, the image should not have transparency
 
 
-@pytest.mark.asyncio
 async def test_image_rotation_converter_convert_async_url_input(sample_image_bytes):
     """Test successful rotation of image from URL."""
     converter = ImageRotationConverter(output_format="WEBP", angle=45.0)
@@ -175,7 +172,6 @@ async def test_image_rotation_converter_convert_async_url_input(sample_image_byt
             mock_serializer.save_b64_image.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_image_rotation_converter_url_format_conversion(sample_image_bytes):
     """Test successful conversion of image from URL."""
     converter = ImageRotationConverter(output_format="WEBP")
@@ -201,7 +197,6 @@ async def test_image_rotation_converter_url_format_conversion(sample_image_bytes
             mock_serializer.save_b64_image.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_image_rotation_converter_invalid_url():
     """Test handling of invalid URLs."""
     converter = ImageRotationConverter()
@@ -211,7 +206,6 @@ async def test_image_rotation_converter_invalid_url():
             await converter.convert_async(prompt=invalid_url, input_type="url")
 
 
-@pytest.mark.asyncio
 async def test_image_rotation_converter_corrupted_image_bytes():
     """Test handling of corrupted image bytes."""
     converter = ImageRotationConverter()
@@ -224,7 +218,6 @@ async def test_image_rotation_converter_corrupted_image_bytes():
             await converter.convert_async(prompt="corrupted.png", input_type="image_path")
 
 
-@pytest.mark.asyncio
 async def test_image_rotation_converter_output_format_fallback():
     """Test fallback to JPEG when original format is unsupported (and no output_format specified)."""
     img = Image.new("RGB", (100, 100), color=(123, 123, 123))

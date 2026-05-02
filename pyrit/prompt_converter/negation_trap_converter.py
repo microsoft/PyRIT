@@ -36,7 +36,7 @@ class NegationTrapConverter(PromptConverter):
         *,
         wrong_value: str = "incorrect_guess",
         trap_template: str | None = None,
-    ):
+    ) -> None:
         """
         Initialize the Negation Trap Converter.
 

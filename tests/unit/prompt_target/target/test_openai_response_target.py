@@ -136,7 +136,6 @@ def test_init_with_no_additional_request_headers_var_raises():
         OpenAIResponseTarget(model_name="gpt-4", endpoint="", api_key="xxxxx", headers="")
 
 
-@pytest.mark.asyncio()
 async def test_build_input_for_multi_modal(target: OpenAIResponseTarget):
     image_request = get_image_message_piece()
     conversation_id = image_request.conversation_id
@@ -193,7 +192,6 @@ async def test_build_input_for_multi_modal(target: OpenAIResponseTarget):
     os.remove(image_request.original_value)
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_with_unsupported_data_types(target: OpenAIResponseTarget):
     # Like an image_path, the audio_path requires a file, but doesn't validate any contents
     entry = get_audio_message_piece()
@@ -203,7 +201,6 @@ async def test_build_input_for_multi_modal_with_unsupported_data_types(target: O
     assert "Unsupported data type 'audio_path' in message index 0" in str(excinfo.value)
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_includes_extra_body_params(
     patch_central_database, dummy_text_message_piece: MessagePiece
 ):
@@ -221,7 +218,6 @@ async def test_construct_request_body_includes_extra_body_params(
     assert body["key"] == "value"
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_json_object(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     json_response_config = _JsonResponseConfig(enabled=True)
     request = Message(message_pieces=[dummy_text_message_piece])
@@ -230,7 +226,6 @@ async def test_construct_request_body_json_object(target: OpenAIResponseTarget, 
     assert body["text"] == {"format": {"type": "json_object"}}
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_json_schema(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     schema_object = {"type": "object", "properties": {"name": {"type": "string"}}}
     json_response_config = _JsonResponseConfig.from_metadata(
@@ -249,7 +244,6 @@ async def test_construct_request_body_json_schema(target: OpenAIResponseTarget, 
     }
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_removes_empty_values(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
@@ -266,7 +260,6 @@ async def test_construct_request_body_removes_empty_values(
     assert "text" not in body
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_serializes_text_message(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
@@ -277,7 +270,6 @@ async def test_construct_request_body_serializes_text_message(
     assert body["input"][0]["content"][0]["text"] == "dummy text"
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_serializes_complex_message(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
@@ -294,7 +286,6 @@ async def test_construct_request_body_serializes_complex_message(
     assert messages[1]["type"] == "input_image"
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_empty_response_adds_to_memory(
     openai_response_json: dict, target: OpenAIResponseTarget
 ):
@@ -352,7 +343,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
         assert target._async_client.responses.create.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
     target: OpenAIResponseTarget,
 ):
@@ -375,7 +365,6 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
         target._memory.add_message_to_memory.assert_called_once_with(request=message)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAIResponseTarget):
     mock_memory = MagicMock()
     mock_memory.get_conversation.return_value = []
@@ -398,7 +387,6 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
         target._memory.add_message_to_memory.assert_called_once_with(request=message)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async(openai_response_json: dict, target: OpenAIResponseTarget):
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
@@ -445,7 +433,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
     os.remove(tmp_file_name)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_empty_response_retries(openai_response_json: dict, target: OpenAIResponseTarget):
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
@@ -495,7 +482,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
         assert target._async_client.responses.create.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_rate_limit_exception_retries(target: OpenAIResponseTarget):
     message = Message(message_pieces=[MessagePiece(role="user", conversation_id="12345", original_value="Hello")])
 
@@ -513,7 +499,6 @@ async def test_send_prompt_async_rate_limit_exception_retries(target: OpenAIResp
         assert target._async_client.responses.create.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_bad_request_error(target: OpenAIResponseTarget):
     message = Message(message_pieces=[MessagePiece(role="user", conversation_id="1236748", original_value="Hello")])
 
@@ -526,7 +511,6 @@ async def test_send_prompt_async_bad_request_error(target: OpenAIResponseTarget)
         await target.send_prompt_async(message=message)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_content_filter(target: OpenAIResponseTarget):
     message = Message(
         message_pieces=[
@@ -673,7 +657,6 @@ def test_validate_request_raises_for_invalid_type(target: OpenAIResponseTarget):
     assert "This target supports only the following data types" in str(excinfo.value)
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_empty_conversation(target: OpenAIResponseTarget):
     # Should raise ValueError if no message pieces
     req = MagicMock()
@@ -683,7 +666,6 @@ async def test_build_input_for_multi_modal_async_empty_conversation(target: Open
     assert "Failed to process conversation message at index 0: Message contains no message pieces" in str(excinfo.value)
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_image_and_text(target: OpenAIResponseTarget):
     # Should build correct structure for text and image
     text_piece = MessagePiece(
@@ -704,7 +686,6 @@ async def test_build_input_for_multi_modal_async_image_and_text(target: OpenAIRe
     assert result[0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_filters_none(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
@@ -724,7 +705,6 @@ def test_set_openai_env_configuration_vars_sets_vars():
     assert target.api_key_environment_variable == "OPENAI_RESPONSES_KEY"
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_filters_reasoning(target: OpenAIResponseTarget):
     # Prepare a conversation with a reasoning piece and a text piece
     user_prompt = MessagePiece(
@@ -797,7 +777,6 @@ async def test_build_input_for_multi_modal_async_filters_reasoning(target: OpenA
 
 
 # New pytests
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_system_message_maps_to_developer(target: OpenAIResponseTarget):
     system_piece = MessagePiece(
         role="system",
@@ -815,7 +794,6 @@ async def test_build_input_for_multi_modal_async_system_message_maps_to_develope
     assert items[0]["content"][0]["text"] == "You are a helpful assistant"
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_system_message_multiple_pieces(target: OpenAIResponseTarget):
     """Test that system messages can have multiple pieces and are properly handled."""
     sys1 = MessagePiece(role="system", original_value_data_type="text", original_value="A", conversation_id="123")
@@ -828,7 +806,6 @@ async def test_build_input_for_multi_modal_async_system_message_multiple_pieces(
     assert items[0]["content"][1]["text"] == "B"
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_mixed_roles_raises(target: OpenAIResponseTarget):
     """Test that Message validation prevents pieces with different roles."""
     user_piece = MessagePiece(
@@ -842,7 +819,6 @@ async def test_build_input_for_multi_modal_async_mixed_roles_raises(target: Open
         Message(message_pieces=[user_piece, assistant_piece])
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_function_call_forwarded(target: OpenAIResponseTarget):
     call = {"type": "function_call", "call_id": "abc123", "name": "sum", "arguments": '{"a":2,"b":3}'}
     assistant_call_piece = MessagePiece(
@@ -859,7 +835,6 @@ async def test_build_input_for_multi_modal_async_function_call_forwarded(target:
     assert items[0]["call_id"] == "abc123"
 
 
-@pytest.mark.asyncio
 async def test_build_input_for_multi_modal_async_function_call_output_stringifies(target: OpenAIResponseTarget):
     # original_value is a function_call_output “artifact” (top level)
     output_payload = {"type": "function_call_output", "call_id": "c1", "output": {"ok": True, "value": 5}}
@@ -898,7 +873,6 @@ def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIRespon
     assert json.loads(payload["output"]) == {"answer": 42}
 
 
-@pytest.mark.asyncio
 async def test_execute_call_section_calls_registered_function(target: OpenAIResponseTarget):
     async def add_fn(args: dict[str, Any]) -> dict[str, Any]:
         return {"sum": args["a"] + args["b"]}
@@ -911,7 +885,6 @@ async def test_execute_call_section_calls_registered_function(target: OpenAIResp
     assert result == {"sum": 5}
 
 
-@pytest.mark.asyncio
 async def test_execute_call_section_missing_function_tolerant_mode(target: OpenAIResponseTarget):
     # default fail_on_missing_function=False
     section = {"type": "function_call", "name": "unknown_tool", "arguments": "{}"}
@@ -921,7 +894,6 @@ async def test_execute_call_section_missing_function_tolerant_mode(target: OpenA
     assert "available_functions" in result
 
 
-@pytest.mark.asyncio
 async def test_execute_call_section_malformed_arguments_tolerant_mode(target: OpenAIResponseTarget):
     async def echo_fn(args: dict[str, Any]) -> dict[str, Any]:
         return args
@@ -934,7 +906,6 @@ async def test_execute_call_section_malformed_arguments_tolerant_mode(target: Op
     assert result["raw_arguments"] == "{not-json"
 
 
-@pytest.mark.asyncio
 async def test_execute_call_section_missing_function_strict_mode(target: OpenAIResponseTarget):
     target._custom_functions = {}
     target._fail_on_missing_function = True
@@ -943,7 +914,6 @@ async def test_execute_call_section_missing_function_strict_mode(target: OpenAIR
         await target._execute_call_section(section)
 
 
-@pytest.mark.asyncio
 async def test_send_prompt_async_agentic_loop_executes_function_and_returns_final_answer(target: OpenAIResponseTarget):
     # 1) Register a simple function
     async def times2(args: dict[str, Any]) -> dict[str, Any]:
@@ -1151,7 +1121,6 @@ def test_validate_response_empty_output(target: OpenAIResponseTarget, dummy_text
         target._validate_response(mock_response, dummy_text_message_piece)
 
 
-@pytest.mark.asyncio
 async def test_construct_message_from_response(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     """Test _construct_message_from_response parses output sections."""
     mock_response = MagicMock()
@@ -1219,7 +1188,6 @@ def test_init_without_reasoning_params(patch_central_database):
     assert target._reasoning_summary is None
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_includes_reasoning_effort(
     patch_central_database, dummy_text_message_piece: MessagePiece
 ):
@@ -1235,7 +1203,6 @@ async def test_construct_request_body_includes_reasoning_effort(
     assert body["reasoning"] == {"effort": "medium"}
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_includes_reasoning_summary(
     patch_central_database, dummy_text_message_piece: MessagePiece
 ):
@@ -1251,7 +1218,6 @@ async def test_construct_request_body_includes_reasoning_summary(
     assert body["reasoning"] == {"summary": "detailed"}
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_includes_reasoning_effort_and_summary(
     patch_central_database, dummy_text_message_piece: MessagePiece
 ):
@@ -1268,7 +1234,6 @@ async def test_construct_request_body_includes_reasoning_effort_and_summary(
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
 
 
-@pytest.mark.asyncio
 async def test_construct_request_body_omits_reasoning_when_not_set(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):

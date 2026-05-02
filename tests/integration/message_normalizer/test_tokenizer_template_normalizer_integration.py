@@ -19,7 +19,6 @@ ALL_ALIASES = list(TokenizerTemplateNormalizer.MODEL_ALIASES.keys())
 
 
 @pytest.mark.parametrize("alias", ALL_ALIASES)
-@pytest.mark.asyncio
 async def test_from_model_and_normalize(alias: str):
     """Test that each model alias can be loaded and normalize messages.
 
@@ -43,7 +42,6 @@ async def test_from_model_and_normalize(alias: str):
     assert "Hello!" in result
 
 
-@pytest.mark.asyncio
 async def test_llama3_vision_with_image():
     """Test that Llama-3.2-Vision can handle multimodal content with images.
 

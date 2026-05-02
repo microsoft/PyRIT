@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, EmojiConverter
 
 
-@pytest.mark.asyncio
 async def test_emoji_converter_basic():
     converter = EmojiConverter()
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -15,7 +14,6 @@ async def test_emoji_converter_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_emoji_converter_produces_output():
     converter = EmojiConverter()
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -25,7 +23,6 @@ async def test_emoji_converter_produces_output():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_emoji_converter_empty():
     converter = EmojiConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -34,7 +31,6 @@ async def test_emoji_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_emoji_converter_numbers_unchanged():
     converter = EmojiConverter()
     result = await converter.convert_async(prompt="123", input_type="text")
@@ -43,7 +39,6 @@ async def test_emoji_converter_numbers_unchanged():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_emoji_converter_input_not_supported():
     converter = EmojiConverter()
     with pytest.raises(ValueError):

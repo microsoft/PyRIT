@@ -250,8 +250,10 @@ export const attacksApi = {
   listAttacks: async (params?: {
     limit?: number
     cursor?: string
-    attack_type?: string
+    attack_types?: string[]
     converter_types?: string[]
+    converter_types_match?: 'any' | 'all'
+    has_converters?: boolean
     outcome?: string
     label?: string[]
     min_turns?: number

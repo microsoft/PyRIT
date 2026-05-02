@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import CaesarConverter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_shift_1():
     converter = CaesarConverter(caesar_offset=1)
     result = await converter.convert_async(prompt="abc", input_type="text")
@@ -15,7 +14,6 @@ async def test_caesar_converter_shift_1():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_shift_negative():
     converter = CaesarConverter(caesar_offset=-1)
     result = await converter.convert_async(prompt="bcd", input_type="text")
@@ -24,7 +22,6 @@ async def test_caesar_converter_shift_negative():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_wraps_around():
     converter = CaesarConverter(caesar_offset=1)
     result = await converter.convert_async(prompt="xyz", input_type="text")
@@ -33,7 +30,6 @@ async def test_caesar_converter_wraps_around():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_preserves_case():
     converter = CaesarConverter(caesar_offset=1)
     result = await converter.convert_async(prompt="AbC", input_type="text")
@@ -42,7 +38,6 @@ async def test_caesar_converter_preserves_case():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_with_description():
     converter = CaesarConverter(caesar_offset=1, append_description=True)
     result = await converter.convert_async(prompt="hello", input_type="text")
@@ -62,7 +57,6 @@ def test_caesar_converter_invalid_negative_offset():
         CaesarConverter(caesar_offset=-26)
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_empty():
     converter = CaesarConverter(caesar_offset=1)
     result = await converter.convert_async(prompt="", input_type="text")
@@ -71,7 +65,6 @@ async def test_caesar_converter_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_caesar_converter_input_not_supported():
     converter = CaesarConverter(caesar_offset=1)
     with pytest.raises(ValueError):

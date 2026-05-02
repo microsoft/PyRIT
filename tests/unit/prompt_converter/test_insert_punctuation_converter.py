@@ -23,7 +23,6 @@ from pyrit.prompt_converter import InsertPunctuationConverter
         ("I can't wait!!!", False, [",", "/", "]"], 0.4, 6),
     ],
 )
-@pytest.mark.asyncio
 async def test_word_swap_ratio(
     input_prompt, between_words, punctuation_list, word_swap_ratio, expected_punctuation_count
 ):
@@ -40,7 +39,6 @@ async def test_word_swap_ratio(
     "input_prompt, expected_punctuation_count",
     [("count 1 2 3 4 5 6 7 8 9 and 10.", 3), ("Aha!", 2)],
 )
-@pytest.mark.asyncio
 async def test_default_swap(input_prompt, expected_punctuation_count):
     converter = InsertPunctuationConverter()
     result = await converter.convert_async(prompt=input_prompt)
@@ -55,7 +53,6 @@ async def test_default_swap(input_prompt, expected_punctuation_count):
     "word_swap_ratio",
     [-0.1, 1.5],
 )
-@pytest.mark.asyncio
 async def test_invalid_word_swap_ratio(word_swap_ratio):
     with pytest.raises(ValueError):
         InsertPunctuationConverter(word_swap_ratio=word_swap_ratio)
@@ -66,7 +63,6 @@ async def test_invalid_word_swap_ratio(word_swap_ratio):
     "punctuation_list",
     ["~~", " ", "1", "a", "//"],
 )
-@pytest.mark.asyncio
 async def test_invalid_punctuation_list(punctuation_list):
     with pytest.raises(ValueError):
         converter = InsertPunctuationConverter()

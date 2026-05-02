@@ -37,7 +37,6 @@ def reset_registry():
 class TestListConverters:
     """Tests for ConverterService.list_converters method."""
 
-    @pytest.mark.asyncio
     async def test_list_converters_returns_empty_when_no_converters(self) -> None:
         """Test that list_converters returns empty list when no converters exist."""
         service = ConverterService()
@@ -46,7 +45,6 @@ class TestListConverters:
 
         assert result.items == []
 
-    @pytest.mark.asyncio
     async def test_list_converters_returns_converters_from_registry(self) -> None:
         """Test that list_converters returns converters from registry with full params."""
         service = ConverterService()
@@ -79,7 +77,6 @@ class TestListConverters:
 class TestListConverterCatalog:
     """Tests for ConverterService.list_converter_catalog_async method."""
 
-    @pytest.mark.asyncio
     async def test_list_converter_catalog_returns_known_converter_types(self) -> None:
         """Test that the converter catalog exposes available converter classes."""
         service = ConverterService()
@@ -90,7 +87,6 @@ class TestListConverterCatalog:
         assert "Base64Converter" in converter_types
         assert "CaesarConverter" in converter_types
 
-    @pytest.mark.asyncio
     async def test_list_converter_catalog_includes_supported_types(self) -> None:
         """Test that catalog entries include supported input and output types."""
         service = ConverterService()
@@ -105,7 +101,6 @@ class TestListConverterCatalog:
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
 
-    @pytest.mark.asyncio
     async def test_get_converter_returns_none_for_nonexistent(self) -> None:
         """Test that get_converter returns None for non-existent converter."""
         service = ConverterService()
@@ -114,7 +109,6 @@ class TestGetConverter:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_get_converter_returns_converter_from_registry(self) -> None:
         """Test that get_converter returns converter built from registry object."""
         service = ConverterService()
@@ -165,7 +159,6 @@ class TestGetConverterObject:
 class TestCreateConverter:
     """Tests for ConverterService.create_converter method."""
 
-    @pytest.mark.asyncio
     async def test_create_converter_raises_for_invalid_type(self) -> None:
         """Test that create_converter raises for invalid converter type."""
         service = ConverterService()
@@ -178,7 +171,6 @@ class TestCreateConverter:
         with pytest.raises(ValueError, match="not found"):
             await service.create_converter_async(request=request)
 
-    @pytest.mark.asyncio
     async def test_create_converter_success(self) -> None:
         """Test successful converter creation."""
         service = ConverterService()
@@ -195,7 +187,6 @@ class TestCreateConverter:
         assert result.converter_type == "Base64Converter"
         assert result.display_name == "My Base64"
 
-    @pytest.mark.asyncio
     async def test_create_converter_registers_in_registry(self) -> None:
         """Test that create_converter registers object in registry."""
         service = ConverterService()
@@ -260,7 +251,6 @@ class TestResolveConverterParams:
 class TestPreviewConversion:
     """Tests for ConverterService.preview_conversion method."""
 
-    @pytest.mark.asyncio
     async def test_preview_conversion_raises_for_nonexistent_converter(self) -> None:
         """Test that preview raises ValueError for non-existent converter ID."""
         service = ConverterService()
@@ -274,7 +264,6 @@ class TestPreviewConversion:
         with pytest.raises(ValueError, match="not found"):
             await service.preview_conversion_async(request=request)
 
-    @pytest.mark.asyncio
     async def test_preview_conversion_with_converter_ids(self) -> None:
         """Test preview with converter IDs."""
         service = ConverterService()
@@ -300,7 +289,6 @@ class TestPreviewConversion:
         assert len(result.steps) == 1
         assert result.steps[0].converter_id == "conv-1"
 
-    @pytest.mark.asyncio
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""
         service = ConverterService()
@@ -413,6 +401,7 @@ def _try_instantiate_converter(converter_name: str):
 
     from pyrit.common.apply_defaults import _RequiredValueSentinel
     from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
 
     # Converters requiring external credentials or resources that can't be mocked
     # at the constructor level — these validate env vars / files in __init__ body
@@ -461,11 +450,18 @@ def _try_instantiate_converter(converter_name: str):
         ann = param.annotation
         ann_str = str(ann) if ann is not inspect.Parameter.empty else ""
 
-        # PromptChatTarget — mock it with a proper identifier
+        # PromptChatTarget / PromptTarget — mock it with a proper identifier
         if ann is not inspect.Parameter.empty and (
-            (isinstance(ann, type) and issubclass(ann, PromptChatTarget)) or "PromptChatTarget" in ann_str
+            (isinstance(ann, type) and issubclass(ann, PromptTarget))
+            or "PromptChatTarget" in ann_str
+            or "PromptTarget" in ann_str
         ):
-            mock_target = MagicMock(spec=PromptChatTarget)
+            spec_cls = (
+                PromptChatTarget
+                if (isinstance(ann, type) and issubclass(ann, PromptChatTarget)) or "PromptChatTarget" in ann_str
+                else PromptTarget
+            )
+            mock_target = MagicMock(spec=spec_cls)
             mock_target.__class__.__name__ = "MockChatTarget"
             # Configure get_identifier() to return a proper identifier-like object
             # so that _create_identifier can extract class_name, model_name, etc.

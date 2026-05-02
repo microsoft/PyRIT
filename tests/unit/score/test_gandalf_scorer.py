@@ -48,7 +48,6 @@ def generate_request(conversation_id: Optional[str] = None) -> Message:
 @patch("requests.post")
 @pytest.mark.parametrize("password_correct", [True, False])
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_score(
     mocked_post, sqlite_instance: MemoryInterface, level: GandalfLevel, password_correct: bool
 ):
@@ -85,7 +84,6 @@ async def test_gandalf_scorer_score(
 
 @patch("requests.post")
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_set_system_prompt(
     mocked_post,
     sqlite_instance: MemoryInterface,
@@ -113,7 +111,6 @@ async def test_gandalf_scorer_set_system_prompt(
 
 @patch("requests.post")
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, sqlite_instance: MemoryInterface):
     conversation_id = str(uuid.uuid4())
     generated_request = generate_request(conversation_id=conversation_id)
@@ -135,7 +132,6 @@ async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, s
 
 
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_runtime_error_retries(level: GandalfLevel, sqlite_instance: MemoryInterface):
     conversation_id = str(uuid.uuid4())
     sqlite_instance.add_message_to_memory(request=generate_request(conversation_id=conversation_id))

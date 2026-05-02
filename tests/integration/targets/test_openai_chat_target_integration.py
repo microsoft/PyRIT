@@ -74,7 +74,6 @@ def platform_openai_chat_args():
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def test_openai_chat_target_audio_multi_turn(sqlite_instance, platform_openai_audio_args):
     """
     Test multi-turn conversation with audio output.
@@ -138,7 +137,6 @@ async def test_openai_chat_target_audio_multi_turn(sqlite_instance, platform_ope
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, platform_openai_chat_args):
     """
     Test that OpenAIChatTarget can handle multiple tool definitions.
@@ -215,7 +213,6 @@ async def test_openai_chat_target_tool_calling_multiple_tools(sqlite_instance, p
 # ============================================================================
 
 
-@pytest.mark.asyncio
 async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, platform_openai_chat_args):
     """
     Test that token usage metadata is captured from a real API response.

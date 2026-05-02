@@ -10,7 +10,7 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         mode: str = "combined",
         prompt_template: Optional[SeedPrompt] = None,
     ) -> None:
@@ -53,7 +53,7 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
         Initialize the scientific translation converter.
 
         Args:
-            converter_target (PromptChatTarget): The LLM target to perform the conversion.
+            converter_target (PromptTarget): The LLM target to perform the conversion.
             mode (str): The translation mode to use. Built-in options are:
 
                 - ``academic``: Use academic/homework style framing

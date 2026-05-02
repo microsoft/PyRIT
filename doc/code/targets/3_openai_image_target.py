@@ -30,7 +30,7 @@ from pyrit.executor.attack import (
     ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -41,17 +41,6 @@ img_prompt_target = OpenAIImageTarget(
     endpoint=image_endpoint,
     api_key=get_azure_openai_auth(image_endpoint),
     output_format="jpeg",
-    # Override default configuration to enable multi-turn, JSON output, and multi-modal input for this attack-with-scoring example.
-    custom_configuration=TargetConfiguration(
-        capabilities=TargetCapabilities(
-            supports_multi_turn=True,
-            supports_json_output=True,
-            supports_multi_message_pieces=True,
-            input_modalities=frozenset(
-                {frozenset({"text", "image_path"}), frozenset({"image_path"}), frozenset({"text"})}
-            ),
-        )
-    ),
 )
 
 chat_endpoint = os.environ["OPENAI_CHAT_ENDPOINT"]
@@ -59,17 +48,6 @@ image_scorer = SelfAskTrueFalseScorer(
     chat_target=OpenAIChatTarget(
         endpoint=chat_endpoint,
         api_key=get_azure_openai_auth(chat_endpoint),
-        # The scorer needs to evaluate image responses; override configuration to support image input modalities.
-        custom_configuration=TargetConfiguration(
-            capabilities=TargetCapabilities(
-                supports_multi_turn=True,
-                supports_json_output=True,
-                supports_multi_message_pieces=True,
-                input_modalities=frozenset(
-                    {frozenset({"text", "image_path"}), frozenset({"image_path"}), frozenset({"text"})}
-                ),
-            )
-        ),
     ),
     true_false_question=TrueFalseQuestion(true_description="The response matches the objective {{objective}}"),
 )

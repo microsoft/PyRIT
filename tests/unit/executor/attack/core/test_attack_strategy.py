@@ -218,7 +218,6 @@ class TestAttackStrategyInitialization:
 class TestAttackStrategyExecution:
     """Tests for AttackStrategy execution methods"""
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_objective_creates_context(self, mock_attack_strategy):
         """Test that execute_async with objective parameter creates context and executes."""
         objective = "Test objective"
@@ -234,7 +233,6 @@ class TestAttackStrategyExecution:
         assert result is not None
         assert isinstance(result, AttackResult)
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_prepended_conversation(self, mock_attack_strategy):
         """Test that execute_async handles prepended_conversation parameter."""
         objective = "Test objective"
@@ -248,13 +246,11 @@ class TestAttackStrategyExecution:
 
         assert result is not None
 
-    @pytest.mark.asyncio
     async def test_execute_async_requires_objective(self, mock_attack_strategy):
         """Test that execute_async requires objective parameter."""
         with pytest.raises(ValueError, match="objective is required"):
             await mock_attack_strategy.execute_async()
 
-    @pytest.mark.asyncio
     async def test_execute_async_rejects_unknown_params(self, mock_attack_strategy):
         """Test that execute_async rejects unknown parameters."""
         with pytest.raises(ValueError, match="does not accept parameters"):
@@ -263,7 +259,6 @@ class TestAttackStrategyExecution:
                 unknown_param="value",
             )
 
-    @pytest.mark.asyncio
     async def test_execute_async_allows_optional_parameters_as_none(self, mock_attack_strategy):
         """Test that execute_async works with optional parameters as None."""
         # None values should be skipped, not cause errors
@@ -280,7 +275,6 @@ class TestAttackStrategyExecution:
 class TestDefaultAttackStrategyEventHandler:
     """Tests for the default attack strategy event handler"""
 
-    @pytest.mark.asyncio
     async def test_on_pre_execute_sets_start_time(self, event_handler, sample_attack_context, mock_logger):
         """Test that pre-execute handler sets start time"""
         event_data = StrategyEventData(
@@ -295,7 +289,6 @@ class TestDefaultAttackStrategyEventHandler:
 
         assert sample_attack_context.start_time == 123.456
 
-    @pytest.mark.asyncio
     async def test_on_pre_execute_logs_objective(self, event_handler, sample_attack_context, mock_logger):
         """Test that pre-execute handler logs the objective"""
         event_data = StrategyEventData(
@@ -308,7 +301,6 @@ class TestDefaultAttackStrategyEventHandler:
         await event_handler.on_event(event_data)
         mock_logger.info.assert_called_once_with(f"Starting attack: {sample_attack_context.objective}")
 
-    @pytest.mark.asyncio
     async def test_on_pre_execute_raises_on_none_context(self, event_handler, mock_logger):
         """Test that pre-execute handler raises error for None context"""
         # Create a dummy context that we'll set to None in the event data
@@ -326,7 +318,6 @@ class TestDefaultAttackStrategyEventHandler:
         with pytest.raises(ValueError, match="Attack context is None"):
             await event_handler.on_event(event_data)
 
-    @pytest.mark.asyncio
     async def test_on_post_execute_calculates_execution_time(
         self, event_handler, sample_attack_context, sample_attack_result, mock_logger
     ):
@@ -346,7 +337,6 @@ class TestDefaultAttackStrategyEventHandler:
 
         assert sample_attack_result.execution_time_ms == 500
 
-    @pytest.mark.asyncio
     async def test_on_post_execute_logs_success(
         self, event_handler, sample_attack_context, sample_attack_result, mock_logger
     ):
@@ -367,7 +357,6 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} achieved the objective. Reason: Test successful"
         mock_logger.info.assert_called_with(expected_message)
 
-    @pytest.mark.asyncio
     async def test_on_post_execute_logs_failure(
         self, event_handler, sample_attack_context, sample_attack_result, mock_logger
     ):
@@ -388,7 +377,6 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} did not achieve the objective. Reason: Test failed"
         mock_logger.info.assert_called_with(expected_message)
 
-    @pytest.mark.asyncio
     async def test_on_post_execute_logs_undetermined(
         self, event_handler, sample_attack_context, sample_attack_result, mock_logger
     ):
@@ -409,7 +397,6 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} outcome is undetermined. Reason: Not specified"
         mock_logger.info.assert_called_with(expected_message)
 
-    @pytest.mark.asyncio
     async def test_on_post_execute_adds_results_to_memory(self, mock_memory):
         """Test that post-execute handler adds results to memory"""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
@@ -432,7 +419,6 @@ class TestDefaultAttackStrategyEventHandler:
 
             mock_memory.add_attack_results_to_memory.assert_called_once_with(attack_results=[sample_result])
 
-    @pytest.mark.asyncio
     async def test_on_post_execute_raises_on_none_result(self, event_handler, sample_attack_context, mock_logger):
         """Test that post-execute handler raises error for None result"""
         # Create a dummy result that we'll set to None
@@ -451,7 +437,6 @@ class TestDefaultAttackStrategyEventHandler:
         with pytest.raises(ValueError, match="Attack result is None"):
             await event_handler.on_event(event_data)
 
-    @pytest.mark.asyncio
     async def test_on_event_handles_other_events(self, event_handler, sample_attack_context, mock_logger):
         """Test that on_event handles events not in the specific handlers"""
         event_data = StrategyEventData(
@@ -473,7 +458,6 @@ class TestDefaultAttackStrategyEventHandler:
 class TestAttackStrategyIntegration:
     """Integration tests for AttackStrategy with event handlers"""
 
-    @pytest.mark.asyncio
     async def test_attack_strategy_event_flow(self, mock_memory, mock_objective_target):
         """Test that AttackStrategy properly triggers events during execution"""
 
@@ -510,7 +494,6 @@ class TestAttackStrategyIntegration:
         # Current behavior: execution_time_ms is not modified by event handler
         assert result.execution_time_ms == 500
 
-    @pytest.mark.asyncio
     async def test_attack_strategy_with_custom_event_handler(self, mock_objective_target):
         """Test that AttackStrategy can work with custom event handlers"""
         custom_handler_called = False

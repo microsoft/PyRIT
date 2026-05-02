@@ -12,13 +12,11 @@ def _make_message(role: ChatMessageRole, content: str) -> Message:
     return Message(message_pieces=[MessagePiece(role=role, original_value=content)])
 
 
-@pytest.mark.asyncio
 async def test_history_squash_empty_raises():
     with pytest.raises(ValueError, match="cannot be empty"):
         await HistorySquashNormalizer().normalize_async(messages=[])
 
 
-@pytest.mark.asyncio
 async def test_history_squash_single_message_returns_unchanged():
     messages = [_make_message("user", "hello")]
     result = await HistorySquashNormalizer().normalize_async(messages)
@@ -27,7 +25,6 @@ async def test_history_squash_single_message_returns_unchanged():
     assert result[0].api_role == "user"
 
 
-@pytest.mark.asyncio
 async def test_history_squash_two_turns():
     messages = [
         _make_message("user", "hello"),
@@ -47,7 +44,6 @@ async def test_history_squash_two_turns():
     assert "how are you?" in text
 
 
-@pytest.mark.asyncio
 async def test_history_squash_includes_system_in_history():
     messages = [
         _make_message("system", "You are helpful"),
@@ -66,7 +62,6 @@ async def test_history_squash_includes_system_in_history():
     assert "bye" in text
 
 
-@pytest.mark.asyncio
 async def test_history_squash_multi_piece_message():
     """Multi-piece last message has all pieces joined in [Current Message]."""
     conversation_id = "test-conv-id"
@@ -85,7 +80,6 @@ async def test_history_squash_multi_piece_message():
     assert "part2" in text
 
 
-@pytest.mark.asyncio
 async def test_history_squash_preserves_original_list():
     """Normalize should not mutate the input list."""
     messages = [

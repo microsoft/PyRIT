@@ -332,7 +332,6 @@ def test_reset_database_keeps_foreign_alembic_version_table(sqlite_instance):
     assert "pyrit_memory_alembic_version" in table_names
 
 
-@pytest.mark.asyncio()
 async def test_insert_entry(sqlite_instance):
     session = sqlite_instance.get_session()
     message_piece_entry = MessagePiece(

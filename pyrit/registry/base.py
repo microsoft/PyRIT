@@ -42,6 +42,21 @@ class ClassRegistryEntry:
     class_description: str = ""
     registry_name: str = ""
 
+    @staticmethod
+    def description_from_docstring(cls: type, *, fallback: str = "") -> str:
+        """
+        Extract a normalized description from a class docstring.
+
+        Collapses all whitespace into single spaces. Returns fallback if
+        no docstring is present or the docstring is empty after cleaning.
+
+        Returns:
+            str: The cleaned docstring or the fallback value.
+        """
+        doc = cls.__doc__ or ""
+        cleaned = " ".join(doc.split())
+        return cleaned or fallback
+
 
 @runtime_checkable
 class RegistryProtocol(Protocol[MetadataT]):

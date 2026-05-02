@@ -69,6 +69,21 @@ export const useAttackHistoryStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     flexWrap: 'wrap',
   },
+  matchModeToggle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    paddingInline: tokens.spacingHorizontalXS,
+  },
+  matchModeLabel: {
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground3,
+    userSelect: 'none',
+  },
+  matchModeLabelActive: {
+    color: tokens.colorNeutralForeground1,
+    fontWeight: tokens.fontWeightSemibold,
+  },
   pagination: {
     display: 'flex',
     justifyContent: 'center',

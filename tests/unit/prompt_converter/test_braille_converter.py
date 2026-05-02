@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import BrailleConverter, ConverterResult
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_simple_text():
     """Test basic Braille conversion."""
     converter = BrailleConverter()
@@ -21,7 +20,6 @@ async def test_braille_converter_simple_text():
     assert result.output_text != prompt
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_with_space():
     """Test Braille conversion with spaces."""
     converter = BrailleConverter()
@@ -35,7 +33,6 @@ async def test_braille_converter_with_space():
     assert " " in result.output_text
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_uppercase():
     """Test Braille conversion with uppercase letters."""
     converter = BrailleConverter()
@@ -49,7 +46,6 @@ async def test_braille_converter_uppercase():
     assert len(result.output_text) > 0
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_numbers():
     """Test Braille conversion with numbers."""
     converter = BrailleConverter()
@@ -62,7 +58,6 @@ async def test_braille_converter_numbers():
     assert len(result.output_text) > 0
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_consecutive_numbers_single_prefix():
     """Test that consecutive digits get only one number prefix."""
     converter = BrailleConverter()
@@ -77,7 +72,6 @@ async def test_braille_converter_consecutive_numbers_single_prefix():
     assert result.output_text.count(num_prefix) == 1
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_punctuation():
     """Test Braille conversion with punctuation."""
     converter = BrailleConverter()
@@ -90,7 +84,6 @@ async def test_braille_converter_punctuation():
     assert len(result.output_text) > 0
 
 
-@pytest.mark.asyncio
 async def test_braille_converter_input_type_not_supported():
     """Test that non-text input types raise ValueError."""
     converter = BrailleConverter()

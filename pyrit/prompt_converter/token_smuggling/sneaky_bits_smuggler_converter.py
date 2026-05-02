@@ -27,7 +27,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
         action: Literal["encode", "decode"] = "encode",
         zero_char: Optional[str] = None,
         one_char: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with options for encoding/decoding in Sneaky Bits mode.
 

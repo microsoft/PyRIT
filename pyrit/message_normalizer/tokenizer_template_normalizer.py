@@ -126,7 +126,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
 
         return cast(
             "PreTrainedTokenizerBase",
-            AutoTokenizer.from_pretrained(model_name, token=token or None),  # type: ignore[no-untyped-call, unused-ignore]
+            AutoTokenizer.from_pretrained(model_name, token=token or None),
         )
 
     @classmethod

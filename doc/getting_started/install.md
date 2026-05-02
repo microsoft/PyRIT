@@ -18,7 +18,7 @@ Pre-configured container with JupyterLab. Best if you want to get started immedi
 :link: ./install_local
 **Custom Setup**
 
-Install with pip, uv, or conda. Best if you need to integrate PyRIT into existing Python workflows, prefer lighter-weight installations, or want direct access from your system Python.
+Install with pip or uv. Best if you need to integrate PyRIT into existing Python workflows, prefer lighter-weight installations, or want direct access from your system Python.
 ::::
 
 :::::

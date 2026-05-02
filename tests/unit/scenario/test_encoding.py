@@ -129,7 +129,6 @@ class TestEncodingInitialization:
             assert scenario._scorer_config.objective_scorer is not None
             assert isinstance(scenario._scorer_config.objective_scorer, DecodingScorer)
 
-    @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""
 
@@ -178,7 +177,6 @@ class TestEncodingInitialization:
             # max_concurrency defaults to 1 until initialize_async is called
             assert scenario._max_concurrency == 1
 
-    @pytest.mark.asyncio
     async def test_init_attack_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):
@@ -204,7 +202,6 @@ class TestEncodingInitialization:
 class TestEncodingAtomicAttacks:
     """Tests for Encoding atomic attack generation."""
 
-    @pytest.mark.asyncio
     async def test_get_atomic_attacks_async_returns_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):
@@ -223,7 +220,6 @@ class TestEncodingAtomicAttacks:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_get_converter_attacks_returns_multiple_encodings(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):
@@ -243,7 +239,6 @@ class TestEncodingAtomicAttacks:
             # quoted-printable, UUencode, ROT13, Braille, Atbash, Morse, NATO, Ecoji, Zalgo, Leet, AsciiSmuggler
             assert len(attack_runs) > 0
 
-    @pytest.mark.asyncio
     async def test_get_prompt_attacks_creates_attack_runs(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):
@@ -266,7 +261,6 @@ class TestEncodingAtomicAttacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
                 assert len(run._seed_groups) == len(mock_seed_attack_groups)
 
-    @pytest.mark.asyncio
     async def test_attack_runs_include_objectives(
         self,
         mock_objective_target,
@@ -301,7 +295,6 @@ class TestEncodingAtomicAttacks:
 class TestEncodingExecution:
     """Tests for Encoding execution."""
 
-    @pytest.mark.asyncio
     async def test_scenario_initialization(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):
@@ -318,7 +311,6 @@ class TestEncodingExecution:
             # Verify initialization creates atomic attacks
             assert scenario.atomic_attack_count > 0
 
-    @pytest.mark.asyncio
     async def test_resolve_seed_groups_loads_garak_data(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
     ):

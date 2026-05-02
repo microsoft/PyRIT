@@ -11,7 +11,7 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -20,23 +20,23 @@ class NoiseConverter(LLMGenericTextConverter):
     """
     Injects noise errors into a conversation using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the conversion (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
     """
 
     @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         noise: Optional[str] = None,
         number_errors: int = 5,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified parameters.
 
         Args:
-            converter_target (PromptChatTarget): The endpoint that converts the prompt.
+            converter_target (PromptTarget): The endpoint that converts the prompt.
                 Can be omitted if a default has been configured via PyRIT initialization.
             noise (str): The noise to inject. Grammar error, delete random letter, insert random space, etc.
             number_errors (int): The number of errors to inject.

@@ -27,7 +27,7 @@ class ZalgoConverter(WordLevelConverter):
         intensity: int = 10,
         seed: Optional[int] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified selection parameters.
 
