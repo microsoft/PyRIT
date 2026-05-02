@@ -69,7 +69,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         top_k: int | None = None,
         do_sample: bool | None = None,
         repetition_penalty: float | None = None,
-        seed: int | None = None,
+        random_seed: int | None = None,
         skip_special_tokens: bool = True,
         trust_remote_code: bool = False,
         device_map: str | None = None,
@@ -99,8 +99,8 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 non-greedy decoding. Defaults to None.
             repetition_penalty (float | None): Penalty for repeating tokens. Values > 1.0 discourage
                 repetition. Defaults to None (uses model default, typically 1.0).
-            seed (int | None): Random seed for deterministic generation. When set, calls
-                torch.manual_seed() before each generation. Defaults to None.
+            random_seed (int | None): Random seed for deterministic generation. When set, calls
+                torch.manual_seed() at construction time. Defaults to None.
             skip_special_tokens (bool): Whether to skip special tokens. Defaults to True.
             trust_remote_code (bool): Whether to trust remote code execution. Defaults to False.
             device_map (str | None): Device mapping strategy.
@@ -166,7 +166,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         self._top_k = top_k
         self._do_sample = do_sample
         self._repetition_penalty = repetition_penalty
-        self._seed = seed
+        self._random_seed = random_seed
         self.skip_special_tokens = skip_special_tokens
 
         self._warn_if_sampling_params_without_do_sample()
@@ -193,7 +193,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 "top_k": self._top_k,
                 "do_sample": self._do_sample,
                 "repetition_penalty": self._repetition_penalty,
-                "seed": self._seed,
+                "random_seed": self._random_seed,
                 "max_new_tokens": self.max_new_tokens,
                 "skip_special_tokens": self.skip_special_tokens,
                 "use_cuda": self.use_cuda,
@@ -421,7 +421,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             messages.append({"role": role, "content": content})
         return messages
 
-    def set_seed(self, seed: int) -> None:
+    def set_random_seed(self, random_seed: int) -> None:
         """
         Set a new random seed and immediately re-seed the RNG.
 
@@ -430,9 +430,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
         time; call this method to change it later.
 
         Args:
-            seed (int): The random seed value.
+            random_seed (int): The random seed value.
         """
-        self._seed = seed
+        self._random_seed = random_seed
         self._seed_rng()
 
     def _build_generation_params(self) -> dict[str, Any]:
@@ -463,7 +463,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         """
         Seed the random number generators for deterministic generation.
 
-        When ``self._seed`` is set, seeds both CPU and CUDA RNGs before each
+        When ``self._random_seed`` is set, seeds both CPU and CUDA RNGs before each
         ``model.generate()`` call. This enables reproducible results when all other
         parameters are held constant.
 
@@ -471,12 +471,12 @@ class HuggingFaceChatTarget(PromptChatTarget):
             This sets global torch RNG state. Concurrent generation calls on
             the same process may interfere with determinism.
         """
-        if self._seed is not None:
+        if self._random_seed is not None:
             import torch
 
-            torch.manual_seed(self._seed)
+            torch.manual_seed(self._random_seed)
             if self.use_cuda:
-                torch.cuda.manual_seed_all(self._seed)
+                torch.cuda.manual_seed_all(self._random_seed)
 
     def _get_effective_generation_config(self) -> dict[str, Any]:
         """
@@ -493,8 +493,8 @@ class HuggingFaceChatTarget(PromptChatTarget):
             effective = self.model.generation_config.to_dict()
 
         effective.update(self._generation_params)
-        if self._seed is not None:
-            effective["seed"] = self._seed
+        if self._random_seed is not None:
+            effective["random_seed"] = self._random_seed
         return effective
 
     def _warn_if_sampling_params_without_do_sample(self) -> None:

@@ -327,21 +327,21 @@ async def test_hugging_face_chat_sets_endpoint_and_rate_limit(patch_central_data
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
 def test_identifier_includes_generation_params():
-    """New generation params (top_k, do_sample, repetition_penalty, seed) appear in the identifier."""
+    """New generation params (top_k, do_sample, repetition_penalty, random_seed) appear in the identifier."""
     target = HuggingFaceChatTarget(
         model_id="test_model",
         use_cuda=False,
         top_k=40,
         do_sample=True,
         repetition_penalty=1.2,
-        seed=42,
+        random_seed=42,
         temperature=0.7,
     )
     identifier = target.get_identifier()
     assert identifier.params["top_k"] == 40
     assert identifier.params["do_sample"] is True
     assert identifier.params["repetition_penalty"] == 1.2
-    assert identifier.params["seed"] == 42
+    assert identifier.params["random_seed"] == 42
     assert identifier.params["temperature"] == 0.7
 
 
@@ -356,7 +356,7 @@ def test_identifier_excludes_none_generation_params():
     assert "top_k" not in identifier.params
     assert "do_sample" not in identifier.params
     assert "repetition_penalty" not in identifier.params
-    assert "seed" not in identifier.params
+    assert "random_seed" not in identifier.params
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
@@ -415,20 +415,20 @@ async def test_generate_omits_none_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-def test_seed_calls_manual_seed_at_init():
-    """When seed is set, torch.manual_seed is called during construction."""
+def test_random_seed_calls_manual_seed_at_init():
+    """When random_seed is set, torch.manual_seed is called during construction."""
     with patch("torch.manual_seed") as mock_manual_seed:
         HuggingFaceChatTarget(
             model_id="test_model",
             use_cuda=False,
-            seed=42,
+            random_seed=42,
         )
         mock_manual_seed.assert_called_once_with(42)
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-def test_no_seed_does_not_call_manual_seed():
-    """When seed is None, torch.manual_seed is not called."""
+def test_no_random_seed_does_not_call_manual_seed():
+    """When random_seed is None, torch.manual_seed is not called."""
     with patch("torch.manual_seed") as mock_manual_seed:
         HuggingFaceChatTarget(
             model_id="test_model",
@@ -438,16 +438,16 @@ def test_no_seed_does_not_call_manual_seed():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-def test_set_seed_reseeds_rng():
-    """Calling set_seed updates the seed and immediately re-seeds the RNG."""
+def test_set_random_seed_reseeds_rng():
+    """Calling set_random_seed updates the seed and immediately re-seeds the RNG."""
     target = HuggingFaceChatTarget(
         model_id="test_model",
         use_cuda=False,
     )
     with patch("torch.manual_seed") as mock_manual_seed:
-        target.set_seed(99)
+        target.set_random_seed(99)
         mock_manual_seed.assert_called_once_with(99)
-    assert target._seed == 99
+    assert target._random_seed == 99
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
@@ -535,7 +535,7 @@ async def test_effective_generation_config_in_metadata():
         use_cuda=False,
         top_k=40,
         do_sample=True,
-        seed=42,
+        random_seed=42,
     )
     await target.load_model_and_tokenizer()
 
@@ -558,7 +558,7 @@ async def test_effective_generation_config_in_metadata():
 
     assert effective_config["top_k"] == 40
     assert effective_config["do_sample"] is True
-    assert effective_config["seed"] == 42
+    assert effective_config["random_seed"] == 42
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
