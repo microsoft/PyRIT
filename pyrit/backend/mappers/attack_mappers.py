@@ -198,8 +198,11 @@ def attack_result_to_summary(
     """
     message_count = stats.message_count
     last_preview = stats.last_message_preview
-    labels = dict(stats.labels) if stats.labels else {}
 
+    # Merge attack-result labels with conversation-level labels.
+    # Conversation labels take precedence on key collision.
+    labels = dict(ar.labels) if ar.labels else {}
+    labels.update(stats.labels or {})
     # Resolution order for created_at: explicit metadata override, then the
     # persisted AttackResult.timestamp, and finally datetime.now() as a
     # last-resort fallback for never-persisted results.

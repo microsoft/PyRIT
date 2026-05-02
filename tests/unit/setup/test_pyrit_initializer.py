@@ -38,13 +38,7 @@ class TestPyRITInitializerBase:
         """Test that concrete subclass can be instantiated."""
 
         class ConcreteInitializer(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Concrete"
-
-            @property
-            def description(self) -> str:
-                return "Concrete initializer"
+            """Concrete initializer"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -52,86 +46,20 @@ class TestPyRITInitializerBase:
         init = ConcreteInitializer()
         assert init is not None
 
-    def test_name_property_is_abstract(self):
-        """Test that name property must be implemented."""
-
-        class MissingName(PyRITInitializer):
-            @property
-            def description(self) -> str:
-                return "Missing name"
-
-            async def initialize_async(self) -> None:
-                pass
-
-        with pytest.raises(TypeError):
-            MissingName()  # type: ignore[abstract]
-
     def test_initialize_method_is_abstract(self):
         """Test that initialize method must be implemented."""
 
         class MissingInitialize(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Missing init"
-
-            @property
-            def description(self) -> str:
-                return "Missing initialize"
+            """Missing initialize"""
 
         with pytest.raises(TypeError):
             MissingInitialize()  # type: ignore[abstract]
-
-    def test_default_execution_order_is_one(self):
-        """Test that default execution order is 1."""
-
-        class DefaultOrder(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Default"
-
-            @property
-            def description(self) -> str:
-                return "Default order"
-
-            async def initialize_async(self) -> None:
-                pass
-
-        init = DefaultOrder()
-        assert init.execution_order == 1
-
-    def test_execution_order_can_be_overridden(self):
-        """Test that execution order can be customized."""
-
-        class CustomOrder(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Custom"
-
-            @property
-            def description(self) -> str:
-                return "Custom order"
-
-            @property
-            def execution_order(self) -> int:
-                return 5
-
-            async def initialize_async(self) -> None:
-                pass
-
-        init = CustomOrder()
-        assert init.execution_order == 5
 
     def test_default_required_env_vars_is_empty(self):
         """Test that default required_env_vars is empty list."""
 
         class NoEnvVars(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "No env"
-
-            @property
-            def description(self) -> str:
-                return "No env vars"
+            """No env vars"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -143,13 +71,7 @@ class TestPyRITInitializerBase:
         """Test that required_env_vars can be customized."""
 
         class WithEnvVars(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "With env"
-
-            @property
-            def description(self) -> str:
-                return "With env vars"
+            """With env vars"""
 
             @property
             def required_env_vars(self):
@@ -165,13 +87,7 @@ class TestPyRITInitializerBase:
         """Test that default validate method does nothing."""
 
         class DefaultValidate(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Default validate"
-
-            @property
-            def description(self) -> str:
-                return "Default validation"
+            """Default validation"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -184,13 +100,7 @@ class TestPyRITInitializerBase:
         """Test that validate method can be customized."""
 
         class CustomValidate(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Custom validate"
-
-            @property
-            def description(self) -> str:
-                return "Custom validation"
+            """Custom validation"""
 
             def validate(self) -> None:
                 raise ValueError("Validation failed")
@@ -223,13 +133,7 @@ class TestInitializeWithTracking:
         executed = False
 
         class TrackableInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Trackable"
-
-            @property
-            def description(self) -> str:
-                return "Trackable init"
+            """Trackable init"""
 
             async def initialize_async(self) -> None:
                 nonlocal executed
@@ -247,13 +151,7 @@ class TestInitializeWithTracking:
                 self.value = value
 
         class TrackingInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Tracking"
-
-            @property
-            def description(self) -> str:
-                return "Tracking defaults"
+            """Tracking defaults"""
 
             async def initialize_async(self) -> None:
                 set_default_value(class_type=DummyClass, parameter_name="value", value="tracked")
@@ -271,13 +169,7 @@ class TestInitializeWithTracking:
         """Test that tracking captures global variables."""
 
         class GlobalVarInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Global var"
-
-            @property
-            def description(self) -> str:
-                return "Sets global var"
+            """Sets global var"""
 
             async def initialize_async(self) -> None:
                 set_global_variable(name="tracked_var", value="test_value")
@@ -305,13 +197,7 @@ class TestGetInfo:
         """Test that get_info returns a dictionary."""
 
         class InfoInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Info test"
-
-            @property
-            def description(self) -> str:
-                return "For testing get_info"
+            """For testing get_info"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -320,42 +206,26 @@ class TestGetInfo:
         assert isinstance(info, dict)
 
     async def test_get_info_contains_basic_fields(self):
-        """Test that get_info contains name, description, and class."""
+        """Test that get_info contains description and class."""
 
         class BasicInfoInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Basic Info"
-
-            @property
-            def description(self) -> str:
-                return "Basic description"
+            """Basic description"""
 
             async def initialize_async(self) -> None:
                 pass
 
         info = await BasicInfoInit.get_info_async()
-        assert "name" in info
         assert "description" in info
         assert "class" in info
-        assert "execution_order" in info
 
-        assert info["name"] == "Basic Info"
         assert info["description"] == "Basic description"
         assert info["class"] == "BasicInfoInit"
-        assert info["execution_order"] == 1
 
     async def test_get_info_includes_required_env_vars_when_present(self):
         """Test that get_info includes required_env_vars when defined."""
 
         class EnvVarsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Env vars"
-
-            @property
-            def description(self) -> str:
-                return "With env vars"
+            """With env vars"""
 
             @property
             def required_env_vars(self):
@@ -372,13 +242,7 @@ class TestGetInfo:
         """Test that get_info omits required_env_vars when empty."""
 
         class NoEnvVarsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "No env"
-
-            @property
-            def description(self) -> str:
-                return "No env vars"
+            """No env vars"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -391,32 +255,20 @@ class TestGetInfo:
         """Test that get_info can be called as a class method."""
 
         class ClassMethodInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Class method"
-
-            @property
-            def description(self) -> str:
-                return "For class method test"
+            """For class method test"""
 
             async def initialize_async(self) -> None:
                 pass
 
         # Should work without creating an instance
         info = await ClassMethodInit.get_info_async()
-        assert info["name"] == "Class method"
+        assert info["class"] == "ClassMethodInit"
 
     async def test_get_info_includes_default_values_info(self):
         """Test that get_info includes information about default values."""
 
         class DefaultsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Defaults"
-
-            @property
-            def description(self) -> str:
-                return "Sets defaults"
+            """Sets defaults"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -460,13 +312,7 @@ class TestGetInfoTracking:
                 self.target = target
 
         class CompleteInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Complete Tracker"
-
-            @property
-            def description(self) -> str:
-                return "Sets both defaults and globals"
+            """Sets both defaults and globals"""
 
             async def initialize_async(self) -> None:
                 # Set default values
@@ -495,13 +341,7 @@ class TestGetInfoTracking:
         """Test that get_info returns empty lists when initializer sets nothing."""
 
         class EmptyInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Empty Tracker"
-
-            @property
-            def description(self) -> str:
-                return "Sets nothing"
+            """Sets nothing"""
 
             async def initialize_async(self) -> None:
                 pass  # Don't set anything
@@ -531,13 +371,7 @@ class TestGetDynamicDefaultValuesInfo:
         """Test that method returns a dictionary."""
 
         class DynamicInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Dynamic"
-
-            @property
-            def description(self) -> str:
-                return "Dynamic info"
+            """Dynamic info"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -550,13 +384,7 @@ class TestGetDynamicDefaultValuesInfo:
         """Test that returned dict has required keys."""
 
         class KeysInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Keys"
-
-            @property
-            def description(self) -> str:
-                return "For keys test"
+            """For keys test"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -574,13 +402,7 @@ class TestGetDynamicDefaultValuesInfo:
                 self.value = value
 
         class DefaultsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Defaults capture"
-
-            @property
-            def description(self) -> str:
-                return "Captures defaults"
+            """Captures defaults"""
 
             async def initialize_async(self) -> None:
                 set_default_value(class_type=DummyClass, parameter_name="value", value="captured")
@@ -595,13 +417,7 @@ class TestGetDynamicDefaultValuesInfo:
         """Test that method captures global variables."""
 
         class GlobalsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Globals capture"
-
-            @property
-            def description(self) -> str:
-                return "Captures globals"
+            """Captures globals"""
 
             async def initialize_async(self) -> None:
                 set_global_variable(name="dynamic_test_var", value="captured")
@@ -622,13 +438,7 @@ class TestGetDynamicDefaultValuesInfo:
         set_default_value(class_type=DummyClass, parameter_name="value", value="original")
 
         class RestoringInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "Restoring"
-
-            @property
-            def description(self) -> str:
-                return "Restores state"
+            """Restores state"""
 
             async def initialize_async(self) -> None:
                 set_default_value(class_type=DummyClass, parameter_name="other_value", value="temporary")
@@ -655,13 +465,7 @@ class TestGetDynamicDefaultValuesInfoWithoutMemory:
         CentralMemory.set_memory_instance(None)  # type: ignore[arg-type]
 
         class NoMemoryInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "No memory"
-
-            @property
-            def description(self) -> str:
-                return "No memory initialized"
+            """No memory initialized"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -681,9 +485,7 @@ class TestSupportedParameters:
         """Test that base class returns empty supported_parameters."""
 
         class NoParamsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "no_params"
+            """No params"""
 
             async def initialize_async(self) -> None:
                 pass
@@ -695,9 +497,7 @@ class TestSupportedParameters:
         """Test that subclass can declare supported_parameters."""
 
         class WithParamsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "with_params"
+            """With params"""
 
             @property
             def supported_parameters(self) -> list:
@@ -718,9 +518,7 @@ class TestSupportedParameters:
         """Test that unknown params raise ValueError."""
 
         class StrictInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "strict"
+            """Strict"""
 
             @property
             def supported_parameters(self) -> list:
@@ -737,9 +535,7 @@ class TestSupportedParameters:
         """Test that missing required params raise ValueError."""
 
         class RequiredInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "required"
+            """Required"""
 
             @property
             def supported_parameters(self) -> list:
@@ -756,9 +552,7 @@ class TestSupportedParameters:
         """Test that valid params pass validation."""
 
         class ValidInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "valid"
+            """Valid"""
 
             @property
             def supported_parameters(self) -> list:
@@ -778,9 +572,7 @@ class TestSupportedParameters:
         """Test that validate() checks self.params."""
 
         class ParamInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "param_init"
+            """Param init"""
 
             @property
             def supported_parameters(self) -> list:
@@ -800,9 +592,7 @@ class TestSupportedParameters:
         received_params = {}
 
         class TrackingInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "tracking"
+            """Tracking"""
 
             async def initialize_async(self) -> None:
                 received_params.update(self.params)
@@ -819,9 +609,7 @@ class TestSupportedParameters:
         received = {"params": "not_set"}
 
         class EmptyParamsInit(PyRITInitializer):
-            @property
-            def name(self) -> str:
-                return "empty"
+            """Empty"""
 
             async def initialize_async(self) -> None:
                 received["params"] = dict(self.params)

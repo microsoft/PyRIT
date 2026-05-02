@@ -738,6 +738,113 @@ def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
         assert "harm_category" in retrieved_entry.labels
 
 
+def test_get_message_pieces_labels_falls_back_to_attack_result_labels(sqlite_instance: MemoryInterface):
+    """PMEs without labels are returned when a matching AttackResultEntry shares the conversation_id."""
+    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.models import AttackOutcome, AttackResult
+
+    conv_id = str(uuid.uuid4())
+    labels = {"operation": "op1", "operator": "name1"}
+
+    # PME with NO labels
+    pme = PromptMemoryEntry(
+        entry=MessagePiece(
+            role="user",
+            original_value="Hello from AR",
+            conversation_id=conv_id,
+        )
+    )
+    # AttackResultEntry with labels sharing the same conversation_id
+    ar = AttackResult(
+        conversation_id=conv_id,
+        objective="test",
+        outcome=AttackOutcome.SUCCESS,
+        labels=labels,
+    )
+    are = AttackResultEntry(entry=ar)
+
+    sqlite_instance._insert_entries(entries=[pme, are])
+
+    retrieved = sqlite_instance.get_message_pieces(labels=labels)
+    assert len(retrieved) == 1
+    assert retrieved[0].original_value == "Hello from AR"
+
+
+def test_get_message_pieces_labels_returns_pme_and_ar_label_matches(sqlite_instance: MemoryInterface):
+    """Both PMEs with direct labels and PMEs matched via AR labels are returned."""
+    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.models import AttackOutcome, AttackResult
+
+    labels = {"operation": "op1"}
+
+    # PME with direct labels
+    pme_direct = PromptMemoryEntry(
+        entry=MessagePiece(
+            role="user",
+            original_value="Direct label",
+            labels=labels,
+        )
+    )
+    # PME without labels, but associated AR has labels
+    conv_id = str(uuid.uuid4())
+    pme_via_ar = PromptMemoryEntry(
+        entry=MessagePiece(
+            role="user",
+            original_value="Via AR label",
+            conversation_id=conv_id,
+        )
+    )
+    ar = AttackResult(
+        conversation_id=conv_id,
+        objective="test",
+        outcome=AttackOutcome.SUCCESS,
+        labels=labels,
+    )
+    are = AttackResultEntry(entry=ar)
+
+    # PME with no labels and no matching AR
+    pme_no_match = PromptMemoryEntry(
+        entry=MessagePiece(
+            role="user",
+            original_value="No match",
+        )
+    )
+
+    sqlite_instance._insert_entries(entries=[pme_direct, pme_via_ar, are, pme_no_match])
+
+    retrieved = sqlite_instance.get_message_pieces(labels=labels)
+    assert len(retrieved) == 2
+    original_values = {r.original_value for r in retrieved}
+    assert original_values == {"Direct label", "Via AR label"}
+
+
+def test_get_message_pieces_labels_no_match_when_ar_labels_differ(sqlite_instance: MemoryInterface):
+    """PMEs are NOT returned when the AR labels don't match the query."""
+    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.models import AttackOutcome, AttackResult
+
+    conv_id = str(uuid.uuid4())
+    pme = PromptMemoryEntry(
+        entry=MessagePiece(
+            role="user",
+            original_value="Unmatched",
+            conversation_id=conv_id,
+        )
+    )
+    ar = AttackResult(
+        conversation_id=conv_id,
+        objective="test",
+        outcome=AttackOutcome.SUCCESS,
+        labels={"operation": "other_op"},
+    )
+    are = AttackResultEntry(entry=ar)
+
+    sqlite_instance._insert_entries(entries=[pme, are])
+
+    retrieved = sqlite_instance.get_message_pieces(labels={"operation": "op1"})
+    assert len(retrieved) == 0
+
+
 def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
     metadata: dict[str, str | int] = {"key1": "value1", "key2": "value2"}
     entries = [

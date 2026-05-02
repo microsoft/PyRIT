@@ -38,6 +38,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
@@ -74,6 +75,7 @@ class MockNodeFactory:
         # Set all attributes
         node.node_id = config.node_id
         node.parent_id = config.parent_id
+        node._vis_node_id = "root"
         node.prompt_sent = config.prompt_sent
         node.completed = config.completed
         node.off_topic = config.off_topic
@@ -106,7 +108,9 @@ class MockNodeFactory:
 
         # Set up duplicate method to return a new mock node
         def duplicate_side_effect():
-            return MockNodeFactory.create_node(NodeMockConfig(parent_id=node.node_id))
+            dup = MockNodeFactory.create_node(NodeMockConfig(parent_id=node.node_id))
+            dup._vis_node_id = node._vis_node_id
+            return dup
 
         node.duplicate = MagicMock(side_effect=duplicate_side_effect)
 
@@ -155,10 +159,12 @@ class AttackBuilder:
         self.converters: Optional[AttackConverterConfig] = None
         self.successful_threshold: float = 0.8
         self.prompt_normalizer: Optional[PromptNormalizer] = None
+        self.error_score_map: dict[str, float] | None = None
+        self._supports_multi_turn: bool = True
 
     def with_default_mocks(self) -> "AttackBuilder":
         """Set up default mocks for all required components."""
-        self.objective_target = self._create_mock_target()
+        self.objective_target = self._create_mock_target(supports_multi_turn=self._supports_multi_turn)
         self.adversarial_chat = self._create_mock_chat()
         self.objective_scorer = self._create_mock_scorer("MockScorer")
         return self
@@ -183,6 +189,16 @@ class AttackBuilder:
         normalizer = MagicMock(spec=PromptNormalizer)
         normalizer.send_prompt_async = AsyncMock(return_value=None)
         self.prompt_normalizer = cast("PromptNormalizer", normalizer)
+        return self
+
+    def with_error_score_map(self, error_score_map: dict[str, float] | None) -> "AttackBuilder":
+        """Set the error score mapping."""
+        self.error_score_map = error_score_map
+        return self
+
+    def with_supports_multi_turn(self, supports_multi_turn: bool) -> "AttackBuilder":
+        """Set whether the objective target supports multi-turn conversations."""
+        self._supports_multi_turn = supports_multi_turn
         return self
 
     def build(self) -> TreeOfAttacksWithPruningAttack:
@@ -215,16 +231,25 @@ class AttackBuilder:
         if self.prompt_normalizer:
             kwargs["prompt_normalizer"] = self.prompt_normalizer
 
+        if self.error_score_map is not None:
+            kwargs["error_score_map"] = self.error_score_map
+
         return TreeOfAttacksWithPruningAttack(**kwargs)
 
     @staticmethod
-    def _create_mock_target() -> PromptTarget:
+    def _create_mock_target(supports_multi_turn: bool = True) -> PromptTarget:
         target = MagicMock(spec=PromptTarget)
         target.send_prompt_async = AsyncMock(return_value=None)
         target.get_identifier.return_value = ComponentIdentifier(
             class_name="MockTarget",
             class_module="test_module",
         )
+        target.capabilities.supports_multi_turn = supports_multi_turn
+        target.capabilities.output_modalities = frozenset({frozenset(["text"])})
+        target.configuration.includes.side_effect = (
+            lambda capability: capability == CapabilityName.MULTI_TURN and supports_multi_turn
+        )
+        target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
 
     @staticmethod
@@ -379,12 +404,14 @@ class TestHelpers:
 
     @staticmethod
     def add_nodes_to_tree(context: TAPAttackContext, nodes: list[_TreeOfAttacksNode], parent: str = "root"):
-        """Add nodes to the context's tree visualization."""
+        """Add nodes to the context's tree visualization and set their _vis_node_id."""
         for _i, node in enumerate(nodes):
             score_str = ""
             if node.objective_score:
                 score_str = f": Score {node.objective_score.get_value()}"
-            context.tree_visualization.create_node(f"{context.executed_turns}{score_str}", node.node_id, parent=parent)
+            vis_id = f"{node.node_id}_d{context.executed_turns}"
+            context.tree_visualization.create_node(f"{context.executed_turns}{score_str}", vis_id, parent=parent)
+            node._vis_node_id = vis_id
 
     @staticmethod
     def mock_prompt_loading(attack: TreeOfAttacksWithPruningAttack):
@@ -546,6 +573,34 @@ class TestTreeOfAttacksInitialization:
                 next_message=next_message,
             )
 
+    def test_default_scorer_detects_text_output_modalities(self):
+        """Test that default scorer detects text output modalities from target capabilities."""
+        builder = AttackBuilder()
+        builder._supports_multi_turn = True
+        builder.objective_target = AttackBuilder._create_mock_target(supports_multi_turn=True)
+        builder.adversarial_chat = AttackBuilder._create_mock_chat()
+        # Don't set objective_scorer — let TAP create the default
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=builder.objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
+        )
+        scorer = attack._objective_scorer._scorer
+        assert "text" in scorer._validator._supported_data_types
+
+    def test_default_scorer_detects_image_target_modalities(self):
+        """Test that image target output modalities are passed to scorer validator."""
+        builder = AttackBuilder()
+        builder.objective_target = AttackBuilder._create_mock_target(supports_multi_turn=False)
+        builder.objective_target.configuration.capabilities.output_modalities = frozenset({frozenset(["image_path"])})
+        builder.adversarial_chat = AttackBuilder._create_mock_chat()
+
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=builder.objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=builder.adversarial_chat),
+        )
+        scorer = attack._objective_scorer._scorer
+        assert "image_path" in scorer._validator._supported_data_types
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPruningLogic:
@@ -623,9 +678,9 @@ class TestPruningLogic:
         )
 
         context.nodes = [off_topic_node, incomplete_node, valid_node]
-        helpers.add_nodes_to_tree(context, context.nodes)
+        context.executed_turns = 1
 
-        # Execute sending prompts (which updates visualization and tracks pruned nodes)
+        # Execute sending prompts (which creates visualization nodes and tracks pruned nodes)
         await attack._send_prompts_to_all_nodes_async(context=context)
 
         # Verify off-topic node's conversation is tracked as PRUNED
@@ -795,6 +850,330 @@ class TestPruningLogic:
         assert context.best_objective_score == existing_score
         assert context.best_conversation_id == "existing_conv_id"
 
+    def test_prune_blocked_nodes_with_score_zero(self, attack_builder, node_factory, helpers):
+        """Test that nodes with 'blocked' score=0 are only pruned when width exceeded."""
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(tree_width=3)
+            .with_error_score_map({"blocked": 0.0})
+            .build()
+        )
+
+        context = helpers.create_basic_context()
+
+        # Create 2 blocked nodes (score 0.0) and 2 valid nodes
+        blocked_nodes = [
+            node_factory.create_node(
+                NodeMockConfig(
+                    node_id=f"blocked_node_{i}",
+                    completed=True,
+                    off_topic=False,
+                    objective_score_value=0.0,
+                    objective_target_conversation_id=f"conv_blocked_{i}",
+                )
+            )
+            for i in range(2)
+        ]
+        valid_nodes = node_factory.create_nodes_with_scores([0.8, 0.6])
+        nodes = blocked_nodes + valid_nodes
+
+        context.nodes = nodes
+        helpers.add_nodes_to_tree(context, nodes)
+
+        # Execute pruning
+        attack._prune_nodes_to_maintain_width(context=context)
+
+        # 4 completed nodes with tree_width=3 → 1 pruned (lowest score = a blocked node)
+        assert len(context.nodes) == 3
+        remaining_scores = sorted(
+            [node.objective_score.get_value() for node in context.nodes if node.objective_score is not None],
+            reverse=True,
+        )
+        assert remaining_scores == [0.8, 0.6, 0.0]
+
+        pruned_nodes = [node for node in nodes if node not in context.nodes]
+        assert len(pruned_nodes) == 1
+        assert "Pruned (width)" in context.tree_visualization[pruned_nodes[0]._vis_node_id].tag
+
+    def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
+        """Test that blocked nodes are not pruned when completed list is below tree_width."""
+        basic_attack._error_score_map = {"blocked": 0.0}
+        basic_attack._tree_width = 5
+
+        context = helpers.create_basic_context()
+
+        # 2 blocked nodes (score 0.0) + 1 valid node = 3 total, below width of 5
+        blocked_nodes = [
+            node_factory.create_node(
+                NodeMockConfig(
+                    node_id=f"blocked_node_{i}",
+                    completed=True,
+                    off_topic=False,
+                    objective_score_value=0.0,
+                    objective_target_conversation_id=f"conv_blocked_{i}",
+                )
+            )
+            for i in range(2)
+        ]
+        valid_node = node_factory.create_node(
+            NodeMockConfig(
+                node_id="valid_node", objective_score_value=0.7, objective_target_conversation_id="conv_valid"
+            )
+        )
+        nodes = blocked_nodes + [valid_node]
+
+        context.nodes = nodes
+        helpers.add_nodes_to_tree(context, nodes)
+
+        basic_attack._prune_nodes_to_maintain_width(context=context)
+
+        # No pruning: 3 nodes < tree_width=5
+        assert len(context.nodes) == 3
+        for node in nodes:
+            assert "Pruned" not in context.tree_visualization[node._vis_node_id].tag
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestErrorScoreMap:
+    """Tests for error_score_map functionality in TAP attack."""
+
+    def test_default_error_score_map_maps_blocked(self, attack_builder):
+        """Test that default error_score_map (None) maps 'blocked' to 0.0."""
+        attack = attack_builder.with_default_mocks().build()
+        assert attack._error_score_map == {"blocked": 0.0}
+
+    def test_custom_error_score_map(self, attack_builder):
+        """Test that a custom error_score_map is used as-is."""
+        custom_map = {"blocked": 0.1, "unknown": 0.2}
+        attack = attack_builder.with_default_mocks().with_error_score_map(custom_map).build()
+        assert attack._error_score_map == custom_map
+
+    def test_empty_error_score_map_disables_mapping(self, attack_builder):
+        """Test that passing {} disables error score mapping entirely."""
+        attack = attack_builder.with_default_mocks().with_error_score_map({}).build()
+        assert attack._error_score_map == {}
+
+    def test_invalid_error_score_map_key_raises(self, attack_builder):
+        """Test that an invalid error type key raises ValueError."""
+        with pytest.raises(ValueError, match="not a valid PromptResponseError"):
+            attack_builder.with_default_mocks().with_error_score_map({"invalid_error": 0.0}).build()
+
+    def test_out_of_range_error_score_map_value_raises(self, attack_builder):
+        """Test that a score value outside [0, 1] raises ValueError."""
+        with pytest.raises(ValueError, match="must be between 0.0 and 1.0"):
+            attack_builder.with_default_mocks().with_error_score_map({"blocked": 1.5}).build()
+
+    @pytest.mark.asyncio
+    async def test_score_response_assigns_score_for_mapped_error(self, attack_builder):
+        """Test that _score_response_async assigns a synthetic score for mapped errors."""
+        builder = attack_builder.with_default_mocks()
+        attack = builder.build()
+
+        # Create a real _TreeOfAttacksNode with error_score_map
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        node = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map={"blocked": 0.0},
+        )
+
+        # Create a Message with a blocked error
+        piece = MessagePiece(
+            role="assistant",
+            original_value="Content blocked",
+            converted_value="Content blocked",
+            conversation_id=node.objective_target_conversation_id,
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[piece])
+
+        await node._score_response_async(response=response, objective="test objective")
+
+        assert node.objective_score is not None
+        assert node.objective_score.get_value() == 0.0
+        assert node.objective_score.score_type == "float_scale"
+        assert "blocked" in node.objective_score.score_rationale
+
+    @pytest.mark.asyncio
+    async def test_score_response_skips_unmapped_error(self, attack_builder):
+        """Test that unmapped errors still go through normal scoring path."""
+        builder = attack_builder.with_default_mocks()
+        attack = builder.build()
+
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        # error_score_map only maps "blocked", not "unknown"
+        node = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map={"blocked": 0.0},
+        )
+
+        # Create a Message with "unknown" error (not in map)
+        piece = MessagePiece(
+            role="assistant",
+            original_value="Unknown error",
+            converted_value="Unknown error",
+            conversation_id=node.objective_target_conversation_id,
+            response_error="unknown",
+        )
+        response = Message(message_pieces=[piece])
+
+        # Mock Scorer.score_response_async to return objective scores
+        mock_score = Score(
+            score_value="0.5",
+            score_value_description="test",
+            score_type="float_scale",
+            score_rationale="test rationale",
+            message_piece_id=str(piece.id),
+            scorer_class_identifier=builder.objective_scorer.get_identifier(),
+            objective="test objective",
+        )
+        with patch.object(
+            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+        ):
+            await node._score_response_async(response=response, objective="test objective")
+
+        # Should have used the normal scorer, not the error map
+        assert node.objective_score is not None
+        assert node.objective_score.get_value() == 0.5
+
+    @pytest.mark.asyncio
+    async def test_score_response_empty_map_disables_interception(self, attack_builder):
+        """Test that empty error_score_map lets all errors through to normal scoring."""
+        builder = attack_builder.with_default_mocks()
+
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        node = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map={},
+        )
+
+        # Create a blocked response
+        piece = MessagePiece(
+            role="assistant",
+            original_value="Content blocked",
+            converted_value="Content blocked",
+            conversation_id=node.objective_target_conversation_id,
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[piece])
+
+        mock_score = Score(
+            score_value="0.0",
+            score_value_description="test",
+            score_type="float_scale",
+            score_rationale="scorer handled it",
+            message_piece_id=str(piece.id),
+            scorer_class_identifier=builder.objective_scorer.get_identifier(),
+        )
+        with patch.object(
+            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+        ) as mock_scorer:
+            await node._score_response_async(response=response, objective="test objective")
+
+        # Empty map → normal scoring path was called
+        mock_scorer.assert_called_once()
+
+    def test_duplicate_preserves_error_score_map(self, attack_builder):
+        """Test that duplicate() preserves the error_score_map on child nodes."""
+        builder = attack_builder.with_default_mocks()
+
+        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        custom_map = {"blocked": 0.1, "unknown": 0.2}
+        parent = _TreeOfAttacksNode(
+            objective_target=builder.objective_target,
+            adversarial_chat=builder.adversarial_chat,
+            adversarial_chat_seed_prompt=adversarial_chat_seed,
+            adversarial_chat_system_seed_prompt=adversarial_chat_system,
+            adversarial_chat_prompt_template=adversarial_chat_template,
+            objective_scorer=builder.objective_scorer,
+            on_topic_scorer=None,
+            request_converters=[],
+            response_converters=[],
+            auxiliary_scorers=[],
+            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
+            attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            desired_response_prefix="Sure, here is",
+            prompt_normalizer=normalizer,
+            error_score_map=custom_map,
+        )
+
+        with patch.object(parent._memory, "duplicate_conversation", return_value="new_conv_id"):
+            child = parent.duplicate()
+
+        assert child._error_score_map == custom_map
+        # Verify it's a copy, not the same object
+        assert child._error_score_map is not parent._error_score_map
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBranchingLogic:
@@ -891,10 +1270,10 @@ class TestExecutionPhase:
         )
 
         context = helpers.create_basic_context()
+        context.executed_turns = 1
 
-        # Create 15 mock nodes
+        # Create 15 mock nodes (vis nodes will be created by _send_prompts_to_all_nodes_async)
         nodes = node_factory.create_nodes_with_scores([0.5] * 15)
-        helpers.add_nodes_to_tree(context, nodes)
         context.nodes = nodes
 
         await attack._send_prompts_to_all_nodes_async(context=context)
@@ -1370,6 +1749,56 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores["AuxScorer1"].get_value() == 0.8
         assert node.auxiliary_scores["AuxScorer2"].get_value() == 0.6
 
+    @pytest.mark.asyncio
+    async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
+        """Test that single-turn targets get a fresh conversation_id before each send."""
+        node_components["objective_target"].capabilities.supports_multi_turn = False
+        node_components["objective_target"].configuration.includes.side_effect = lambda capability: False
+        node = _TreeOfAttacksNode(**node_components)
+
+        original_conv_id = node.objective_target_conversation_id
+
+        # Mock the adversarial chat to return valid JSON prompt
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="response",
+            converted_value="response",
+            conversation_id="resp_conv",
+        )
+        response_msg = Message(message_pieces=[response_piece])
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response_msg)
+        node._adversarial_chat.send_prompt_async = AsyncMock(return_value=response_msg)
+
+        with patch.object(node, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"):
+            with patch.object(node, "_score_response_async", new_callable=AsyncMock):
+                await node._send_prompt_to_target_async("test prompt")
+
+        # Conversation ID should have changed for single-turn target
+        assert node.objective_target_conversation_id != original_conv_id
+
+    @pytest.mark.asyncio
+    async def test_node_multi_turn_target_keeps_conv_id(self, node_components):
+        """Test that multi-turn targets keep the same conversation_id."""
+        node_components["objective_target"].capabilities.supports_multi_turn = True
+        node = _TreeOfAttacksNode(**node_components)
+
+        original_conv_id = node.objective_target_conversation_id
+
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="response",
+            converted_value="response",
+            conversation_id="resp_conv",
+        )
+        response_msg = Message(message_pieces=[response_piece])
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response_msg)
+
+        await node._send_prompt_to_target_async("test prompt")
+
+        assert node.objective_target_conversation_id == original_conv_id
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksErrorHandling:
@@ -1545,56 +1974,92 @@ class TestTreeOfAttacksVisualization:
         assert "7/10" in result
 
     def test_tree_visualization_structure(self, basic_attack, node_factory, helpers):
-        """Test that tree visualization maintains proper structure."""
+        """Test that tree visualization maintains proper depth-as-children structure."""
         context = helpers.create_basic_context()
 
-        # Create a tree structure:
+        # Create a tree structure where each depth is a child of the previous:
         # root
-        # |---node_0 (iteration 1)
-        # │   |--- node_0_child_0 (iteration 2)
-        # │   |--- node_0_child_1 (iteration 2)
-        # |-- node_1 (iteration 1)
-        #     |--- node_1_child_0 (iteration 2)
+        # ├── node_0_d1 (depth 1)
+        # │   ├── node_0_child_0_d2 (depth 2, branched from node_0)
+        # │   └── node_0_child_1_d2 (depth 2, branched from node_0)
+        # └── node_1_d1 (depth 1)
+        #     └── node_1_child_0_d2 (depth 2, branched from node_1)
 
         # First level nodes
         node_0 = node_factory.create_node(NodeMockConfig(node_id="node_0"))
         node_1 = node_factory.create_node(NodeMockConfig(node_id="node_1"))
 
-        # Add first level to tree
+        # Add first level to tree (simulates _send_prompts creating vis nodes)
         context.executed_turns = 1
         helpers.add_nodes_to_tree(context, [node_0, node_1])
 
-        # Second level nodes
+        # Second level nodes (branched from first level)
         node_0_child_0 = node_factory.create_node(NodeMockConfig(node_id="node_0_child_0", parent_id="node_0"))
         node_0_child_1 = node_factory.create_node(NodeMockConfig(node_id="node_0_child_1", parent_id="node_0"))
         node_1_child_0 = node_factory.create_node(NodeMockConfig(node_id="node_1_child_0", parent_id="node_1"))
 
-        # Add second level to tree using the helper with proper parent relationships
+        # Add second level as children of the first level's vis nodes
         context.executed_turns = 2
-        # Add children under node_0
-        for child in [node_0_child_0, node_0_child_1]:
-            context.tree_visualization.create_node(
-                f"2: Score {child.objective_score.get_value() if child.objective_score else 'N/A'}",
-                child.node_id,
-                parent=child.parent_id,
-            )
-        # Add child under node_1
-        context.tree_visualization.create_node(
-            f"2: Score {node_1_child_0.objective_score.get_value() if node_1_child_0.objective_score else 'N/A'}",
-            node_1_child_0.node_id,
-            parent=node_1_child_0.parent_id,
-        )
+        helpers.add_nodes_to_tree(context, [node_0_child_0, node_0_child_1], parent=node_0._vis_node_id)
+        helpers.add_nodes_to_tree(context, [node_1_child_0], parent=node_1._vis_node_id)
 
         # Verify tree structure
         assert len(context.tree_visualization.all_nodes()) == 6  # root + 5 nodes
         assert len(context.tree_visualization.children("root")) == 2
-        assert len(context.tree_visualization.children("node_0")) == 2
-        assert len(context.tree_visualization.children("node_1")) == 1
+        assert len(context.tree_visualization.children(node_0._vis_node_id)) == 2
+        assert len(context.tree_visualization.children(node_1._vis_node_id)) == 1
 
-        # Also verify the parent relationships are correct
-        assert context.tree_visualization.parent("node_0_child_0").identifier == "node_0"
-        assert context.tree_visualization.parent("node_0_child_1").identifier == "node_0"
-        assert context.tree_visualization.parent("node_1_child_0").identifier == "node_1"
+        # Verify the parent relationships: depth-2 nodes are children of depth-1 vis nodes
+        assert context.tree_visualization.parent(node_0_child_0._vis_node_id).identifier == node_0._vis_node_id
+        assert context.tree_visualization.parent(node_0_child_1._vis_node_id).identifier == node_0._vis_node_id
+        assert context.tree_visualization.parent(node_1_child_0._vis_node_id).identifier == node_1._vis_node_id
+
+    @pytest.mark.asyncio
+    async def test_surviving_node_gets_child_vis_nodes_per_depth(self, attack_builder, node_factory, helpers):
+        """Test that a surviving node gets a new child vis node at each depth (not appended scores)."""
+        attack = (
+            attack_builder.with_default_mocks()
+            .with_tree_params(tree_width=1, tree_depth=3, branching_factor=1)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        context = helpers.create_basic_context()
+        context.executed_turns = 1
+
+        # Create one node that survives all depths
+        node = node_factory.create_node(NodeMockConfig(node_id="survivor", objective_score_value=0.5))
+        context.nodes = [node]
+
+        # Depth 1: send_prompts creates vis node under root
+        await attack._send_prompts_to_all_nodes_async(context=context)
+        depth1_vis = node._vis_node_id
+        assert depth1_vis == "survivor_d1"
+        assert context.tree_visualization.parent(depth1_vis).identifier == "root"
+        assert "Score:" in context.tree_visualization[depth1_vis].tag
+        # No appended scores — just one score
+        assert context.tree_visualization[depth1_vis].tag.count("Score:") == 1
+
+        # Depth 2: surviving node gets a NEW child vis node
+        context.executed_turns = 2
+        await attack._send_prompts_to_all_nodes_async(context=context)
+        depth2_vis = node._vis_node_id
+        assert depth2_vis == "survivor_d2"
+        assert context.tree_visualization.parent(depth2_vis).identifier == depth1_vis
+        # Each vis node still has exactly one score
+        assert context.tree_visualization[depth1_vis].tag.count("Score:") == 1
+        assert context.tree_visualization[depth2_vis].tag.count("Score:") == 1
+
+        # Depth 3: another new child vis node
+        context.executed_turns = 3
+        await attack._send_prompts_to_all_nodes_async(context=context)
+        depth3_vis = node._vis_node_id
+        assert depth3_vis == "survivor_d3"
+        assert context.tree_visualization.parent(depth3_vis).identifier == depth2_vis
+
+        # No node has "Score: ... || Score:" pattern (the old appended format)
+        for tree_node in context.tree_visualization.all_nodes():
+            assert "|| Score:" not in tree_node.tag
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1626,9 +2091,9 @@ class TestTreeOfAttacksConversationTracking:
         nodes = node_factory.create_nodes_with_scores([0.8, 0.9])
         context.nodes = nodes
 
-        # Add the initial nodes to the tree visualization to avoid parent node issues
-        for node in nodes:
-            context.tree_visualization.create_node("1: ", node.node_id, parent="root")
+        # Add the initial nodes to the tree visualization and set their _vis_node_id
+        context.executed_turns = 1
+        helpers.add_nodes_to_tree(context, nodes)
 
         # Set up branching factor to create additional nodes
         basic_attack._branching_factor = 3
@@ -1811,3 +2276,341 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
         objective="test",
     )
     assert result.tree_visualization is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario-driven end-to-end TAP simulation tests
+# ---------------------------------------------------------------------------
+# Each scenario is a compact dict describing the behavior of every node at
+# every depth.  The test harness wires up mocked nodes whose send_prompt_async
+# applies the prescribed behavior (score, error, off-topic, json-error), then
+# runs _perform_async and asserts the expected outcome, best score, depth, and
+# node / prune counts.
+#
+# Node behaviors per depth are lists (one entry per node in that depth).
+# Allowed behavior keys:
+#   score     – float objective score (node completes successfully)
+#   error     – response_error string triggering error_score_map (e.g. "blocked")
+#   fail      – True → node raises an exception (unexpected error)
+#   off_topic – True → node is off-topic after retries
+#   json_err  – True → node raises InvalidJsonException
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ScenarioNodeBehavior:
+    """Compact description of how a node should behave during send_prompt_async."""
+
+    score: float | None = None
+    error: str | None = None
+    fail: bool = False
+    off_topic: bool = False
+    json_err: bool = False
+
+
+def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _TreeOfAttacksNode:
+    """Create a mock node that applies the given behavior during send_prompt_async."""
+    _call_behaviors: list[_ScenarioNodeBehavior] = [behavior]
+
+    async def _send_prompt(objective: str) -> None:
+        # Use the latest behavior (may be updated for re-execution at deeper depths)
+        b = _call_behaviors[-1]
+        # Reset state for re-execution
+        node.completed = False
+        node.off_topic = False
+        node.objective_score = None
+        node.error_message = None
+        if b.json_err:
+            node.error_message = "JSON parsing error"
+            return
+        if b.fail:
+            node.error_message = "Execution error: simulated failure"
+            return
+        if b.off_topic:
+            node.off_topic = True
+            return
+        # Normal completion
+        node.completed = True
+        if b.error is not None:
+            node.objective_score = MagicMock(
+                get_value=MagicMock(return_value=0.0),
+                score_metadata=None,
+            )
+        elif b.score is not None:
+            node.objective_score = MagicMock(
+                get_value=MagicMock(return_value=b.score),
+                score_metadata=None,
+            )
+
+    node = MagicMock()
+    node.node_id = node_id
+    node.parent_id = None
+    node._vis_node_id = "root"
+    node.completed = False
+    node.off_topic = False
+    node.objective_score = None
+    node.auxiliary_scores = {}
+    node.error_message = None
+    node.last_prompt_sent = None
+    node.last_response = None
+    node.objective_target_conversation_id = str(uuid.uuid4())
+    node.adversarial_chat_conversation_id = str(uuid.uuid4())
+    node.send_prompt_async = AsyncMock(side_effect=_send_prompt)
+    node.duplicate = MagicMock()  # replaced per-depth below
+    node._call_behaviors = _call_behaviors  # expose for re-programming
+    return node
+
+
+# Scenario parameters: tree_width, tree_depth, branching_factor, threshold,
+# error_score_map, behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth
+
+_B = _ScenarioNodeBehavior  # shorthand
+
+_SCENARIOS = [
+    pytest.param(
+        # Scenario: immediate success on depth 1
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {1: [_B(score=0.9), _B(score=0.3)]},
+        AttackOutcome.SUCCESS,
+        0.9,
+        1,
+        id="immediate_success_depth1",
+    ),
+    pytest.param(
+        # Scenario: all nodes blocked on depth 1, branches survive, succeed on depth 2
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {
+            1: [_B(error="blocked"), _B(error="blocked")],
+            2: [_B(score=0.8), _B(score=0.5), _B(score=0.2), _B(score=0.1)],
+        },
+        AttackOutcome.SUCCESS,
+        0.8,
+        2,
+        id="blocked_depth1_recovers_depth2",
+    ),
+    pytest.param(
+        # Scenario: mixed — one blocked, one scores low; depth 2 one succeeds
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {
+            1: [_B(error="blocked"), _B(score=0.3)],
+            2: [_B(score=0.75), _B(fail=True), _B(score=0.4), _B(off_topic=True)],
+        },
+        AttackOutcome.SUCCESS,
+        0.75,
+        2,
+        id="mixed_errors_and_success",
+    ),
+    pytest.param(
+        # Scenario: all fail across all 4 depths → failure
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {
+            1: [_B(fail=True), _B(json_err=True)],
+            # No surviving nodes → all pruned after depth 1
+        },
+        AttackOutcome.FAILURE,
+        0.0,
+        1,
+        id="all_fail_all_depths",
+    ),
+    pytest.param(
+        # Scenario: gradual improvement over 3 depths (width=2, branching=2 → 4 nodes/depth)
+        # After pruning to width 2, only the top 2 survive.
+        # Original survivors get re-executed + branching_factor-1 new duplicates.
+        2,
+        3,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {
+            1: [_B(score=0.2), _B(score=0.3)],
+            2: [_B(score=0.5), _B(score=0.4), _B(error="blocked"), _B(score=0.35)],
+            3: [_B(score=0.75), _B(score=0.6), _B(json_err=True), _B(off_topic=True)],
+        },
+        AttackOutcome.SUCCESS,
+        0.75,
+        3,
+        id="gradual_improvement_succeeds_depth3",
+    ),
+    pytest.param(
+        # Scenario: close but never reaches threshold across 3 depths
+        2,
+        3,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {
+            1: [_B(score=0.2), _B(score=0.3)],
+            2: [_B(score=0.4), _B(score=0.5), _B(score=0.45), _B(score=0.35)],
+            3: [_B(score=0.6), _B(score=0.65), _B(score=0.55), _B(score=0.68)],
+        },
+        AttackOutcome.FAILURE,
+        0.65,
+        3,
+        id="close_but_never_reaches_threshold",
+    ),
+    pytest.param(
+        # Scenario: error_score_map disabled (empty), blocked = immediate prune
+        2,
+        4,
+        2,
+        0.7,
+        {},
+        {
+            1: [_B(error="blocked"), _B(error="blocked")],
+            # With empty error_score_map, blocked nodes don't get scores → pruned
+        },
+        AttackOutcome.FAILURE,
+        0.0,
+        2,
+        id="empty_error_map_blocked_prunes_all",
+    ),
+    pytest.param(
+        # Scenario: off-topic nodes recovered by siblings
+        2,
+        4,
+        2,
+        0.7,
+        {"blocked": 0.0},
+        {
+            1: [_B(off_topic=True), _B(score=0.4)],
+            2: [_B(score=0.8), _B(score=0.5)],
+        },
+        AttackOutcome.SUCCESS,
+        0.8,
+        2,
+        id="off_topic_sibling_recovers",
+    ),
+]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTAPScenarios:
+    """Scenario-driven tests exercising the full TAP execution loop with mocked nodes.
+
+    Each scenario is run twice: once with a multi-turn target and once with a single-turn target.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("supports_multi_turn", [True, False], ids=["multi_turn", "single_turn"])
+    @pytest.mark.parametrize(
+        "tree_width, tree_depth, branching_factor, threshold, error_score_map, "
+        "behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth",
+        _SCENARIOS,
+    )
+    async def test_tap_scenario(
+        self,
+        attack_builder,
+        helpers,
+        supports_multi_turn,
+        tree_width,
+        tree_depth,
+        branching_factor,
+        threshold,
+        error_score_map,
+        behaviors_per_depth,
+        expected_outcome,
+        expected_best_score,
+        expected_max_depth,
+    ):
+        attack = (
+            attack_builder.with_supports_multi_turn(supports_multi_turn)
+            .with_default_mocks()
+            .with_tree_params(
+                tree_width=tree_width,
+                tree_depth=tree_depth,
+                branching_factor=branching_factor,
+            )
+            .with_threshold(threshold)
+            .with_error_score_map(error_score_map)
+            .with_prompt_normalizer()
+            .build()
+        )
+
+        # Track per-depth behavior counters
+        _depth_counters: dict[int, int] = {}
+
+        def _get_next_behavior(depth: int) -> _ScenarioNodeBehavior:
+            if depth not in _depth_counters:
+                _depth_counters[depth] = 0
+            behaviors = behaviors_per_depth.get(depth, [])
+            idx = _depth_counters[depth]
+            _depth_counters[depth] += 1
+            return behaviors[idx] if idx < len(behaviors) else _B(fail=True)
+
+        def _make_nodes_for_depth(depth: int, count: int) -> list:
+            nodes = []
+            for i in range(count):
+                b = _get_next_behavior(depth)
+                node = _make_node_with_behavior(b, f"d{depth}_n{i}")
+                next_depth = depth + 1
+
+                def _dup_factory(parent=node, d=next_depth):
+                    # Reprogram parent for re-execution at next depth
+                    parent._call_behaviors.append(_get_next_behavior(d))
+                    # Create child with its own behavior
+                    cb = _get_next_behavior(d)
+                    child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child.parent_id = parent.node_id
+                    child._vis_node_id = parent._vis_node_id
+                    child.duplicate = MagicMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
+                    return child
+
+                def _dup_child(parent_node, d):
+                    parent_node._call_behaviors.append(_get_next_behavior(d))
+                    cb = _get_next_behavior(d)
+                    child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child.parent_id = parent_node.node_id
+                    child._vis_node_id = parent_node._vis_node_id
+                    child.duplicate = MagicMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
+                    return child
+
+                node.duplicate = MagicMock(side_effect=_dup_factory)
+                nodes.append(node)
+            return nodes
+
+        # Mock _create_attack_node to produce nodes with prescribed behaviors
+        depth1_nodes = _make_nodes_for_depth(1, tree_width)
+        _depth1_idx = [0]
+
+        def _create_node_side_effect(**kwargs):
+            if _depth1_idx[0] < len(depth1_nodes):
+                node = depth1_nodes[_depth1_idx[0]]
+                _depth1_idx[0] += 1
+            else:
+                node = _make_node_with_behavior(_B(fail=True), f"extra_{_depth1_idx[0]}")
+                _depth1_idx[0] += 1
+            return node
+
+        context = helpers.create_basic_context()
+
+        with patch.object(attack, "_create_attack_node", side_effect=_create_node_side_effect):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
+                result = await attack._perform_async(context=context)
+
+        assert result.outcome == expected_outcome, (
+            f"Expected {expected_outcome}, got {result.outcome}. "
+            f"Best score: {context.best_objective_score.get_value() if context.best_objective_score else 'None'}"
+        )
+        assert result.max_depth_reached == expected_max_depth
+
+        if expected_best_score > 0:
+            assert context.best_objective_score is not None
+            assert abs(context.best_objective_score.get_value() - expected_best_score) < 0.01, (
+                f"Expected best score ~{expected_best_score}, got {context.best_objective_score.get_value()}"
+            )

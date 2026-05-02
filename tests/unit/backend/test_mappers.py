@@ -81,6 +81,7 @@ def _make_attack_result(
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
         },
+        labels={"test_ar_label": "test_ar_value"},
     )
 
 
@@ -175,7 +176,7 @@ class TestAttackResultToSummary:
 
         summary = attack_result_to_summary(ar, stats=stats)
 
-        assert summary.labels == {"env": "prod", "team": "red"}
+        assert summary.labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
     def test_labels_passed_through_without_normalization(self) -> None:
         """Test that labels are passed through as-is (DB stores canonical keys after migration)."""
@@ -187,7 +188,24 @@ class TestAttackResultToSummary:
 
         summary = attack_result_to_summary(ar, stats=stats)
 
-        assert summary.labels == {"operator": "alice", "operation": "op_red", "env": "prod"}
+        assert summary.labels == {
+            "operator": "alice",
+            "operation": "op_red",
+            "env": "prod",
+            "test_ar_label": "test_ar_value",
+        }
+
+    def test_conversation_labels_take_precedence_on_collision(self) -> None:
+        """Test that conversation-level labels override attack-result labels on key collision."""
+        ar = _make_attack_result()
+        stats = ConversationStats(
+            message_count=1,
+            labels={"test_ar_label": "conversation_wins"},
+        )
+
+        summary = attack_result_to_summary(ar, stats=stats)
+
+        assert summary.labels["test_ar_label"] == "conversation_wins"
 
     def test_outcome_success(self) -> None:
         """Test that success outcome is mapped."""
@@ -249,6 +267,7 @@ class TestAttackResultToSummary:
             ),
             outcome=AttackOutcome.UNDETERMINED,
             metadata={"created_at": now.isoformat(), "updated_at": now.isoformat()},
+            labels={"test_label": "test_value"},
         )
 
         summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))

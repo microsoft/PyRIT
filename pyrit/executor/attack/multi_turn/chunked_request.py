@@ -327,6 +327,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             metadata={"combined_chunks": combined_value, "chunk_count": len(context.chunk_responses)},
+            labels=context.memory_labels,
         )
 
     def _determine_attack_outcome(

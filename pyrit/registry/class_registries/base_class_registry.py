@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from typing import Self
 
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
-from pyrit.registry.base import RegistryProtocol
+from pyrit.registry.base import ClassRegistryEntry, RegistryProtocol
 
 # Type variable for the registered class type
 T = TypeVar("T")
@@ -48,7 +48,6 @@ class ClassEntry(Generic[T]):
         registered_class: The actual Python class (Type[T]).
         factory: Optional callable to create instances with custom logic.
         default_kwargs: Default keyword arguments for instance creation.
-        description: Optional description override.
     """
 
     def __init__(
@@ -57,7 +56,6 @@ class ClassEntry(Generic[T]):
         registered_class: type[T],
         factory: Optional[Callable[..., T]] = None,
         default_kwargs: Optional[dict[str, object]] = None,
-        description: Optional[str] = None,
     ) -> None:
         """
         Initialize a class entry.
@@ -66,12 +64,19 @@ class ClassEntry(Generic[T]):
             registered_class: The actual Python class (Type[T]).
             factory: Optional callable that creates an instance.
             default_kwargs: Default keyword arguments for instantiation.
-            description: Optional description override.
         """
         self.registered_class = registered_class
         self.factory = factory
         self.default_kwargs = default_kwargs or {}
-        self.description = description
+
+    def get_description(self, *, fallback: str = "") -> str:
+        """
+        Resolve description from docstring, falling back to provided default.
+
+        Returns:
+            str: The resolved description string.
+        """
+        return ClassRegistryEntry.description_from_docstring(self.registered_class, fallback=fallback)
 
     def create_instance(self, **kwargs: object) -> T:
         """
@@ -284,7 +289,6 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         name: Optional[str] = None,
         factory: Optional[Callable[..., T]] = None,
         default_kwargs: Optional[dict[str, object]] = None,
-        description: Optional[str] = None,
     ) -> None:
         """
         Register a class with the registry.
@@ -294,7 +298,6 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             name: Optional custom registry name. If not provided, derived from class name.
             factory: Optional callable for creating instances with custom logic.
             default_kwargs: Default keyword arguments for instance creation.
-            description: Optional description override.
         """
         if name is None:
             name = self._get_registry_name(cls)
@@ -303,7 +306,6 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             registered_class=cls,
             factory=factory,
             default_kwargs=default_kwargs,
-            description=description,
         )
         self._class_entries[name] = entry
         self._metadata_cache = None
