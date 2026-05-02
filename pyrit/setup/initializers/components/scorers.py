@@ -120,11 +120,11 @@ _PREFERRED_BEST: dict[str, tuple[str, str]] = {
 
 class ScorerInitializer(PyRITInitializer):
     """
-    Scorer Initializer for registering pre-configured scorers.
+    Instantiates a collection of scorers using targets from the TargetRegistry and adds them to the ScorerRegistry.
 
     This initializer registers all evaluation scorers into the ScorerRegistry.
     Targets are pulled from the TargetRegistry (populated by TargetInitializer),
-    so this initializer must run after the target initializer (enforced via execution_order).
+    so this initializer should be listed after TargetInitializer in the initializers list.
     Scorers that fail to initialize (e.g., due to missing targets) are skipped with a warning.
 
     Every scorer category follows the same pattern:
@@ -143,29 +143,6 @@ class ScorerInitializer(PyRITInitializer):
                 default=["default"],
             ),
         ]
-
-    @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "Scorer Initializer"
-
-    @property
-    def execution_order(self) -> int:
-        """
-        Get the execution order for this initializer.
-
-        Returns 2 to ensure this runs after TargetInitializer (order=1),
-        which populates the TargetRegistry that scorers depend on.
-        """
-        return 2
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Instantiates a collection of scorers using targets from "
-            "the TargetRegistry and adds them to the ScorerRegistry"
-        )
 
     @property
     def required_env_vars(self) -> list[str]:

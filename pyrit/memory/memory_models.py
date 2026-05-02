@@ -697,6 +697,7 @@ class AttackResultEntry(Base):
         outcome (AttackOutcome): The outcome of the attack, indicating success, failure, or undetermined.
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
+        labels (dict[str, str]): Optional labels associated with the attack result entry.
         pruned_conversation_ids (List[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (List[str]): List of conversation IDs used for adversarial chat.
         timestamp (DateTime): The timestamp of the attack result entry.
@@ -728,6 +729,7 @@ class AttackResultEntry(Base):
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, Union[str, int, float, bool]]] = mapped_column(JSON, nullable=True)
+    labels: Mapped[dict[str, str]] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)
@@ -783,6 +785,7 @@ class AttackResultEntry(Base):
         self.outcome = entry.outcome.value
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
+        self.labels = entry.labels or {}
 
         # Persist conversation references by type
         self.pruned_conversation_ids = [
@@ -895,6 +898,7 @@ class AttackResultEntry(Base):
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
             timestamp=_ensure_utc(self.timestamp) or datetime.now(tz=timezone.utc),
+            labels=self.labels or {},
         )
 
 

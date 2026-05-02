@@ -30,7 +30,6 @@ class TestScorerInitializerBasic:
         """Test that ScorerInitializer can be instantiated."""
         init = ScorerInitializer()
         assert init is not None
-        assert init.name == "Scorer Initializer"
 
     def test_required_env_vars_is_empty(self) -> None:
         """Test that required env vars is empty (handles missing targets gracefully)."""
@@ -42,11 +41,6 @@ class TestScorerInitializerBasic:
         init = ScorerInitializer()
         assert isinstance(init.description, str)
         assert len(init.description) > 0
-
-    def test_execution_order_is_two(self) -> None:
-        """Test that execution_order is 2 (runs after target initializer)."""
-        init = ScorerInitializer()
-        assert init.execution_order == 2
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -220,15 +214,9 @@ class TestScorerInitializerGetInfo:
         info = await ScorerInitializer.get_info_async()
 
         assert isinstance(info, dict)
-        assert info["name"] == "Scorer Initializer"
         assert info["class"] == "ScorerInitializer"
         assert "description" in info
         assert isinstance(info["description"], str)
-
-    async def test_get_info_execution_order_is_two(self) -> None:
-        """Test that get_info reports execution_order of 2."""
-        info = await ScorerInitializer.get_info_async()
-        assert info["execution_order"] == 2
 
 
 @pytest.mark.usefixtures("patch_central_database")

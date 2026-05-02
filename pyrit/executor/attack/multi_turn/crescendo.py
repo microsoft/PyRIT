@@ -424,6 +424,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             last_response=context.last_response.get_piece() if context.last_response else None,
             last_score=context.last_score,
             related_conversations=context.related_conversations,
+            labels=context.memory_labels,
         )
         # setting metadata for backtrack count
         result.backtrack_count = context.backtrack_count

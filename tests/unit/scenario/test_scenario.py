@@ -88,6 +88,7 @@ def sample_attack_results():
             objective=f"objective{i}",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
+            labels={"test_label": f"value{i}"},
         )
         for i in range(5)
     ]

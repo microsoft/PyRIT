@@ -9,7 +9,7 @@ from contextlib import closing, suppress
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast
 
-from sqlalchemy import and_, create_engine, event, exists, text
+from sqlalchemy import and_, create_engine, event, exists, or_, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, sessionmaker
@@ -227,27 +227,61 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         self._insert_entries(entries=embedding_data)
 
-    def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[TextClause]:
+    def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[Any]:
         """
         Generate SQL conditions for filtering message pieces by memory labels.
 
         Uses JSON_VALUE() function specific to SQL Azure to query label fields in JSON format.
 
+        Matches if labels are on the PromptMemoryEntry itself OR on any
+        AttackResultEntry that shares the same conversation_id.
+
         Args:
             memory_labels (dict[str, str]): Dictionary of label key-value pairs to filter by.
 
         Returns:
-            list: List containing a single SQLAlchemy text condition with bound parameters.
+            list: List containing a single SQLAlchemy OR condition with bound parameters.
         """
-        json_validation = "ISJSON(labels) = 1"
-        json_conditions = " AND ".join([f"JSON_VALUE(labels, '$.{key}') = :{key}" for key in memory_labels])
-        # Combine both conditions
-        conditions = f"{json_validation} AND {json_conditions}"
+        # Build conditions for direct PME label match
+        pme_label_parts: list[str] = []
+        pme_bindparams: dict[str, str] = {}
+        # Build conditions for AR label match (via exists subquery)
+        are_label_parts: list[str] = []
+        are_bindparams: dict[str, str] = {}
 
-        # Create SQL condition using SQLAlchemy's text() with bindparams
-        # for safe parameter passing, preventing SQL injection
-        condition = text(conditions).bindparams(**{key: str(value) for key, value in memory_labels.items()})
-        return [condition]
+        for key, value in memory_labels.items():
+            pme_param = f"pme_ml_{key}"
+            pme_label_parts.append(f"JSON_VALUE(\"PromptMemoryEntries\".labels, '$.{key}') = :{pme_param}")
+            pme_bindparams[pme_param] = str(value)
+
+            are_param = f"are_ml_{key}"
+            are_label_parts.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') = :{are_param}")
+            are_bindparams[are_param] = str(value)
+
+        # Direct PME label match
+        combined_pme = " AND ".join(pme_label_parts)
+        pme_match = and_(
+            PromptMemoryEntry.labels.isnot(None),
+            cast(
+                "ColumnElement[bool]",
+                text(f'ISJSON("PromptMemoryEntries".labels) = 1 AND {combined_pme}').bindparams(**pme_bindparams),
+            ),
+        )
+
+        # AR label match via exists subquery
+        combined_are = " AND ".join(are_label_parts)
+        are_match = exists().where(
+            and_(
+                AttackResultEntry.conversation_id == PromptMemoryEntry.conversation_id,
+                AttackResultEntry.labels.isnot(None),
+                cast(
+                    "ColumnElement[bool]",
+                    text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined_are}').bindparams(**are_bindparams),
+                ),
+            )
+        )
+
+        return [or_(pme_match, are_match)]
 
     def _get_metadata_conditions(self, *, prompt_metadata: dict[str, Union[str, int]]) -> list[TextClause]:
         """
@@ -453,36 +487,68 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Azure SQL implementation for filtering AttackResults by labels.
 
+        Matches if labels are on any associated PromptMemoryEntry OR directly
+        on the AttackResultEntry itself.
+
         Uses JSON_VALUE() with parameterized IN clauses. See
         ``MemoryInterface._get_attack_result_label_condition`` for semantics.
 
         Returns:
-            Any: SQLAlchemy exists subquery condition with bound parameters.
+            Any: SQLAlchemy condition with bound parameters.
         """
-        label_conditions: list[str] = []
-        bindparams_dict: dict[str, str] = {}
+        # Build conditions for PromptMemoryEntry labels (via exists subquery)
+        pme_label_conditions: list[str] = []
+        pme_bindparams: dict[str, str] = {}
+        # Build conditions for AttackResultEntry labels (direct match)
+        are_label_conditions: list[str] = []
+        are_bindparams: dict[str, str] = {}
+
         for key, raw_value in labels.items():
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            placeholders = []
+            pme_placeholders = []
+            are_placeholders = []
             for idx, v in enumerate(values):
-                param_name = f"label_{key}_{idx}"
-                placeholders.append(f":{param_name}")
-                bindparams_dict[param_name] = str(v)
-            label_conditions.append(f"JSON_VALUE(labels, '$.{key}') IN ({', '.join(placeholders)})")
+                pme_param = f"pme_label_{key}_{idx}"
+                pme_placeholders.append(f":{pme_param}")
+                pme_bindparams[pme_param] = str(v)
+                are_param = f"are_label_{key}_{idx}"
+                are_placeholders.append(f":{are_param}")
+                are_bindparams[are_param] = str(v)
+            pme_in = ", ".join(pme_placeholders)
+            pme_label_conditions.append(f"JSON_VALUE(\"PromptMemoryEntries\".labels, '$.{key}') IN ({pme_in})")
+            are_in = ", ".join(are_placeholders)
+            are_label_conditions.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') IN ({are_in})")
 
-        base = [
+        # PromptMemoryEntry subquery
+        pme_base: list[Any] = [
             PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
             PromptMemoryEntry.labels.isnot(None),
         ]
-        if label_conditions:
-            combined = " AND ".join(label_conditions)
-            base.append(
-                cast("ColumnElement[bool]", text(f"ISJSON(labels) = 1 AND {combined}").bindparams(**bindparams_dict))
+        if pme_label_conditions:
+            combined_pme = " AND ".join(pme_label_conditions)
+            pme_base.append(
+                cast(
+                    "ColumnElement[bool]",
+                    text(f'ISJSON("PromptMemoryEntries".labels) = 1 AND {combined_pme}').bindparams(**pme_bindparams),
+                )
             )
+        pme_match = exists().where(and_(*pme_base))
 
-        return exists().where(and_(*base))
+        # Direct AttackResultEntry label match
+        are_parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
+        if are_label_conditions:
+            combined_are = " AND ".join(are_label_conditions)
+            are_parts.append(
+                cast(
+                    "ColumnElement[bool]",
+                    text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined_are}').bindparams(**are_bindparams),
+                )
+            )
+        are_match = and_(*are_parts)
+
+        return or_(pme_match, are_match)
 
     def get_unique_attack_class_names(self) -> list[str]:
         """

@@ -18,8 +18,6 @@ class TestTargetInitializerBasic:
         """Test that TargetInitializer can be instantiated."""
         init = TargetInitializer()
         assert init is not None
-        assert init.name == "Target Initializer"
-        assert init.execution_order == 1
 
     def test_required_env_vars_is_empty(self):
         """Test that no env vars are required (initializer is optional)."""
@@ -222,7 +220,6 @@ class TestTargetInitializerGetInfo:
         info = await TargetInitializer.get_info_async()
 
         assert isinstance(info, dict)
-        assert info["name"] == "Target Initializer"
         assert info["class"] == "TargetInitializer"
         assert "description" in info
         assert isinstance(info["description"], str)
