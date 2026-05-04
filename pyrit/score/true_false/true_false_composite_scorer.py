@@ -75,6 +75,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         *,
         objective: Optional[str] = None,
         role_filter: Optional[ChatMessageRole] = None,
+        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Score a request/response by combining results from all constituent scorers.
@@ -83,6 +84,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             message (Message): The request/response to score.
             objective (Optional[str]): Scoring objective or context.
             role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
+            score_blocked_content (bool): If True, blocked pieces with partial content will be
+                substituted with text copies for scoring. Defaults to False.
 
         Returns:
             list[Score]: A single-element list with the aggregated true/false score.
@@ -92,7 +95,12 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ValueError: If no scores are generated from the request response pieces.
         """
         tasks = [
-            scorer.score_async(message=message, objective=objective, role_filter=role_filter)
+            scorer.score_async(
+                message=message,
+                objective=objective,
+                role_filter=role_filter,
+                score_blocked_content=score_blocked_content,
+            )
             for scorer in self._scorers
         ]
 

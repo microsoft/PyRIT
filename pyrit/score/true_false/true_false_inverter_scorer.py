@@ -53,6 +53,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         *,
         objective: Optional[str] = None,
         role_filter: Optional[ChatMessageRole] = None,
+        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Scores the piece using the underlying true-false scorer and returns the inverted score.
@@ -62,6 +63,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
             role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
+            score_blocked_content (bool): If True, blocked pieces with partial content will be
+                substituted with text copies for scoring. Defaults to False.
 
         Returns:
             list[Score]: A list containing a single Score object with the inverted true/false value.
@@ -70,6 +73,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             message,
             objective=objective,
             role_filter=role_filter,
+            score_blocked_content=score_blocked_content,
         )
 
         # TrueFalseScorers only have a single score
