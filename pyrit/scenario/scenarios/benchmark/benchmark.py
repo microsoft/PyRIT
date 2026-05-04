@@ -177,7 +177,7 @@ class Benchmark(Scenario):
                     )
                     atomic_attacks.append(
                         AtomicAttack(
-                            atomic_attack_name=f"{technique_name}__{model_label}_{dataset_name}",
+                            atomic_attack_name=f"{technique_name}__{model_label}__{dataset_name}",
                             attack_technique=attack_technique,
                             seed_groups=list(seed_groups),
                             adversarial_chat=model_target,
