@@ -51,6 +51,10 @@ async def display_image_response(response_piece: MessagePiece, safe_outputs: boo
         image_stream = io.BytesIO(image_bytes)
         image: Image.Image = Image.open(image_stream)
 
+        # Safe outputs are not designed to completely hide or blur the image, but to reduce the cognitive
+        # load of content review by sanitizing the image (e.g. desaturating and shrinking it) while still
+        # allowing reviewers to see the general content of the image and make informed decisions. The
+        # specific image transformations follow content moderation best practices.
         if safe_outputs:
             new_width = int(image.width * 0.5)
             new_height = int(image.height * 0.5)
