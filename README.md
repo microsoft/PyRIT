@@ -10,7 +10,7 @@ identify risks in generative AI systems.
   about how to use, install, or contribute to PyRIT.
 - Visit our [Discord server](https://discord.gg/9fMpq3tc8u) to chat with the team and community.
 
-## Trademarks
+## Trademarks and Citations
 
 This project may contain trademarks or logos for projects, products, or services.
 Authorized use of Microsoft trademarks or logos is subject to and must follow
@@ -19,7 +19,5 @@ Use of Microsoft trademarks or logos in modified versions of this project must
 not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's
 policies.
-
-## Citing PyRIT
 
 If you use PyRIT in your research, please cite the tool itself following the `CITATION.cff` file in the root of this repository.
