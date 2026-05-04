@@ -55,7 +55,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
 
   const isAzureML = TARGET_TYPE_CONFIG[targetType] === 'azureml'
-  const isOpenAI = TARGET_TYPE_CONFIG[targetType] === 'openai'
 
   const resetForm = () => {
     setTargetType('')
