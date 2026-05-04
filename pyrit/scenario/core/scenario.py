@@ -713,10 +713,13 @@ class Scenario(ABC):
             )
             return False
 
-        # Treat None (legacy result without persisted params) as empty.
+        # Treat None (legacy result without persisted params) as empty. Compare both sides
+        # post-JSON-roundtrip so types that the memory column rewrites (tuple → list, non-str
+        # dict keys → str) don't surface as false mismatches under param_type=None.
         stored_params = stored_result.scenario_identifier.init_data or {}
-        if stored_params != self.params:
-            diff = _format_param_key_diff(stored=stored_params, current=self.params)
+        current_params_normalized = json.loads(json.dumps(self.params))
+        if stored_params != current_params_normalized:
+            diff = _format_param_key_diff(stored=stored_params, current=current_params_normalized)
             logger.warning(
                 f"Scenario result ID {self._scenario_result_id} has mismatched parameters ({diff}). "
                 f"Either CLI/config args differ from the original run, or a scenario default changed "

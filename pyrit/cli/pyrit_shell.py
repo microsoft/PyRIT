@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import cmd
-import copy
 import logging
 import sys
 import threading
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
     from pyrit.models.scenario_result import ScenarioResult
 
 from pyrit.cli import _banner as banner
+from pyrit.cli._cli_args import merge_config_scenario_args
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.registry import ScenarioRegistry
 
@@ -395,15 +395,14 @@ class PyRITShell(cmd.Cmd):
         )
 
         try:
-            cli_scenario_args = self._fc.extract_scenario_args(parsed=args)
             # Merge config-file scenario args (CLI wins). Shell v1 requires the
             # scenario name to be provided positionally; config-only scenarios
             # are not supported in the shell.
-            config_scenario = self.context._scenario_config
-            merged_scenario_args: dict[str, Any] = {}
-            if config_scenario and config_scenario.name == args["scenario_name"] and config_scenario.args:
-                merged_scenario_args.update(copy.deepcopy(config_scenario.args))
-            merged_scenario_args.update(cli_scenario_args)
+            merged_scenario_args = merge_config_scenario_args(
+                config_scenario=self.context._scenario_config,
+                effective_scenario_name=args["scenario_name"],
+                cli_args=self._fc.extract_scenario_args(parsed=args),
+            )
 
             result = asyncio.run(
                 self._fc.run_scenario_async(

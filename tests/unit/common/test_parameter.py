@@ -99,3 +99,20 @@ class TestParameter:
 
         with pytest.raises((AttributeError, TypeError)):
             p.name = "y"  # type: ignore[misc]
+
+
+class TestCoerceValuePassthroughDeepcopy:
+    """``coerce_value`` deep-copies raw passthrough values for ``param_type=None``."""
+
+    def test_param_type_none_returns_distinct_object(self) -> None:
+        """A mutable raw value must not share identity with the coerced result."""
+        from pyrit.common.parameter import coerce_value
+
+        raw = ["a", "b"]
+        coerced = coerce_value(param=Parameter(name="opts", description="d"), raw_value=raw)
+
+        assert coerced == raw
+        assert coerced is not raw
+
+        raw.append("c")
+        assert coerced == ["a", "b"]

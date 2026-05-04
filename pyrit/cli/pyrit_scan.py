@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import copy
 import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Optional, get_origin
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
+    merge_config_scenario_args,
     non_negative_int,
     positive_int,
     validate_log_level_argparse,
@@ -188,6 +188,17 @@ def parse_args(args: Optional[list[str]] = None) -> Namespace:
     scenario flags don't fail. Pass 2 parses for real, with the resolved
     scenario's declared params added as namespaced flags.
 
+    The scenario name may come from the CLI positional or, as a fallback, from
+    the ``scenario.name`` block in ``--config-file`` (or the default config
+    file). This mirrors the runtime behavior in ``main()`` so config-only
+    scenario names can still expose their declared CLI flags.
+
+    The CLI positional is only trusted when it resolves to a known scenario.
+    Pass 1 doesn't yet know about scenario-declared flags, so ``parse_known_args``
+    can greedily consume an unknown flag's value (e.g. the ``"7"`` in
+    ``--max-turns 7``) as the positional. When that happens the positional won't
+    resolve, and we fall back to the config peek.
+
     Args:
         args (Optional[list[str]]): Argument list (``sys.argv[1:]`` when None).
 
@@ -198,12 +209,49 @@ def parse_args(args: Optional[list[str]] = None) -> Namespace:
     parsed_pass1, _ = pass1_parser.parse_known_args(args)
 
     scenario_class = _resolve_scenario_class(parsed_pass1.scenario_name)
+    if scenario_class is None:
+        fallback_name = _peek_scenario_name_from_config(config_file=parsed_pass1.config_file)
+        scenario_class = _resolve_scenario_class(fallback_name)
 
     pass2_parser = _build_base_parser(add_help=True)
     if scenario_class is not None:
         _add_scenario_params(parser=pass2_parser, declared=scenario_class.supported_parameters())
 
     return pass2_parser.parse_args(args)
+
+
+def _peek_scenario_name_from_config(*, config_file: Optional[Path]) -> Optional[str]:
+    """
+    Best-effort lookup of the scenario name in layered config (default + explicit).
+
+    Pass 1 of ``parse_args`` needs the scenario name to register that scenario's
+    declared parameters as flags. Failures are swallowed: if the YAML is missing
+    or malformed, return ``None`` and let ``main`` surface the canonical error.
+
+    Args:
+        config_file (Optional[Path]): Path from ``--config-file``.
+
+    Returns:
+        Optional[str]: The scenario name, or ``None`` if not configured / unavailable.
+    """
+    from pyrit.common.path import DEFAULT_CONFIG_PATH
+    from pyrit.setup.configuration_loader import ConfigurationLoader
+
+    paths: list[Path] = []
+    if DEFAULT_CONFIG_PATH.exists():
+        paths.append(DEFAULT_CONFIG_PATH)
+    if config_file is not None and config_file.exists():
+        paths.append(config_file)
+
+    name: Optional[str] = None
+    for path in paths:
+        try:
+            loaded = ConfigurationLoader.from_yaml_file(path)
+        except Exception:
+            continue
+        if loaded.scenario_config is not None:
+            name = loaded.scenario_config.name
+    return name
 
 
 def _resolve_scenario_class(scenario_name: Optional[str]) -> Optional[type[Scenario]]:
@@ -273,29 +321,23 @@ def _add_scenario_params(*, parser: ArgumentParser, declared: list[Parameter]) -
 
 def _argparse_type_for(*, param: Parameter) -> Optional[Any]:
     """
-    Map a ``Parameter`` to an argparse ``type=`` callable, or None for str/raw.
+    Map a ``Parameter`` to an argparse ``type=`` callable, or ``None`` for str/raw.
+
+    For list params, ``None`` is correct because ``nargs='+'`` collects strings;
+    list element validation happens via ``coerce_list`` at scenario-set time.
 
     Args:
         param (Parameter): The scenario-declared parameter.
 
     Returns:
-        Optional[Any]: Coercion callable, or None if no coercion is needed.
+        Optional[Any]: Coercion callable, or ``None`` if no coercion is needed.
     """
-    param_type = param.param_type
-    if param_type is None or param_type is str:
-        return None
-    from pyrit.common.parameter import coerce_bool, coerce_scalar
+    from pyrit.common.parameter import coerce_value
 
-    if param_type is bool:
-        return lambda raw: coerce_bool(param_name=param.name, raw_value=raw)
-    if param_type is int:
-        return lambda raw: coerce_scalar(param_name=param.name, scalar_type=int, raw_value=raw)
-    if param_type is float:
-        return lambda raw: coerce_scalar(param_name=param.name, scalar_type=float, raw_value=raw)
-    if _is_list_param(param_type):
-        # nargs='+' applies type per element; v1 only supports list[str].
-        return str
-    return None
+    param_type = param.param_type
+    if param_type is None or param_type is str or _is_list_param(param_type):
+        return None
+    return lambda raw: coerce_value(param=param, raw_value=raw)
 
 
 def _is_list_param(param_type: Any) -> bool:
@@ -417,13 +459,12 @@ def main(args: Optional[list[str]] = None) -> int:
         if parsed_args.memory_labels:
             memory_labels = frontend_core.parse_memory_labels(json_string=parsed_args.memory_labels)
 
-        # Merge scenario args: CLI wins per-key over config args. Config args
-        # are deep-copied so mutable values (lists, dicts) don't leak across runs.
-        cli_scenario_args = _extract_scenario_args(parsed=parsed_args)
-        merged_scenario_args: dict[str, Any] = {}
-        if config_scenario and config_scenario.name == effective_scenario_name and config_scenario.args:
-            merged_scenario_args.update(copy.deepcopy(config_scenario.args))
-        merged_scenario_args.update(cli_scenario_args)
+        # Merge scenario args (CLI wins per-key over config args).
+        merged_scenario_args = merge_config_scenario_args(
+            config_scenario=config_scenario,
+            effective_scenario_name=effective_scenario_name,
+            cli_args=_extract_scenario_args(parsed=parsed_args),
+        )
 
         # Run scenario
         asyncio.run(

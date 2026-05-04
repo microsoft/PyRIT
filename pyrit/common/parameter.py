@@ -3,6 +3,7 @@
 
 """Unified parameter declaration and coercion helpers shared by initializers, scenarios, and CLI parsers."""
 
+import copy
 from dataclasses import dataclass
 from types import GenericAlias
 from typing import Any, get_args, get_origin
@@ -121,7 +122,8 @@ def coerce_value(*, param: Parameter, raw_value: Any) -> Any:
     """
     param_type = param.param_type
     if param_type is None:
-        value: Any = raw_value
+        # Deep-copy so mutable raw values don't share identity with self.params.
+        value: Any = copy.deepcopy(raw_value)
     elif param_type is bool:
         value = coerce_bool(param_name=param.name, raw_value=raw_value)
     elif param_type is int:

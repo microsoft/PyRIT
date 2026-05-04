@@ -531,6 +531,18 @@ class TestResumeParameterValidation:
         assert result is False
         assert "added: max_turns" in caplog.text
 
+    def test_resume_normalizes_json_drift_for_passthrough_tuples(self) -> None:
+        """A tuple value under param_type=None matches a stored list (post-JSON round-trip)."""
+        scenario = _make_scenario(declared_params=[Parameter(name="weights", description="d")])
+        scenario.set_params_from_args(args={"weights": (0.5, 0.5)})
+
+        # init_data after a real DB round-trip would be a list, not a tuple. The fix
+        # normalizes both sides through json.loads(json.dumps(...)) before comparing.
+        stored = self._make_stored_result(
+            scenario_name=type(scenario).__name__, version=1, init_data={"weights": [0.5, 0.5]}
+        )
+        assert scenario._validate_stored_scenario(stored_result=stored) is True
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestParamPersistenceJsonSafety:

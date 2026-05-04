@@ -607,6 +607,29 @@ class TestTwoPassParsing:
         assert "--max-turns" in captured.out
         assert "Conversation turn cap" in captured.out
 
+    def test_config_only_scenario_name_registers_scenario_flags(self):
+        """When pass 1's positional doesn't resolve, fall back to ``scenario.name`` from the config file."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+
+        # Resolve only "fake_scenario"; anything pass 1 misclassifies as the positional
+        # (e.g. the "7" from "--max-turns 7") returns None and triggers the config peek.
+        def fake_resolve(name):
+            return scenario_class if name == "fake_scenario" else None
+
+        with (
+            patch.object(pyrit_scan, "_peek_scenario_name_from_config", return_value="fake_scenario") as peek,
+            patch.object(pyrit_scan, "_resolve_scenario_class", side_effect=fake_resolve),
+        ):
+            args = pyrit_scan.parse_args(["--config-file", "foo.yaml", "--max-turns", "7"])
+
+        peek.assert_called_once()
+        assert args.scenario_name is None
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"max_turns": 7}
+
 
 class TestExtractScenarioArgs:
     """Tests for the namespaced-dest extraction helper."""
