@@ -86,8 +86,6 @@ class Score:
             ValueError: If score value or score type is invalid.
 
         """
-        # Import at runtime to avoid circular import
-
         self.id = id if id else uuid.uuid4()
         if timestamp is None:
             self.timestamp = datetime.now(tz=timezone.utc)

@@ -312,7 +312,7 @@ class PromptMemoryEntry(Base):
             timestamp=_ensure_utc(self.timestamp),
         )
         message_piece.scores = [score.get_score() for score in self.scores]
-        message_piece.labels = self.labels
+        message_piece.labels = self.labels or {}
         message_piece.targeted_harm_categories = self.targeted_harm_categories or []
         return message_piece
 
