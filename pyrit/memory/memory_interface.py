@@ -895,6 +895,9 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if prompt_ids is not None and len(prompt_ids) == 0:
+            return []
+
         try:
             conditions: list[Any] = []
             if attack_id:

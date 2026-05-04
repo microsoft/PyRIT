@@ -58,8 +58,8 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         result = await normalizer.normalize_string_async(messages)
 
         assert "Turn 1:" in result
-        assert "User: Hello" in result
-        assert "Assistant: Hi there!" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi there!" in result
 
     async def test_skips_system_messages(self):
         """Test that system messages are skipped in output."""
@@ -74,8 +74,8 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "system" not in result.lower()
         assert "You are a helpful assistant" not in result
-        assert "User: Hello" in result
-        assert "Assistant: Hi!" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi!" in result
 
     async def test_turn_numbering(self):
         """Test that turns are numbered correctly."""
@@ -103,3 +103,31 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "converted text" in result
         assert "(original: original text)" in result
+
+    @pytest.mark.asyncio
+    async def test_preserves_tool_role_label(self):
+        """Test that tool messages keep the Tool label in context output."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_message("user", "Call the weather tool"),
+            _make_message("tool", "72F and sunny"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert "tool: 72F and sunny" in result
+        assert "assistant: 72F and sunny" not in result
+
+    @pytest.mark.asyncio
+    async def test_preserves_developer_role_label(self):
+        """Test that developer messages keep the Developer label in context output."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_message("user", "Use concise units"),
+            _make_message("developer", "Prefer metric units"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert "developer: Prefer metric units" in result
+        assert "assistant: Prefer metric units" not in result
