@@ -149,7 +149,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             if callable(self._api_key):
                 # Token provider - create an AsyncTokenCredential wrapper
                 credential = AsyncTokenProviderCredential(self._api_key)  # type: ignore[ty:invalid-argument-type]
-                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)  # type: ignore[ty:invalid-argument-type]
+                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
             else:
                 # String API key
                 if not isinstance(self._api_key, str):
