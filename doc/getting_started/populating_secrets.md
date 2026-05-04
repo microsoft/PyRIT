@@ -63,6 +63,16 @@ OPENAI_CHAT_MODEL="llama3-8b-8192"
 Get your API key from [console.groq.com](https://console.groq.com/).
 :::
 
+:::{tab-item} HuggingFace
+```bash
+OPENAI_CHAT_ENDPOINT="https://router.huggingface.co/v1"
+OPENAI_CHAT_KEY="hf_your-token-here"
+OPENAI_CHAT_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+```
+
+Get your token from [huggingface.co/docs/hub/security-tokens](https://huggingface.co/docs/hub/security-tokens). Browse available models at [huggingface.co/models](https://huggingface.co/models).
+:::
+
 :::{tab-item} OpenRouter
 ```bash
 OPENAI_CHAT_ENDPOINT="https://openrouter.ai/api/v1"

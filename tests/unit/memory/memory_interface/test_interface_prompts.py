@@ -109,6 +109,18 @@ def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface
     assert str(single_str_result[0].id) == str(uuid3)
 
 
+def test_get_message_pieces_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
+    piece = MessagePiece(
+        id=uuid.uuid4(),
+        role="user",
+        original_value="Test prompt",
+        converted_value="Test prompt",
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+    assert sqlite_instance.get_message_pieces(prompt_ids=[]) == []
+
+
 def test_duplicate_memory(sqlite_instance: MemoryInterface):
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
     attack2 = PromptSendingAttack(objective_target=get_mock_target("Target2"))
