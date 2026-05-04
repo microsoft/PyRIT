@@ -20,4 +20,4 @@ not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's
 policies.
 
-If you use PyRIT in your research, please cite the tool itself following the `CITATION.cff` file in the root of this repository.
+If you use PyRIT in your research, please cite the tool itself following the [`CITATION.cff`](./CITATION.cff) file in the root of this repository.
