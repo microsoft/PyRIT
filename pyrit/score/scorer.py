@@ -175,7 +175,9 @@ class Scorer(Identifiable, abc.ABC):
             role_filter (Optional[ChatMessageRole]): Only score messages with this exact stored role.
                 Use "assistant" to score only real assistant responses, or "simulated_assistant"
                 to score only simulated responses. Defaults to None (no filtering).
-            skip_on_error_result (bool): If True, skip scoring if the message contains an error. Defaults to False.
+            skip_on_error_result (bool): If True, skip scoring if the message contains an error. If True
+                but score_blocked_content is also True, blocked content will be scored in the case of a
+                content filter triggered error instead of skipping. Defaults to False.
             infer_objective_from_request (bool): If True, infer the objective from the message's previous request
                 when objective is not provided. Defaults to False.
             score_blocked_content (bool): If True, blocked responses that contain partial content
