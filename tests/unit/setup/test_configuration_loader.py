@@ -123,9 +123,9 @@ class TestConfigurationLoader:
 
     def test_initializer_name_already_snake_case(self):
         """Test that snake_case names remain unchanged."""
-        config = ConfigurationLoader(initializers=["load_default_datasets", "objective_list"])
+        config = ConfigurationLoader(initializers=["load_default_datasets", "scorer"])
         assert config._initializer_configs[0].name == "load_default_datasets"
-        assert config._initializer_configs[1].name == "objective_list"
+        assert config._initializer_configs[1].name == "scorer"
 
     def test_initializer_dict_without_name_raises_error(self):
         """Test that dict initializer without 'name' raises ValueError."""

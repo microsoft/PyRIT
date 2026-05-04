@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from asyncio import Task
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -322,3 +323,242 @@ async def test_hugging_face_chat_sets_endpoint_and_rate_limit(patch_central_data
     # HuggingFaceChatTarget doesn't set an endpoint (it's local), so it should be empty
     assert not identifier.params.get("endpoint")
     assert target._max_requests_per_minute == 30
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_identifier_includes_generation_params():
+    """New generation params (top_k, do_sample, repetition_penalty, random_seed) appear in the identifier."""
+    target = HuggingFaceChatTarget(
+        model_id="test_model",
+        use_cuda=False,
+        top_k=40,
+        do_sample=True,
+        repetition_penalty=1.2,
+        random_seed=42,
+        temperature=0.7,
+    )
+    identifier = target.get_identifier()
+    assert identifier.params["top_k"] == 40
+    assert identifier.params["do_sample"] is True
+    assert identifier.params["repetition_penalty"] == 1.2
+    assert identifier.params["random_seed"] == 42
+    assert identifier.params["temperature"] == 0.7
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_identifier_excludes_none_generation_params():
+    """None-valued generation params are excluded from the identifier (backward compatibility)."""
+    target = HuggingFaceChatTarget(
+        model_id="test_model",
+        use_cuda=False,
+    )
+    identifier = target.get_identifier()
+    assert "top_k" not in identifier.params
+    assert "do_sample" not in identifier.params
+    assert "repetition_penalty" not in identifier.params
+    assert "random_seed" not in identifier.params
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_generate_passes_new_params():
+    """Verify top_k, do_sample, repetition_penalty are forwarded to model.generate()."""
+    target = HuggingFaceChatTarget(
+        model_id="test_model",
+        use_cuda=False,
+        top_k=40,
+        do_sample=True,
+        repetition_penalty=1.2,
+    )
+    await target.load_model_and_tokenizer()
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test prompt",
+        converted_value="test prompt",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+    await target.send_prompt_async(message=message)
+
+    call_kwargs = target.model.generate.call_args[1]
+    assert call_kwargs["top_k"] == 40
+    assert call_kwargs["do_sample"] is True
+    assert call_kwargs["repetition_penalty"] == 1.2
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_generate_omits_none_params():
+    """When optional params are None, they should not be passed to model.generate()."""
+    target = HuggingFaceChatTarget(
+        model_id="test_model",
+        use_cuda=False,
+    )
+    await target.load_model_and_tokenizer()
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test prompt",
+        converted_value="test prompt",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+    await target.send_prompt_async(message=message)
+
+    call_kwargs = target.model.generate.call_args[1]
+    assert "top_k" not in call_kwargs
+    assert "do_sample" not in call_kwargs
+    assert "repetition_penalty" not in call_kwargs
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_random_seed_calls_manual_seed_at_init():
+    """When random_seed is set, torch.manual_seed is called during construction."""
+    with patch("torch.manual_seed") as mock_manual_seed:
+        HuggingFaceChatTarget(
+            model_id="test_model",
+            use_cuda=False,
+            random_seed=42,
+        )
+        mock_manual_seed.assert_called_once_with(42)
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_no_random_seed_does_not_call_manual_seed():
+    """When random_seed is None, torch.manual_seed is not called."""
+    with patch("torch.manual_seed") as mock_manual_seed:
+        HuggingFaceChatTarget(
+            model_id="test_model",
+            use_cuda=False,
+        )
+        mock_manual_seed.assert_not_called()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_set_random_seed_reseeds_rng():
+    """Calling set_random_seed updates the seed and immediately re-seeds the RNG."""
+    target = HuggingFaceChatTarget(
+        model_id="test_model",
+        use_cuda=False,
+    )
+    with patch("torch.manual_seed") as mock_manual_seed:
+        target.set_random_seed(99)
+        mock_manual_seed.assert_called_once_with(99)
+    assert target._random_seed == 99
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_sampling_params_without_do_sample_warns():
+    """Setting temperature != 1.0 without do_sample=True emits a warning."""
+    with pytest.warns(UserWarning, match="do_sample is not True"):
+        HuggingFaceChatTarget(
+            model_id="test_model",
+            use_cuda=False,
+            temperature=0.7,
+        )
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_sampling_params_with_do_sample_no_warning():
+    """Setting temperature != 1.0 with do_sample=True does not warn."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        HuggingFaceChatTarget(
+            model_id="test_model",
+            use_cuda=False,
+            temperature=0.7,
+            do_sample=True,
+        )
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+def test_default_params_no_warning():
+    """Default parameters (temperature=1.0, top_p=1.0) do not trigger warning."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        HuggingFaceChatTarget(
+            model_id="test_model",
+            use_cuda=False,
+        )
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_full_conversation_sent_to_chat_template():
+    """Verify system and user messages from the full conversation are sent to the chat template."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer()
+
+    system_piece = MessagePiece(
+        role="system",
+        original_value="You are a helpful assistant.",
+        converted_value="You are a helpful assistant.",
+        converted_value_data_type="text",
+        conversation_id="conv1",
+        sequence=0,
+    )
+    user_piece = MessagePiece(
+        role="user",
+        original_value="Hello",
+        converted_value="Hello",
+        converted_value_data_type="text",
+        conversation_id="conv1",
+        sequence=1,
+    )
+    system_msg = Message(message_pieces=[system_piece])
+    user_msg = Message(message_pieces=[user_piece])
+
+    with patch.object(target, "_apply_chat_template", wraps=target._apply_chat_template) as mock_template:
+        await target._send_prompt_to_target_async(normalized_conversation=[system_msg, user_msg])
+
+        call_args = mock_template.call_args[0][0]
+        assert len(call_args) == 2
+        assert call_args[0] == {"role": "system", "content": "You are a helpful assistant."}
+        assert call_args[1] == {"role": "user", "content": "Hello"}
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_effective_generation_config_in_metadata():
+    """Verify effective generation config is stored in response prompt_metadata."""
+    target = HuggingFaceChatTarget(
+        model_id="test_model",
+        use_cuda=False,
+        top_k=40,
+        do_sample=True,
+        random_seed=42,
+    )
+    await target.load_model_and_tokenizer()
+
+    # Mock generation_config on the model
+    mock_gen_config = MagicMock()
+    mock_gen_config.to_dict.return_value = {"eos_token_id": 2, "bos_token_id": 1}
+    target.model.generation_config = mock_gen_config
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test",
+        converted_value="test",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    response = await target.send_prompt_async(message=message)
+    metadata = response[0].message_pieces[0].prompt_metadata
+    effective_config = json.loads(metadata["effective_generation_config"])
+
+    assert effective_config["top_k"] == 40
+    assert effective_config["do_sample"] is True
+    assert effective_config["random_seed"] == 42
+    assert effective_config["temperature"] == 1.0
+    # Model defaults should also be present
+    assert effective_config["eos_token_id"] == 2

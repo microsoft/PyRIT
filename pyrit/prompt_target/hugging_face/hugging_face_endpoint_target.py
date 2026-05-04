@@ -2,8 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Optional
+import warnings
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
@@ -19,7 +20,10 @@ class HuggingFaceEndpointTarget(PromptTarget):
     """
     The HuggingFaceEndpointTarget interacts with HuggingFace models hosted on cloud endpoints.
 
-    Inherits from PromptTarget to comply with the current design standards.
+    .. deprecated:: 0.13.0
+        Use ``OpenAIChatTarget`` with ``endpoint="https://router.huggingface.co/v1"``
+        and ``api_key=HUGGINGFACE_TOKEN`` instead. The HuggingFace Inference Providers API
+        is OpenAI-compatible, making this target redundant. Will be removed in v0.15.0.
     """
 
     def __init__(
@@ -31,10 +35,13 @@ class HuggingFaceEndpointTarget(PromptTarget):
         max_tokens: int = 400,
         temperature: float = 1.0,
         top_p: float = 1.0,
-        max_requests_per_minute: Optional[int] = None,
+        top_k: int | None = None,
+        do_sample: bool | None = None,
+        repetition_penalty: float | None = None,
+        max_requests_per_minute: int | None = None,
         verbose: bool = False,
-        custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
+        custom_configuration: TargetConfiguration | None = None,
+        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the HuggingFaceEndpointTarget with API credentials and model parameters.
@@ -43,15 +50,27 @@ class HuggingFaceEndpointTarget(PromptTarget):
             hf_token (str): The Hugging Face token for authenticating with the Hugging Face endpoint.
             endpoint (str): The endpoint URL for the Hugging Face model.
             model_id (str): The model ID to be used at the endpoint.
-            max_tokens (int, Optional): The maximum number of tokens to generate. Defaults to 400.
-            temperature (float, Optional): The sampling temperature to use. Defaults to 1.0.
-            top_p (float, Optional): The cumulative probability for nucleus sampling. Defaults to 1.0.
-            max_requests_per_minute (Optional[int]): The maximum number of requests per minute. Defaults to None.
-            verbose (bool, Optional): Flag to enable verbose logging. Defaults to False.
-            custom_configuration (Optional[TargetConfiguration]): Custom configuration for this target instance.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+            max_tokens (int): The maximum number of tokens to generate. Defaults to 400.
+            temperature (float): The sampling temperature to use. Defaults to 1.0.
+            top_p (float): The cumulative probability for nucleus sampling. Defaults to 1.0.
+            top_k (int | None): Top-K sampling parameter. Only used when do_sample is True.
+                Defaults to None (uses model default).
+            do_sample (bool | None): Whether to use sampling instead of greedy decoding.
+                Defaults to None.
+            repetition_penalty (float | None): Penalty for repeating tokens. Values > 1.0
+                discourage repetition. Defaults to None (uses model default).
+            max_requests_per_minute (int | None): The maximum number of requests per minute. Defaults to None.
+            verbose (bool): Flag to enable verbose logging. Defaults to False.
+            custom_configuration (TargetConfiguration | None): Custom configuration for this target instance.
+            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
                 ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
+        print_deprecation_message(
+            old_item=HuggingFaceEndpointTarget,
+            new_item="OpenAIChatTarget with endpoint='https://router.huggingface.co/v1'",
+            removed_in="v0.15.0",
+        )
+
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             verbose=verbose,
@@ -70,6 +89,11 @@ class HuggingFaceEndpointTarget(PromptTarget):
         self.max_tokens = max_tokens
         self._temperature = temperature
         self._top_p = top_p
+        self._top_k = top_k
+        self._do_sample = do_sample
+        self._repetition_penalty = repetition_penalty
+
+        self._warn_if_sampling_params_without_do_sample()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -82,6 +106,9 @@ class HuggingFaceEndpointTarget(PromptTarget):
             params={
                 "temperature": self._temperature,
                 "top_p": self._top_p,
+                "top_k": self._top_k,
+                "do_sample": self._do_sample,
+                "repetition_penalty": self._repetition_penalty,
                 "max_tokens": self.max_tokens,
             },
         )
@@ -106,13 +133,20 @@ class HuggingFaceEndpointTarget(PromptTarget):
         message = normalized_conversation[-1]
         request = message.message_pieces[0]
         headers = {"Authorization": f"Bearer {self.hf_token}"}
+        parameters: dict[str, object] = {
+            "max_tokens": self.max_tokens,
+            "temperature": self._temperature,
+            "top_p": self._top_p,
+        }
+        if self._top_k is not None:
+            parameters["top_k"] = self._top_k
+        if self._do_sample is not None:
+            parameters["do_sample"] = self._do_sample
+        if self._repetition_penalty is not None:
+            parameters["repetition_penalty"] = self._repetition_penalty
         payload: dict[str, object] = {
             "inputs": request.converted_value,
-            "parameters": {
-                "max_tokens": self.max_tokens,
-                "temperature": self._temperature,
-                "top_p": self._top_p,
-            },
+            "parameters": parameters,
         }
 
         logger.info(f"Sending the following prompt to the cloud endpoint: {request.converted_value}")
@@ -161,3 +195,20 @@ class HuggingFaceEndpointTarget(PromptTarget):
         n_pieces = len(message.message_pieces)
         if n_pieces != 1:
             raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
+
+    def _warn_if_sampling_params_without_do_sample(self) -> None:
+        """
+        Emit a warning when sampling parameters are set but do_sample is not explicitly True.
+
+        Sampling-specific parameters (temperature != 1.0, top_p != 1.0, top_k) are
+        ignored by HuggingFace unless do_sample=True.
+        """
+        has_sampling_override = self._temperature != 1.0 or self._top_p != 1.0 or self._top_k is not None
+        if has_sampling_override and self._do_sample is not True:
+            warnings.warn(
+                "Sampling parameters (temperature, top_p, top_k) are set but do_sample is not True. "
+                "HuggingFace ignores these parameters during greedy decoding. "
+                "Set do_sample=True to enable sampling.",
+                UserWarning,
+                stacklevel=3,
+            )

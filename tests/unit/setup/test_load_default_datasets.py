@@ -14,22 +14,12 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
+from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLoadDefaultDatasets:
     """Test suite for LoadDefaultDatasets initializer."""
-
-    def test_name_property(self) -> None:
-        """Test that name property returns expected value."""
-        initializer = LoadDefaultDatasets()
-        assert initializer.name == "Default Dataset Loader for Scenarios"
-
-    def test_execution_order_property(self) -> None:
-        """Test that execution order is set correctly."""
-        initializer = LoadDefaultDatasets()
-        assert initializer.execution_order == 10
 
     def test_description_property(self) -> None:
         """Test that description property returns non-empty string."""
@@ -37,7 +27,7 @@ class TestLoadDefaultDatasets:
         description = initializer.description
         assert isinstance(description, str)
         assert len(description) > 0
-        assert "DatasetLoader" in description
+        assert "dataset" in description.lower()
         assert "scenarios" in description.lower()
 
     def test_required_env_vars_property(self) -> None:

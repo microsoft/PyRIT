@@ -88,8 +88,9 @@ class Scenario(ABC):
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
         """
-        # Use the class docstring with normalized whitespace as description
-        description = " ".join(self.__class__.__doc__.split()) if self.__class__.__doc__ else ""
+        from pyrit.registry.base import ClassRegistryEntry
+
+        description = ClassRegistryEntry.description_from_docstring(self.__class__)
 
         self._identifier = ScenarioIdentifier(
             name=type(self).__name__, scenario_version=version, description=description

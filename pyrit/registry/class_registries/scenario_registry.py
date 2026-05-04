@@ -187,9 +187,7 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         """
         scenario_class = entry.registered_class
 
-        # Extract description from docstring, clean up whitespace
-        doc = scenario_class.__doc__ or ""
-        description = " ".join(doc.split()) if doc else entry.description or "No description available"
+        description = entry.get_description(fallback="No description available")
 
         # Get the strategy class for this scenario
         strategy_class = scenario_class.get_strategy_class()

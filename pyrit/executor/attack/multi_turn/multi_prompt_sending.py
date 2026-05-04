@@ -297,6 +297,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             outcome=outcome,
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
+            labels=context.memory_labels,
         )
 
     def _determine_attack_outcome(
