@@ -42,14 +42,8 @@ class InitializerMetadata(ClassRegistryEntry):
     Use get_class() to get the actual class.
     """
 
-    # Human-readable display name (e.g., "Objective Target Setup").
-    display_name: str = field(kw_only=True)
-
     # Environment variables required by the initializer.
     required_env_vars: tuple[str, ...] = field(kw_only=True)
-
-    # Execution order priority (lower = earlier).
-    execution_order: int = field(kw_only=True)
 
     # Supported parameters as tuples of (name, description, required, default).
     supported_parameters: tuple[tuple[str, str, bool, Optional[list[str]]], ...] = field(kw_only=True, default=())
@@ -73,7 +67,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         Args:
             discovery_path: The path to discover initializers from.
                 If None, defaults to pyrit/setup/initializers (discovers all).
-                To discover only scenarios, pass pyrit/setup/initializers/scenarios.
             lazy_discovery: If True, discovery is deferred until first access.
                 Defaults to False for backwards compatibility.
 
@@ -193,16 +186,16 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         initializer_class = entry.registered_class
 
+        description = entry.get_description(fallback="No description available")
+
         try:
             instance = initializer_class()
             return InitializerMetadata(
                 class_name=initializer_class.__name__,
                 class_module=initializer_class.__module__,
-                class_description=instance.description,
+                class_description=description,
                 registry_name=name,
-                display_name=instance.name,
                 required_env_vars=tuple(instance.required_env_vars),
-                execution_order=instance.execution_order,
                 supported_parameters=tuple(
                     (p.name, p.description, p.required, p.default) for p in instance.supported_parameters
                 ),
@@ -214,9 +207,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 class_module=initializer_class.__module__,
                 class_description="Error loading initializer metadata",
                 registry_name=name,
-                display_name=name,
                 required_env_vars=(),
-                execution_order=100,
             )
 
     @staticmethod

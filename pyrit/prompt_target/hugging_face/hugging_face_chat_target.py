@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import asyncio
+import json
 import logging
 import os
+import warnings
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from transformers import (
     AutoModelForCausalLM,
@@ -55,46 +57,59 @@ class HuggingFaceChatTarget(PromptChatTarget):
     def __init__(
         self,
         *,
-        model_id: Optional[str] = None,
-        model_path: Optional[str] = None,
-        hf_access_token: Optional[str] = None,
+        model_id: str | None = None,
+        model_path: str | None = None,
+        hf_access_token: str | None = None,
         use_cuda: bool = False,
         tensor_format: str = "pt",
-        necessary_files: Optional[list[str]] = None,
+        necessary_files: list[str] | None = None,
         max_new_tokens: int = 20,
         temperature: float = 1.0,
         top_p: float = 1.0,
+        top_k: int | None = None,
+        do_sample: bool | None = None,
+        repetition_penalty: float | None = None,
+        random_seed: int | None = None,
         skip_special_tokens: bool = True,
         trust_remote_code: bool = False,
-        device_map: Optional[str] = None,
-        torch_dtype: Optional[Any] = None,
-        attn_implementation: Optional[str] = None,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
+        device_map: str | None = None,
+        torch_dtype: Any | None = None,
+        attn_implementation: str | None = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
+        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the HuggingFaceChatTarget.
 
         Args:
-            model_id (Optional[str]): The Hugging Face model ID. Either model_id or model_path must be provided.
-            model_path (Optional[str]): Path to a local model. Either model_id or model_path must be provided.
-            hf_access_token (Optional[str]): Hugging Face access token for authentication.
+            model_id (str | None): The Hugging Face model ID. Either model_id or model_path must be provided.
+            model_path (str | None): Path to a local model. Either model_id or model_path must be provided.
+            hf_access_token (str | None): Hugging Face access token for authentication.
             use_cuda (bool): Whether to use CUDA for GPU acceleration. Defaults to False.
             tensor_format (str): The tensor format. Defaults to "pt".
-            necessary_files (Optional[list]): List of necessary model files to download.
+            necessary_files (list[str] | None): List of necessary model files to download.
             max_new_tokens (int): Maximum number of new tokens to generate. Defaults to 20.
             temperature (float): Sampling temperature. Defaults to 1.0.
             top_p (float): Nucleus sampling probability. Defaults to 1.0.
+            top_k (int | None): Top-K sampling parameter. Only used when do_sample is True.
+                Defaults to None (uses model default, typically 50).
+            do_sample (bool | None): Whether to use sampling instead of greedy decoding. When None,
+                sampling is automatically enabled if temperature, top_p, or top_k suggest
+                non-greedy decoding. Defaults to None.
+            repetition_penalty (float | None): Penalty for repeating tokens. Values > 1.0 discourage
+                repetition. Defaults to None (uses model default, typically 1.0).
+            random_seed (int | None): Random seed for deterministic generation. When set, calls
+                torch.manual_seed() at construction time. Defaults to None.
             skip_special_tokens (bool): Whether to skip special tokens. Defaults to True.
             trust_remote_code (bool): Whether to trust remote code execution. Defaults to False.
-            device_map (Optional[str]): Device mapping strategy.
-            torch_dtype (Optional[torch.dtype]): Torch data type for model weights.
-            attn_implementation (Optional[str]): Attention implementation type.
-            max_requests_per_minute (Optional[int]): The maximum number of requests per minute. Defaults to None.
-            custom_configuration (Optional[TargetConfiguration]): Override the default configuration for this target
-            instance. Defaults to None
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+            device_map (str | None): Device mapping strategy.
+            torch_dtype (Any | None): Torch data type for model weights.
+            attn_implementation (str | None): Attention implementation type.
+            max_requests_per_minute (int | None): The maximum number of requests per minute. Defaults to None.
+            custom_configuration (TargetConfiguration | None): Override the default configuration for this target
+                instance. Defaults to None.
+            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
                 ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
@@ -148,7 +163,16 @@ class HuggingFaceChatTarget(PromptChatTarget):
         self.max_new_tokens = max_new_tokens
         self._temperature = temperature
         self._top_p = top_p
+        self._top_k = top_k
+        self._do_sample = do_sample
+        self._repetition_penalty = repetition_penalty
+        self._random_seed = random_seed
         self.skip_special_tokens = skip_special_tokens
+
+        self._warn_if_sampling_params_without_do_sample()
+
+        self._generation_params = self._build_generation_params()
+        self._seed_rng()
 
         if self.use_cuda and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but not available.")
@@ -166,6 +190,10 @@ class HuggingFaceChatTarget(PromptChatTarget):
             params={
                 "temperature": self._temperature,
                 "top_p": self._top_p,
+                "top_k": self._top_k,
+                "do_sample": self._do_sample,
+                "repetition_penalty": self._repetition_penalty,
+                "random_seed": self._random_seed,
                 "max_new_tokens": self.max_new_tokens,
                 "skip_special_tokens": self.skip_special_tokens,
                 "use_cuda": self.use_cuda,
@@ -300,6 +328,9 @@ class HuggingFaceChatTarget(PromptChatTarget):
         """
         Send a normalized prompt asynchronously to the HuggingFace model.
 
+        Builds the full chat history (system, user, assistant turns) from the normalized
+        conversation and passes it through the model's chat template.
+
         Args:
             normalized_conversation (list[Message]): The full conversation
                 (history + current message) after running the normalization
@@ -310,21 +341,15 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
         Raises:
             EmptyResponseException: If the model generates an empty response.
-            Exception: If any error occurs during inference.
         """
-        # Load the model and tokenizer using the encapsulated method
         await self.load_model_and_tokenizer_task
 
-        message = normalized_conversation[-1]
-        request = message.message_pieces[0]
-        prompt_template = request.converted_value
+        request = normalized_conversation[-1].message_pieces[0]
 
-        logger.info(f"Sending the following prompt to the HuggingFace model: {prompt_template}")
+        messages = self._build_chat_messages(normalized_conversation=normalized_conversation)
 
-        # Prepare the input messages using chat templates
-        messages = [{"role": "user", "content": prompt_template}]
+        logger.info(f"Sending the following messages to the HuggingFace model: {messages}")
 
-        # Apply chat template via the _apply_chat_template method
         tokenized_chat = self._apply_chat_template(messages)
         input_ids = tokenized_chat["input_ids"]
         attention_mask = tokenized_chat["attention_mask"]
@@ -332,28 +357,21 @@ class HuggingFaceChatTarget(PromptChatTarget):
         logger.info(f"Tokenized chat: {input_ids}")
 
         try:
-            # Ensure model is on the correct device (should already be the case from `load_model_and_tokenizer`)
+            # Ensure model is on the correct device (should already be, but safeguard for device changes)
             self.model.to(self.device)
 
-            # Record the length of the input tokens to later extract only the generated tokens
+            # Record input length to extract only newly generated tokens
             input_length = input_ids.shape[-1]
 
-            # Generate the response
+            generate_kwargs = {"input_ids": input_ids, "attention_mask": attention_mask, **self._generation_params}
+
             logger.info("Generating response from model...")
-            generated_ids = self.model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=self.max_new_tokens,
-                temperature=self._temperature,
-                top_p=self._top_p,
-            )
+            generated_ids = self.model.generate(**generate_kwargs)
 
-            logger.info(f"Generated IDs: {generated_ids}")  # Log the generated IDs
+            logger.info(f"Generated IDs: {generated_ids}")
 
-            # Extract the assistant's response by slicing the generated tokens after the input tokens
             generated_tokens = generated_ids[0][input_length:]
 
-            # Decode the assistant's response from the generated token IDs
             assistant_response = cast(
                 "str",
                 self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),
@@ -366,16 +384,136 @@ class HuggingFaceChatTarget(PromptChatTarget):
 
             model_identifier = self.model_id or self.model_path
 
+            effective_config = self._get_effective_generation_config()
+
             response = construct_response_from_request(
                 request=request,
                 response_text_pieces=[assistant_response],
-                prompt_metadata={"model_id": model_identifier or ""},
+                prompt_metadata={
+                    "model_id": model_identifier or "",
+                    "effective_generation_config": json.dumps(effective_config, default=str),
+                },
             )
             return [response]
 
         except Exception as e:
             logger.error(f"Error occurred during inference: {e}")
             raise
+
+    def _build_chat_messages(self, *, normalized_conversation: list[Message]) -> list[dict[str, str]]:
+        """
+        Build a list of chat message dicts from the full normalized conversation.
+
+        Includes system, user, and assistant messages from the conversation history
+        so that the model's chat template receives the complete context.
+
+        Args:
+            normalized_conversation (list[Message]): The full normalized conversation.
+
+        Returns:
+            list[dict[str, str]]: Messages formatted for the chat template.
+        """
+        messages: list[dict[str, str]] = []
+        for msg in normalized_conversation:
+            piece = msg.message_pieces[0]
+            role = piece.api_role
+            content = piece.converted_value or ""
+            messages.append({"role": role, "content": content})
+        return messages
+
+    def set_random_seed(self, random_seed: int) -> None:
+        """
+        Set a new random seed and immediately re-seed the RNG.
+
+        Allows re-seeding between conversations or experiments for controlled
+        reproducibility. The initial seed (if any) is applied once at construction
+        time; call this method to change it later.
+
+        Args:
+            random_seed (int): The random seed value.
+        """
+        self._random_seed = random_seed
+        self._seed_rng()
+
+    def _build_generation_params(self) -> dict[str, Any]:
+        """
+        Build the static generation parameters dict.
+
+        Computed once at init. Only includes optional parameters when they
+        are explicitly set (not None), allowing the model's own
+        generation_config defaults to apply otherwise.
+
+        Returns:
+            dict[str, Any]: Static keyword arguments for model.generate().
+        """
+        params: dict[str, Any] = {
+            "max_new_tokens": self.max_new_tokens,
+            "temperature": self._temperature,
+            "top_p": self._top_p,
+        }
+        if self._top_k is not None:
+            params["top_k"] = self._top_k
+        if self._do_sample is not None:
+            params["do_sample"] = self._do_sample
+        if self._repetition_penalty is not None:
+            params["repetition_penalty"] = self._repetition_penalty
+        return params
+
+    def _seed_rng(self) -> None:
+        """
+        Seed the random number generators for deterministic generation.
+
+        When ``self._random_seed`` is set, seeds both CPU and CUDA RNGs before each
+        ``model.generate()`` call. This enables reproducible results when all other
+        parameters are held constant.
+
+        Note:
+            This sets global torch RNG state. Concurrent generation calls on
+            the same process may interfere with determinism.
+        """
+        if self._random_seed is not None:
+            import torch
+
+            torch.manual_seed(self._random_seed)
+            if self.use_cuda:
+                torch.cuda.manual_seed_all(self._random_seed)
+
+    def _get_effective_generation_config(self) -> dict[str, Any]:
+        """
+        Return the effective generation parameters that were used for the last call.
+
+        Combines the model's own generation_config with the explicit overrides from
+        this target instance, so that the stored metadata reflects what actually ran.
+
+        Returns:
+            dict[str, Any]: Merged generation configuration.
+        """
+        effective: dict[str, Any] = {}
+        if hasattr(self.model, "generation_config"):
+            effective = self.model.generation_config.to_dict()
+
+        effective.update(self._generation_params)
+        if self._random_seed is not None:
+            effective["random_seed"] = self._random_seed
+        return effective
+
+    def _warn_if_sampling_params_without_do_sample(self) -> None:
+        """
+        Emit a warning when sampling parameters are set but do_sample is not explicitly True.
+
+        Sampling-specific parameters (temperature != 1.0, top_p != 1.0, top_k) are
+        ignored by HuggingFace's generate() unless do_sample=True. This helps users
+        avoid silent misconfiguration.
+        """
+        has_sampling_override = self._temperature != 1.0 or self._top_p != 1.0 or self._top_k is not None
+        if has_sampling_override and self._do_sample is not True:
+            warnings.warn(
+                "Sampling parameters (temperature, top_p, top_k) are set but do_sample is not True. "
+                "HuggingFace ignores these parameters during greedy decoding. "
+                "Set do_sample=True to enable sampling.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     def _apply_chat_template(self, messages: list[dict[str, str]]) -> Any:
         """

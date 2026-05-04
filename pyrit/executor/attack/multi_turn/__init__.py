@@ -22,6 +22,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttack,
     TAPAttackContext,
     TAPAttackResult,
+    TAPSystemPromptPaths,
     TreeOfAttacksWithPruningAttack,
 )
 
@@ -43,4 +44,5 @@ __all__ = [
     "TAPAttack",
     "TAPAttackResult",
     "TAPAttackContext",
+    "TAPSystemPromptPaths",
 ]

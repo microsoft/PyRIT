@@ -91,6 +91,9 @@ class AttackResult(StrategyResult):
     # Arbitrary metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # labels associated with this attack result
+    labels: dict[str, str] = field(default_factory=dict)
+
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:
         """

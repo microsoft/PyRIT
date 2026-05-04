@@ -29,8 +29,6 @@ class TestAIRTInitializer:
         """Test that AIRTInitializer can be instantiated."""
         init = AIRTInitializer()
         assert init is not None
-        assert init.name == "AIRT Default Configuration"
-        assert init.execution_order == 1
 
     def test_airt_initializer_description(self):
         """Test that AIRTInitializer has the correct description."""
@@ -139,7 +137,7 @@ class TestAIRTInitializerInitialize:
 
         # Verify basic structure
         assert isinstance(info, dict)
-        assert "name" in info
+        assert "description" in info
         assert "default_values" in info
         assert "global_variables" in info
 
@@ -290,7 +288,6 @@ class TestAIRTInitializerGetInfo:
         info = await AIRTInitializer.get_info_async()
 
         assert isinstance(info, dict)
-        assert info["name"] == "AIRT Default Configuration"
         assert info["class"] == "AIRTInitializer"
         assert "required_env_vars" in info
         assert "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT" in info["required_env_vars"]
