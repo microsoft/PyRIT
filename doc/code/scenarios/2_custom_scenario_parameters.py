@@ -11,12 +11,12 @@
 # %% [markdown]
 # # Custom Scenario Parameters
 #
+# Sometimes a scenario needs a custom parameter that a user can set without
+# editing source code (`max_turns`, dataset names, feature flags, etc.).
 # Scenarios can declare typed parameters that flow from CLI flags or YAML
-# config into `self.params`. Use this when a scenario has a knob a user
-# should be able to turn without editing source code (`max_turns`, dataset
-# names, feature flags, etc.).
+# config into `self.params`.
 #
-# This is different from [Scenario Parameters](./1_scenario_parameters.ipynb),
+# This is different from [Common Scenario Parameters](./1_common_scenario_parameters.ipynb),
 # which covers the framework-level configuration surface (datasets, strategies,
 # scorers, baseline). This guide is about parameters that scenario authors add
 # on their own classes.
@@ -25,23 +25,30 @@
 #
 # `Parameter` is the unified declaration shared by initializers and scenarios.
 # To declare one on a scenario, override the `supported_parameters()` classmethod
-# and return a list. `Scam` declares one (`max_turns`), shown below:
-
-# %%
-import inspect
-
-from pyrit.scenario.scenarios.airt.scam import Scam
-
-# Authors declare a parameter by overriding the supported_parameters classmethod.
-# Here's the actual declaration on Scam:
-print(inspect.getsource(Scam.supported_parameters))
-
-# %% [markdown]
+# and return a list. Here's the actual declaration on
+# [`Scam`](../../../pyrit/scenario/scenarios/airt/scam.py):
+#
+# ```python
+# @classmethod
+# def supported_parameters(cls) -> list[Parameter]:
+#     """Declare custom parameters this scenario accepts from the CLI / config file."""
+#     return [
+#         Parameter(
+#             name="max_turns",
+#             description="Maximum conversation turns for the persuasive_rta strategy.",
+#             param_type=int,
+#             default=5,
+#         ),
+#     ]
+# ```
+#
 # At runtime the framework calls `supported_parameters()` to inspect declarations.
 # It's a classmethod, so this works without instantiating the scenario (which
 # would wire up memory and scorers):
 
 # %%
+from pyrit.scenario.scenarios.airt.scam import Scam
+
 for param in Scam.supported_parameters():
     print(param)
 
@@ -54,7 +61,6 @@ for param in Scam.supported_parameters():
 #
 # - **name**: dict key in `self.params`, converted to `--kebab-case` for the CLI
 # - **description**: shown in `--list-scenarios` and `--help`
-# - **required** (`bool`): when True, the user must supply a value
 # - **default**: value used when not supplied; deep-copied per run
 # - **param_type**: `str`, `int`, `float`, `bool`, `list[str]`, or `None` (raw passthrough)
 # - **choices**: optional tuple of allowed values (not supported with `list` types)
@@ -66,9 +72,9 @@ from pyrit.common import Parameter
 
 # What a scenario author would return from supported_parameters():
 example_declarations = [
-    # Required scalar: the user must supply a value
-    Parameter(name="objective", description="Goal the attack pursues", required=True, param_type=str),
-    # Optional scalar with default
+    # Scalar with no default — author must guard against None at run time
+    Parameter(name="objective", description="Goal the attack pursues", param_type=str),
+    # Scalar with default
     Parameter(name="max_turns", description="Conversation cap", default=5, param_type=int),
     # Choices: behaves like an enum
     Parameter(
@@ -146,24 +152,16 @@ for p in example_declarations:
 #
 # A `scenario:` block names the scenario and supplies parameter values. CLI
 # flags override matching keys; absent keys fall back to YAML, then to the
-# declared default.
-
-# %%
-from pyrit.setup.configuration_loader import ConfigurationLoader
-
-# A YAML-style dict; in practice this comes from your config file.
-config_data = {
-    "scenario": {
-        "name": "airt.scam",
-        "args": {"max_turns": 10},
-    },
-}
-
-config = ConfigurationLoader.from_dict(config_data)
-scenario_config = config.scenario_config
-assert scenario_config is not None  # narrows the type after parsing
-print(f"scenario name: {scenario_config.name}")
-print(f"scenario args: {scenario_config.args}")
+# declared default. See [.pyrit_conf_example](../../../.pyrit_conf_example)
+# for a complete config file with this and other supported sections.
+#
+# ```yaml
+# # ~/.pyrit/.pyrit_conf
+# scenario:
+#   name: airt.scam
+#   args:
+#     max_turns: 10
+# ```
 
 # %% [markdown]
 # A few invocation shapes from the CLI:
@@ -175,8 +173,7 @@ print(f"scenario args: {scenario_config.args}")
 # ```
 #
 # `pyrit_shell` supports the YAML form when the scenario name is supplied
-# explicitly (`run airt.scam ...`). A bare `run` does not fall back to the
-# config-file scenario name in the current release.
+# explicitly (`run airt.scam ...`).
 #
 # ## Discovering parameters via --list-scenarios
 #
@@ -203,22 +200,31 @@ for metadata in ScenarioRegistry.get_registry_singleton().list_metadata():
 #
 # ## Resume validation
 #
-# When you resume a scenario with `--scenario-result-id <id>`, PyRIT compares
-# the current effective parameters against the values stored with the original
-# result. On mismatch, a new scenario result is created (the original is
-# preserved) and a warning is logged. The diff lists key names only, never
-# values, so sensitive parameters don't leak into log output.
+# When you ask to resume by passing `scenario_result_id` to a Scenario constructor,
+# PyRIT verifies that the stored result is an exact match for the current
+# configuration. Any deviation aborts with a `ValueError` rather than silently
+# starting a fresh scenario, so original progress is never orphaned without the
+# caller noticing. Mismatch axes:
 #
-# A typical mismatch warning looks like this:
+# - **Stored id not found** in memory (typo, wiped DB, never persisted)
+# - **Scenario name differs** (e.g., a Scam id passed to a Cyber constructor)
+# - **Scenario version differs** (release drift between save and resume)
+# - **Effective parameters differ** from those persisted with the original run
+#
+# A typical param-mismatch error message:
 #
 # ```text
-# Scenario result ID 7c3f... has mismatched parameters (changed: max_turns).
-# Either CLI/config args differ from the original run, or a scenario default
-# changed between releases. Creating new scenario result.
+# Scenario result id '7c3f...' has mismatched parameters (changed: max_turns).
+# Drop scenario_result_id to start a new scenario, or pass matching parameters to resume.
 # ```
 #
-# Notice the diff names the changed key (`max_turns`) but never prints the
-# stored or current value.
+# The diff names changed/added/removed keys but never prints values, so sensitive
+# parameters don't leak into exception output. To start fresh, drop the
+# `scenario_result_id` argument; to resume, pass the same params used originally.
+#
+# A dedicated `pyrit_scan --resume` CLI flag that loads stored params for you
+# (so you can't supply mismatching ones in the first place) is tracked as a
+# separate follow-up.
 
 # %% [markdown]
 # `Scam.max_turns` was previously hardcoded to `5` in

@@ -504,7 +504,7 @@ class TestSupportedParameters:
             def supported_parameters(self) -> list:
                 return [
                     Parameter(name="mode", description="Operation mode", default="fast"),
-                    Parameter(name="count", description="Item count", required=True),
+                    Parameter(name="count", description="Item count"),
                 ]
 
             async def initialize_async(self) -> None:
@@ -513,7 +513,7 @@ class TestSupportedParameters:
         init = WithParamsInit()
         assert len(init.supported_parameters) == 2
         assert init.supported_parameters[0].name == "mode"
-        assert init.supported_parameters[1].required is True
+        assert init.supported_parameters[1].name == "count"
 
     def test_validate_params_raises_on_unknown(self) -> None:
         """Test that unknown params raise ValueError."""
@@ -532,23 +532,6 @@ class TestSupportedParameters:
         with pytest.raises(ValueError, match="unknown parameter"):
             init._validate_params(params={"bogus": ["value"]})
 
-    def test_validate_params_raises_on_missing_required(self) -> None:
-        """Test that missing required params raise ValueError."""
-
-        class RequiredInit(PyRITInitializer):
-            """Required"""
-
-            @property
-            def supported_parameters(self) -> list:
-                return [Parameter(name="key", description="API key", required=True)]
-
-            async def initialize_async(self) -> None:
-                pass
-
-        init = RequiredInit()
-        with pytest.raises(ValueError, match="requires parameter 'key'"):
-            init._validate_params(params={})
-
     def test_validate_params_accepts_valid(self) -> None:
         """Test that valid params pass validation."""
 
@@ -559,7 +542,7 @@ class TestSupportedParameters:
             def supported_parameters(self) -> list:
                 return [
                     Parameter(name="mode", description="Mode", default="fast"),
-                    Parameter(name="key", description="Key", required=True),
+                    Parameter(name="key", description="Key"),
                 ]
 
             async def initialize_async(self) -> None:

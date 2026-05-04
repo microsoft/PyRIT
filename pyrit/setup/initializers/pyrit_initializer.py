@@ -199,14 +199,6 @@ class PyRITInitializer(ABC):
                 f"Supported parameters: {', '.join(sorted(supported_names)) if supported_names else 'none'}"
             )
 
-        # Check for missing required params
-        for param_def in self.supported_parameters:
-            if param_def.required and param_def.name not in params:
-                raise ValueError(
-                    f"Initializer '{type(self).__name__}' requires parameter "
-                    f"'{param_def.name}': {param_def.description}"
-                )
-
     async def initialize_with_tracking_async(self) -> None:
         """
         Execute initialization while tracking what changes are made.
@@ -358,7 +350,6 @@ class PyRITInitializer(ABC):
                 {
                     "name": p.name,
                     "description": p.description,
-                    "required": p.required,
                     "default": p.default,
                 }
                 for p in instance.supported_parameters

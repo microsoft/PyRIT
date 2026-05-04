@@ -278,7 +278,7 @@ class TestDefaultMaterialization:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestParamValidation:
-    """Unknown / required-missing checks."""
+    """Unknown-key validation."""
 
     def test_unknown_param_raises(self) -> None:
         scenario = _make_scenario(declared_params=[Parameter(name="known", description="d", param_type=str)])
@@ -290,20 +290,6 @@ class TestParamValidation:
         scenario = _make_scenario(declared_params=[Parameter(name="known", description="d", param_type=str)])
         with pytest.raises(ValueError, match="bogus1, bogus2"):
             scenario.set_params_from_args(args={"bogus1": "a", "bogus2": "b"})
-
-    def test_missing_required_raises(self) -> None:
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="key", description="d", param_type=str, required=True)]
-        )
-        with pytest.raises(ValueError, match="missing required parameter"):
-            scenario.set_params_from_args(args={})
-
-    def test_required_supplied_passes(self) -> None:
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="key", description="d", param_type=str, required=True)]
-        )
-        scenario.set_params_from_args(args={"key": "value"})
-        assert scenario.params == {"key": "value"}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -318,13 +304,6 @@ class TestDeclarationValidation:
             ]
         )
         with pytest.raises(ValueError, match="duplicate parameter name"):
-            scenario.set_params_from_args(args={})
-
-    def test_required_with_default_raises(self) -> None:
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="x", description="d", param_type=int, required=True, default=5)]
-        )
-        with pytest.raises(ValueError, match="required.*cannot have a default"):
             scenario.set_params_from_args(args={})
 
     def test_invalid_default_type_raises(self) -> None:
@@ -433,18 +412,10 @@ class TestNoneIsAbsent:
         assert scenario.params == {"mode": "fast"}
 
     def test_none_value_with_no_default_is_simply_absent(self) -> None:
-        """If a param has no default and is not required, a None value yields no entry."""
+        """If a param has no default, a None value yields no entry."""
         scenario = _make_scenario(declared_params=[Parameter(name="optional", description="d", param_type=str)])
         scenario.set_params_from_args(args={"optional": None})
         assert scenario.params == {}
-
-    def test_none_value_for_required_param_raises(self) -> None:
-        """A required param explicitly set to None is still missing, not satisfied."""
-        scenario = _make_scenario(
-            declared_params=[Parameter(name="key", description="d", param_type=str, required=True)]
-        )
-        with pytest.raises(ValueError, match="missing required parameter"):
-            scenario.set_params_from_args(args={"key": None})
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -472,31 +443,30 @@ class TestResumeParameterValidation:
             scenario_run_state="CREATED",
         )
 
-    def test_matching_params_returns_true(self) -> None:
+    def test_matching_params_returns_none(self) -> None:
         scenario = _make_scenario(
             declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
         )
         scenario.set_params_from_args(args={"max_turns": 10})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 10})
-        assert scenario._validate_stored_scenario(stored_result=stored) is True
+        # Match path: returns None and does not raise.
+        assert scenario._validate_stored_scenario(stored_result=stored) is None
 
-    def test_changed_param_returns_false_with_diff(self, caplog) -> None:
+    def test_changed_param_raises_with_diff(self) -> None:
         scenario = _make_scenario(
             declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
         )
         scenario.set_params_from_args(args={"max_turns": 10})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 5})
-        with caplog.at_level("WARNING"):
-            result = scenario._validate_stored_scenario(stored_result=stored)
-        assert result is False
-        # Diff log should reference the key but NOT the values (no leak).
-        assert "changed: max_turns" in caplog.text
-        assert "10" not in caplog.text
-        assert "stored=5" not in caplog.text
+        with pytest.raises(ValueError, match="mismatched parameters .*changed: max_turns") as exc_info:
+            scenario._validate_stored_scenario(stored_result=stored)
+        # Diff names the key but never the values (no leak).
+        assert "10" not in str(exc_info.value)
+        assert "stored=5" not in str(exc_info.value)
 
-    def test_added_param_returns_false(self, caplog) -> None:
+    def test_added_param_raises(self) -> None:
         scenario = _make_scenario(
             declared_params=[
                 Parameter(name="max_turns", description="d", param_type=int, default=5),
@@ -506,10 +476,8 @@ class TestResumeParameterValidation:
         scenario.set_params_from_args(args={})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data={"max_turns": 5})
-        with caplog.at_level("WARNING"):
-            result = scenario._validate_stored_scenario(stored_result=stored)
-        assert result is False
-        assert "added: mode" in caplog.text
+        with pytest.raises(ValueError, match="added: mode"):
+            scenario._validate_stored_scenario(stored_result=stored)
 
     def test_legacy_init_data_none_matches_empty_params(self) -> None:
         """A pre-Stage-5 stored result has init_data=None; treat as empty for back-compat."""
@@ -517,19 +485,17 @@ class TestResumeParameterValidation:
         scenario.set_params_from_args(args={})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data=None)
-        assert scenario._validate_stored_scenario(stored_result=stored) is True
+        assert scenario._validate_stored_scenario(stored_result=stored) is None
 
-    def test_legacy_init_data_none_mismatches_populated_params(self, caplog) -> None:
+    def test_legacy_init_data_none_mismatches_populated_params(self) -> None:
         scenario = _make_scenario(
             declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)]
         )
         scenario.set_params_from_args(args={"max_turns": 7})
 
         stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=1, init_data=None)
-        with caplog.at_level("WARNING"):
-            result = scenario._validate_stored_scenario(stored_result=stored)
-        assert result is False
-        assert "added: max_turns" in caplog.text
+        with pytest.raises(ValueError, match="added: max_turns"):
+            scenario._validate_stored_scenario(stored_result=stored)
 
     def test_resume_normalizes_json_drift_for_passthrough_tuples(self) -> None:
         """A tuple value under param_type=None matches a stored list (post-JSON round-trip)."""
@@ -541,7 +507,23 @@ class TestResumeParameterValidation:
         stored = self._make_stored_result(
             scenario_name=type(scenario).__name__, version=1, init_data={"weights": [0.5, 0.5]}
         )
-        assert scenario._validate_stored_scenario(stored_result=stored) is True
+        assert scenario._validate_stored_scenario(stored_result=stored) is None
+
+    def test_name_mismatch_raises(self) -> None:
+        scenario = _make_scenario(declared_params=[])
+        scenario.set_params_from_args(args={})
+
+        stored = self._make_stored_result(scenario_name="OtherScenario", version=1, init_data={})
+        with pytest.raises(ValueError, match="belongs to scenario 'OtherScenario'"):
+            scenario._validate_stored_scenario(stored_result=stored)
+
+    def test_version_mismatch_raises(self) -> None:
+        scenario = _make_scenario(declared_params=[])
+        scenario.set_params_from_args(args={})
+
+        stored = self._make_stored_result(scenario_name=type(scenario).__name__, version=999, init_data={})
+        with pytest.raises(ValueError, match="version 999 but current version is 1"):
+            scenario._validate_stored_scenario(stored_result=stored)
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -69,7 +69,6 @@ class ScenarioParameterMetadata(NamedTuple):
 
     name: str
     description: str
-    required: bool
     default: Any
     param_type: str
     choices: Optional[str]
@@ -219,7 +218,6 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
             ScenarioParameterMetadata(
                 name=p.name,
                 description=p.description,
-                required=p.required,
                 default=p.default,
                 param_type=_param_type_display(p.param_type),
                 choices=", ".join(repr(c) for c in p.choices) if p.choices else None,

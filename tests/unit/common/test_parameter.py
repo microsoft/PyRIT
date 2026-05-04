@@ -17,7 +17,6 @@ class TestParameter:
 
         assert p.name == "x"
         assert p.description == "some param"
-        assert p.required is False
         assert p.default is None
         assert p.param_type is None
         assert p.choices is None
@@ -27,13 +26,11 @@ class TestParameter:
         p = Parameter(
             name="max_turns",
             description="turn cap",
-            required=True,
             default=5,
             param_type=int,
             choices=(1, 5, 10),
         )
 
-        assert p.required is True
         assert p.default == 5
         assert p.param_type is int
         assert p.choices == (1, 5, 10)

@@ -392,12 +392,6 @@ class Scenario(ABC):
             except ValueError as exc:
                 raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
 
-            if param.required and param.default is not None:
-                raise ValueError(
-                    f"Scenario '{type(self).__name__}' parameter '{param.name}' is declared as required "
-                    f"but also has a default value. A required parameter cannot have a default."
-                )
-
             if param.choices is not None and get_origin(param.param_type) is list:
                 # argparse `nargs='+'` applies choices per-item; core checks the whole list.
                 # Reject the combination until we reconcile the semantics.
@@ -442,7 +436,7 @@ class Scenario(ABC):
                 the whole call sees one consistent view.
 
         Raises:
-            ValueError: For unknown names or missing required params.
+            ValueError: If any keys in ``params`` are not declared.
         """
         declared_names = {p.name for p in declared}
 
@@ -452,13 +446,6 @@ class Scenario(ABC):
                 f"Scenario '{type(self).__name__}' received unknown parameter(s): {', '.join(unknown)}. "
                 f"Supported parameters: "
                 f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
-            )
-
-        missing_required = [p.name for p in declared if p.required and p.name not in params]
-        if missing_required:
-            raise ValueError(
-                f"Scenario '{type(self).__name__}' is missing required parameter(s): "
-                f"{', '.join(sorted(missing_required))}."
             )
 
     def _prepare_strategies(
@@ -569,23 +556,20 @@ class Scenario(ABC):
         _assert_json_serializable(params=params_snapshot)
         self._identifier.init_data = params_snapshot
 
-        # Check if we're resuming an existing scenario
+        # Check if we're resuming an existing scenario. Any divergence is a hard error
+        # rather than a silent restart, so the original progress isn't orphaned without
+        # the user knowing.
         if self._scenario_result_id:
             existing_results = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
 
-            if existing_results:
-                existing_result = existing_results[0]
-
-                # Validate that the stored scenario matches current configuration
-                if self._validate_stored_scenario(stored_result=existing_result):
-                    return  # Valid match - skip creating new scenario result
-                # Validation failed - will create new scenario result
-                self._scenario_result_id = None
-            else:
-                logger.warning(
-                    f"Scenario result ID {self._scenario_result_id} not found in memory. Creating new scenario result."
+            if not existing_results:
+                raise ValueError(
+                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
+                    f"Drop scenario_result_id to start a new scenario."
                 )
-                self._scenario_result_id = None
+
+            self._validate_stored_scenario(stored_result=existing_results[0])
+            return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
         self._display_group_map = {aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks}
@@ -685,34 +669,37 @@ class Scenario(ABC):
         )
         raise ValueError(error_msg)
 
-    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> bool:
+    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
         """
-        Validate that a stored scenario result matches the current scenario configuration.
+        Validate that a stored scenario result exactly matches the current scenario configuration.
+
+        Resume is opt-in via ``scenario_result_id``; any divergence from the stored
+        result is treated as user error rather than a silent restart, since the
+        original progress would otherwise be orphaned without warning.
 
         Args:
             stored_result (ScenarioResult): The scenario result retrieved from memory.
 
-        Returns:
-            bool: True if the stored scenario matches current configuration, False otherwise.
+        Raises:
+            ValueError: If the stored scenario name, version, or parameters do not
+                match the current configuration.
         """
         stored_name = stored_result.scenario_identifier.name
         stored_version = stored_result.scenario_identifier.version
 
         if stored_name != self._identifier.name:
-            logger.warning(
-                f"Scenario result ID {self._scenario_result_id} has mismatched name: "
-                f"stored='{stored_name}', current='{self._identifier.name}'. "
-                f"Creating new scenario result."
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' belongs to scenario '{stored_name}' "
+                f"but current scenario is '{self._identifier.name}'. "
+                f"Drop scenario_result_id to start a new scenario."
             )
-            return False
 
         if stored_version != self._identifier.version:
-            logger.warning(
-                f"Scenario result ID {self._scenario_result_id} has mismatched version: "
-                f"stored={stored_version}, current={self._identifier.version}. "
-                f"Creating new scenario result."
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' was created with "
+                f"{self._identifier.name} version {stored_version} but current version is "
+                f"{self._identifier.version}. Drop scenario_result_id to start a new scenario."
             )
-            return False
 
         # Treat None (legacy result without persisted params) as empty. Compare both sides
         # post-JSON-roundtrip so types that the memory column rewrites (tuple → list, non-str
@@ -721,19 +708,15 @@ class Scenario(ABC):
         current_params_normalized = json.loads(json.dumps(self.params))
         if stored_params != current_params_normalized:
             diff = _format_param_key_diff(stored=stored_params, current=current_params_normalized)
-            logger.warning(
-                f"Scenario result ID {self._scenario_result_id} has mismatched parameters ({diff}). "
-                f"Either CLI/config args differ from the original run, or a scenario default changed "
-                f"between releases. Creating new scenario result."
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters ({diff}). "
+                f"Drop scenario_result_id to start a new scenario, or pass matching parameters to resume."
             )
-            return False
 
-        # Valid match - log resumption
         logger.info(
             f"Resuming scenario '{self._name}' from existing result "
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
-        return True
 
     def _get_completed_objectives_for_attack(self, *, atomic_attack_name: str) -> set[str]:
         """

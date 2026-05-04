@@ -499,9 +499,9 @@ class TestFormatFunctions:
             default_datasets=(),
             max_dataset_size=None,
             supported_parameters=(
-                ScenarioParameterMetadata("max_turns", "Conversation turn cap", False, 5, "int", None),
-                ScenarioParameterMetadata("mode", "Run mode", False, "fast", "str", "'fast', 'slow'"),
-                ScenarioParameterMetadata("required_param", "Required input", True, None, "str", None),
+                ScenarioParameterMetadata("max_turns", "Conversation turn cap", 5, "int", None),
+                ScenarioParameterMetadata("mode", "Run mode", "fast", "str", "'fast', 'slow'"),
+                ScenarioParameterMetadata("optional_param", "Optional input", None, "str", None),
             ),
         )
 
@@ -514,7 +514,7 @@ class TestFormatFunctions:
         assert "[default: 5]" in captured.out
         assert "Conversation turn cap" in captured.out
         assert "[choices: 'fast', 'slow']" in captured.out
-        assert "(required)" in captured.out
+        assert "optional_param" in captured.out
 
     def test_format_scenario_metadata_omits_section_when_no_parameters(self, capsys):
         """A scenario without declared parameters should not print the Supported Parameters header."""

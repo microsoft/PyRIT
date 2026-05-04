@@ -54,6 +54,22 @@ initializers:
         - default
         - scorer
 
+# Default Scenario
+# ----------------
+# Optional default scenario to run when invoking `pyrit_scan` without a
+# positional scenario name. Also accepts custom parameters declared by the
+# scenario via its `supported_parameters()` classmethod (see
+# `pyrit_scan <scenario> --help` to discover them).
+#
+# - name: scenario registry name (e.g. `airt.scam`, `foundry.red_team_agent`)
+# - args: per-scenario custom parameters; CLI flags override these per key
+#
+# Example:
+# scenario:
+#   name: airt.scam
+#   args:
+#     max_turns: 10
+
 # Operator and Operation Labels
 # ------------------------------
 # Default labels applied to all attacks created with PyRIT.

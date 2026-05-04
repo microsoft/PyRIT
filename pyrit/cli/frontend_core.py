@@ -610,11 +610,10 @@ def format_scenario_metadata(*, scenario_metadata: ScenarioMetadata) -> None:
     if scenario_metadata.supported_parameters:
         print("    Supported Parameters:")
         for param in scenario_metadata.supported_parameters:
-            req_str = " (required)" if param.required else ""
             default_str = f" [default: {param.default!r}]" if param.default is not None else ""
             type_display = f" ({param.param_type})" if param.param_type else ""
             choices_display = f" [choices: {param.choices}]" if param.choices else ""
-            print(f"      - {param.name}{type_display}{req_str}{default_str}{choices_display}: {param.description}")
+            print(f"      - {param.name}{type_display}{default_str}{choices_display}: {param.description}")
 
 
 def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) -> None:
@@ -636,10 +635,9 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
 
     if initializer_metadata.supported_parameters:
         print("    Supported Parameters:")
-        for param_name, param_desc, param_required, param_default in initializer_metadata.supported_parameters:
-            req_str = " (required)" if param_required else ""
+        for param_name, param_desc, param_default in initializer_metadata.supported_parameters:
             default_str = f" [default: {param_default}]" if param_default else ""
-            print(f"      - {param_name}{req_str}{default_str}: {param_desc}")
+            print(f"      - {param_name}{default_str}: {param_desc}")
 
     if initializer_metadata.class_description:
         print("    Description:")

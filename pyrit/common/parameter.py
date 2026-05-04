@@ -21,7 +21,6 @@ class Parameter:
             ``--kebab-case`` CLI flag.
         description (str): Human-readable description shown in ``--help`` and
             ``--list-*`` output.
-        required (bool): Whether the parameter must be provided. Defaults to False.
         default (Any): Default value when not supplied. Defaults to None. Must not
             contain secrets; defaults are rendered verbatim by ``--list-scenarios``.
         param_type (type | GenericAlias | None): Type for scenario-side coercion.
@@ -34,7 +33,6 @@ class Parameter:
 
     name: str
     description: str
-    required: bool = False
     default: Any = None
     param_type: type | GenericAlias | None = None
     choices: tuple[Any, ...] | None = None
