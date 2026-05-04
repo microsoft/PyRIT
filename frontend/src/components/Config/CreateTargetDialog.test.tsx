@@ -414,8 +414,8 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByText("Top P")).toBeInTheDocument();
     expect(screen.getByText("Repetition Penalty")).toBeInTheDocument();
 
-    // OpenAI-specific fields should NOT be visible
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    // OpenAI-specific fields should NOT be visible, but underlying model switch should be
+    expect(screen.getByRole("switch")).toBeInTheDocument();
   });
 
   it("should send custom AzureML params when fields are modified", async () => {

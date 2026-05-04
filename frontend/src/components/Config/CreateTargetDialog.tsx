@@ -97,9 +97,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
       if (modelName) params.model_name = modelName
       if (apiKey) params.api_key = apiKey
 
-      if (isOpenAI) {
-        if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
-      } else if (isAzureML) {
+      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
+
+      if (isAzureML) {
         const parsedMaxNewTokens = parseInt(maxNewTokens, 10)
         if (!isNaN(parsedMaxNewTokens)) params.max_new_tokens = parsedMaxNewTokens
         const parsedTemperature = parseFloat(temperature)
@@ -180,32 +180,28 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 />
               </Field>
 
-              {isOpenAI && (
-                <>
-                  <div>
-                    <Switch
-                      checked={hasDifferentUnderlying}
-                      onChange={(_, data) => {
-                        setHasDifferentUnderlying(data.checked)
-                        if (!data.checked) setUnderlyingModel('')
-                      }}
-                      label="Underlying model differs from deployment name"
-                    />
-                    <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: '2px' }}>
-                      On Azure, the deployment name (e.g. my-gpt4-deployment) may differ from the actual model (e.g. gpt-4o).
-                    </Text>
-                  </div>
+              <div>
+                <Switch
+                  checked={hasDifferentUnderlying}
+                  onChange={(_, data) => {
+                    setHasDifferentUnderlying(data.checked)
+                    if (!data.checked) setUnderlyingModel('')
+                  }}
+                  label="Underlying model differs from deployment name"
+                />
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: '2px' }}>
+                  On Azure, the deployment name (e.g. my-gpt4-deployment) may differ from the actual model (e.g. gpt-4o).
+                </Text>
+              </div>
 
-                  {hasDifferentUnderlying && (
-                    <Field label="Underlying Model">
-                      <Input
-                        placeholder="e.g. gpt-4o-2024-08-06"
-                        value={underlyingModel}
-                        onChange={(_, data) => setUnderlyingModel(data.value)}
-                      />
-                    </Field>
-                  )}
-                </>
+              {hasDifferentUnderlying && (
+                <Field label="Underlying Model">
+                  <Input
+                    placeholder="e.g. gpt-4o-2024-08-06"
+                    value={underlyingModel}
+                    onChange={(_, data) => setUnderlyingModel(data.value)}
+                  />
+                </Field>
               )}
 
               {isAzureML && (
