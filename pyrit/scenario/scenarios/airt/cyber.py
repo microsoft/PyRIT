@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, ClassVar
+
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.prompt_target import OpenAIChatTarget

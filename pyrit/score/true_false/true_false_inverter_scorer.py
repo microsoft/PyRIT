@@ -51,7 +51,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         )
 
     def get_chat_target(self) -> Optional["PromptTarget"]:
-        """Delegate to the wrapped scorer.
+        """
+        Delegate to the wrapped scorer.
 
         Returns:
             Optional[PromptTarget]: The chat target from the wrapped scorer.

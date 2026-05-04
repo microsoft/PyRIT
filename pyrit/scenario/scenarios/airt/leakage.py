@@ -82,7 +82,7 @@ def _build_leakage_strategy() -> type[ScenarioStrategy]:
     from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
     all_specs = SCENARIO_TECHNIQUES + LEAKAGE_TECHNIQUES
-    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[return-value]
+    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="LeakageStrategy",
         specs=all_specs,
         aggregate_tags={
@@ -116,7 +116,8 @@ class Leakage(Scenario):
 
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
-        """Return the default strategy member (ALL).
+        """
+        Return the default strategy member (ALL).
 
         Returns:
             ScenarioStrategy: The ALL strategy value.
@@ -192,16 +193,15 @@ class Leakage(Scenario):
         """
         Return core + leakage-specific attack technique factories.
 
-        Registers core scenario techniques and leakage-unique techniques,
-        then returns all registered factories.
+        Gets core factories from the base class, then builds leakage-specific
+        factories locally without registering them in the global registry.
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique names to their factories.
         """
-        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
+        factories = super()._get_attack_technique_factories()
 
-        register_scenario_techniques()
+        for spec in LEAKAGE_TECHNIQUES:
+            factories[spec.name] = AttackTechniqueRegistry.build_factory_from_spec(spec)
 
-        registry = AttackTechniqueRegistry.get_registry_singleton()
-        registry.register_from_specs(LEAKAGE_TECHNIQUES)
-        return registry.get_factories()
+        return factories
