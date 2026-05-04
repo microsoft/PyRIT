@@ -22,18 +22,4 @@ policies.
 
 ## Citing PyRIT
 
-If you use PyRIT in your research, please cite our preprint paper as follows:
-
-```
-@misc{munoz2024pyritframeworksecurityrisk,
-      title={PyRIT: A Framework for Security Risk Identification and Red Teaming in Generative AI Systems},
-      author={Gary D. Lopez Munoz and Amanda J. Minnich and Roman Lutz and Richard Lundeen and Raja Sekhar Rao Dheekonda and Nina Chikanov and Bolor-Erdene Jagdagdorj and Martin Pouliot and Shiven Chawla and Whitney Maxwell and Blake Bullwinkel and Katherine Pratt and Joris de Gruyter and Charlotte Siska and Pete Bryan and Tori Westerhoff and Chang Kawaguchi and Christian Seifert and Ram Shankar Siva Kumar and Yonatan Zunger},
-      year={2024},
-      eprint={2410.02828},
-      archivePrefix={arXiv},
-      primaryClass={cs.CR},
-      url={https://arxiv.org/abs/2410.02828},
-}
-```
-
-Additionally, please cite the tool itself following the `CITATION.cff` file in the root of this repository.
+If you use PyRIT in your research, please cite the tool itself following the `CITATION.cff` file in the root of this repository.
