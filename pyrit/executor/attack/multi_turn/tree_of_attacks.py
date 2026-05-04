@@ -2233,6 +2233,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             last_response=last_response,
             last_score=context.best_objective_score,
             related_conversations=context.related_conversations,
+            labels=context.memory_labels,
         )
 
         # Set attack-specific metadata using properties

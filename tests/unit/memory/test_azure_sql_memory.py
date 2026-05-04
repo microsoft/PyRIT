@@ -249,6 +249,54 @@ def test_get_memories_with_attack_id(memory_interface: AzureSQLMemory):
     pytest.skip("Test requires Azure SQL-specific JSON functions; covered by integration tests")
 
 
+def test_get_attack_result_label_condition_single_label(memory_interface: AzureSQLMemory):
+    """Test that _get_attack_result_label_condition builds a valid condition for a single label."""
+    condition = memory_interface._get_attack_result_label_condition(labels={"operation": "test_op"})
+    compiled = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    assert "JSON_VALUE" in compiled
+    assert "ISJSON" in compiled
+
+
+def test_get_attack_result_label_condition_multiple_labels(memory_interface: AzureSQLMemory):
+    """Test that _get_attack_result_label_condition builds a valid condition for multiple labels."""
+    condition = memory_interface._get_attack_result_label_condition(
+        labels={"operation": "test_op", "operator": "roakey"}
+    )
+    compiled = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    # Both AR-direct and PME-conversation branches should appear
+    assert "AttackResultEntries" in compiled
+    assert "PromptMemoryEntries" in compiled
+
+
+def test_get_message_pieces_memory_label_conditions_single_label(memory_interface: AzureSQLMemory):
+    """Test that _get_message_pieces_memory_label_conditions builds a valid OR condition."""
+    conditions = memory_interface._get_message_pieces_memory_label_conditions(memory_labels={"operation": "test_op"})
+    assert len(conditions) == 1
+    compiled = str(conditions[0].compile(compile_kwargs={"literal_binds": False}))
+    assert "ISJSON" in compiled
+    assert "JSON_VALUE" in compiled
+
+
+def test_get_message_pieces_memory_label_conditions_includes_ar_fallback(memory_interface: AzureSQLMemory):
+    """Test that the condition references both PME and AR tables for the OR fallback."""
+    conditions = memory_interface._get_message_pieces_memory_label_conditions(
+        memory_labels={"operation": "test_op", "operator": "roakey"}
+    )
+    compiled = str(conditions[0].compile(compile_kwargs={"literal_binds": False}))
+    assert "AttackResultEntries" in compiled
+    assert "PromptMemoryEntries" in compiled
+
+
+def test_get_message_pieces_memory_label_conditions_bind_params(memory_interface: AzureSQLMemory):
+    """Test that bind parameters are created for both PME and AR branches."""
+    conditions = memory_interface._get_message_pieces_memory_label_conditions(memory_labels={"operation": "test_op"})
+    params = conditions[0].compile().params
+    # PME branch param
+    assert params.get("pme_ml_operation") == "test_op"
+    # AR branch param
+    assert params.get("are_ml_operation") == "test_op"
+
+
 def test_update_entries(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
@@ -380,32 +428,37 @@ def test_get_attack_result_label_condition_with_string_value(memory_interface: A
     """String values produce a single-placeholder IN clause with the stringified value."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
     params = condition.compile().params
-    assert params.get("label_operator_0") == "roakey"
+    assert params.get("pme_label_operator_0") == "roakey"
+    assert params.get("are_label_operator_0") == "roakey"
 
 
 def test_get_attack_result_label_condition_with_sequence_value(memory_interface: AzureSQLMemory):
     """Sequence values produce one placeholder per element."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operation": ["op_a", "op_b", "op_c"]})
     params = condition.compile().params
-    assert params.get("label_operation_0") == "op_a"
-    assert params.get("label_operation_1") == "op_b"
-    assert params.get("label_operation_2") == "op_c"
+    assert params.get("pme_label_operation_0") == "op_a"
+    assert params.get("pme_label_operation_1") == "op_b"
+    assert params.get("pme_label_operation_2") == "op_c"
+    assert params.get("are_label_operation_0") == "op_a"
+    assert params.get("are_label_operation_1") == "op_b"
+    assert params.get("are_label_operation_2") == "op_c"
 
 
 def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface: AzureSQLMemory):
     """Empty sequence values are skipped (no filter applied for that key)."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey", "operation": []})
     params = condition.compile().params
-    # operator gets a bind param; operation (empty) does not.
-    assert params.get("label_operator_0") == "roakey"
-    assert not any(k.startswith("label_operation_") for k in params)
+    # operator gets bind params; operation (empty) does not.
+    assert params.get("pme_label_operator_0") == "roakey"
+    assert params.get("are_label_operator_0") == "roakey"
+    assert not any("label_operation_" in k for k in params)
 
 
 def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: AzureSQLMemory):
     """An empty labels dict produces a condition with no label filters bound."""
     condition = memory_interface._get_attack_result_label_condition(labels={})
     params = condition.compile().params
-    assert not any(k.startswith("label_") for k in params)
+    assert not any("label_" in k for k in params)
 
 
 @pytest.mark.parametrize(
