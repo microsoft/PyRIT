@@ -97,6 +97,6 @@ print(f"Available initializers: {initializer_names[:5]}...")  # Show first 5
 
 # Get detailed metadata
 for init_item in initializer_registry.list_metadata()[:2]:  # Show first 2
-    print(f"\n{init_item.display_name}:")
+    print(f"\n{init_item.registry_name}:")
     print(f"  Class: {init_item.class_name}")
     print(f"  Description: {init_item.class_description[:80]}...")

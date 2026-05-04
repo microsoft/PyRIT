@@ -63,20 +63,6 @@ class SimpleInitializer(PyRITInitializer):
         super().__init__()
 
     @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "Simple Complete Configuration"
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Complete simple setup with basic OpenAI converters, "
-            "objective scorer (no harm detection), and adversarial targets. "
-            "Only requires OPENAI_CHAT_ENDPOINT and OPENAI_CHAT_MODEL environment variables."
-        )
-
-    @property
     def required_env_vars(self) -> list[str]:
         """Get list of required environment variables."""
         return [

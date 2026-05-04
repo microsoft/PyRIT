@@ -47,7 +47,7 @@
 #
 # PyRITInitializers are how you can configure the CLI scanner. PyRIT includes several built-in initializers you can use with the `--initializers` flag.
 #
-# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `objective_list`, `simple`) regardless of which subdirectory they're in.
+# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`, `simple`) regardless of which subdirectory they're in.
 #
 # List the available initializers using the --list-initializers flag.
 
