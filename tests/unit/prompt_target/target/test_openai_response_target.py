@@ -1043,6 +1043,48 @@ def test_invalid_top_p_raises(patch_central_database):
 # Unit tests for override methods
 
 
+class TestExtractPartialContentResponseTarget:
+    def test_extracts_text_from_message_sections(self):
+        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
+
+        target = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://test.com", api_key="test")
+
+        section = MagicMock()
+        section.type = MessagePieceType.MESSAGE
+        content_item = MagicMock()
+        content_item.text = "Partial response text"
+        section.content = [content_item]
+
+        mock_response = MagicMock()
+        mock_response.output = [section]
+
+        result = target._extract_partial_content(mock_response)
+        assert result == "Partial response text"
+
+    def test_returns_none_when_no_output(self):
+        target = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://test.com", api_key="test")
+
+        mock_response = MagicMock()
+        mock_response.output = []
+
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+    def test_ignores_non_message_sections(self):
+        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
+
+        target = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://test.com", api_key="test")
+
+        section = MagicMock()
+        section.type = MessagePieceType.REASONING
+
+        mock_response = MagicMock()
+        mock_response.output = [section]
+
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+
 def test_check_content_filter_detects_filtered_response(target: OpenAIResponseTarget):
     """Test _check_content_filter detects content_filter error code."""
     mock_response = MagicMock()

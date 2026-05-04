@@ -79,6 +79,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         *,
         objective: Optional[str] = None,
         role_filter: Optional[ChatMessageRole] = None,
+        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Scores the piece using the underlying float-scale scorer and thresholds the resulting score.
@@ -88,6 +89,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
             role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
+            score_blocked_content (bool): If True, blocked pieces with partial content will be
+                substituted with text copies for scoring. Defaults to False.
 
         Returns:
             list[Score]: A list containing a single true/false Score object based on the threshold comparison.
@@ -96,6 +99,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             message,
             objective=objective,
             role_filter=role_filter,
+            score_blocked_content=score_blocked_content,
         )
 
         # Aggregator handles 0-many scores and returns exactly one result (or raises if configured)

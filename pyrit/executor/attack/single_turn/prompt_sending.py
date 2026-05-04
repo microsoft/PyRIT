@@ -102,6 +102,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._score_blocked_content = attack_scoring_config.score_blocked_content
 
         # Skip criteria could be set directly in the injected prompt normalizer
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -363,6 +364,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 role_filter="assistant",
                 objective=objective,
                 skip_on_error_result=True,
+                score_blocked_content=self._score_blocked_content,
             )
 
         if not self._objective_scorer:

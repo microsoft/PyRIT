@@ -163,6 +163,7 @@ class Scorer(Identifiable, abc.ABC):
         role_filter: Optional[ChatMessageRole] = None,
         skip_on_error_result: bool = False,
         infer_objective_from_request: bool = False,
+        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Score the message, add the results to the database, and return a list of Score objects.
@@ -177,6 +178,9 @@ class Scorer(Identifiable, abc.ABC):
             skip_on_error_result (bool): If True, skip scoring if the message contains an error. Defaults to False.
             infer_objective_from_request (bool): If True, infer the objective from the message's previous request
                 when objective is not provided. Defaults to False.
+            score_blocked_content (bool): If True, blocked responses that contain partial content
+                (in prompt_metadata["partial_content"]) will be scored using that content instead
+                of being filtered out or short-circuited. Defaults to False.
 
         Returns:
             list[Score]: A list of Score objects representing the results.
@@ -192,8 +196,12 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         if skip_on_error_result and message.is_error():
-            logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
-            return []
+            # When score_blocked_content is enabled and the message has partial content,
+            # don't skip — let _score_async handle the substitution.
+            has_partial = any("partial_content" in p.prompt_metadata for p in message.message_pieces if p.is_blocked())
+            if not (score_blocked_content and has_partial):
+                logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
+                return []
 
         if infer_objective_from_request and (not objective):
             objective = self._extract_objective_from_response(message)
@@ -202,6 +210,7 @@ class Scorer(Identifiable, abc.ABC):
             scores = await self._score_async(
                 message,
                 objective=objective,
+                score_blocked_content=score_blocked_content,
             )
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
@@ -217,7 +226,9 @@ class Scorer(Identifiable, abc.ABC):
 
         return scores
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: Optional[str] = None, score_blocked_content: bool = False
+    ) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -225,9 +236,16 @@ class Scorer(Identifiable, abc.ABC):
         and returns a flattened list of scores. Subclasses can override this method
         to implement custom scoring logic (e.g., aggregating scores).
 
+        When score_blocked_content is True, blocked pieces with partial content in
+        prompt_metadata["partial_content"] are substituted with text-type copies
+        (with response_error="none") so they pass the validator and are scored
+        by the LLM without triggering blocked short-circuits.
+
         Args:
             message (Message): The message to score.
             objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            score_blocked_content (bool): If True, substitute blocked pieces that have
+                partial content with text-type copies. Defaults to False.
 
         Returns:
             list[Score]: A list of Score objects.
@@ -237,6 +255,20 @@ class Scorer(Identifiable, abc.ABC):
 
         # Score only the supported pieces
         supported_pieces = self._get_supported_pieces(message)
+
+        # When score_blocked_content is enabled, substitute blocked pieces that have partial content.
+        # Substitutes replace the original blocked piece (if present) or are added if not.
+        if score_blocked_content:
+            already_supported_ids = {p.id for p in supported_pieces}
+            for piece in message.message_pieces:
+                if piece.is_blocked() and "partial_content" in piece.prompt_metadata:
+                    substitute = self._create_text_piece_from_blocked(piece)
+                    if substitute and self._validator.is_message_piece_supported(message_piece=substitute):
+                        # Replace original blocked piece if it was already in supported_pieces
+                        if piece.id in already_supported_ids:
+                            supported_pieces = [substitute if p.id == piece.id else p for p in supported_pieces]
+                        else:
+                            supported_pieces.append(substitute)
 
         tasks = [self._score_piece_async(message_piece=piece, objective=objective) for piece in supported_pieces]
 
@@ -252,6 +284,44 @@ class Scorer(Identifiable, abc.ABC):
     @abstractmethod
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         raise NotImplementedError
+
+    @staticmethod
+    def _create_text_piece_from_blocked(piece: MessagePiece) -> Optional[MessagePiece]:
+        """
+        Create a text-typed copy of a blocked MessagePiece using its partial content.
+
+        The substitute preserves the original piece's id (so scores link back correctly),
+        sets converted_value to the partial content with converted_value_data_type="text",
+        and sets response_error="none" so scorer short-circuits (e.g., refusal scorer's
+        blocked check) do not fire.
+
+        Args:
+            piece: A blocked MessagePiece with prompt_metadata["partial_content"].
+
+        Returns:
+            MessagePiece with text content, or None if partial content is empty.
+        """
+        partial_content = str(piece.prompt_metadata.get("partial_content", ""))
+        if not partial_content:
+            return None
+
+        return MessagePiece(
+            id=piece.id,
+            role=piece.api_role,
+            original_value=piece.original_value,
+            converted_value=partial_content,
+            original_value_data_type=piece.original_value_data_type,
+            converted_value_data_type="text",
+            conversation_id=piece.conversation_id,
+            sequence=piece.sequence,
+            labels=piece.labels,
+            prompt_metadata=piece.prompt_metadata,
+            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+            prompt_target_identifier=piece.prompt_target_identifier,
+            attack_identifier=piece.attack_identifier,
+            response_error="none",
+            timestamp=piece.timestamp,
+        )
 
     def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
         """
@@ -713,6 +783,7 @@ class Scorer(Identifiable, abc.ABC):
         role_filter: ChatMessageRole = "assistant",
         objective: Optional[str] = None,
         skip_on_error_result: bool = True,
+        score_blocked_content: bool = False,
     ) -> dict[str, list[Score]]:
         """
         Score a response using an objective scorer and optional auxiliary scorers.
@@ -725,6 +796,8 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "assistant" (real responses only, not simulated).
             objective (Optional[str]): Task/objective for scoring context. Defaults to None.
             skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to True.
+            score_blocked_content (bool): If True, blocked responses with partial content will be
+                scored using that content. Defaults to False.
 
         Returns:
             Dict[str, List[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
@@ -747,6 +820,7 @@ class Scorer(Identifiable, abc.ABC):
                     role_filter=role_filter,
                     objective=objective,
                     skip_on_error_result=skip_on_error_result,
+                    score_blocked_content=score_blocked_content,
                 )
                 result["auxiliary_scores"] = aux_scores
             # objective_scores remains empty
@@ -760,12 +834,14 @@ class Scorer(Identifiable, abc.ABC):
                 role_filter=role_filter,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
+                score_blocked_content=score_blocked_content,
             )
             obj_task = objective_scorer.score_async(
                 message=response,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
                 role_filter=role_filter,
+                score_blocked_content=score_blocked_content,
             )
             aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
             result["auxiliary_scores"] = aux_scores
@@ -776,6 +852,7 @@ class Scorer(Identifiable, abc.ABC):
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
                 role_filter=role_filter,
+                score_blocked_content=score_blocked_content,
             )
             result["objective_scores"] = obj_scores
         return result
@@ -788,6 +865,7 @@ class Scorer(Identifiable, abc.ABC):
         role_filter: ChatMessageRole = "assistant",
         objective: Optional[str] = None,
         skip_on_error_result: bool = True,
+        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Score a response using multiple scorers in parallel.
@@ -802,6 +880,8 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "assistant" (real responses only, not simulated).
             objective (Optional[str]): Optional objective description for scoring context.
             skip_on_error_result (bool): If True, skip scoring pieces that have errors (default: True).
+            score_blocked_content (bool): If True, blocked responses with partial content will be
+                scored using that content. Defaults to False.
 
         Returns:
             List[Score]: All scores from all scorers
@@ -816,6 +896,7 @@ class Scorer(Identifiable, abc.ABC):
                 objective=objective,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
+                score_blocked_content=score_blocked_content,
             )
             for scorer in scorers
         ]

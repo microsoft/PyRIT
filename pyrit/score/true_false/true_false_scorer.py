@@ -104,7 +104,9 @@ class TrueFalseScorer(Scorer):
 
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=result_file)
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: Optional[str] = None, score_blocked_content: bool = False
+    ) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -113,6 +115,8 @@ class TrueFalseScorer(Scorer):
         Args:
             message (Message): The message to score.
             objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            score_blocked_content (bool): If True, blocked pieces with partial content will be
+                substituted with text copies for scoring. Defaults to False.
 
         Returns:
             list[Score]: A list containing a single true/false Score object.
@@ -121,7 +125,9 @@ class TrueFalseScorer(Scorer):
             ValueError: If no pieces are scored and cannot determine a piece ID for the return score.
         """
         # Get individual scores for all supported pieces using base implementation logic
-        score_list = await super()._score_async(message, objective=objective)
+        score_list = await super()._score_async(
+            message, objective=objective, score_blocked_content=score_blocked_content
+        )
 
         if not score_list:
             # If no pieces matched (e.g., due to role filter or if all pieces filtered), return False

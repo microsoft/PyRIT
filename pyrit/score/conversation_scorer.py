@@ -33,7 +33,9 @@ class ConversationScorer(Scorer, ABC):
         enforce_all_pieces_valid=True,
     )
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: Optional[str] = None, score_blocked_content: bool = False
+    ) -> list[Score]:
         """
         Scores the entire conversation history by concatenating all messages and passing to the wrapped scorer.
 
@@ -41,6 +43,8 @@ class ConversationScorer(Scorer, ABC):
             message (Message): A message from the conversation to be scored.
                 The conversation ID from the first message piece is used to retrieve the full conversation from memory.
             objective (Optional[str]): Optional objective to evaluate against.
+            score_blocked_content (bool): If True, blocked pieces with partial content will be
+                substituted with text copies for scoring. Defaults to False.
 
         Returns:
             list[Score]: List of Score objects from the underlying scorer
