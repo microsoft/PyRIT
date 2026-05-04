@@ -15,20 +15,13 @@ class ConversationContextNormalizer(MessageStringNormalizer):
     The output format is:
 
         Turn 1:
-        User: <content>
-        Assistant: <content>
+        user: <content>
+        assistant: <content>
 
         Turn 2:
-        User: <content>
+        user: <content>
         ...
     """
-
-    _ROLE_LABELS = {
-        "user": "User",
-        "assistant": "Assistant",
-        "tool": "Tool",
-        "developer": "Developer",
-    }
 
     async def normalize_string_async(self, messages: list[Message]) -> str:
         """
@@ -62,8 +55,7 @@ class ConversationContextNormalizer(MessageStringNormalizer):
 
                 # Format the piece content
                 content = self._format_piece_content(piece)
-                role_label = self._ROLE_LABELS.get(piece.api_role, piece.api_role.capitalize())
-                context_parts.append(f"{role_label}: {content}")
+                context_parts.append(f"{piece.api_role}: {content}")
 
         return "\n".join(context_parts)
 

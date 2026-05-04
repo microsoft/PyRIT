@@ -60,8 +60,8 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         result = await normalizer.normalize_string_async(messages)
 
         assert "Turn 1:" in result
-        assert "User: Hello" in result
-        assert "Assistant: Hi there!" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi there!" in result
 
     @pytest.mark.asyncio
     async def test_skips_system_messages(self):
@@ -77,8 +77,8 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "system" not in result.lower()
         assert "You are a helpful assistant" not in result
-        assert "User: Hello" in result
-        assert "Assistant: Hi!" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi!" in result
 
     @pytest.mark.asyncio
     async def test_turn_numbering(self):
@@ -120,8 +120,8 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         result = await normalizer.normalize_string_async(messages)
 
-        assert "Tool: 72F and sunny" in result
-        assert "Assistant: 72F and sunny" not in result
+        assert "tool: 72F and sunny" in result
+        assert "assistant: 72F and sunny" not in result
 
     @pytest.mark.asyncio
     async def test_preserves_developer_role_label(self):
@@ -134,5 +134,5 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         result = await normalizer.normalize_string_async(messages)
 
-        assert "Developer: Prefer metric units" in result
-        assert "Assistant: Prefer metric units" not in result
+        assert "developer: Prefer metric units" in result
+        assert "assistant: Prefer metric units" not in result
