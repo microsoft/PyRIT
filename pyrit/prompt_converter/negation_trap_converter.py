@@ -36,14 +36,14 @@ class NegationTrapConverter(PromptConverter):
         *,
         wrong_value: str = "incorrect_guess",
         trap_template: str | None = None,
-    ):
+    ) -> None:
         """
         Initialize the Negation Trap Converter.
 
         Args:
-            wrong_value: A deliberately wrong value to use in the trap. The target
-                        may reveal the correct value when correcting this.
-            trap_template: A custom template string. Must include {prompt} and {wrong_value}
+            wrong_value (str): A deliberately wrong value to use in the trap. The target
+                        may reveal the correct value when correcting this. Defaults to "incorrect_guess".
+            trap_template (str): A custom template string. Must include {prompt} and {wrong_value}
                           placeholders. If None, uses the default denial template.
 
         Raises:

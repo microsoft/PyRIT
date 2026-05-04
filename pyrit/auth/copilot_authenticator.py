@@ -56,7 +56,7 @@ class CopilotAuthenticator(Authenticator):
         token_capture_timeout_seconds: int = DEFAULT_TOKEN_CAPTURE_TIMEOUT,
         network_retries: int = DEFAULT_NETWORK_RETRIES,
         fallback_to_plaintext: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the CopilotAuthenticator.
 
@@ -233,7 +233,7 @@ class CopilotAuthenticator(Authenticator):
                 minutes_left = (expiry_time - current_time).total_seconds() / 60
                 logger.info(f"Cached token is valid for another {minutes_left:.2f} minutes")
 
-            return token_data  # type: ignore[no-any-return]
+            return token_data
 
         except Exception as e:
             error_name = type(e).__name__
@@ -353,6 +353,9 @@ class CopilotAuthenticator(Authenticator):
 
         Returns:
             Optional[str]: The bearer token if successfully retrieved, None otherwise.
+
+        Raises:
+            ValueError: If the username is not set.
         """
         from playwright.async_api import async_playwright
 
@@ -415,11 +418,15 @@ class CopilotAuthenticator(Authenticator):
 
                 logger.info("Waiting for email input...")
                 await page.wait_for_selector("#i0116", timeout=self._elements_timeout)
+                if self._username is None:
+                    raise ValueError("Username is not set")
                 await page.fill("#i0116", self._username)
                 await page.click("#idSIButton9")
 
                 logger.info("Waiting for password input...")
                 await page.wait_for_selector("#i0118", timeout=self._elements_timeout)
+                if self._password is None:
+                    raise ValueError("Password is not set")
                 await page.fill("#i0118", self._password)
                 await page.click("#idSIButton9")
 
@@ -450,7 +457,7 @@ class CopilotAuthenticator(Authenticator):
                 else:
                     logger.error(f"Failed to retrieve bearer token within {self._token_capture_timeout} seconds.")
 
-                return bearer_token  # type: ignore[no-any-return]
+                return bearer_token
             except Exception as e:
                 logger.error("Failed to retrieve access token using Playwright.")
 

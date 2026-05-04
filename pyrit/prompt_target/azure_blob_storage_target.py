@@ -15,6 +15,8 @@ from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,22 @@ class AzureBlobStorageTarget(PromptTarget):
     AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_CONTAINER_URL"
     SAS_TOKEN_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_SAS_TOKEN"
 
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["url"]),
+                }
+            ),
+            output_modalities=frozenset(
+                {
+                    frozenset(["url"]),
+                }
+            ),
+        )
+    )
+
     def __init__(
         self,
         *,
@@ -56,6 +74,8 @@ class AzureBlobStorageTarget(PromptTarget):
         sas_token: Optional[str] = None,
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
         max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Azure Blob Storage target.
@@ -68,6 +88,10 @@ class AzureBlobStorageTarget(PromptTarget):
             blob_content_type (SupportedContentType): The content type for blobs.
                 Defaults to PLAIN_TEXT.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
+            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
+                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         self._blob_content_type: str = blob_content_type.value
 
@@ -78,7 +102,12 @@ class AzureBlobStorageTarget(PromptTarget):
         self._sas_token: Optional[str] = sas_token
         self._client_async: Optional[AsyncContainerClient] = None
 
-        super().__init__(endpoint=self._container_url, max_requests_per_minute=max_requests_per_minute)
+        super().__init__(
+            endpoint=self._container_url,
+            max_requests_per_minute=max_requests_per_minute,
+            custom_configuration=custom_configuration,
+            custom_capabilities=custom_capabilities,
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -122,8 +151,11 @@ class AzureBlobStorageTarget(PromptTarget):
             file_name (str): File name to assign to uploaded blob.
             data (bytes): Byte representation of content to upload to container.
             content_type (str): Content type to upload.
+
+        Raises:
+            RuntimeError: If blob storage client is not initialized.
         """
-        content_settings = ContentSettings(content_type=f"{content_type}")  # type: ignore[no-untyped-call, unused-ignore]
+        content_settings = ContentSettings(content_type=f"{content_type}")
         logger.info(msg="\nUploading to Azure Storage as blob:\n\t" + file_name)
 
         if not self._client_async:
@@ -134,6 +166,8 @@ class AzureBlobStorageTarget(PromptTarget):
         # If not, the file will be put in the root of the container.
         blob_path = f"{blob_prefix}/{file_name}" if blob_prefix else file_name
         try:
+            if self._client_async is None:
+                raise RuntimeError("Blob storage client not initialized")
             blob_client = self._client_async.get_blob_client(blob=blob_path)
             if await blob_client.exists():
                 logger.info(msg=f"Blob {blob_path} already exists. Deleting it before uploading a new version.")
@@ -167,18 +201,20 @@ class AzureBlobStorageTarget(PromptTarget):
         return container_url, blob_prefix
 
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         (Async) Sends prompt to target, which creates a file and uploads it as a blob
         to the provided storage container.
 
         Args:
-            message (Message): A Message to be sent to the target.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response with the Blob URL.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
 
         # default file name is <conversation_id>.txt, but can be overridden by prompt metadata
@@ -196,18 +232,3 @@ class AzureBlobStorageTarget(PromptTarget):
         )
 
         return [response]
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received {n_pieces} pieces")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type not in ["text", "url"]:
-            raise ValueError(f"This target only supports text and url prompt input. Received: {piece_type}.")
-
-        request = message.message_pieces[0]
-        messages = self._memory.get_message_pieces(conversation_id=request.conversation_id)
-
-        if len(messages) > 0:
-            raise ValueError("This target only supports a single turn conversation.")

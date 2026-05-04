@@ -19,14 +19,14 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
     scientific domains: chemistry, biology, medicine, pharmacology, physics, and psychology.
     The benchmark comprises 3,000 prompts derived from real-world regulations and laws.
 
-    Reference: https://arxiv.org/abs/2505.21605
+    Reference: [@jiang2025sosbench]
     """
 
     def __init__(
         self,
         *,
         source: str = "SOSBench/SOSBench",
-    ):
+    ) -> None:
         """
         Initialize the SOSBench dataset loader.
 

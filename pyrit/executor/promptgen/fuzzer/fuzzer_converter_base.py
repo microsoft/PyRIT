@@ -29,7 +29,7 @@ class FuzzerConverter(PromptConverter):
     Base class for GPTFUZZER converters.
 
     Adapted from GPTFUZZER: Red Teaming Large Language Models with Auto-Generated Jailbreak Prompts.
-    Paper: https://arxiv.org/pdf/2309.10253 by Jiahao Yu, Xingwei Lin, Zheng Yu, Xinyu Xing.
+    Paper: [@yu2023gptfuzzer]
     GitHub: https://github.com/sherdencooper/GPTFuzz/tree/master
     """
 
@@ -40,9 +40,9 @@ class FuzzerConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         prompt_template: SeedPrompt,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified chat target and prompt template.
 

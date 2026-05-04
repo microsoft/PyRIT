@@ -4,7 +4,7 @@
 import os
 from unittest.mock import MagicMock, patch
 
-from pyrit.cli.banner import (
+from pyrit.cli._banner import (
     ANSI_COLORS,
     DARK_THEME,
     LIGHT_THEME,
@@ -167,7 +167,7 @@ class TestPlayAnimation:
         assert "Python Risk Identification Tool" in result
 
     def test_no_animation_when_not_tty(self) -> None:
-        with patch("pyrit.cli.banner.can_animate", return_value=False):
+        with patch("pyrit.cli._banner.can_animate", return_value=False):
             result = play_animation()
             assert "Python Risk Identification Tool" in result
 
@@ -176,10 +176,10 @@ class TestPlayAnimation:
         mock_stdout.isatty.return_value = True
 
         with (
-            patch("pyrit.cli.banner.can_animate", return_value=True),
-            patch("pyrit.cli.banner._detect_theme", return_value=DARK_THEME),
-            patch("pyrit.cli.banner.time.sleep"),
-            patch("pyrit.cli.banner.sys.stdout", mock_stdout),
+            patch("pyrit.cli._banner.can_animate", return_value=True),
+            patch("pyrit.cli._banner._detect_theme", return_value=DARK_THEME),
+            patch("pyrit.cli._banner.time.sleep"),
+            patch("pyrit.cli._banner.sys.stdout", mock_stdout),
         ):
             result = play_animation()
 
@@ -203,10 +203,10 @@ class TestPlayAnimation:
                 raise KeyboardInterrupt
 
         with (
-            patch("pyrit.cli.banner.can_animate", return_value=True),
-            patch("pyrit.cli.banner._detect_theme", return_value=DARK_THEME),
-            patch("pyrit.cli.banner.time.sleep", side_effect=sleep_then_interrupt),
-            patch("pyrit.cli.banner.sys.stdout", mock_stdout),
+            patch("pyrit.cli._banner.can_animate", return_value=True),
+            patch("pyrit.cli._banner._detect_theme", return_value=DARK_THEME),
+            patch("pyrit.cli._banner.time.sleep", side_effect=sleep_then_interrupt),
+            patch("pyrit.cli._banner.sys.stdout", mock_stdout),
         ):
             result = play_animation()
 

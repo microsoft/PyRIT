@@ -29,4 +29,4 @@ For example, [BREAKING] FEAT or [BREAKING] MAINT -->
 
 <!--- JupyText helps us see regressions in APIs or in our documentation by executing all code samples -->
 <!--- Include how you/if ran JupyText here -->
-<!--- This is described at: https://github.com/Azure/PyRIT/tree/main/doc  -->
+<!--- This is described at: https://github.com/microsoft/PyRIT/tree/main/doc  -->

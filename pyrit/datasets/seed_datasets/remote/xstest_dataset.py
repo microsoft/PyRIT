@@ -26,7 +26,7 @@ class _XSTestDataset(_RemoteDatasetLoader):
         *,
         source: str = "https://raw.githubusercontent.com/paul-rottger/exaggerated-safety/a3bb396/xstest_v2_prompts.csv",
         source_type: Literal["public_url", "file"] = "public_url",
-    ):
+    ) -> None:
         """
         Initialize the XSTest dataset loader.
 

@@ -28,7 +28,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
         converter_target: Optional[PromptChatTarget] = None,
         prompt_template: Optional[SeedPrompt] = None,
         prompt_templates: Optional[list[str]] = None,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified chat target and prompt templates.
 

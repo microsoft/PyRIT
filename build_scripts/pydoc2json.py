@@ -141,6 +141,33 @@ def class_to_dict(cls: griffe.Class) -> dict:
     return result
 
 
+def _resolve_alias_from_source(target_path: str) -> dict | None:
+    """Try to resolve an unresolvable alias by loading the target .py file directly.
+
+    When griffe cannot resolve an alias (e.g. due to missing __init__.py in
+    namespace packages), fall back to parsing the individual source file and
+    extracting the class or function definition.
+    """
+    parts = target_path.rsplit(".", 1)
+    if len(parts) != 2:
+        return None
+    module_path, member_name = parts
+    source_file = Path(module_path.replace(".", "/") + ".py")
+    if not source_file.exists():
+        return None
+    try:
+        code = source_file.read_text(encoding="utf-8")
+        file_mod = griffe.visit(module_path, code=code, filepath=source_file)
+        member = file_mod.members.get(member_name)
+        if isinstance(member, griffe.Class):
+            return class_to_dict(member)
+        if isinstance(member, griffe.Function):
+            return function_to_dict(member)
+    except Exception:
+        pass
+    return None
+
+
 def module_to_dict(mod: griffe.Module, include_submodules: bool = False) -> dict:
     """Convert a griffe Module to a structured dict."""
     result = {
@@ -167,8 +194,13 @@ def module_to_dict(mod: griffe.Module, include_submodules: bool = False) -> dict
                     elif isinstance(target, griffe.Function):
                         result["members"].append(function_to_dict(target))
                 except Exception:
-                    # Unresolvable alias — just record the name
-                    result["members"].append({"name": name, "kind": "alias", "target": str(member.target_path)})
+                    # Griffe cannot resolve (e.g. namespace package) — try source file
+                    resolved = _resolve_alias_from_source(str(member.target_path))
+                    if resolved:
+                        resolved["name"] = name
+                        result["members"].append(resolved)
+                    else:
+                        result["members"].append({"name": name, "kind": "alias", "target": str(member.target_path)})
             elif isinstance(member, griffe.Module) and include_submodules:
                 result["members"].append(module_to_dict(member, include_submodules=True))
         except Exception as e:

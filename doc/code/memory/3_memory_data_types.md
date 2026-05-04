@@ -78,50 +78,25 @@ flowchart
 
 This architecture is plumbed throughout PyRIT, providing flexibility to interact with various modalities seamlessly. All pieces are stored in the database as individual `MessagePieces` and are reassembled when needed. The `PromptNormalizer` automatically adds these to the database as prompts are sent.
 
-## SeedPrompts
+## Seeds
 
-[`SeedPrompt`](../../../pyrit/models/seeds/seed_prompt.py) objects represent the starting points of conversations. They are used to assemble and initiate attacks, and can be translated to and from `MessagePieces`.
+All seed types inherit from [`Seed`](../../../pyrit/models/seeds/seed.py), which provides common fields (`value`, `value_sha256`, `dataset_name`, `harm_categories`, `is_general_technique`, `metadata`, etc.) along with Jinja2 templating and YAML loading support.
 
-**Key Fields:**
+### Seed Types
 
-- **`value`**: The actual prompt text or file path
-- **`data_type`**: Type of data (e.g., `text`, `image_path`, `audio_path`)
-- **`name`**: Name of the prompt
-- **`dataset_name`**: Name of the dataset this prompt belongs to
-- **`harm_categories`**: Categories of harm associated with this prompt
-- **`description`**: Description of the prompt's purpose or content
-- **`parameters`**: Template parameters that can be filled in dynamically
-- **`prompt_group_id`**: Groups related prompts together
-- **`role`**: Role in conversation (e.g., `user`, `assistant`)
-- **`metadata`**: Arbitrary metadata that can be attached
+- [`SeedPrompt`](../../../pyrit/models/seeds/seed_prompt.py) — A prompt to send to a target. Adds `data_type` (text, image_path, audio_path, etc.), `role` (user/assistant), `sequence` (for multi-turn ordering), and template `parameters`. This is the most common seed type and can be translated to and from `MessagePieces`.
 
-`SeedPrompts` support Jinja2 templating, allowing dynamic prompt generation with parameter substitution. They can be loaded from YAML files and organized into datasets and groups for systematic testing.
+- [`SeedObjective`](../../../pyrit/models/seeds/seed_objective.py) — The goal of an attack (e.g., "Generate hate speech content"). Always text. Cannot be a general technique.
 
-## SeedObjectives
+- [`SeedSimulatedConversation`](../../../pyrit/models/seeds/seed_simulated_conversation.py) — Configuration for dynamically generating multi-turn conversations. Specifies system prompt paths, number of turns, and sequence offsets. The actual generation happens in the executor layer.
 
-[`SeedObjective`](../../../pyrit/models/seeds/seed_objective.py) objects represent the goal or objective of an attack or test scenario. They describe what the attacker is trying to achieve and are used alongside `SeedPrompts` to define complete attack scenarios.
+### Seed Groups
 
-**Key Fields:**
+Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py) containers that enforce consistency (shared `prompt_group_id`, valid role sequences, no duplicate sequence numbers). Two specialized subclasses add further constraints:
 
-- **`value`**: The objective statement describing the goal (e.g., "Generate hate speech content")
-- **`data_type`**: Always `text` for objectives
-- **`name`**: Name identifying the objective
-- **`dataset_name`**: Name of the dataset this objective belongs to
-- **`harm_categories`**: Categories of harm the objective relates to
-- **`authors`**: Attribution information for the objective
-- **`groups`**: Group affiliations (e.g., "AI Red Team")
-- **`source`**: Source or reference for the objective
-- **`metadata`**: Additional metadata about the objective
+- [`SeedAttackGroup`](../../../pyrit/models/seeds/seed_attack_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
 
-`SeedObjectives` support Jinja2 templating for dynamic objective generation and can be loaded from YAML files alongside prompts, making it easy to organize and reuse test objectives across different scenarios.
-
-**Relationship to SeedGroups:**
-
-`SeedObjective` and `SeedPrompt` objects are combined into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py) objects, which represent a complete test case with optional seed prompts and an objective. A SeedGroup can contain:
-
-- Multiple prompts (for multi-turn conversations)
-- A single objective (what the attack is trying to achieve)
-- Both prompts and an objective (complete attack specification)
+- [`SeedAttackTechniqueGroup`](../../../pyrit/models/seeds/seed_attack_technique_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
 
 
 ## Scores
@@ -150,8 +125,8 @@ Scores enable automated evaluation of attack success, content harmfulness, and o
 
 - **`conversation_id`**: The conversation that produced this result
 - **`objective`**: Natural-language description of the attacker's goal
-- **`attack_identifier`**: Information identifying the attack strategy used
-- **`atomic_attack_identifier`**: Composite identifier combining the attack strategy with general technique seed identifiers from the dataset
+- **`attack_identifier`**: `ComponentIdentifier` identifying the attack strategy used
+- **`atomic_attack_identifier`**: Composite `ComponentIdentifier` combining the attack technique with seed identifiers from the dataset (see [ComponentIdentifiers](#componentidentifiers) below)
 - **`last_response`**: The final `MessagePiece` generated in the attack
 - **`last_score`**: The final score assigned to the last response
 - **`executed_turns`**: Number of turns executed in the attack
@@ -162,3 +137,27 @@ Scores enable automated evaluation of attack success, content harmfulness, and o
 - **`metadata`**: Arbitrary metadata about the attack execution
 
 `AttackResult` objects provide comprehensive reporting on attack campaigns, enabling analysis of red teaming effectiveness and vulnerability identification.
+
+## ComponentIdentifiers
+
+[`ComponentIdentifier`](../../../pyrit/identifiers/component_identifier.py) is an immutable snapshot of a component's behavioral configuration. A single type is used for all components — targets, scorers, converters, and attacks — enabling uniform storage and composition.
+
+**Key Fields:**
+
+- **`class_name`** / **`class_module`**: The Python class and module of the component
+- **`params`**: Behavioral parameters (e.g., `temperature`, `model_name`)
+- **`children`**: Named child identifiers for composition (e.g., a scorer's `prompt_target`)
+- **`hash`**: Content-addressed SHA256 hash computed from class, params, and children
+
+Identifiers are content-addressed: the same configuration always produces the same hash, and any change to params or children produces a different one. This is used throughout PyRIT to track which exact configuration produced a given result.
+
+### Composite Identifiers
+
+For atomic attacks, `build_atomic_attack_identifier` composes a tree of identifiers:
+
+- **`attack_technique`** — the attack strategy and its children (target, converters, scorer, technique seeds)
+- **`seed_identifiers`** — all seeds from the seed group, for traceability
+
+### Eval Hashing
+
+[`EvaluationIdentifier`](../../../pyrit/identifiers/evaluation_identifier.py) subclasses wrap a `ComponentIdentifier` and compute a separate **eval hash** that strips operational params (like endpoint URLs) so the same logical configuration on different deployments produces the same hash. This enables grouping equivalent runs for evaluation comparison.

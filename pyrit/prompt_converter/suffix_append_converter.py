@@ -12,13 +12,13 @@ class SuffixAppendConverter(PromptConverter):
     Appends a specified suffix to the prompt.
     E.g. with a suffix `!!!`, it converts a prompt of `test` to `test !!!`.
 
-    See https://github.com/Azure/PyRIT/tree/main/pyrit/auxiliary_attacks/gcg for adversarial suffix generation.
+    See https://github.com/microsoft/PyRIT/tree/main/pyrit/auxiliary_attacks/gcg for adversarial suffix generation.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, *, suffix: str):
+    def __init__(self, *, suffix: str) -> None:
         """
         Initialize the converter with the specified suffix.
 

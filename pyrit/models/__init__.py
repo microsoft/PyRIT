@@ -7,7 +7,6 @@ from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResult
 from pyrit.models.chat_message import (
     ALLOWED_CHAT_MESSAGE_ROLES,
     ChatMessage,
-    ChatMessageListDictContent,
     ChatMessagesDataset,
 )
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
@@ -69,7 +68,6 @@ __all__ = [
     "ChatMessage",
     "ChatMessagesDataset",
     "ChatMessageRole",
-    "ChatMessageListDictContent",
     "ConversationReference",
     "ConversationStats",
     "ConversationType",

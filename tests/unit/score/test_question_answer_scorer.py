@@ -32,7 +32,6 @@ def text_message_piece(patch_central_database) -> MessagePiece:
     return piece
 
 
-@pytest.mark.asyncio
 async def test_score_async_unsupported_image_type_returns_false(
     patch_central_database, image_message_piece: MessagePiece
 ):
@@ -48,7 +47,6 @@ async def test_score_async_unsupported_image_type_returns_false(
     os.remove(image_message_piece.converted_value)
 
 
-@pytest.mark.asyncio
 async def test_score_async_missing_metadata_returns_false(patch_central_database):
     request = MessagePiece(
         id="test_id",
@@ -67,7 +65,6 @@ async def test_score_async_missing_metadata_returns_false(patch_central_database
     assert "No supported pieces" in scores[0].score_rationale
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response,expected_score",
     [
@@ -93,7 +90,6 @@ async def test_question_answer_scorer_score(response: str, expected_score: bool,
     assert result_score.score_category == ["new_category"]
 
 
-@pytest.mark.asyncio
 async def test_question_answer_scorer_adds_to_memory():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
@@ -112,7 +108,6 @@ async def test_question_answer_scorer_adds_to_memory():
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_question_answer_scorer_no_category():
     memory = MagicMock(MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):

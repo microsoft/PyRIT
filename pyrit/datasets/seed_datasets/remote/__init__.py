@@ -25,6 +25,11 @@ from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
 from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import (
     _CCPSensitivePromptsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
+    COMIC_JAILBREAK_TEMPLATES,
+    ComicJailbreakTemplateConfig,
+    _ComicJailbreakDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
     _DarkBenchDataset,
 )  # noqa: F401
@@ -101,6 +106,17 @@ from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import (
 from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import (  # noqa: F401
     _TransphobiaAwarenessDataset,
 )
+from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
+    VisualLeakBenchCategory,
+    VisualLeakBenchPIIType,
+    _VisualLeakBenchDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
+    VLGuardCategory,
+    VLGuardSubcategory,
+    VLGuardSubset,
+    _VLGuardDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     _VLSUMultimodalDataset,
 )  # noqa: F401
@@ -111,12 +127,18 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 __all__ = [
     "PromptIntelCategory",
     "PromptIntelSeverity",
+    "VLGuardCategory",
+    "VLGuardSubcategory",
+    "VLGuardSubset",
     "_AegisContentSafetyDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
     "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
+    "_ComicJailbreakDataset",
+    "COMIC_JAILBREAK_TEMPLATES",
+    "ComicJailbreakTemplateConfig",
     "_DarkBenchDataset",
     "_EquityMedQADataset",
     "_ForbiddenQuestionsDataset",
@@ -143,6 +165,10 @@ __all__ = [
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
+    "_VLGuardDataset",
     "_VLSUMultimodalDataset",
+    "_VisualLeakBenchDataset",
+    "VisualLeakBenchCategory",
+    "VisualLeakBenchPIIType",
     "_XSTestDataset",
 ]

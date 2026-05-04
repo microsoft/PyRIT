@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import copy
 import uuid
-import warnings
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -177,21 +176,6 @@ class Message:
         if len(self.message_pieces) == 0:
             return False
         return self.message_pieces[0].is_simulated
-
-    @property
-    def role(self) -> ChatMessageRole:
-        """
-        Deprecated: Use api_role for comparisons or _role for internal storage.
-
-        This property is deprecated and will be removed in a future version.
-        Returns api_role for backward compatibility.
-        """
-        warnings.warn(
-            "Message.role getter is deprecated. Use api_role for comparisons. This property will be removed in 0.13.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.api_role
 
     @property
     def conversation_id(self) -> str:
@@ -571,7 +555,7 @@ def construct_response_from_request(
                 role="assistant",
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
-                labels=request.labels,
+                labels=request.labels,  # deprecated
                 prompt_target_identifier=request.prompt_target_identifier,
                 attack_identifier=request.attack_identifier,
                 original_value_data_type=response_type,

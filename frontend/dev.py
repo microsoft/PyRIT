@@ -180,7 +180,7 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
         "-m",
         "pyrit.cli.pyrit_backend",
         "--host",
-        "0.0.0.0",
+        "localhost",
         "--port",
         "8000",
         "--log-level",

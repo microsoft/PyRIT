@@ -25,7 +25,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/Psychotherapy-LLM/CBT-Bench
-        - https://arxiv.org/abs/2410.13218
+        - [@zhang2024cbtbench]
     """
 
     def __init__(
@@ -34,7 +34,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         source: str = "Psychotherapy-LLM/CBT-Bench",
         config: str = "core_fine_seed",
         split: str = "train",
-    ):
+    ) -> None:
         """
         Initialize the CBT-Bench dataset loader.
 

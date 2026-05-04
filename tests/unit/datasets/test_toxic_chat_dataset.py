@@ -37,7 +37,6 @@ def mock_toxic_chat_data():
 class TestToxicChatDataset:
     """Test the ToxicChat dataset loader."""
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_toxic_chat_data):
         """Test fetching ToxicChat dataset."""
         loader = _ToxicChatDataset()
@@ -59,7 +58,6 @@ class TestToxicChatDataset:
             second_prompt = dataset.seeds[1]
             assert second_prompt.harm_categories == []
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_preserves_jinja2_content(self):
         """Test that entries with Jinja2-like content are preserved via raw wrapping."""
         data_with_html = [
@@ -91,9 +89,8 @@ class TestToxicChatDataset:
             assert dataset.seeds[0].value == "Normal question"
             assert dataset.seeds[1].value == "<!DOCTYPE html>{%block%}broken"
 
-    @pytest.mark.asyncio
-    async def test_fetch_dataset_skips_jinja2_incompatible_entries(self):
-        """Test that entries with Jinja2-incompatible content are skipped."""
+    async def test_fetch_dataset_preserves_jinja2_syntax_in_entries(self):
+        """Test that entries with Jinja2 syntax are preserved as literal text."""
         data_with_endraw = [
             {
                 "conv_id": "good1",
@@ -105,7 +102,7 @@ class TestToxicChatDataset:
                 "openai_moderation": "[]",
             },
             {
-                "conv_id": "bad1",
+                "conv_id": "jinja1",
                 "user_input": "This has {% endraw %} in it",
                 "model_output": "N/A",
                 "human_annotation": "False",
@@ -128,11 +125,12 @@ class TestToxicChatDataset:
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_endraw)):
             dataset = await loader.fetch_dataset()
 
-            assert len(dataset.seeds) == 2
+            # All entries are preserved — untrusted text is never passed through Jinja
+            assert len(dataset.seeds) == 3
             assert dataset.seeds[0].value == "Normal question"
-            assert dataset.seeds[1].value == "Another normal question"
+            assert dataset.seeds[1].value == "This has {% endraw %} in it"
+            assert dataset.seeds[2].value == "Another normal question"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_preserves_for_loop_content(self):
         """Test that entries with {% for %} control structures are preserved without raw wrapper."""
         data_with_for = [
@@ -154,7 +152,6 @@ class TestToxicChatDataset:
             assert len(dataset.seeds) == 1
             assert dataset.seeds[0].value == "Use {% for x in items %}{{ x }}{% endfor %} in your code"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_sets_harm_categories_from_openai_moderation(self):
         """Test that harm_categories includes openai_moderation categories with score > 0.8."""
         import json
@@ -196,7 +193,6 @@ class TestToxicChatDataset:
         loader = _ToxicChatDataset()
         assert loader.dataset_name == "toxic_chat"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_with_custom_config(self, mock_toxic_chat_data):
         """Test fetching with custom config."""
         loader = _ToxicChatDataset(

@@ -11,19 +11,13 @@ build:
     python: "3.13"
     nodejs: "20"
   jobs:
+    install:
+      - pip install .[dev]
     pre_build:
       - python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
       - python build_scripts/gen_api_md.py
     build:
       html:
         - cd doc && jupyter-book build --all
-      commands:
         - mkdir -p $READTHEDOCS_OUTPUT/html
         - cp -r doc/_build/site/* $READTHEDOCS_OUTPUT/html/
-
-python:
-   install:
-   - method: pip
-     path: .
-     extra_requirements:
-         - dev

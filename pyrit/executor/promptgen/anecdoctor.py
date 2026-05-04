@@ -213,7 +213,7 @@ class AnecdoctorGenerator(
             system_prompt=system_prompt,
             conversation_id=context.conversation_id,
             attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,
+            labels=context.memory_labels,  # deprecated
         )
 
     async def _perform_async(self, *, context: AnecdoctorContext) -> AnecdoctorResult:
@@ -356,9 +356,11 @@ class AnecdoctorGenerator(
 
         Raises:
             RuntimeError: If knowledge graph extraction fails.
+            ValueError: If the processing model is not initialized.
         """
         # Processing model is guaranteed to exist when this method is called
-        assert self._processing_model is not None
+        if self._processing_model is None:
+            raise ValueError("self._processing_model is not initialized")
 
         self._logger.debug("Extracting knowledge graph from evaluation data")
 
@@ -374,7 +376,7 @@ class AnecdoctorGenerator(
             system_prompt=kg_system_prompt,
             conversation_id=kg_conversation_id,
             attack_identifier=self.get_identifier(),
-            labels=self._memory_labels,
+            labels=self._memory_labels,  # deprecated
         )
 
         # Format examples for knowledge graph extraction using few-shot format

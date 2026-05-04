@@ -24,7 +24,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,13 @@ class TranslationConverter(PromptConverter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         language: str,
         prompt_template: Optional[SeedPrompt] = None,
         max_retries: int = 3,
@@ -51,7 +52,7 @@ class TranslationConverter(PromptConverter):
         Initialize the converter with the target chat support, language, and optional prompt template.
 
         Args:
-            converter_target (PromptChatTarget): The target chat support for the conversion which will translate.
+            converter_target (PromptTarget): The target chat support for the conversion which will translate.
                 Can be omitted if a default has been configured via PyRIT initialization.
             language (str): The language for the conversion. E.g. Spanish, French, leetspeak, etc.
             prompt_template (SeedPrompt, Optional): The prompt template for the conversion.
@@ -62,6 +63,7 @@ class TranslationConverter(PromptConverter):
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If the language is not provided.
         """
+        super().__init__(converter_target=converter_target)
         self.converter_target = converter_target
 
         # Retry strategy for the conversion

@@ -25,7 +25,6 @@ from pyrit.prompt_target import (
 )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name", "supports_seed"),
     [
@@ -38,6 +37,7 @@ from pyrit.prompt_target import (
         ("AZURE_OPENAI_GPT4O_STRICT_FILTER_ENDPOINT", "AZURE_OPENAI_GPT4O_STRICT_FILTER_MODEL", True),
         ("AZURE_OPENAI_GPT3_5_CHAT_ENDPOINT", "AZURE_OPENAI_GPT3_5_CHAT_MODEL", True),
         ("AZURE_OPENAI_GPT4_CHAT_ENDPOINT", "AZURE_OPENAI_GPT4_CHAT_MODEL", True),
+        ("AZURE_OPENAI_GPT5_4_ENDPOINT", "AZURE_OPENAI_GPT5_4_MODEL", True),
         ("AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT", "AZURE_OPENAI_GPT5_COMPLETIONS_MODEL", True),
         ("AZURE_OPENAI_GPTV_CHAT_ENDPOINT", "AZURE_OPENAI_GPTV_CHAT_MODEL", True),
         ("AZURE_FOUNDRY_MISTRAL_LARGE_ENDPOINT", "AZURE_FOUNDRY_MISTRAL_LARGE_MODEL", True),
@@ -65,7 +65,6 @@ async def test_openai_chat_target_entra_auth(sqlite_instance, endpoint, model_na
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
@@ -93,7 +92,6 @@ async def test_openai_image_target_entra_auth(sqlite_instance, endpoint, model_n
 SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
 
 
-@pytest.mark.asyncio
 async def test_openai_image_editing_single_image_entra_auth(sqlite_instance):
     """
     Test image editing with a single image input using Entra authentication.
@@ -137,7 +135,6 @@ async def test_openai_image_editing_single_image_entra_auth(sqlite_instance):
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
-@pytest.mark.asyncio
 async def test_openai_image_editing_multiple_images_entra_auth(sqlite_instance):
     """
     Test image editing with multiple image inputs using Entra authentication.
@@ -187,7 +184,6 @@ async def test_openai_image_editing_multiple_images_entra_auth(sqlite_instance):
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
@@ -211,7 +207,6 @@ async def test_openai_tts_target_entra_auth(sqlite_instance, endpoint, model_nam
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
@@ -236,7 +231,6 @@ async def test_openai_responses_target_entra_auth(sqlite_instance, endpoint, mod
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
@@ -261,7 +255,6 @@ async def test_openai_responses_target_reasoning_effort_entra_auth(sqlite_instan
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
@@ -287,7 +280,6 @@ async def test_openai_responses_target_reasoning_summary_entra_auth(sqlite_insta
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "model_name"),
     [
@@ -309,7 +301,6 @@ async def test_openai_realtime_target_entra_auth(sqlite_instance, endpoint, mode
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 async def test_video_target_entra_auth(sqlite_instance):
     # Takes a long time and sometimes encounters retry errors.
     # Note: AZURE_OPENAI_VIDEO_ENDPOINT should be configured for Sora v2 API
@@ -325,7 +316,6 @@ async def test_video_target_entra_auth(sqlite_instance):
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 async def test_video_target_remix_entra_auth(sqlite_instance):
     """Test video remix mode with Entra authentication."""
     endpoint = os.environ["OPENAI_VIDEO_ENDPOINT"]
@@ -359,7 +349,6 @@ async def test_video_target_remix_entra_auth(sqlite_instance):
     assert remix_result[0].message_pieces[0].response_error == "none"
 
 
-@pytest.mark.asyncio
 async def test_prompt_shield_target_entra_auth(sqlite_instance):
     # Make sure to assign the Cognitive Services User or Contributor role
     endpoint = os.environ["AZURE_CONTENT_SAFETY_API_ENDPOINT"]
@@ -374,7 +363,6 @@ async def test_prompt_shield_target_entra_auth(sqlite_instance):
     assert result.last_response is not None
 
 
-@pytest.mark.asyncio
 async def test_openai_chat_target_with_sync_token_provider(sqlite_instance):
     """Test that OpenAIChatTarget works with synchronous token providers (auto-wrapped)."""
     from azure.identity import DefaultAzureCredential, get_bearer_token_provider

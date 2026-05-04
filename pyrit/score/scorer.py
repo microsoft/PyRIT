@@ -12,6 +12,7 @@ from abc import abstractmethod
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Optional,
     Union,
     cast,
@@ -23,7 +24,7 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -35,11 +36,12 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import (
         ScorerEvalDatasetFiles,
@@ -59,32 +61,42 @@ class Scorer(Identifiable, abc.ABC):
     # Specifies glob patterns for datasets and a result file name.
     evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
 
+    #: Capability requirements placed on the scorer's chat target (if any).
+    #: Subclasses that use a chat target should override this and pass the
+    #: target to ``super().__init__(chat_target=...)`` so the base class can
+    #: validate it.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
     _identifier: Optional[ComponentIdentifier] = None
 
-    def __init__(self, *, validator: ScorerPromptValidator):
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
         """
         Initialize the Scorer.
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
+            chat_target (Optional[PromptTarget]): Chat target used by the scorer, if any. When
+                provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         self._validator = validator
+        if chat_target is not None:
+            type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
-    def get_eval_hash(self) -> str:
+    def get_identifier(self) -> ComponentIdentifier:
         """
-        Compute a behavioral equivalence hash for evaluation grouping.
+        Get the scorer's identifier with eval_hash always attached.
 
-        Delegates to ``ScorerEvaluationIdentifier`` which filters target children
-        (prompt_target, converter_target) to behavioral params only, so the same
-        scorer configuration on different deployments produces the same eval hash.
+        Overrides the base ``Identifiable.get_identifier()`` so that
+        ``to_dict()`` always emits the ``eval_hash`` key.
 
         Returns:
-            str: A hex-encoded SHA256 hash suitable for eval registry keying.
+            ComponentIdentifier: The identity with ``eval_hash`` set.
         """
-        # Deferred import to avoid circular dependency (evaluation_identifier → identifiers → …)
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
-        return ScorerEvaluationIdentifier(self.get_identifier()).eval_hash
+        identifier = super().get_identifier()
+        if identifier.eval_hash is None:
+            identifier = identifier.with_eval_hash(ScorerEvaluationIdentifier(identifier).eval_hash)
+            self._identifier = identifier
+        return identifier
 
     @property
     def scorer_type(self) -> ScoreType:
@@ -268,7 +280,7 @@ class Scorer(Identifiable, abc.ABC):
         file_mapping: Optional[ScorerEvalDatasetFiles] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: RegistryUpdateBehavior = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
     ) -> Optional[ScorerMetrics]:
         """
@@ -410,14 +422,13 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: A flattened list of Score objects from all scored prompts.
 
         Raises:
-            ValueError: If objectives is empty or if the number of objectives doesn't match
+            ValueError: If objectives is not None and the number of objectives doesn't match
                 the number of messages.
         """
-        if not objectives:
+        if objectives is None:
             objectives = [""] * len(messages)
-
         elif len(objectives) != len(messages):
-            raise ValueError("The number of tasks must match the number of messages.")
+            raise ValueError("The number of objectives must match the number of messages.")
 
         if len(messages) == 0:
             return []
@@ -456,7 +467,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             ValueError: If the number of objectives does not match the number of image_paths.
         """
-        if objectives and len(objectives) != len(image_paths):
+        if objectives is not None and len(objectives) != len(image_paths):
             raise ValueError("The number of objectives must match the number of image_paths.")
 
         if len(image_paths) == 0:
@@ -465,10 +476,10 @@ class Scorer(Identifiable, abc.ABC):
         prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
-            task_arguments=["image_path", "objective"] if objectives else ["image_path"],
+            task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
             prompt_target=prompt_target,
             batch_size=batch_size,
-            items_to_batch=[image_paths, objectives] if objectives else [image_paths],
+            items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )
 
         return [score for sublist in results for score in sublist]
@@ -494,7 +505,7 @@ class Scorer(Identifiable, abc.ABC):
     async def _score_value_with_llm(
         self,
         *,
-        prompt_target: PromptChatTarget,
+        prompt_target: PromptTarget,
         system_prompt: str,
         message_value: str,
         message_data_type: PromptDataType,
@@ -516,7 +527,7 @@ class Scorer(Identifiable, abc.ABC):
         description fields.
 
         Args:
-            prompt_target (PromptChatTarget): The target LLM to send the message to.
+            prompt_target (PromptTarget): The target LLM to send the message to.
             system_prompt (str): The system-level prompt that guides the behavior of the target LLM.
             message_value (str): The actual value or content to be scored by the LLM (e.g., text, image path,
                 audio path).
@@ -623,7 +634,7 @@ class Scorer(Identifiable, abc.ABC):
             elif isinstance(cat_val, list):
                 if not all(isinstance(x, str) for x in cat_val):
                     raise ValueError("'category' must be a string or a list of strings")
-                normalized_category = cat_val
+                normalized_category = cat_val  # type: ignore[ty:invalid-assignment]
             else:
                 # JSON must yield either a string or a list of strings
                 raise ValueError("'category' must be a string or a list of strings")

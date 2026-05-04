@@ -107,7 +107,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
             For example, add <code>airt</code> to the <code>initializers</code> list to register
             Azure OpenAI targets automatically. See the{' '}
-            <a href="https://github.com/Azure/PyRIT/blob/main/.pyrit_conf_example" target="_blank" rel="noopener noreferrer">
+            <a href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" rel="noopener noreferrer">
               .pyrit_conf_example
             </a>{' '}
             for details.

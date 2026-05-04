@@ -8,7 +8,7 @@ Core classes can be imported directly from this module:
     from pyrit.scenario import Scenario, AtomicAttack, ScenarioStrategy
 
 Specific scenarios should be imported from their subpackages:
-    from pyrit.scenario.airt import ContentHarms, Cyber
+    from pyrit.scenario.airt import RapidResponse, Cyber
     from pyrit.scenario.garak import Encoding
     from pyrit.scenario.foundry import RedTeamAgent
 """
@@ -18,6 +18,8 @@ import sys
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import (
     AtomicAttack,
+    AttackTechnique,
+    AttackTechniqueFactory,
     DatasetConfiguration,
     Scenario,
     ScenarioCompositeStrategy,
@@ -42,6 +44,8 @@ foundry = _foundry_module
 
 __all__ = [
     "AtomicAttack",
+    "AttackTechnique",
+    "AttackTechniqueFactory",
     "DatasetConfiguration",
     "Scenario",
     "ScenarioCompositeStrategy",

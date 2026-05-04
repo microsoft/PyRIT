@@ -4,8 +4,6 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from pyrit.cli import pyrit_backend
 
 
@@ -16,7 +14,7 @@ class TestParseArgs:
         """Should parse backend defaults correctly."""
         args = pyrit_backend.parse_args(args=[])
 
-        assert args.host == "0.0.0.0"
+        assert args.host == "localhost"
         assert args.port == 8000
         assert args.config_file is None
 
@@ -30,7 +28,6 @@ class TestParseArgs:
 class TestInitializeAndRun:
     """Tests for pyrit_backend.initialize_and_run_async."""
 
-    @pytest.mark.asyncio
     async def test_initialize_and_run_passes_config_file_to_frontend_core(self) -> None:
         """Should forward parsed config file path to FrontendCore."""
         parsed_args = pyrit_backend.parse_args(args=["--config-file", "./custom_conf.yaml"])
@@ -42,7 +39,7 @@ class TestInitializeAndRun:
         ):
             mock_core = MagicMock()
             mock_core.initialize_async = AsyncMock()
-            mock_core._initializer_names = None
+            mock_core._initializer_configs = None
             mock_core_class.return_value = mock_core
 
             mock_server = MagicMock()

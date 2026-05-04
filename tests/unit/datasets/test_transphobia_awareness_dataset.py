@@ -4,7 +4,6 @@
 from unittest.mock import patch
 
 import pandas as pd
-import pytest
 
 from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import (
     _TransphobiaAwarenessDataset,
@@ -31,7 +30,6 @@ class TestTransphobiaAwarenessDataset:
         dataset = _TransphobiaAwarenessDataset(source=custom_url)
         assert dataset.source == custom_url
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_with_mock_data(self):
         """Test fetching dataset with mocked pandas read_excel."""
         # Create mock DataFrame
@@ -63,7 +61,6 @@ class TestTransphobiaAwarenessDataset:
             assert dataset.seeds[0].metadata["question_sentiment"] == 3.0
             assert dataset.seeds[1].metadata["question_sentiment"] == 5.0
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_keyword_mapping(self):
         """Test that keywords are properly mapped."""
         mock_df = pd.DataFrame(
@@ -90,7 +87,6 @@ class TestTransphobiaAwarenessDataset:
             # nonbinary should be mapped to "non-binary"
             assert dataset.seeds[2].metadata["keyword"] == "non-binary"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_handles_missing_sentiment(self):
         """Test that missing sentiment values are handled gracefully."""
         mock_df = pd.DataFrame(

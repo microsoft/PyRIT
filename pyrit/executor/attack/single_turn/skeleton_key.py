@@ -43,8 +43,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
     2. Sending the actual objective prompt to the primed target.
     3. Evaluating the response using configured scorers to determine success.
 
-    Learn more about attack at the link below:
-    https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/
+    Learn more about the attack [@microsoft2024skeletonkey].
     """
 
     # Default skeleton key prompt path
@@ -54,7 +53,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -182,4 +181,5 @@ class SkeletonKeyAttack(PromptSendingAttack):
             outcome=AttackOutcome.FAILURE,
             outcome_reason="Skeleton key prompt was filtered or failed",
             executed_turns=1,
+            labels=context.memory_labels,
         )

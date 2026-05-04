@@ -14,7 +14,6 @@ from pyrit.prompt_target import (
 )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -53,7 +52,6 @@ async def test_azure_content_filters(sqlite_instance, endpoint, api_key, model_n
     assert response_piece.response_error == "blocked"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -93,7 +91,6 @@ async def test_azure_content_filters_response_api(sqlite_instance, endpoint, api
     assert response_piece.response_error == "blocked"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [("OPENAI_IMAGE_STRICT_FILTER_ENDPOINT", "OPENAI_IMAGE_STRICT_FILTER_KEY", "OPENAI_IMAGE_STRICT_FILTER_MODEL")],
@@ -118,7 +115,6 @@ async def test_image_input_filters(sqlite_instance, endpoint, api_key, model_nam
     assert response_piece.response_error == "blocked"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [("AZURE_OPENAI_VIDEO_ENDPOINT", "AZURE_OPENAI_VIDEO_KEY", "AZURE_OPENAI_VIDEO_MODEL")],

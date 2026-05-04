@@ -40,11 +40,17 @@ class ChildEvalRule:
     * ``included_item_values`` — for list-valued children, only include items
       whose ``params`` match **all** specified key-value pairs. ``None``
       means include all items.
+    * ``param_fallbacks`` — maps a primary param key to a fallback key.
+      When the primary key's value is falsy (empty string, ``None``, or
+      missing), the fallback key's value from the component's raw params
+      is used instead. This keeps fallback logic in the eval layer without
+      changing full component hashes.  ``None`` means no fallbacks.
     """
 
     exclude: bool = False
     included_params: Optional[frozenset[str]] = None
     included_item_values: Optional[dict[str, Any]] = field(default=None)
+    param_fallbacks: Optional[dict[str, str]] = field(default=None)
 
 
 def _build_eval_dict(
@@ -52,6 +58,7 @@ def _build_eval_dict(
     *,
     child_eval_rules: dict[str, ChildEvalRule],
     _included_params: Optional[frozenset[str]] = None,
+    _param_fallbacks: Optional[dict[str, str]] = None,
 ) -> dict[str, Any]:
     """
     Build a filtered dictionary for eval-hash computation.
@@ -67,6 +74,10 @@ def _build_eval_dict(
         _included_params (Optional[frozenset[str]]): Internal. If set, only
             include params whose keys are in this frozenset. Passed down from
             a parent rule's ``included_params``.
+        _param_fallbacks (Optional[dict[str, str]]): Internal. Maps a primary
+            param key to a fallback key. When the primary value is falsy,
+            the fallback key's value from raw params is used instead.
+            Passed down from a parent rule's ``param_fallbacks``.
 
     Returns:
         dict[str, Any]: The filtered dictionary suitable for hashing.
@@ -84,6 +95,16 @@ def _build_eval_dict(
         }
     )
 
+    # Apply fallbacks: when a primary param is missing or empty string,
+    # substitute with the fallback key's value from the raw params.
+    if _param_fallbacks:
+        for primary_key, fallback_key in _param_fallbacks.items():
+            primary_value = eval_dict.get(primary_key)
+            if primary_value is None or primary_value == "":
+                fallback_value = identifier.params.get(fallback_key)
+                if fallback_value is not None and fallback_value != "":
+                    eval_dict[primary_key] = fallback_value
+
     if identifier.children:
         eval_children: dict[str, Any] = {}
         for name in sorted(identifier.children):
@@ -99,14 +120,17 @@ def _build_eval_dict(
                 required = rule.included_item_values
                 child_list = [c for c in child_list if all(c.params.get(k) == v for k, v in required.items())]
 
-            # For children with a rule, apply included_params; otherwise None → all params kept.
+            # For children with a rule, apply included_params and param_fallbacks;
+            # otherwise None → all params kept, no fallbacks.
             child_included_params = rule.included_params if rule else None
+            child_param_fallbacks = rule.param_fallbacks if rule else None
             hashes = [
                 config_hash(
                     _build_eval_dict(
                         c,
                         child_eval_rules=child_eval_rules,
                         _included_params=child_included_params,
+                        _param_fallbacks=child_param_fallbacks,
                     )
                 )
                 for c in child_list
@@ -144,8 +168,13 @@ def compute_eval_hash(
 
     Returns:
         str: A hex-encoded SHA256 hash suitable for eval registry keying.
+
+    Raises:
+        RuntimeError: If the identifier's hash is None and child_eval_rules is empty.
     """
     if not child_eval_rules:
+        if identifier.hash is None:
+            raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
 
     eval_dict = _build_eval_dict(
@@ -170,12 +199,22 @@ class EvaluationIdentifier(ABC):
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]]
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
-        """Wrap a ComponentIdentifier and eagerly compute its eval hash."""
+        """
+        Wrap a ComponentIdentifier and resolve its eval hash.
+
+        If the identifier carries an ``eval_hash`` (preserved from a prior
+        DB round-trip or set by the scorer), that value is used directly.
+        Otherwise the eval hash is computed from the identifier's params
+        and children using the subclass's ``CHILD_EVAL_RULES``.
+        """
         self._identifier = identifier
-        self._eval_hash = compute_eval_hash(
-            identifier,
-            child_eval_rules=self.CHILD_EVAL_RULES,
-        )
+        if identifier.eval_hash is not None:
+            self._eval_hash = identifier.eval_hash
+        else:
+            self._eval_hash = compute_eval_hash(
+                identifier,
+                child_eval_rules=self.CHILD_EVAL_RULES,
+            )
 
     @property
     def identifier(self) -> ComponentIdentifier:
@@ -193,13 +232,14 @@ class ScorerEvaluationIdentifier(EvaluationIdentifier):
     Evaluation identity for scorers.
 
     The ``prompt_target`` child is filtered to behavioral params only
-    (``model_name``, ``temperature``, ``top_p``), so the same scorer
+    (``underlying_model_name``, ``temperature``, ``top_p``), so the same scorer
     configuration on different deployments produces the same eval hash.
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
         "prompt_target": ChildEvalRule(
-            included_params=frozenset({"model_name", "temperature", "top_p"}),
+            included_params=frozenset({"underlying_model_name", "temperature", "top_p"}),
+            param_fallbacks={"underlying_model_name": "model_name"},
         ),
     }
 
@@ -210,14 +250,17 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
 
     Per-child rules:
 
+    * ``seed_identifiers`` — excluded entirely (present for traceability only).
+    * ``attack_technique`` — not listed, so fully included by default.
+      Its nested children (``objective_target``, ``adversarial_chat``,
+      ``objective_scorer``, ``technique_seeds``) are processed recursively
+      using the same rules dict, so the rules below apply at any depth.
     * ``objective_target`` — include only ``temperature``.
-    * ``adversarial_chat`` — include ``model_name``, ``temperature``, ``top_p``.
+    * ``adversarial_chat`` — include ``underlying_model_name``, ``temperature``, ``top_p``.
     * ``objective_scorer`` — excluded entirely.
-    * ``seeds`` — include only items where ``is_general_technique=True``.
 
-    Non-target children (e.g., ``request_converters``, ``response_converters``)
-    receive full recursive eval treatment, meaning they fully contribute to
-    the hash.
+    Non-target children (e.g., ``request_converters``, ``response_converters``,
+    ``technique_seeds``) receive full recursive eval treatment.
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
@@ -225,10 +268,11 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
             included_params=frozenset({"temperature"}),
         ),
         "adversarial_chat": ChildEvalRule(
-            included_params=frozenset({"model_name", "temperature", "top_p"}),
+            included_params=frozenset({"underlying_model_name", "temperature", "top_p"}),
+            param_fallbacks={"underlying_model_name": "model_name"},
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
-        "seeds": ChildEvalRule(
-            included_item_values={"is_general_technique": True},
-        ),
+        "seed_identifiers": ChildEvalRule(exclude=True),
+        # attack_technique: not listed in rules — fully included in eval hash.
+        # technique_seeds (nested inside attack_technique): also not listed — fully included.
     }

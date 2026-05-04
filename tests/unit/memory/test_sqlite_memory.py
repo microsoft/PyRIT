@@ -1,20 +1,24 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
+import logging
 import os
+import tempfile
 import uuid
 from collections.abc import Sequence
 from datetime import timezone
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import ARRAY, DateTime, Integer, String, inspect
+from sqlalchemy import ARRAY, DateTime, Integer, String, create_engine, inspect, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
-from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.migration import run_schema_migrations
 from pyrit.models import MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
@@ -154,7 +158,180 @@ def test_embedding_data_column_types(sqlite_instance):
     ], f"Unexpected type for 'embedding' column: {column_types['embedding']}"
 
 
-@pytest.mark.asyncio()
+def test_run_schema_migrations_stamps_matching_unversioned_legacy_database():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "legacy-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            Base.metadata.create_all(engine, checkfirst=True)
+
+            run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "pyrit_memory_alembic_version" in table_names
+
+            with engine.connect() as connection:
+                version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+
+            assert version
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_stamps_unversioned_legacy_database_with_extra_tables():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "legacy-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            Base.metadata.create_all(engine, checkfirst=True)
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        CREATE TABLE "SharedAuditLog" (
+                            id INTEGER PRIMARY KEY,
+                            event_name VARCHAR NOT NULL
+                        )
+                        """
+                    )
+                )
+
+            run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "SharedAuditLog" in table_names
+            assert "pyrit_memory_alembic_version" in table_names
+
+            with engine.connect() as connection:
+                version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+
+            assert version
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_fails_synthetic_unversioned_schema_with_drift():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "legacy-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            Base.metadata.create_all(engine, checkfirst=True)
+            with engine.begin() as connection:
+                connection.execute(text('DROP TABLE "ScoreEntries"'))
+
+            with pytest.raises(RuntimeError, match="unversioned legacy memory schema"):
+                run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "pyrit_memory_alembic_version" not in table_names
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_fails_pre_alembic_like_schema() -> None:
+    """
+    Validate strict behavior for unsupported legacy schemas.
+
+    This schema shape intentionally resembles an older pre-Alembic layout where
+    newer columns (e.g. pyrit_version, converter_identifiers) are absent.
+    Such databases are intentionally unsupported and must fail migration checks.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "legacy-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        CREATE TABLE "PromptMemoryEntries" (
+                            id CHAR(36) NOT NULL,
+                            role VARCHAR NOT NULL,
+                            conversation_id VARCHAR NOT NULL,
+                            sequence INTEGER NOT NULL,
+                            timestamp DATETIME NOT NULL,
+                            labels JSON NOT NULL,
+                            prompt_metadata JSON NOT NULL,
+                            prompt_target_identifier JSON NOT NULL,
+                            attack_identifier JSON NOT NULL,
+                            original_value_data_type VARCHAR NOT NULL,
+                            original_value VARCHAR NOT NULL,
+                            original_value_sha256 VARCHAR,
+                            converted_value_data_type VARCHAR NOT NULL,
+                            converted_value VARCHAR,
+                            converted_value_sha256 VARCHAR,
+                            original_prompt_id CHAR(36) NOT NULL,
+                            PRIMARY KEY (id)
+                        )
+                        """
+                    )
+                )
+
+            with pytest.raises(RuntimeError, match="unversioned legacy memory schema"):
+                run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "pyrit_memory_alembic_version" not in table_names
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_isolates_foreign_alembic_version_table():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "legacy-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            Base.metadata.create_all(engine, checkfirst=True)
+            with engine.begin() as connection:
+                connection.execute(text('CREATE TABLE "alembic_version" (version_num VARCHAR(32) NOT NULL)'))
+
+            run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "alembic_version" in table_names
+            assert "pyrit_memory_alembic_version" in table_names
+
+            with engine.connect() as connection:
+                version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+
+            assert version
+        finally:
+            engine.dispose()
+
+
+def test_reset_database_recreates_schema(sqlite_instance):
+    sqlite_instance.reset_database()
+
+    inspector = inspect(sqlite_instance.engine)
+    table_names = set(inspector.get_table_names())
+
+    assert {
+        "AttackResultEntries",
+        "EmbeddingData",
+        "PromptMemoryEntries",
+        "ScenarioResultEntries",
+        "ScoreEntries",
+        "SeedPromptEntries",
+        "pyrit_memory_alembic_version",
+    }.issubset(table_names)
+
+    with sqlite_instance.engine.connect() as connection:
+        version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+
+    assert version
+
+
+def test_reset_database_keeps_foreign_alembic_version_table(sqlite_instance):
+    with sqlite_instance.engine.begin() as connection:
+        connection.execute(text('CREATE TABLE "alembic_version" (version_num VARCHAR(32) NOT NULL)'))
+
+    sqlite_instance.reset_database()
+
+    table_names = set(inspect(sqlite_instance.engine).get_table_names())
+    assert "alembic_version" in table_names
+    assert "pyrit_memory_alembic_version" in table_names
+
+
 async def test_insert_entry(sqlite_instance):
     session = sqlite_instance.get_session()
     message_piece_entry = MessagePiece(
@@ -668,3 +845,91 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[0]].message_count == 1
     assert result[conv_ids[1]].message_count == 2
     assert result[conv_ids[2]].message_count == 3
+
+
+def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
+    """Verify dispose_engine does not raise or emit 'Logging error' when streams are closed (GH-1520)."""
+    pyrit_logger = logging.getLogger("pyrit")
+    prev_level = pyrit_logger.level
+    pyrit_logger.setLevel(logging.INFO)
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    root = logging.getLogger()
+    root.addHandler(handler)
+
+    try:
+        stream.close()
+        sqlite_instance.dispose_engine()
+    finally:
+        root.removeHandler(handler)
+        pyrit_logger.setLevel(prev_level)
+
+    captured = capsys.readouterr()
+    assert "Logging error" not in captured.err
+
+
+def test_create_engine_uses_static_pool_for_in_memory(sqlite_instance):
+    """In-memory databases must use StaticPool so all threads share one database."""
+    from sqlalchemy.pool import StaticPool
+
+    assert isinstance(sqlite_instance.engine.pool, StaticPool)
+
+
+def test_run_schema_migrations_early_return_with_existing_version_table():
+    """
+    Test that migration early-returns when the version table already exists.
+    This tests the line 57 return in _validate_and_stamp_unversioned_memory_schema.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "versioned-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            Base.metadata.create_all(engine, checkfirst=True)
+
+            run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "pyrit_memory_alembic_version" in table_names
+
+            with engine.connect() as connection:
+                version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+            assert version
+
+            run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert "pyrit_memory_alembic_version" in table_names
+
+            with engine.connect() as connection:
+                version_after = connection.execute(
+                    text("SELECT version_num FROM pyrit_memory_alembic_version")
+                ).scalar_one()
+            assert version_after == version
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_no_memory_tables():
+    """
+    Test that migration early-returns when no memory tables exist.
+    This tests the line 60 return in _validate_and_stamp_unversioned_memory_schema.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "empty-memory.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            run_schema_migrations(engine=engine)
+
+            table_names = set(inspect(engine).get_table_names())
+            assert {
+                "AttackResultEntries",
+                "EmbeddingData",
+                "PromptMemoryEntries",
+                "ScenarioResultEntries",
+                "ScoreEntries",
+                "SeedPromptEntries",
+                "pyrit_memory_alembic_version",
+            }.issubset(table_names)
+        finally:
+            engine.dispose()

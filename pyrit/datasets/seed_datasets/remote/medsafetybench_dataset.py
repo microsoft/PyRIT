@@ -20,14 +20,14 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
     LLM safety in medical contexts.
 
     Reference: https://github.com/AI4LIFE-GROUP/med-safety-bench
-    Paper: NeurIPS 2024 Datasets and Benchmarks Track
+    Paper: [@han2024medsafetybench]
     """
 
     def __init__(
         self,
         *,
         subset_name: Literal["train", "test", "generated", "all"] = "all",
-    ):
+    ) -> None:
         """
         Initialize the MedSafetyBench dataset loader.
 

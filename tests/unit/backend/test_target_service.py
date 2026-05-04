@@ -5,14 +5,15 @@
 Tests for backend target service.
 """
 
-from unittest.mock import MagicMock
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.registry.instance_registries import TargetRegistry
+from pyrit.registry.object_registries import TargetRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +45,6 @@ def _mock_target_identifier(*, class_name: str = "MockTarget", **kwargs) -> Comp
 class TestListTargets:
     """Tests for TargetService.list_targets method."""
 
-    @pytest.mark.asyncio
     async def test_list_targets_returns_empty_when_no_targets(self) -> None:
         """Test that list_targets returns empty list when no targets exist."""
         service = TargetService()
@@ -54,7 +54,6 @@ class TestListTargets:
         assert result.items == []
         assert result.pagination.has_more is False
 
-    @pytest.mark.asyncio
     async def test_list_targets_returns_targets_from_registry(self) -> None:
         """Test that list_targets returns targets from registry."""
         service = TargetService()
@@ -71,7 +70,6 @@ class TestListTargets:
         assert result.items[0].target_type == "MockTarget"
         assert result.pagination.has_more is False
 
-    @pytest.mark.asyncio
     async def test_list_targets_paginates_with_limit(self) -> None:
         """Test that list_targets respects the limit parameter."""
         service = TargetService()
@@ -88,7 +86,6 @@ class TestListTargets:
         assert result.pagination.has_more is True
         assert result.pagination.next_cursor == result.items[-1].target_registry_name
 
-    @pytest.mark.asyncio
     async def test_list_targets_cursor_returns_next_page(self) -> None:
         """Test that list_targets cursor skips to the correct position."""
         service = TargetService()
@@ -105,7 +102,6 @@ class TestListTargets:
         assert second_page.items[0].target_registry_name != first_page.items[0].target_registry_name
         assert second_page.pagination.has_more is True
 
-    @pytest.mark.asyncio
     async def test_list_targets_last_page_has_no_more(self) -> None:
         """Test that the last page has has_more=False and no next_cursor."""
         service = TargetService()
@@ -126,7 +122,6 @@ class TestListTargets:
 class TestGetTarget:
     """Tests for TargetService.get_target method."""
 
-    @pytest.mark.asyncio
     async def test_get_target_returns_none_for_nonexistent(self) -> None:
         """Test that get_target returns None for non-existent target."""
         service = TargetService()
@@ -135,7 +130,6 @@ class TestGetTarget:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_get_target_returns_target_from_registry(self) -> None:
         """Test that get_target returns target built from registry object."""
         service = TargetService()
@@ -150,7 +144,6 @@ class TestGetTarget:
         assert result.target_registry_name == "target-1"
         assert result.target_type == "MockTarget"
 
-    @pytest.mark.asyncio
     async def test_list_targets_includes_extra_params_in_target_specific(self) -> None:
         """Test that extra identifier params (reasoning_effort etc.) appear in target_specific_params."""
         service = TargetService()
@@ -181,7 +174,6 @@ class TestGetTarget:
         assert target.target_specific_params["reasoning_summary"] == "auto"
         assert target.target_specific_params["max_output_tokens"] == 4096
 
-    @pytest.mark.asyncio
     async def test_get_target_includes_extra_params_in_target_specific(self) -> None:
         """Test that get_target returns target_specific_params with extra identifier params."""
         service = TargetService()
@@ -233,7 +225,6 @@ class TestGetTargetObject:
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
 
-    @pytest.mark.asyncio
     async def test_create_target_raises_for_invalid_type(self) -> None:
         """Test that create_target raises for invalid target type."""
         service = TargetService()
@@ -246,7 +237,6 @@ class TestCreateTarget:
         with pytest.raises(ValueError, match="not found"):
             await service.create_target_async(request=request)
 
-    @pytest.mark.asyncio
     async def test_create_target_success(self, sqlite_instance) -> None:
         """Test successful target creation."""
         service = TargetService()
@@ -261,7 +251,6 @@ class TestCreateTarget:
         assert result.target_registry_name is not None
         assert result.target_type == "TextTarget"
 
-    @pytest.mark.asyncio
     async def test_create_target_registers_in_registry(self, sqlite_instance) -> None:
         """Test that create_target registers object in registry."""
         service = TargetService()
@@ -276,6 +265,45 @@ class TestCreateTarget:
         # Object should be retrievable from registry
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj is not None
+
+    async def test_create_target_model_name_not_overridden_by_env_var(self, sqlite_instance) -> None:
+        """Test that explicit model_name is not overridden by underlying_model env var."""
+        with patch.dict(os.environ, {"OPENAI_CHAT_UNDERLYING_MODEL": "gpt-4o"}):
+            service = TargetService()
+
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params={
+                    "model_name": "claude-sonnet-4-6",
+                    "endpoint": "https://test.openai.azure.com/",
+                    "api_key": "test-key",
+                },
+            )
+
+            result = await service.create_target_async(request=request)
+
+            assert result.model_name == "claude-sonnet-4-6"
+            # underlying_model_name should be None since no underlying_model was passed
+            assert result.underlying_model_name is None
+
+    async def test_create_target_with_different_underlying_model(self, sqlite_instance) -> None:
+        """Test that explicit underlying_model is used when it differs from model_name."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={
+                "model_name": "my-gpt4o-deployment",
+                "endpoint": "https://test.openai.azure.com/",
+                "api_key": "test-key",
+                "underlying_model": "gpt-4o",
+            },
+        )
+
+        result = await service.create_target_async(request=request)
+
+        assert result.model_name == "my-gpt4o-deployment"
+        assert result.underlying_model_name == "gpt-4o"
 
 
 class TestTargetServiceSingleton:

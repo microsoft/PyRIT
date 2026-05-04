@@ -64,7 +64,6 @@ class TestCBTBenchDataset:
         loader = _CBTBenchDataset()
         assert loader.dataset_name == "cbt_bench"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, mock_cbt_bench_data):
         """Test fetching CBT-Bench dataset with mocked data."""
         loader = _CBTBenchDataset()
@@ -87,7 +86,6 @@ class TestCBTBenchDataset:
             assert first_prompt.harm_categories == ["psycho-social harms"]
             assert first_prompt.metadata["core_belief_fine_grained"] == ["I am unlovable", "I am immoral"]
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_with_custom_config(self, mock_cbt_bench_data):
         """Test fetching with custom HuggingFace config and split."""
         loader = _CBTBenchDataset(
@@ -107,7 +105,6 @@ class TestCBTBenchDataset:
             assert call_kwargs["split"] == "test"
             assert call_kwargs["cache"] is False
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_situation_only(self, mock_cbt_bench_data_missing_thoughts):
         """Test that items with only situation (no thoughts) still work."""
         loader = _CBTBenchDataset()
@@ -118,7 +115,6 @@ class TestCBTBenchDataset:
             assert len(dataset.seeds) == 1
             assert dataset.seeds[0].value == "A situation without thoughts."
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_empty_raises(self, mock_cbt_bench_data_empty):
         """Test that an empty dataset raises ValueError."""
         loader = _CBTBenchDataset()
@@ -127,7 +123,6 @@ class TestCBTBenchDataset:
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset()
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_metadata_includes_config(self, mock_cbt_bench_data):
         """Test that metadata includes the config name."""
         loader = _CBTBenchDataset(config="distortions_seed")
@@ -138,7 +133,6 @@ class TestCBTBenchDataset:
             for seed in dataset.seeds:
                 assert seed.metadata["config"] == "distortions_seed"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_source_url(self, mock_cbt_bench_data):
         """Test that source URL is correctly set."""
         loader = _CBTBenchDataset()

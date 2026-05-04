@@ -15,7 +15,7 @@
 # %% [markdown]
 # Auxiliary attacks cover a variety of techniques that do not fit into the core PyRIT functionality.
 #
-# These attack pipelines may be useful to run before orchestrating other attacks. For example, we provide an Azure Machine Learning (AML) pipeline for generating suffixes using the [greedy coordinate gradient (GCG)](https://arxiv.org/abs/2307.15043) algorithm.
+# These attack pipelines may be useful to run before orchestrating other attacks. For example, we provide an Azure Machine Learning (AML) pipeline for generating suffixes using the greedy coordinate gradient (GCG) [@zou2023gcg] algorithm.
 
 # %% [markdown]
 # ## GCG Suffixes

@@ -82,7 +82,6 @@ class TestAttackExecutorInitialization:
 class TestExecuteAttackAsync:
     """Tests for execute_attack_async method."""
 
-    @pytest.mark.asyncio
     async def test_execute_single_objective(self):
         """Test executing with a single objective."""
         attack = create_mock_attack()
@@ -97,7 +96,6 @@ class TestExecuteAttackAsync:
         assert len(results) == 1
         attack.execute_with_context_async.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_execute_multiple_objectives(self):
         """Test executing with multiple objectives."""
         attack = create_mock_attack()
@@ -112,7 +110,6 @@ class TestExecuteAttackAsync:
         assert len(results) == 3
         assert attack.execute_with_context_async.call_count == 3
 
-    @pytest.mark.asyncio
     async def test_execute_with_broadcast_memory_labels(self):
         """Test memory_labels broadcast to all objectives."""
         attack = create_mock_attack()
@@ -131,7 +128,6 @@ class TestExecuteAttackAsync:
             context = call.kwargs["context"]
             assert context.params.memory_labels == {"test": "value"}
 
-    @pytest.mark.asyncio
     async def test_execute_with_field_overrides(self):
         """Test field_overrides provides per-objective values."""
         attack = create_mock_attack()
@@ -151,7 +147,6 @@ class TestExecuteAttackAsync:
         assert calls[0].kwargs["context"].params.memory_labels == {"id": "1"}
         assert calls[1].kwargs["context"].params.memory_labels == {"id": "2"}
 
-    @pytest.mark.asyncio
     async def test_validates_empty_objectives(self):
         """Test that empty objectives raises ValueError."""
         attack = create_mock_attack()
@@ -160,7 +155,6 @@ class TestExecuteAttackAsync:
         with pytest.raises(ValueError, match="At least one objective must be provided"):
             await executor.execute_attack_async(attack=attack, objectives=[])
 
-    @pytest.mark.asyncio
     async def test_validates_field_overrides_length(self):
         """Test validation of field_overrides length."""
         attack = create_mock_attack()
@@ -173,7 +167,18 @@ class TestExecuteAttackAsync:
                 field_overrides=[{}],  # Wrong length
             )
 
-    @pytest.mark.asyncio
+    async def test_validates_explicit_empty_field_overrides(self):
+        """Test that explicit empty field_overrides still validate length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_async(
+                attack=attack,
+                objectives=["Obj1", "Obj2"],
+                field_overrides=[],
+            )
+
     async def test_concurrency_control(self):
         """Test that concurrency is properly limited."""
         attack = create_mock_attack()
@@ -200,7 +205,6 @@ class TestExecuteAttackAsync:
 
         assert max_concurrent <= max_concurrency
 
-    @pytest.mark.asyncio
     async def test_single_concurrency_serializes_execution(self):
         """Test that max_concurrency=1 truly serializes execution."""
         attack = create_mock_attack()
@@ -231,7 +235,6 @@ class TestExecuteAttackAsync:
 class TestExecuteAttackFromSeedGroupsAsync:
     """Tests for execute_attack_from_seed_groups_async method."""
 
-    @pytest.mark.asyncio
     async def test_extracts_objectives_from_seed_groups(self):
         """Test that objectives are extracted from seed groups."""
         attack = create_mock_attack()
@@ -250,7 +253,6 @@ class TestExecuteAttackFromSeedGroupsAsync:
         assert calls[0].kwargs["context"].params.objective == "Objective 1"
         assert calls[1].kwargs["context"].params.objective == "Objective 2"
 
-    @pytest.mark.asyncio
     async def test_validates_empty_seed_groups(self):
         """Test that empty seed_groups raises ValueError."""
         attack = create_mock_attack()
@@ -262,14 +264,12 @@ class TestExecuteAttackFromSeedGroupsAsync:
                 seed_groups=[],
             )
 
-    @pytest.mark.asyncio
     async def test_validates_seed_group_has_objective(self):
         """Test that seed groups without objectives raise ValueError at construction."""
         # SeedAttackGroup now validates exactly one objective at construction
         with pytest.raises(ValueError, match="must have exactly one objective"):
             SeedAttackGroup(seeds=[SeedPrompt(value="test", data_type="text")])
 
-    @pytest.mark.asyncio
     async def test_passes_broadcast_fields(self):
         """Test that broadcast fields are passed to all seed groups."""
         attack = create_mock_attack()
@@ -287,7 +287,6 @@ class TestExecuteAttackFromSeedGroupsAsync:
         context = attack.execute_with_context_async.call_args.kwargs["context"]
         assert context.params.memory_labels == {"broadcast": "value"}
 
-    @pytest.mark.asyncio
     async def test_passes_adversarial_chat_and_objective_scorer(self):
         """Test that adversarial_chat and objective_scorer are passed to from_seed_group_async."""
         attack = create_mock_attack()
@@ -322,12 +321,25 @@ class TestExecuteAttackFromSeedGroupsAsync:
             # Restore the original to prevent test pollution in parallel test runs
             attack.params_type.from_seed_group_async = original_from_seed_group_async
 
+    async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
+        """Test that explicit empty field_overrides still validate seed group length."""
+        attack = create_mock_attack()
+        executor = AttackExecutor()
+        sg1 = create_seed_group("Objective 1")
+        sg2 = create_seed_group("Objective 2")
+
+        with pytest.raises(ValueError, match="field_overrides length .* must match"):
+            await executor.execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[sg1, sg2],
+                field_overrides=[],
+            )
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPartialFailureHandling:
     """Tests for partial failure handling."""
 
-    @pytest.mark.asyncio
     async def test_partial_failure_preserves_input_indices(self):
         """Test that input_indices correctly maps completed results when some fail."""
         attack = create_mock_attack()
@@ -350,7 +362,6 @@ class TestPartialFailureHandling:
         assert len(result.completed_results) == 2
         assert result.input_indices == [0, 2]
 
-    @pytest.mark.asyncio
     async def test_all_succeed_input_indices_sequential(self):
         """Test that input_indices is [0, 1, 2, ...] when all succeed."""
         attack = create_mock_attack()
@@ -366,7 +377,6 @@ class TestPartialFailureHandling:
 
         assert result.input_indices == [0, 1, 2]
 
-    @pytest.mark.asyncio
     async def test_partial_failure_with_return_partial(self):
         """Test return_partial_on_failure=True returns partial results."""
         attack = create_mock_attack()
@@ -389,7 +399,6 @@ class TestPartialFailureHandling:
         assert len(result.incomplete_objectives) == 1
         assert result.has_incomplete
 
-    @pytest.mark.asyncio
     async def test_partial_failure_raises_by_default(self):
         """Test that failures raise exception by default."""
         attack = create_mock_attack()
@@ -512,65 +521,9 @@ class TestAttackExecutorResult:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestDeprecatedMethods:
-    """Tests for deprecated methods that should emit warnings."""
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_objective_attack_async_emits_warning(self):
-        """Test that deprecated method emits warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-
-        import warnings
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            await executor.execute_multi_objective_attack_async(
-                attack=attack,
-                objectives=["Test"],
-            )
-
-        # Check that a deprecation warning was logged (via logger.warning)
-        # The method uses logger.warning, not warnings.warn
-
-    @pytest.mark.asyncio
-    async def test_execute_single_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        attack = create_mock_attack()
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_single_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
-        )
-
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_execute_multi_turn_attacks_async_emits_warning(self):
-        """Test that deprecated method works and logs warning."""
-        from pyrit.executor.attack import MultiTurnAttackContext
-
-        attack = create_mock_attack(context_type=MultiTurnAttackContext)
-        attack.execute_with_context_async.return_value = create_attack_result("Test")
-
-        executor = AttackExecutor()
-        result = await executor.execute_multi_turn_attacks_async(
-            attack=attack,
-            objectives=["Test"],
-        )
-
-        assert len(result) == 1
-
-
-@pytest.mark.usefixtures("patch_central_database")
 class TestParamsTypeIntegration:
     """Tests for params_type integration with executor."""
 
-    @pytest.mark.asyncio
     async def test_excluded_params_type_rejects_excluded_fields(self):
         """Test that params_type.excluding() properly rejects fields."""
         # Create a params type that excludes next_message

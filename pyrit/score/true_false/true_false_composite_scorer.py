@@ -62,7 +62,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "sub_scorers": [s.get_identifier() for s in self._scorers],
@@ -113,7 +113,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
         # Ensure the message piece has an ID
         piece_id = message.message_pieces[0].id
-        assert piece_id is not None, "Message piece must have an ID"
+        if piece_id is None:
+            raise ValueError("Message piece must have an ID")
 
         return_score = Score(
             score_value=str(result.value),

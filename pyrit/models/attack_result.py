@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
@@ -81,11 +82,17 @@ class AttackResult(StrategyResult):
     # Optional reason for the outcome, providing additional context
     outcome_reason: Optional[str] = None
 
+    # Wall-clock time the result was created or persisted.
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = field(default_factory=set)
 
     # Arbitrary metadata
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # labels associated with this attack result
+    labels: dict[str, str] = field(default_factory=dict)
 
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:
@@ -113,15 +120,23 @@ class AttackResult(StrategyResult):
         Return the attack strategy identifier from the composite atomic identifier.
 
         This is the non-deprecated replacement for the ``attack_identifier`` property.
-        Extracts and returns the ``"attack"`` child from ``atomic_attack_identifier``.
+        Extracts the ``"attack"`` child from the nested ``"attack_technique"`` child
+        of ``atomic_attack_identifier``.
+
+        Falls back to ``children["attack"]`` for rows created before the nested
+        structure was introduced.
 
         Returns:
             Optional[ComponentIdentifier]: The attack strategy identifier, or ``None`` if
-                ``atomic_attack_identifier`` is not set.
+                ``atomic_attack_identifier`` is not set or the expected children are missing.
 
         """
         if self.atomic_attack_identifier is None:
             return None
+        technique = self.atomic_attack_identifier.get_child("attack_technique")
+        if technique is not None:
+            return technique.get_child("attack")
+        # Fallback for pre-nesting rows that had children["attack"] directly.
         return self.atomic_attack_identifier.get_child("attack")
 
     def get_conversations_by_type(self, conversation_type: ConversationType) -> list[ConversationReference]:
@@ -212,7 +227,7 @@ def _add_attack_identifier_compat(cls: type) -> type:
         The same class with a wrapped ``__init__``.
 
     """
-    original_init = cls.__init__  # type: ignore[misc]
+    original_init = cls.__init__
 
     @functools.wraps(original_init)
     def wrapped_init(self: Any, *args: Any, **kwargs: Any) -> None:
@@ -233,7 +248,7 @@ def _add_attack_identifier_compat(cls: type) -> type:
                 )
         original_init(self, *args, **kwargs)
 
-    cls.__init__ = wrapped_init  # type: ignore[misc]
+    cls.__init__ = wrapped_init  # type: ignore[ty:invalid-assignment]
     return cls
 
 

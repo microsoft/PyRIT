@@ -11,7 +11,7 @@ from openai import BadRequestError
 from pyrit.exceptions import PyritException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.prompt_target import GandalfLevel, PromptChatTarget
+from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, GandalfLevel, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -30,12 +30,13 @@ class GandalfScorer(TrueFalseScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
 
     def __init__(
         self,
         *,
         level: GandalfLevel,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         validator: Optional[ScorerPromptValidator] = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
@@ -44,12 +45,18 @@ class GandalfScorer(TrueFalseScorer):
 
         Args:
             level (GandalfLevel): The Gandalf challenge level to score against.
-            chat_target (PromptChatTarget): The chat target used for password extraction.
+            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
+                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to text data type validator.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
                 TrueFalseScoreAggregator.OR.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
 
         self._prompt_target = chat_target
         self._defender = level.value
@@ -64,7 +71,7 @@ class GandalfScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "score_aggregator": self._score_aggregator.__name__,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
                 "prompt_target": self._prompt_target.get_identifier(),
@@ -170,7 +177,7 @@ class GandalfScorer(TrueFalseScorer):
                 score_value_description=score_description,
                 score_rationale="No password found in text.",
                 score_metadata=None,
-                message_piece_id=message_piece.id,
+                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                 scorer_class_identifier=self.get_identifier(),
                 objective=objective,
             )
@@ -195,7 +202,7 @@ class GandalfScorer(TrueFalseScorer):
                     score_value="True",
                     score_category=[self._defender],
                     score_metadata=None,
-                    message_piece_id=message_piece.id,
+                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                     scorer_class_identifier=self.get_identifier(),
                     objective=objective,
                 )
@@ -207,7 +214,7 @@ class GandalfScorer(TrueFalseScorer):
                     score_value="False",
                     score_category=[self._defender],
                     score_metadata=None,
-                    message_piece_id=message_piece.id,
+                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                     scorer_class_identifier=self.get_identifier(),
                     objective=objective,
                 )

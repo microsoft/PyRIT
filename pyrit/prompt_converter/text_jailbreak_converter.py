@@ -16,7 +16,7 @@ class TextJailbreakConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, *, jailbreak_template: TextJailBreak):
+    def __init__(self, *, jailbreak_template: TextJailBreak) -> None:
         """
         Initialize the converter with the specified jailbreak template.
 

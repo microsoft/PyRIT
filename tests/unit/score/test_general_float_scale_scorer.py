@@ -29,7 +29,6 @@ def general_float_scorer_response() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
-@pytest.mark.asyncio
 async def test_general_float_scorer_score_async(patch_central_database, general_float_scorer_response: Message):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -51,7 +50,6 @@ async def test_general_float_scorer_score_async(patch_central_database, general_
     assert "This is the description." in score[0].score_value_description
 
 
-@pytest.mark.asyncio
 async def test_general_float_scorer_score_async_with_prompt_f_string(
     general_float_scorer_response: Message, patch_central_database
 ):
@@ -77,7 +75,6 @@ async def test_general_float_scorer_score_async_with_prompt_f_string(
     assert prompt == "Rate this: this is a test prompt"
 
 
-@pytest.mark.asyncio
 async def test_general_float_scorer_score_async_handles_custom_keys(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -115,7 +112,6 @@ async def test_general_float_scorer_score_async_handles_custom_keys(patch_centra
     assert "This is the description." in score[0].score_value_description
 
 
-@pytest.mark.asyncio
 async def test_general_float_scorer_score_async_min_max_scale(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -158,3 +154,31 @@ def test_general_float_scorer_init_invalid_min_max():
             min_value=10,
             max_value=5,
         )
+
+
+def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
+    """Test that get_scorer_metrics returns None when eval_hash is None."""
+    from unittest.mock import patch as _patch
+
+    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        category="test_category",
+    )
+    # Set evaluation_file_mapping with harm_category so the early return before eval_hash is bypassed
+    scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["harm/*.csv"],
+        result_file="harm/test_metrics.jsonl",
+        harm_category="hate_speech",
+    )
+    # Mock get_identifier to return an identifier with eval_hash=None
+    mock_identifier = MagicMock()
+    mock_identifier.eval_hash = None
+    with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
+        result = scorer.get_scorer_metrics()
+    assert result is None

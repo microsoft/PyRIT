@@ -33,6 +33,7 @@ from pyrit.backend.models.attacks import (
     Score,
     TargetInfo,
 )
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackResult, ChatMessageRole, PromptDataType
 from pyrit.models import Message as PyritMessage
 from pyrit.models import MessagePiece as PyritMessagePiece
@@ -107,7 +108,7 @@ async def _get_sas_for_container_async(*, container_url: str) -> str:
                 account_name=storage_account_name,
                 container_name=container_name,
                 user_delegation_key=delegation_key,
-                permission=ContainerSasPermissions(read=True),  # type: ignore[no-untyped-call,unused-ignore]
+                permission=ContainerSasPermissions(read=True),
                 expiry=expiry_time,
                 start=start_time,
             )
@@ -197,11 +198,22 @@ def attack_result_to_summary(
     """
     message_count = stats.message_count
     last_preview = stats.last_message_preview
-    labels = dict(stats.labels) if stats.labels else {}
 
+    # Merge attack-result labels with conversation-level labels.
+    # Conversation labels take precedence on key collision.
+    labels = dict(ar.labels) if ar.labels else {}
+    labels.update(stats.labels or {})
+    # Resolution order for created_at: explicit metadata override, then the
+    # persisted AttackResult.timestamp, and finally datetime.now() as a
+    # last-resort fallback for never-persisted results.
     created_str = ar.metadata.get("created_at")
     updated_str = ar.metadata.get("updated_at")
-    created_at = datetime.fromisoformat(created_str) if created_str else datetime.now(timezone.utc)
+    if created_str:
+        created_at = datetime.fromisoformat(created_str)
+    elif ar.timestamp is not None:
+        created_at = ar.timestamp
+    else:
+        created_at = datetime.now(timezone.utc)
     updated_at = datetime.fromisoformat(updated_str) if updated_str else created_at
 
     aid = ar.get_attack_strategy_identifier()
@@ -409,7 +421,7 @@ def request_piece_to_pyrit_message_piece(
     role: ChatMessageRole,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,  # deprecated
 ) -> PyritMessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
@@ -420,10 +432,17 @@ def request_piece_to_pyrit_message_piece(
         conversation_id: The conversation/attack ID.
         sequence: The message sequence number.
         labels: Optional labels to attach to the piece.
+            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         PyritMessagePiece domain object.
     """
+    if labels is not None:
+        print_deprecation_message(
+            old_item="request_piece_to_pyrit_message_piece(..., labels=...)",
+            new_item="request_piece_to_pyrit_message_piece(...)",
+            removed_in="0.16.0",
+        )
     metadata: Optional[dict[str, str | int]] = None
     if piece.prompt_metadata:
         metadata = dict(piece.prompt_metadata)
@@ -439,7 +458,7 @@ def request_piece_to_pyrit_message_piece(
         conversation_id=conversation_id,
         sequence=sequence,
         prompt_metadata=metadata,
-        labels=labels or {},
+        labels=labels or {},  # deprecated
         original_prompt_id=original_prompt_id,
     )
 
@@ -449,7 +468,7 @@ def request_to_pyrit_message(
     request: AddMessageRequest,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,
+    labels: Optional[dict[str, str]] = None,  # deprecated
 ) -> PyritMessage:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.
@@ -459,17 +478,24 @@ def request_to_pyrit_message(
         conversation_id: The conversation/attack ID.
         sequence: The message sequence number.
         labels: Optional labels to attach to each piece.
+            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         PyritMessage ready to send to the target.
     """
+    if labels is not None:
+        print_deprecation_message(
+            old_item="request_to_pyrit_message(..., labels=...)",
+            new_item="request_to_pyrit_message(...)",
+            removed_in="0.16.0",
+        )
     pieces = [
         request_piece_to_pyrit_message_piece(
             piece=p,
             role=request.role,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,
+            labels=labels,  # deprecated
         )
         for p in request.pieces
     ]

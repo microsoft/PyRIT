@@ -14,14 +14,56 @@ from pydantic import BaseModel, Field
 from pyrit.models import PromptDataType
 
 __all__ = [
+    "ConverterCatalogEntry",
+    "ConverterCatalogResponse",
     "ConverterInstance",
     "ConverterInstanceListResponse",
+    "ConverterParameterSchema",
     "CreateConverterRequest",
     "CreateConverterResponse",
     "ConverterPreviewRequest",
     "ConverterPreviewResponse",
     "PreviewStep",
 ]
+
+
+# ============================================================================
+# Converter Catalog (Available Types)
+# ============================================================================
+
+
+class ConverterParameterSchema(BaseModel):
+    """Schema for a single converter constructor parameter."""
+
+    name: str = Field(..., description="Parameter name")
+    type_name: str = Field(..., description="Human-readable type (e.g. 'str', 'int', 'Literal[...]')")
+    required: bool = Field(..., description="Whether the parameter must be provided")
+    default_value: Optional[str] = Field(None, description="String representation of default value, if any")
+    choices: Optional[list[str]] = Field(None, description="Allowed values for Literal types")
+    description: Optional[str] = Field(None, description="Parameter description from docstring")
+
+
+class ConverterCatalogEntry(BaseModel):
+    """A converter type available from the backend registry."""
+
+    converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
+    supported_input_types: list[str] = Field(
+        default_factory=list, description="Input data types supported by this converter type"
+    )
+    supported_output_types: list[str] = Field(
+        default_factory=list, description="Output data types produced by this converter type"
+    )
+    parameters: list[ConverterParameterSchema] = Field(
+        default_factory=list, description="Constructor parameters for dynamic form generation"
+    )
+    is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
+    description: Optional[str] = Field(None, description="Short description of the converter from its docstring")
+
+
+class ConverterCatalogResponse(BaseModel):
+    """Response for listing available converter types from the registry."""
+
+    items: list[ConverterCatalogEntry] = Field(..., description="List of available converter types")
 
 
 # ============================================================================
