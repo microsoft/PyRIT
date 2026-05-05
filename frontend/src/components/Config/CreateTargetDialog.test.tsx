@@ -2,9 +2,9 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import CreateTargetDialog from "./CreateTargetDialog";
-import { targetsApi } from "../../services/api";
+import { targetsApi } from "@/services/api";
 
-jest.mock("../../services/api", () => ({
+jest.mock("@/services/api", () => ({
   targetsApi: {
     createTarget: jest.fn(),
   },
@@ -347,5 +347,154 @@ describe("CreateTargetDialog", () => {
     await waitFor(() => {
       expect(screen.getByText("Failed to create target")).toBeInTheDocument();
     });
+  });
+
+  it("should create AzureMLChatTarget with AzureML-specific params", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "azure_ml_llama",
+      target_type: "AzureMLChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    // Select AzureMLChatTarget type
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    // Fill endpoint
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-llama.eastus.inference.ml.azure.com/score" },
+    });
+
+    // Fill model name
+    const modelInput = screen.getByPlaceholderText("e.g. Llama-3.2-3B-Instruct");
+    fireEvent.change(modelInput, { target: { value: "Llama-3.2-3B-Instruct" } });
+
+    // Submit (uses defaults for max_new_tokens, temperature, top_p, repetition_penalty)
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "AzureMLChatTarget",
+        params: {
+          endpoint: "https://my-llama.eastus.inference.ml.azure.com/score",
+          model_name: "Llama-3.2-3B-Instruct",
+          max_new_tokens: 400,
+          temperature: 1.0,
+          top_p: 1.0,
+          repetition_penalty: 1.0,
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should show AzureML fields and hide OpenAI fields when AzureMLChatTarget selected", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    // AzureML-specific fields should be visible
+    expect(screen.getByText("Max New Tokens")).toBeInTheDocument();
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.getByText("Top P")).toBeInTheDocument();
+    expect(screen.getByText("Repetition Penalty")).toBeInTheDocument();
+
+    // OpenAI-specific fields should NOT be visible, but underlying model switch should be
+    expect(screen.getByRole("switch")).toBeInTheDocument();
+  });
+
+  it("should send custom AzureML params when fields are modified", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "azure_ml_custom",
+      target_type: "AzureMLChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    // Fill endpoint — use fireEvent.change because userEvent.type truncates
+    // URLs containing periods in FluentUI Input under jsdom.
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-model.eastus.inference.ml.azure.com/score" },
+    });
+
+    // Modify AzureML-specific fields to non-default values via label queries
+    // Use fireEvent.change for the same jsdom/FluentUI reason as endpoint input.
+    fireEvent.change(screen.getByLabelText("Max New Tokens"), {
+      target: { value: "512" },
+    });
+    fireEvent.change(screen.getByLabelText("Temperature"), {
+      target: { value: "0.7" },
+    });
+    fireEvent.change(screen.getByLabelText("Top P"), {
+      target: { value: "0.9" },
+    });
+    fireEvent.change(screen.getByLabelText("Repetition Penalty"), {
+      target: { value: "1.2" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "AzureMLChatTarget",
+        params: {
+          endpoint: "https://my-model.eastus.inference.ml.azure.com/score",
+          max_new_tokens: 512,
+          temperature: 0.7,
+          top_p: 0.9,
+          repetition_penalty: 1.2,
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should reset form when dialog is closed via onOpenChange", () => {
+    const onClose = jest.fn();
+
+    const { rerender } = render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onClose={onClose} />
+      </TestWrapper>
+    );
+
+    // Simulate Dialog's onOpenChange with open=false
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    // Close the dialog by re-rendering with open=false
+    rerender(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} open={false} onClose={onClose} />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -142,10 +142,12 @@ Lists all registered targets with their type, endpoint, and model name. Click "S
 
 Click "New Target" to open the creation dialog. Fill in:
 
-- **Target Type** (required): One of `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, or `OpenAIResponseTarget`
-- **Endpoint URL** (required): Your Azure OpenAI or OpenAI API endpoint
-- **Model / Deployment Name** (optional): e.g., `gpt-4o`, `dall-e-3`
+- **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
+- **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
+- **Model / Deployment Name** (optional): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
 - **API Key** (optional): Stored in memory only (not persisted to disk)
+
+For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
 
 #### Auto-Populating Targets
 

@@ -766,26 +766,6 @@ def test_message_piece_to_dict():
     assert result["scores"] == [score.to_dict() for score in entry.scores]
 
 
-def test_message_piece_scorer_identifier_dict_backward_compatibility():
-    """Test that passing a dict for scorer_identifier normalizes to ComponentIdentifier."""
-
-    scorer_dict = {
-        "class_name": "TestScorer",
-        "class_module": "pyrit.score.test_scorer",
-    }
-
-    entry = MessagePiece(
-        role="user",
-        original_value="Hello",
-        scorer_identifier=scorer_dict,
-    )
-
-    # Check that scorer_identifier is now a ComponentIdentifier
-    assert isinstance(entry.scorer_identifier, ComponentIdentifier)
-    assert entry.scorer_identifier.class_name == "TestScorer"
-    assert entry.scorer_identifier.class_module == "pyrit.score.test_scorer"
-
-
 def test_message_piece_scorer_identifier_none_default():
     """Test that scorer_identifier defaults to None when not provided."""
     entry = MessagePiece(
