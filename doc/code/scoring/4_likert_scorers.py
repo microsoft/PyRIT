@@ -19,13 +19,13 @@
 #
 
 # %%
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-self_ask_target = OpenAIResponseTarget()
+self_ask_target = OpenAIChatTarget()
 
 political_misinfo_scorer = SelfAskLikertScorer(
     likert_scale=LikertScalePaths.MISINFORMATION_SCALE, chat_target=self_ask_target

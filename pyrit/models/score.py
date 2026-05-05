@@ -62,7 +62,7 @@ class Score:
         id: Optional[uuid.UUID | str] = None,  # noqa: A002
         score_category: Optional[list[str]] = None,
         score_metadata: Optional[dict[str, Union[str, int, float]]] = None,
-        scorer_class_identifier: Union[ComponentIdentifier, dict[str, Any]],
+        scorer_class_identifier: ComponentIdentifier,
         timestamp: Optional[datetime] = None,
         objective: Optional[str] = None,
     ) -> None:
@@ -78,7 +78,7 @@ class Score:
             id (Optional[uuid.UUID | str]): Optional score ID.
             score_category (Optional[List[str]]): Optional score categories.
             score_metadata (Optional[Dict[str, Union[str, int, float]]]): Optional metadata.
-            scorer_class_identifier (Union[ScorerIdentifier, Dict[str, Any]]): Scorer identifier.
+            scorer_class_identifier (ComponentIdentifier): Scorer identifier.
             timestamp (Optional[datetime]): Optional creation timestamp.
             objective (Optional[str]): Optional task objective.
 
@@ -86,9 +86,6 @@ class Score:
             ValueError: If score value or score type is invalid.
 
         """
-        # Import at runtime to avoid circular import
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
-
         self.id = id if id else uuid.uuid4()
         if timestamp is None:
             self.timestamp = datetime.now(tz=timezone.utc)
@@ -112,8 +109,7 @@ class Score:
         self.message_piece_id = message_piece_id
         self.objective = objective
 
-        # Normalize to ComponentIdentifier (handles dict)
-        self.scorer_class_identifier = ComponentIdentifier.normalize(scorer_class_identifier)
+        self.scorer_class_identifier = scorer_class_identifier
 
     def get_value(self) -> bool | float:
         """

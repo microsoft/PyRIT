@@ -639,32 +639,6 @@ class TestComponentIdentifierRoundtrip:
         assert r2.eval_hash == eval_hash
 
 
-class TestComponentIdentifierNormalize:
-    """Tests for normalize class method."""
-
-    def test_normalize_returns_component_identifier_unchanged(self):
-        """Test that normalize returns a ComponentIdentifier as-is."""
-        original = ComponentIdentifier(class_name="Test", class_module="mod")
-        result = ComponentIdentifier.normalize(original)
-        assert result is original
-
-    def test_normalize_converts_dict(self):
-        """Test that normalize converts a dict to ComponentIdentifier."""
-        data = {"class_name": "Test", "class_module": "mod", "endpoint": "https://api.example.com"}
-        result = ComponentIdentifier.normalize(data)
-        assert isinstance(result, ComponentIdentifier)
-        assert result.class_name == "Test"
-        assert result.params["endpoint"] == "https://api.example.com"
-
-    def test_normalize_raises_for_invalid_type(self):
-        """Test that normalize raises TypeError for non-dict/non-ComponentIdentifier."""
-        with pytest.raises(TypeError, match="Expected ComponentIdentifier or dict"):
-            ComponentIdentifier.normalize("invalid")  # type: ignore[arg-type]
-
-        with pytest.raises(TypeError, match="Expected ComponentIdentifier or dict"):
-            ComponentIdentifier.normalize(123)  # type: ignore[arg-type]
-
-
 class TestComponentIdentifierFrozen:
     """Tests for frozen immutability."""
 
