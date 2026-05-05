@@ -244,11 +244,12 @@ class TestDefaultMaterialization:
         assert scenario_b.params["items"] == ["x"]
         assert shared_default == ["x"]
 
-    def test_default_none_is_not_materialized(self) -> None:
-        """Parameters with default=None are not added to self.params."""
+    def test_default_none_materializes_as_none(self) -> None:
+        """Parameters declared without an explicit default still appear in self.params (as None)
+        so scenarios can rely on key presence."""
         scenario = _make_scenario(declared_params=[Parameter(name="optional", description="d", param_type=str)])
         scenario.set_params_from_args(args={})
-        assert scenario.params == {}
+        assert scenario.params == {"optional": None}
 
     def test_default_value_is_coerced_to_param_type(self) -> None:
         """A declared default value is coerced to param_type so user-supplied
@@ -411,11 +412,11 @@ class TestNoneIsAbsent:
         scenario.set_params_from_args(args={"mode": None})
         assert scenario.params == {"mode": "fast"}
 
-    def test_none_value_with_no_default_is_simply_absent(self) -> None:
-        """If a param has no default, a None value yields no entry."""
+    def test_none_value_with_no_default_materializes_as_none(self) -> None:
+        """A param with no declared default still materializes (as None) so scenarios can rely on key presence."""
         scenario = _make_scenario(declared_params=[Parameter(name="optional", description="d", param_type=str)])
         scenario.set_params_from_args(args={"optional": None})
-        assert scenario.params == {}
+        assert scenario.params == {"optional": None}
 
 
 @pytest.mark.usefixtures("patch_central_database")

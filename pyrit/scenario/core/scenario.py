@@ -327,7 +327,9 @@ class Scenario(ABC):
         Populate ``self.params`` from merged CLI / config arguments.
 
         Coerces each value to its declared ``param_type``, validates, and
-        materializes declared defaults for params not in ``args``.
+        materializes declared defaults for params not in ``args``. Every
+        declared parameter is guaranteed a key in ``self.params`` after this
+        call; params without a declared default land as ``None``.
 
         Args:
             args (dict[str, Any]): Map of parameter name to raw value. Keys
@@ -335,8 +337,8 @@ class Scenario(ABC):
                 Argparse callers should use ``argparse.SUPPRESS``.
 
         Raises:
-            ValueError: Invalid declaration, unknown or missing-required
-                parameter, coercion failure, or value not in ``choices``.
+            ValueError: Invalid declaration, unknown parameter, coercion
+                failure, or value not in ``choices``.
         """
         declared = list(self.supported_parameters())
         if not self._declarations_validated:
@@ -360,11 +362,15 @@ class Scenario(ABC):
         self._validate_params(params=coerced, declared=declared)
 
         for param in declared:
-            if param.name not in coerced and param.default is not None:
-                # Coerce defaults too so user-supplied and default-supplied values share
-                # the declared type. Deep-copy guards against shared mutable instances
-                # (e.g. list/dict defaults under param_type=None).
-                coerced[param.name] = copy.deepcopy(coerce_value(param=param, raw_value=param.default))
+            if param.name in coerced:
+                continue
+            # Materialize every declared param so scenarios can rely on
+            # ``self.params[name]`` never raising ``KeyError``. Params declared
+            # without an explicit default land as None, and the scenario raises
+            # a domain-specific error at run time if it cannot proceed.
+            coerced[param.name] = (
+                copy.deepcopy(coerce_value(param=param, raw_value=param.default)) if param.default is not None else None
+            )
 
         self.params = coerced
 
