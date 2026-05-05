@@ -17,17 +17,20 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { targetsApi } from '../../services/api'
+import { targetsApi } from '@/services/api'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 
-const SUPPORTED_TARGET_TYPES = [
-  'OpenAIChatTarget',
-  'OpenAICompletionTarget',
-  'OpenAIImageTarget',
-  'OpenAIVideoTarget',
-  'OpenAITTSTarget',
-  'OpenAIResponseTarget',
-] as const
+const TARGET_TYPE_CONFIG: Record<string, 'openai' | 'azureml'> = {
+  OpenAIChatTarget: 'openai',
+  OpenAICompletionTarget: 'openai',
+  OpenAIImageTarget: 'openai',
+  OpenAIVideoTarget: 'openai',
+  OpenAITTSTarget: 'openai',
+  OpenAIResponseTarget: 'openai',
+  AzureMLChatTarget: 'azureml',
+}
+
+const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
 
 interface CreateTargetDialogProps {
   open: boolean
@@ -43,9 +46,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [maxNewTokens, setMaxNewTokens] = useState('400')
+  const [temperature, setTemperature] = useState('1.0')
+  const [topP, setTopP] = useState('1.0')
+  const [repetitionPenalty, setRepetitionPenalty] = useState('1.0')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
+
+  const isAzureML = TARGET_TYPE_CONFIG[targetType] === 'azureml'
 
   const resetForm = () => {
     setTargetType('')
@@ -54,6 +63,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
     setHasDifferentUnderlying(false)
     setUnderlyingModel('')
     setApiKey('')
+    setMaxNewTokens('400')
+    setTemperature('1.0')
+    setTopP('1.0')
+    setRepetitionPenalty('1.0')
     setError(null)
     setFieldErrors({})
   }
@@ -81,8 +94,20 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
         endpoint,
       }
       if (modelName) params.model_name = modelName
-      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
       if (apiKey) params.api_key = apiKey
+
+      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
+
+      if (isAzureML) {
+        const parsedMaxNewTokens = parseInt(maxNewTokens, 10)
+        if (!isNaN(parsedMaxNewTokens)) params.max_new_tokens = parsedMaxNewTokens
+        const parsedTemperature = parseFloat(temperature)
+        if (!isNaN(parsedTemperature)) params.temperature = parsedTemperature
+        const parsedTopP = parseFloat(topP)
+        if (!isNaN(parsedTopP)) params.top_p = parsedTopP
+        const parsedRepetitionPenalty = parseFloat(repetitionPenalty)
+        if (!isNaN(parsedRepetitionPenalty)) params.repetition_penalty = parsedRepetitionPenalty
+      }
 
       await targetsApi.createTarget({
         type: targetType,
@@ -138,7 +163,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 validationState={fieldErrors.endpoint ? 'error' : 'none'}
               >
                 <Input
-                  placeholder="https://your-resource.openai.azure.com/"
+                  placeholder={isAzureML
+                    ? 'https://your-model.region.inference.ml.azure.com/score'
+                    : 'https://your-resource.openai.azure.com/'}
                   value={endpoint}
                   onChange={(_, data) => setEndpoint(data.value)}
                 />
@@ -146,7 +173,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
 
               <Field label="Model / Deployment Name">
                 <Input
-                  placeholder="e.g. gpt-4o, my-deployment"
+                  placeholder={isAzureML ? 'e.g. Llama-3.2-3B-Instruct' : 'e.g. gpt-4o, my-deployment'}
                   value={modelName}
                   onChange={(_, data) => setModelName(data.value)}
                 />
@@ -174,6 +201,46 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                     onChange={(_, data) => setUnderlyingModel(data.value)}
                   />
                 </Field>
+              )}
+
+              {isAzureML && (
+                <>
+                  <Field label="Max New Tokens">
+                    <Input
+                      type="number"
+                      placeholder="400"
+                      value={maxNewTokens}
+                      onChange={(_, data) => setMaxNewTokens(data.value)}
+                    />
+                  </Field>
+
+                  <Field label="Temperature">
+                    <Input
+                      type="number"
+                      placeholder="1.0"
+                      value={temperature}
+                      onChange={(_, data) => setTemperature(data.value)}
+                    />
+                  </Field>
+
+                  <Field label="Top P">
+                    <Input
+                      type="number"
+                      placeholder="1.0"
+                      value={topP}
+                      onChange={(_, data) => setTopP(data.value)}
+                    />
+                  </Field>
+
+                  <Field label="Repetition Penalty">
+                    <Input
+                      type="number"
+                      placeholder="1.0"
+                      value={repetitionPenalty}
+                      onChange={(_, data) => setRepetitionPenalty(data.value)}
+                    />
+                  </Field>
+                </>
               )}
 
               <Field label="API Key">

@@ -37,8 +37,7 @@ def _create_message_piece(
         converted_value_sha256=sha256,
         sequence=0,
         conversation_id=conversation_id or str(uuid.uuid4()),
-        labels={"test": "label"},
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
 
 
@@ -51,7 +50,7 @@ def _create_score(message_piece_id: str) -> Score:
         score_category=["test"],
         score_rationale="test rationale",
         score_metadata={},
-        scorer_class_identifier={"__type__": "TestScorer"},
+        scorer_class_identifier=ComponentIdentifier.from_dict({"__type__": "TestScorer"}),
         message_piece_id=message_piece_id,
     )
 
