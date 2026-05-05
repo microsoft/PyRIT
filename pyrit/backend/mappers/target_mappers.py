@@ -5,7 +5,7 @@
 Target mappers – domain → DTO translation for target-related models.
 """
 
-from pyrit.backend.models.targets import TargetInstance
+from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
 from pyrit.prompt_target import PromptTarget
 
 
@@ -43,6 +43,16 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     extra = {k: v for k, v in params.items() if k not in extracted_keys and v is not None}
     combined_specific = {**extra, **explicit_specific} or None
 
+    caps = target_obj.capabilities
+    capabilities = TargetCapabilitiesInfo(
+        supports_multi_turn=caps.supports_multi_turn,
+        supports_multi_message_pieces=caps.supports_multi_message_pieces,
+        supports_json_schema=caps.supports_json_schema,
+        supports_json_output=caps.supports_json_output,
+        supports_editable_history=caps.supports_editable_history,
+        supports_system_prompt=caps.supports_system_prompt,
+    )
+
     return TargetInstance(
         target_registry_name=target_registry_name,
         target_type=identifier.class_name,
@@ -52,6 +62,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         temperature=params.get("temperature"),
         top_p=params.get("top_p"),
         max_requests_per_minute=params.get("max_requests_per_minute"),
-        supports_multi_turn=target_obj.capabilities.supports_multi_turn,
+        supports_multi_turn=caps.supports_multi_turn,
+        capabilities=capabilities,
         target_specific_params=combined_specific,
     )

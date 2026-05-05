@@ -17,12 +17,28 @@ const sampleTargets: TargetInstance[] = [
     target_type: 'OpenAIChatTarget',
     endpoint: 'https://api.openai.com',
     model_name: 'gpt-4',
+    capabilities: {
+      supports_multi_turn: true,
+      supports_multi_message_pieces: true,
+      supports_json_schema: true,
+      supports_json_output: true,
+      supports_editable_history: true,
+      supports_system_prompt: true,
+    },
   },
   {
     target_registry_name: 'azure_image_dalle',
     target_type: 'AzureImageTarget',
     endpoint: 'https://azure.openai.com',
     model_name: 'dall-e-3',
+    capabilities: {
+      supports_multi_turn: false,
+      supports_multi_message_pieces: false,
+      supports_json_schema: false,
+      supports_json_output: false,
+      supports_editable_history: false,
+      supports_system_prompt: false,
+    },
   },
   {
     target_registry_name: 'text_target_basic',
@@ -58,7 +74,7 @@ describe('TargetTable', () => {
     expect(screen.getAllByText('TextTarget').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('should display Type, Model, Endpoint and Parameters columns', () => {
+  it('should display Type, Model, Endpoint, capability columns and Parameters columns', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
@@ -68,6 +84,12 @@ describe('TargetTable', () => {
     expect(screen.getByText('Type')).toBeInTheDocument()
     expect(screen.getByText('Model')).toBeInTheDocument()
     expect(screen.getByText('Endpoint')).toBeInTheDocument()
+    expect(screen.getByText('Multi-turn')).toBeInTheDocument()
+    expect(screen.getByText('Multi-piece')).toBeInTheDocument()
+    expect(screen.getByText('JSON Schema')).toBeInTheDocument()
+    expect(screen.getByText('JSON Output')).toBeInTheDocument()
+    expect(screen.getByText('Edit History')).toBeInTheDocument()
+    expect(screen.getByText('System Prompt')).toBeInTheDocument()
     expect(screen.getByText('Parameters')).toBeInTheDocument()
   })
 
@@ -151,8 +173,22 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
+    // Dashes for model, endpoint, and 6 capability columns (all unknown)
     const dashes = screen.getAllByText('—')
     expect(dashes.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('should show dash for capability columns when capabilities is absent', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[sampleTargets[2]]} />
+      </TestWrapper>
+    )
+
+    // TextTarget has no capabilities — all 6 should be dashes
+    const dashes = screen.getAllByText('—')
+    // model (—) + endpoint (—) + 6 capabilities (—) + params (—) = 9
+    expect(dashes.length).toBeGreaterThanOrEqual(8)
   })
 
   it('should display target_specific_params when present', () => {

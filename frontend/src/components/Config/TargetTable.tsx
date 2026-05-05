@@ -12,7 +12,7 @@ import {
   Tooltip,
   Select,
 } from '@fluentui/react-components'
-import { CheckmarkRegular } from '@fluentui/react-icons'
+import { CheckmarkRegular, DismissRegular } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
 import { useTargetTableStyles } from './TargetTable.styles'
 
@@ -39,6 +39,27 @@ function formatParams(params?: Record<string, unknown> | null): string {
   return parts.join('\n')
 }
 
+/** Capability column definitions with tooltip descriptions. */
+const CAPABILITY_COLUMNS = [
+  { key: 'supports_multi_turn', label: 'Multi-turn', tooltip: 'Supports multi-turn conversation history' },
+  { key: 'supports_multi_message_pieces', label: 'Multi-piece', tooltip: 'Supports multiple message pieces in a single request' },
+  { key: 'supports_json_schema', label: 'JSON Schema', tooltip: 'Supports constraining output to a JSON schema' },
+  { key: 'supports_json_output', label: 'JSON Output', tooltip: 'Supports JSON output format' },
+  { key: 'supports_editable_history', label: 'Edit History', tooltip: 'Allows attack history to be modified' },
+  { key: 'supports_system_prompt', label: 'System Prompt', tooltip: 'Supports system prompts' },
+] as const
+
+/** Render a capability indicator: ✓ (green) / ✗ (red) / — (unknown). */
+function CapabilityCell({ value }: { value: boolean | undefined }) {
+  if (value === undefined) {
+    return <Text size={200}>—</Text>
+  }
+  if (value) {
+    return <CheckmarkRegular style={{ color: 'green' }} />
+  }
+  return <DismissRegular style={{ color: 'red', fontSize: '12px' }} />
+}
+
 /** Render the model cell with a tooltip when underlying model differs. */
 function ModelCell({ target }: { target: TargetInstance }) {
   const displayName = target.model_name || '—'
@@ -60,6 +81,21 @@ function ModelCell({ target }: { target: TargetInstance }) {
   }
 
   return <Text size={200}>{displayName}</Text>
+}
+
+/** Render capability cells for a target. */
+function CapabilityCells({ target }: { target: TargetInstance }) {
+  return (
+    <>
+      {CAPABILITY_COLUMNS.map(({ key }) => (
+        <TableCell key={key} style={{ width: '80px', textAlign: 'center' }}>
+          <CapabilityCell
+            value={target.capabilities?.[key]}
+          />
+        </TableCell>
+      ))}
+    </>
+  )
 }
 
 export default function TargetTable({ targets, activeTarget, onSetActiveTarget }: TargetTableProps) {
@@ -99,6 +135,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                   {activeTarget.endpoint || '—'}
                 </Text>
               </TableCell>
+              <CapabilityCells target={activeTarget} />
               <TableCell style={{ width: '200px' }}>
                 <Text size={200} className={styles.paramsCell}>
                   {formatParams(activeTarget.target_specific_params) || '—'}
@@ -132,6 +169,13 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
             <TableHeaderCell style={{ width: '200px' }}>Type</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>Model</TableHeaderCell>
             <TableHeaderCell style={{ minWidth: '300px' }}>Endpoint</TableHeaderCell>
+            {CAPABILITY_COLUMNS.map(({ key, label, tooltip }) => (
+              <TableHeaderCell key={key} style={{ width: '80px', textAlign: 'center' }}>
+                <Tooltip content={tooltip} relationship="description">
+                  <Text size={200} style={{ cursor: 'help' }}>{label}</Text>
+                </Tooltip>
+              </TableHeaderCell>
+            ))}
             <TableHeaderCell style={{ width: '200px' }}>Parameters</TableHeaderCell>
           </TableRow>
         </TableHeader>
@@ -167,6 +211,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                   {target.endpoint || '—'}
                 </Text>
               </TableCell>
+              <CapabilityCells target={target} />
               <TableCell>
                 <Text size={200} className={styles.paramsCell}>
                   {formatParams(target.target_specific_params) || '—'}
