@@ -454,3 +454,339 @@ class TestMainIntegration:
         result = pyrit_scan.main(["--list-initializers"])
 
         assert result == 0
+
+
+class TestTwoPassParsing:
+    """Tests for the two-pass scenario-parameter augmentation flow."""
+
+    @staticmethod
+    def _patch_resolve(scenario_class):
+        """Patch the registry lookup so tests don't depend on the real registry."""
+        return patch.object(pyrit_scan, "_resolve_scenario_class", return_value=scenario_class)
+
+    @staticmethod
+    def _make_scenario_class(declared_params):
+        """Build a stand-in class whose only obligation is to expose supported_parameters()."""
+
+        class _FakeScenario:
+            @classmethod
+            def supported_parameters(cls):
+                return list(declared_params)
+
+        return _FakeScenario
+
+    def test_no_scenario_resolved_leaves_namespace_unaugmented(self):
+        """When the positional name is missing or unknown, scenario flags do not appear."""
+        with self._patch_resolve(None):
+            args = pyrit_scan.parse_args(["--list-scenarios"])
+
+        # No scenario__-prefixed attrs sneaked in.
+        scenario_keys = [k for k in vars(args) if k.startswith("scenario__")]
+        assert scenario_keys == []
+
+    def test_int_param_coerced(self):
+        """A declared int parameter coerces its string CLI value to int."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario", "--max-turns", "10"])
+
+        scenario_args = pyrit_scan._extract_scenario_args(parsed=args)
+        assert scenario_args == {"max_turns": 10}
+
+    def test_bool_param_uses_safe_coercion(self):
+        """``--enabled false`` is correctly parsed to False (avoids the type=bool footgun)."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class([Parameter(name="enabled", description="d", param_type=bool)])
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario", "--enabled", "false"])
+
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"enabled": False}
+
+    def test_list_param_collects_multiple_values(self):
+        """A declared list[str] parameter uses nargs='+' to collect successive values."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class([Parameter(name="datasets", description="d", param_type=list[str])])
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario", "--datasets", "a", "b", "c"])
+
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"datasets": ["a", "b", "c"]}
+
+    def test_choices_validated_by_argparse(self):
+        """A value outside ``choices`` is rejected at parse time."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="mode", description="d", param_type=str, choices=("fast", "slow"))]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(SystemExit):
+                pyrit_scan.parse_args(["fake_scenario", "--mode", "medium"])
+
+    def test_unset_scenario_flag_not_in_namespace(self):
+        """``argparse.SUPPRESS`` keeps absent flags out of the parsed Namespace."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["fake_scenario"])
+
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {}
+
+    def test_unknown_scenario_flag_rejected(self):
+        """Argparse pass 2 rejects flags the scenario didn't declare."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(SystemExit):
+                pyrit_scan.parse_args(["fake_scenario", "--unknown-flag", "value"])
+
+    def test_collision_with_built_in_flag_raises_at_build_time(self):
+        """A declared parameter colliding with a built-in flag fails at parser-build time."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_concurrency", description="d", param_type=int, default=10)]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(ValueError, match="collides with an existing flag"):
+                pyrit_scan.parse_args(["fake_scenario", "--max-concurrency", "5"])
+
+    def test_two_scenario_params_with_same_kebab_form_raise(self):
+        """Two declared parameters that normalize to the same kebab-case flag fail with our ValueError."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [
+                Parameter(name="foo_bar", description="d", param_type=str),
+                Parameter(name="foo-bar", description="d", param_type=str),
+            ]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(ValueError, match="collides with an existing flag"):
+                pyrit_scan.parse_args(["fake_scenario", "--foo-bar", "x"])
+
+    def test_scenario_flag_works_before_positional(self):
+        """Pass 1 uses the full base parser so option order does not break positional ID."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            args = pyrit_scan.parse_args(["--config-file", "foo.yaml", "fake_scenario", "--max-turns", "7"])
+
+        # config-file landed correctly + scenario name identified + scenario param parsed
+        assert args.config_file == Path("foo.yaml")
+        assert args.scenario_name == "fake_scenario"
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"max_turns": 7}
+
+    def test_help_after_scenario_lists_declared_flags(self, capsys):
+        """`pyrit_scan <scenario> --help` shows scenario-declared flags inline."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="Conversation turn cap", param_type=int, default=5)]
+        )
+        with self._patch_resolve(scenario_class):
+            with pytest.raises(SystemExit) as exc_info:
+                pyrit_scan.parse_args(["fake_scenario", "--help"])
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--max-turns" in captured.out
+        assert "Conversation turn cap" in captured.out
+
+    def test_config_only_scenario_name_registers_scenario_flags(self):
+        """When pass 1's positional doesn't resolve, fall back to ``scenario.name`` from the config file."""
+        from pyrit.common import Parameter
+
+        scenario_class = self._make_scenario_class(
+            [Parameter(name="max_turns", description="d", param_type=int, default=5)]
+        )
+
+        # Resolve only "fake_scenario"; anything pass 1 misclassifies as the positional
+        # (e.g. the "7" from "--max-turns 7") returns None and triggers the config peek.
+        def fake_resolve(name):
+            return scenario_class if name == "fake_scenario" else None
+
+        with (
+            patch.object(pyrit_scan, "_peek_scenario_name_from_config", return_value="fake_scenario") as peek,
+            patch.object(pyrit_scan, "_resolve_scenario_class", side_effect=fake_resolve),
+        ):
+            args = pyrit_scan.parse_args(["--config-file", "foo.yaml", "--max-turns", "7"])
+
+        peek.assert_called_once()
+        assert args.scenario_name is None
+        assert pyrit_scan._extract_scenario_args(parsed=args) == {"max_turns": 7}
+
+
+class TestExtractScenarioArgs:
+    """Tests for the namespaced-dest extraction helper."""
+
+    def test_no_scenario_keys_returns_empty(self):
+        from argparse import Namespace
+
+        result = pyrit_scan._extract_scenario_args(parsed=Namespace(scenario_name="x", config_file=None, log_level=20))
+        assert result == {}
+
+    def test_scenario_keys_extracted_with_prefix_stripped(self):
+        from argparse import Namespace
+
+        result = pyrit_scan._extract_scenario_args(
+            parsed=Namespace(
+                scenario_name="x",
+                config_file=None,
+                scenario__max_turns=10,
+                scenario__mode="fast",
+            )
+        )
+        assert result == {"max_turns": 10, "mode": "fast"}
+
+
+class TestConfigScenarioMerge:
+    """Tests for the CLI/config scenario_args merge in pyrit_scan.main()."""
+
+    @staticmethod
+    def _patch_resolve(scenario_class):
+        return patch.object(pyrit_scan, "_resolve_scenario_class", return_value=scenario_class)
+
+    @staticmethod
+    def _make_scenario_class(declared_params):
+        class _FakeScenario:
+            @classmethod
+            def supported_parameters(cls):
+                return list(declared_params)
+
+        return _FakeScenario
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_cli_args_override_config_args_per_key(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """When CLI and config both set max_turns, CLI wins per-key."""
+        from pyrit.common import Parameter
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        # Config sets max_turns=5, mode=slow; CLI overrides max_turns=10.
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args={"max_turns": 5, "mode": "slow"})
+        mock_frontend_core.return_value = mock_context
+
+        scenario_class = self._make_scenario_class(
+            [
+                Parameter(name="max_turns", description="d", param_type=int, default=5),
+                Parameter(name="mode", description="d", param_type=str, default="slow"),
+            ]
+        )
+        with self._patch_resolve(scenario_class):
+            pyrit_scan.main(["scam", "--max-turns", "10"])
+
+        # Inspect the scenario_args kwarg passed into run_scenario_async
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        assert call_kwargs["scenario_args"] == {"max_turns": 10, "mode": "slow"}
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_config_scenario_used_when_no_positional(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """Config-only scenario invocation: pyrit_scan --config-file my.yaml."""
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args={"max_turns": 5})
+        mock_frontend_core.return_value = mock_context
+
+        # No positional, no scenario flags (would require pass-2 augmentation,
+        # which is a documented v1 limitation).
+        with self._patch_resolve(None):
+            result = pyrit_scan.main([])
+
+        assert result == 0
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        assert call_kwargs["scenario_name"] == "scam"
+        assert call_kwargs["scenario_args"] == {"max_turns": 5}
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_config_args_ignored_when_cli_specifies_different_scenario(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """CLI scenario name differs from config: config args silently dropped (CLI-wins)."""
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args={"max_turns": 5})
+        mock_frontend_core.return_value = mock_context
+
+        with self._patch_resolve(None):
+            pyrit_scan.main(["other_scenario"])
+
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        assert call_kwargs["scenario_name"] == "other_scenario"
+        assert call_kwargs["scenario_args"] == {}
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_no_scenario_anywhere_returns_error(
+        self,
+        mock_frontend_core: MagicMock,
+    ):
+        """No CLI positional and no config scenario: explicit error message + nonzero exit."""
+        mock_context = MagicMock()
+        mock_context._scenario_config = None
+        mock_frontend_core.return_value = mock_context
+
+        with self._patch_resolve(None):
+            result = pyrit_scan.main([])
+
+        assert result == 1
+
+    @patch("pyrit.cli.pyrit_scan.asyncio.run")
+    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_config_args_deep_copied(
+        self,
+        mock_frontend_core: MagicMock,
+        mock_run_scenario: AsyncMock,
+        mock_asyncio_run: MagicMock,
+    ):
+        """Mutating scenario_args on one run must not leak into the config block."""
+        from pyrit.setup.configuration_loader import ScenarioConfig
+
+        original_args = {"datasets": ["a", "b"]}
+        mock_context = MagicMock()
+        mock_context._scenario_config = ScenarioConfig(name="scam", args=original_args)
+        mock_frontend_core.return_value = mock_context
+
+        with self._patch_resolve(None):
+            pyrit_scan.main(["scam"])
+
+        call_kwargs = mock_run_scenario.call_args.kwargs
+        # Mutate the passed dict
+        call_kwargs["scenario_args"]["datasets"].append("c")
+        # Original config block must be untouched
+        assert original_args == {"datasets": ["a", "b"]}

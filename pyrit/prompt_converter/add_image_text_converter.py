@@ -41,7 +41,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         self,
         *args: str,
         img_to_add: str = "",
-        font_name: str = "helvetica.ttf",
+        font_name: str | None = None,
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int | tuple[int, int] = 15,
         x_pos: int = _UNSET,  # type: ignore[ty:invalid-parameter-default]
@@ -57,7 +57,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
             *args: Deprecated positional argument for img_to_add. Use img_to_add=... instead.
                 Will be removed in version 0.15.0.
             img_to_add (str): File path of image to add text to.
-            font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
+            font_name (str | None): Path of font to use. Must be a TrueType font (.ttf).
+                Defaults to None which uses Pillow's built-in default font.
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int | tuple[int, int]): Font size as a fixed int, or a (min, max) tuple for automatic
                 sizing that shrinks from max down to min to fit text in the bounding box. Defaults to 15.
@@ -108,7 +109,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
             y_pos = 10
         if not img_to_add:
             raise ValueError("Please provide valid image path")
-        if not font_name.endswith(".ttf"):
+        if font_name is not None and not font_name.endswith(".ttf"):
             raise ValueError("The specified font must be a TrueType font with a .ttf extension")
         self._extract_font_size(font_size)
         if bounding_box is not None:
@@ -118,7 +119,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         self._img_to_add = img_to_add
         self._font_name = font_name
         self._font_size = self._font_size_max
-        self._font_load_failed = False
+        self._font_load_failed = font_name is None
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos

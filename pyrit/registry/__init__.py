@@ -10,6 +10,7 @@ from pyrit.registry.class_registries import (
     InitializerMetadata,
     InitializerRegistry,
     ScenarioMetadata,
+    ScenarioParameterMetadata,
     ScenarioRegistry,
 )
 from pyrit.registry.discovery import (
@@ -44,6 +45,7 @@ __all__ = [
     "RegistryEntry",
     "RegistryProtocol",
     "ScenarioMetadata",
+    "ScenarioParameterMetadata",
     "ScenarioRegistry",
     "ScorerRegistry",
     "TargetRegistry",

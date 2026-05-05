@@ -40,4 +40,4 @@ Each scenario page shows how to run it with minimal configuration.
 
 ## For Developers
 
-If you want to **build custom scenarios** or understand the programming model behind scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb). For details on attack strategies, dataset configuration, and advanced programmatic usage, see [Scenario Parameters](../code/scenarios/1_scenario_parameters.ipynb).
+If you want to **build custom scenarios** or understand the programming model behind scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb). For details on attack strategies, dataset configuration, and advanced programmatic usage, see [Common Scenario Parameters](../code/scenarios/1_common_scenario_parameters.ipynb).

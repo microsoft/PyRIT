@@ -10,7 +10,7 @@ identify risks in generative AI systems.
   about how to use, install, or contribute to PyRIT.
 - Visit our [Discord server](https://discord.gg/9fMpq3tc8u) to chat with the team and community.
 
-## Trademarks
+## Trademarks and Citations
 
 This project may contain trademarks or logos for projects, products, or services.
 Authorized use of Microsoft trademarks or logos is subject to and must follow
@@ -20,20 +20,4 @@ not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's
 policies.
 
-## Citing PyRIT
-
-If you use PyRIT in your research, please cite our preprint paper as follows:
-
-```
-@misc{munoz2024pyritframeworksecurityrisk,
-      title={PyRIT: A Framework for Security Risk Identification and Red Teaming in Generative AI Systems},
-      author={Gary D. Lopez Munoz and Amanda J. Minnich and Roman Lutz and Richard Lundeen and Raja Sekhar Rao Dheekonda and Nina Chikanov and Bolor-Erdene Jagdagdorj and Martin Pouliot and Shiven Chawla and Whitney Maxwell and Blake Bullwinkel and Katherine Pratt and Joris de Gruyter and Charlotte Siska and Pete Bryan and Tori Westerhoff and Chang Kawaguchi and Christian Seifert and Ram Shankar Siva Kumar and Yonatan Zunger},
-      year={2024},
-      eprint={2410.02828},
-      archivePrefix={arXiv},
-      primaryClass={cs.CR},
-      url={https://arxiv.org/abs/2410.02828},
-}
-```
-
-Additionally, please cite the tool itself following the `CITATION.cff` file in the root of this repository.
+If you use PyRIT in your research, please cite the tool itself following the [`CITATION.cff`](./CITATION.cff) file in the root of this repository.
