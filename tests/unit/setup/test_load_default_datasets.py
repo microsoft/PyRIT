@@ -14,7 +14,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
+from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -14,16 +14,21 @@ argument parsing before the full runtime is initialised.
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
 import inspect
 import json
 import logging
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, get_origin
+
+from pyrit.common.parameter import Parameter, coerce_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from pyrit.setup.configuration_loader import ScenarioConfig
 
 # ---------------------------------------------------------------------------
 # Database type constants
@@ -510,36 +515,36 @@ def _parse_shell_arguments(*, parts: list[str], arg_specs: list[_ArgSpec]) -> di
     return result
 
 
-def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
+def parse_run_arguments(*, args_string: str, declared_params: Optional[list[Parameter]] = None) -> dict[str, Any]:
     """
     Parse run command arguments from a string (for shell mode).
 
     Args:
-        args_string: Space-separated argument string (e.g., "scenario_name --initializers foo --strategies bar").
+        args_string: Space-separated argument string.
+        declared_params: Optional scenario-declared parameters. When supplied,
+            adds ``--kebab-case`` flags for each, namespaced under
+            ``scenario__<name>`` in the result dict.
 
     Returns:
-        Dictionary with parsed arguments:
-            - scenario_name: str
-            - initializers: Optional[list[str | dict[str, Any]]]
-            - initialization_scripts: Optional[list[str]]
-            - scenario_strategies: Optional[list[str]]
-            - max_concurrency: Optional[int]
-            - max_retries: Optional[int]
-            - memory_labels: Optional[dict[str, str]]
-            - database: Optional[str]
-            - log_level: Optional[int]
-            - dataset_names: Optional[list[str]]
-            - max_dataset_size: Optional[int]
+        Dictionary mapping built-in result_keys (and ``scenario__*`` keys for
+        any declared params) to their parsed values. ``scenario_name`` is
+        always populated from the first positional token.
 
     Raises:
-        ValueError: If parsing or validation fails.
+        ValueError: Empty input, scenario-flag collision, or shell parser failure.
     """
     parts = shlex.split(args_string)
 
     if not parts:
         raise ValueError("No scenario name provided")
 
-    result = _parse_shell_arguments(parts=parts[1:], arg_specs=_RUN_ARG_SPECS)
+    augmented_specs: list[_ArgSpec] = list(_RUN_ARG_SPECS)
+    if declared_params:
+        scenario_specs = [_arg_spec_from_parameter(param=p) for p in declared_params]
+        _validate_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
+        augmented_specs.extend(scenario_specs)
+
+    result = _parse_shell_arguments(parts=parts[1:], arg_specs=augmented_specs)
     result["scenario_name"] = parts[0]
     return result
 
@@ -564,6 +569,98 @@ def parse_list_targets_arguments(*, args_string: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Scenario-declared parameter support (Stage 2b)
+# ---------------------------------------------------------------------------
+
+# Namespacing prefix for scenario-declared params on the parsed result dict.
+# Mirrors the convention in pyrit_scan.py so both parsers extract scenario
+# args the same way.
+_SCENARIO_RESULT_KEY_PREFIX = "scenario__"
+
+
+def _normalize_scenario_flag(*, name: str) -> str:
+    """Return the kebab-cased CLI flag for a scenario parameter name."""
+    return f"--{name.replace('_', '-')}"
+
+
+def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
+    """
+    Build a shell ``_ArgSpec`` from a scenario ``Parameter`` declaration.
+
+    Args:
+        param (Parameter): Scenario-declared parameter.
+
+    Returns:
+        _ArgSpec: Spec with ``scenario__<name>`` result key and a parser
+            that routes through ``pyrit.common.parameter.coerce_value``.
+    """
+    multi = get_origin(param.param_type) is list
+    parser: Callable[[str], Any] | None
+    if param.param_type is None or param.param_type is str:
+        parser = None
+    elif multi:
+        # Per-element coercion; v1 only ships list[str].
+        parser = str
+    else:
+
+        def parser(raw: str) -> Any:
+            return coerce_value(param=param, raw_value=raw)
+
+    return _ArgSpec(
+        flags=[_normalize_scenario_flag(name=param.name)],
+        result_key=f"{_SCENARIO_RESULT_KEY_PREFIX}{param.name}",
+        multi_value=multi,
+        parser=parser,
+    )
+
+
+def _validate_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> None:
+    """
+    Reject scenario-vs-built-in and scenario-vs-scenario flag collisions.
+
+    Raises:
+        ValueError: If a scenario flag duplicates a built-in flag, or two
+            scenario parameters normalize to the same CLI flag.
+    """
+    base_flags = {flag for spec in base_specs for flag in spec.flags}
+    seen: set[str] = set()
+    for spec in scenario_specs:
+        for flag in spec.flags:
+            if flag in base_flags:
+                raise ValueError(
+                    f"Scenario parameter flag {flag!r} collides with a built-in flag. "
+                    f"Rename the parameter to avoid the collision."
+                )
+            if flag in seen:
+                raise ValueError(
+                    f"Scenario declares two parameters that normalize to the same CLI flag {flag!r}. "
+                    f"Rename one of them."
+                )
+            seen.add(flag)
+
+
+def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
+    """
+    Pull scenario-declared parameter values out of a parsed shell-args dict.
+
+    Drops keys whose value is ``None`` so absent flags don't reach
+    ``Scenario.set_params_from_args`` as explicit ``None`` (the shell parser
+    initializes unsupplied keys to ``None``, unlike argparse's ``SUPPRESS``).
+
+    Args:
+        parsed (dict[str, Any]): Result from ``parse_run_arguments``.
+
+    Returns:
+        dict[str, Any]: Map of original parameter name to supplied value.
+    """
+    return {
+        key.removeprefix(_SCENARIO_RESULT_KEY_PREFIX): value
+        for key, value in parsed.items()
+        if key.startswith(_SCENARIO_RESULT_KEY_PREFIX) and value is not None
+    }
+
+
+# ---------------------------------------------------------------------------
 # Shared argparse builder
 # ---------------------------------------------------------------------------
 
@@ -581,3 +678,39 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
 
 # Module-level logger (stdlib only — no heavy deps)
 _logger = logging.getLogger(__name__)
+
+
+def merge_config_scenario_args(
+    *,
+    config_scenario: Optional[ScenarioConfig],
+    effective_scenario_name: str,
+    cli_args: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Merge config-file scenario args with CLI scenario args (CLI wins per-key).
+
+    When ``config_scenario.name`` does not match ``effective_scenario_name``, the
+    config args are skipped with a warning so users are not silently surprised.
+    Mutable values are deep-copied so they don't leak across runs.
+
+    Args:
+        config_scenario (Optional[ScenarioConfig]): The ``scenario:`` block from
+            the layered config, or ``None`` when not configured.
+        effective_scenario_name (str): The scenario about to run (CLI wins).
+        cli_args (dict[str, Any]): Scenario args supplied on the CLI.
+
+    Returns:
+        dict[str, Any]: The merged scenario-args dict to pass to ``set_params_from_args``.
+    """
+    merged: dict[str, Any] = {}
+    if config_scenario and config_scenario.args:
+        if config_scenario.name == effective_scenario_name:
+            merged.update(copy.deepcopy(config_scenario.args))
+        else:
+            _logger.warning(
+                "Config args for scenario '%s' not applied while running '%s'.",
+                config_scenario.name,
+                effective_scenario_name,
+            )
+    merged.update(cli_args)
+    return merged

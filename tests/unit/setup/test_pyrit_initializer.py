@@ -5,12 +5,13 @@ import sys
 
 import pytest
 
+from pyrit.common import Parameter
 from pyrit.common.apply_defaults import (
     reset_default_values,
     set_default_value,
     set_global_variable,
 )
-from pyrit.setup.initializers import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers import PyRITInitializer
 
 
 class TestPyRITInitializerBase:
@@ -502,8 +503,8 @@ class TestSupportedParameters:
             @property
             def supported_parameters(self) -> list:
                 return [
-                    InitializerParameter(name="mode", description="Operation mode", default="fast"),
-                    InitializerParameter(name="count", description="Item count", required=True),
+                    Parameter(name="mode", description="Operation mode", default="fast"),
+                    Parameter(name="count", description="Item count"),
                 ]
 
             async def initialize_async(self) -> None:
@@ -512,7 +513,7 @@ class TestSupportedParameters:
         init = WithParamsInit()
         assert len(init.supported_parameters) == 2
         assert init.supported_parameters[0].name == "mode"
-        assert init.supported_parameters[1].required is True
+        assert init.supported_parameters[1].name == "count"
 
     def test_validate_params_raises_on_unknown(self) -> None:
         """Test that unknown params raise ValueError."""
@@ -522,7 +523,7 @@ class TestSupportedParameters:
 
             @property
             def supported_parameters(self) -> list:
-                return [InitializerParameter(name="level", description="Level")]
+                return [Parameter(name="level", description="Level")]
 
             async def initialize_async(self) -> None:
                 pass
@@ -530,23 +531,6 @@ class TestSupportedParameters:
         init = StrictInit()
         with pytest.raises(ValueError, match="unknown parameter"):
             init._validate_params(params={"bogus": ["value"]})
-
-    def test_validate_params_raises_on_missing_required(self) -> None:
-        """Test that missing required params raise ValueError."""
-
-        class RequiredInit(PyRITInitializer):
-            """Required"""
-
-            @property
-            def supported_parameters(self) -> list:
-                return [InitializerParameter(name="key", description="API key", required=True)]
-
-            async def initialize_async(self) -> None:
-                pass
-
-        init = RequiredInit()
-        with pytest.raises(ValueError, match="requires parameter 'key'"):
-            init._validate_params(params={})
 
     def test_validate_params_accepts_valid(self) -> None:
         """Test that valid params pass validation."""
@@ -557,8 +541,8 @@ class TestSupportedParameters:
             @property
             def supported_parameters(self) -> list:
                 return [
-                    InitializerParameter(name="mode", description="Mode", default="fast"),
-                    InitializerParameter(name="key", description="Key", required=True),
+                    Parameter(name="mode", description="Mode", default="fast"),
+                    Parameter(name="key", description="Key"),
                 ]
 
             async def initialize_async(self) -> None:
@@ -576,7 +560,7 @@ class TestSupportedParameters:
 
             @property
             def supported_parameters(self) -> list:
-                return [InitializerParameter(name="x", description="X")]
+                return [Parameter(name="x", description="X")]
 
             async def initialize_async(self) -> None:
                 pass
@@ -618,3 +602,58 @@ class TestSupportedParameters:
         await init.initialize_with_tracking_async()
 
         assert received["params"] == {}
+
+
+class TestInitializerParameterDeprecation:
+    """Tests for the deprecated InitializerParameter alias.
+
+    The alias is exposed from two import paths and both must emit the warning:
+      - ``from pyrit.setup.initializers import InitializerParameter`` (package level)
+      - ``from pyrit.setup.initializers.pyrit_initializer import InitializerParameter``
+        (canonical defining module — the path most likely seen in IDE "go to
+        definition" jumps and older sample notebooks)
+    """
+
+    def test_package_level_alias_returns_parameter(self) -> None:
+        """The package-level alias resolves to the unified Parameter class."""
+        with pytest.warns(DeprecationWarning, match="InitializerParameter is deprecated"):
+            from pyrit.setup.initializers import InitializerParameter
+
+        assert InitializerParameter is Parameter
+
+    def test_package_level_alias_emits_deprecation_warning(self) -> None:
+        """Accessing InitializerParameter on the package emits a DeprecationWarning."""
+        import pyrit.setup.initializers as initializers_module
+
+        with pytest.warns(DeprecationWarning, match=r"will be removed in v0\.16\.0"):
+            _ = initializers_module.InitializerParameter
+
+    def test_package_level_alias_warning_points_to_replacement(self) -> None:
+        """The deprecation warning tells users which class to use instead."""
+        import pyrit.setup.initializers as initializers_module
+
+        with pytest.warns(DeprecationWarning, match=r"pyrit\.common\.parameter\.Parameter"):
+            _ = initializers_module.InitializerParameter
+
+    def test_canonical_module_alias_emits_deprecation_warning(self) -> None:
+        """Accessing InitializerParameter on pyrit_initializer also emits the warning."""
+        import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
+
+        with pytest.warns(DeprecationWarning, match=r"will be removed in v0\.16\.0"):
+            value = pyrit_initializer_module.InitializerParameter
+
+        assert value is Parameter
+
+    def test_unknown_attribute_still_raises_attribute_error(self) -> None:
+        """The __getattr__ shim must not swallow other missing attributes."""
+        import pyrit.setup.initializers as initializers_module
+
+        with pytest.raises(AttributeError, match="has no attribute 'NonExistentSymbol'"):
+            _ = initializers_module.NonExistentSymbol
+
+    def test_canonical_module_unknown_attribute_still_raises(self) -> None:
+        """The pyrit_initializer __getattr__ shim must not swallow missing attributes."""
+        import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
+
+        with pytest.raises(AttributeError, match="has no attribute 'NonExistentSymbol'"):
+            _ = pyrit_initializer_module.NonExistentSymbol

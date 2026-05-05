@@ -15,6 +15,7 @@ Specific scenarios should be imported from their subpackages:
 
 import sys
 
+from pyrit.common.parameter import Parameter
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import (
     AtomicAttack,
@@ -47,6 +48,7 @@ __all__ = [
     "AttackTechnique",
     "AttackTechniqueFactory",
     "DatasetConfiguration",
+    "Parameter",
     "Scenario",
     "ScenarioCompositeStrategy",
     "ScenarioStrategy",
