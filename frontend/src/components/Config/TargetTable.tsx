@@ -12,7 +12,7 @@ import {
   Tooltip,
   Select,
 } from '@fluentui/react-components'
-import { CheckmarkRegular, DismissRegular } from '@fluentui/react-icons'
+import { CheckmarkRegular, CheckmarkCircleFilled, DismissCircleFilled } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
 import { useTargetTableStyles } from './TargetTable.styles'
 
@@ -55,9 +55,9 @@ function CapabilityCell({ value }: { value: boolean | undefined }) {
     return <Text size={200}>—</Text>
   }
   if (value) {
-    return <CheckmarkRegular style={{ color: 'green', fontSize: '16px', fontWeight: 'bold' }} />
+    return <CheckmarkCircleFilled style={{ color: 'green', fontSize: '18px' }} />
   }
-  return <DismissRegular style={{ color: 'red', fontSize: '16px', fontWeight: 'bold' }} />
+  return <DismissCircleFilled style={{ color: 'red', fontSize: '18px' }} />
 }
 
 /** Render the model cell with a tooltip when underlying model differs. */
@@ -163,7 +163,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
       )}
 
       <Table aria-label="Target instances" className={styles.table}>
-        <TableHeader>
+        <TableHeader className={styles.stickyHeader}>
           <TableRow>
             <TableHeaderCell style={{ width: '120px' }} />
             <TableHeaderCell style={{ width: '200px' }}>Type</TableHeaderCell>

@@ -9,6 +9,12 @@ export const useTargetTableStyles = makeStyles({
     tableLayout: 'fixed',
     width: '100%',
   },
+  stickyHeader: {
+    position: 'sticky',
+    top: 0,
+    backgroundColor: tokens.colorNeutralBackground1,
+    zIndex: 1,
+  },
   activeRow: {
     backgroundColor: tokens.colorBrandBackground2,
   },
