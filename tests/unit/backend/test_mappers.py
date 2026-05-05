@@ -1302,6 +1302,28 @@ class TestTargetObjectToInstance:
         assert result.capabilities.supports_multi_turn is False
         assert result.supports_multi_turn == result.capabilities.supports_multi_turn
 
+    def test_target_configuration_excluded_from_target_specific_params(self) -> None:
+        """Test that the verbose target_configuration blob is filtered from target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "target_configuration": {"capabilities": {"supports_multi_turn": True}},
+                "reasoning_effort": "high",
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.target_specific_params is not None
+        assert "target_configuration" not in result.target_specific_params
+        assert result.target_specific_params["reasoning_effort"] == "high"
+
 
 # ============================================================================
 # Converter Mapper Tests

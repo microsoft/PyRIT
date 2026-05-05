@@ -55,9 +55,9 @@ function CapabilityCell({ value }: { value: boolean | undefined }) {
     return <Text size={200}>—</Text>
   }
   if (value) {
-    return <CheckmarkRegular style={{ color: 'green' }} />
+    return <CheckmarkRegular style={{ color: 'green', fontSize: '16px', fontWeight: 'bold' }} />
   }
-  return <DismissRegular style={{ color: 'red', fontSize: '12px' }} />
+  return <DismissRegular style={{ color: 'red', fontSize: '16px', fontWeight: 'bold' }} />
 }
 
 /** Render the model cell with a tooltip when underlying model differs. */

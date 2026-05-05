@@ -27,6 +27,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     params = identifier.params
 
     # Keys that are extracted as top-level TargetInstance fields
+    # or are internal-only (target_configuration is the verbose capabilities blob).
     extracted_keys = {
         "endpoint",
         "model_name",
@@ -36,6 +37,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         "max_requests_per_minute",
         "supports_multi_turn",
         "target_specific_params",
+        "target_configuration",
     }
 
     # Collect remaining params as target_specific_params so the frontend can display them
