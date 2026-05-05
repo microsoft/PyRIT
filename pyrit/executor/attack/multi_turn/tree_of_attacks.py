@@ -1357,7 +1357,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
+        attack_scoring_config: TAPAttackScoringConfig | None = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         tree_width: int = 3,
         tree_depth: int = 5,
@@ -1376,7 +1376,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial chat component.
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters.
                 Defaults to None.
-            attack_scoring_config (Optional[AttackScoringConfig]): Scoring configuration for TAP.
+            attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration for TAP.
                 The objective_scorer must be a FloatScaleThresholdScorer, which provides both
                 granular float scores for node comparison and a threshold for determining success.
                 Can be either AttackScoringConfig or TAPAttackScoringConfig. If not provided,

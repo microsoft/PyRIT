@@ -12,7 +12,11 @@ scorer) become available.
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Any
+import logging
+import sys
+import typing
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Union
 
 from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -26,6 +30,16 @@ if TYPE_CHECKING:
     )
     from pyrit.models import SeedAttackTechniqueGroup
     from pyrit.prompt_target import PromptChatTarget, PromptTarget
+
+logger = logging.getLogger(__name__)
+
+
+class ScorerOverridePolicy(str, Enum):
+    """Policy for what to do when the scenario's scorer is incompatible with an attack's annotation."""
+
+    SKIP = "skip"
+    WARN = "warn"
+    RAISE = "raise"
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -48,6 +62,7 @@ class AttackTechniqueFactory(Identifiable):
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_config: AttackAdversarialConfig | None = None,
         seed_technique: SeedAttackTechniqueGroup | None = None,
+        scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> None:
         """
         Initialize the factory with a technique-specific configuration.
@@ -63,6 +78,8 @@ class AttackTechniqueFactory(Identifiable):
                 exposed via the ``adversarial_chat`` property for seed-technique
                 execution.
             seed_technique: Optional technique seed group to attach to created techniques.
+            scorer_override_policy: What to do when a scenario's scorer is incompatible
+                with the attack's ``attack_scoring_config`` type annotation. Defaults to WARN.
 
         Raises:
             TypeError: If any kwarg name is not a valid constructor parameter,
@@ -74,6 +91,7 @@ class AttackTechniqueFactory(Identifiable):
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._adversarial_config = adversarial_config
         self._seed_technique = seed_technique
+        self._scorer_override_policy = scorer_override_policy
 
         self._validate_kwargs()
 
@@ -186,14 +204,45 @@ class AttackTechniqueFactory(Identifiable):
 
         Returns:
             A fresh AttackTechnique with a newly-constructed attack strategy.
+
+        Raises:
+            ValueError: If ``scorer_override_policy`` is RAISE and the override
+                config is incompatible with the attack's type annotation.
         """
         kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
 
         # Only forward overrides when the attack class accepts the underlying param
         accepted_params = self._get_accepted_params()
-        if attack_scoring_config_override is not None and "attack_scoring_config" in accepted_params:
-            kwargs["attack_scoring_config"] = attack_scoring_config_override
+        if attack_scoring_config_override is not None:
+            if "attack_scoring_config" not in accepted_params:
+                # Attack doesn't accept scoring config at all
+                if self._scorer_override_policy == ScorerOverridePolicy.RAISE:
+                    raise ValueError(
+                        f"Scorer override provided but {self._attack_class.__name__} "
+                        f"does not accept 'attack_scoring_config'."
+                    )
+                elif self._scorer_override_policy == ScorerOverridePolicy.WARN:
+                    logger.warning(
+                        f"Scorer override provided but {self._attack_class.__name__} "
+                        f"does not accept 'attack_scoring_config'. Using attack's built-in scorer instead."
+                    )
+            else:
+                required_type = self._get_scoring_config_type()
+                if required_type is None or isinstance(attack_scoring_config_override, required_type):
+                    kwargs["attack_scoring_config"] = attack_scoring_config_override
+                elif self._scorer_override_policy == ScorerOverridePolicy.RAISE:
+                    raise ValueError(
+                        f"Scorer override of type {type(attack_scoring_config_override).__name__} is incompatible "
+                        f"with {self._attack_class.__name__} which requires {required_type.__name__}."
+                    )
+                elif self._scorer_override_policy == ScorerOverridePolicy.WARN:
+                    logger.warning(
+                        f"Scorer override of type {type(attack_scoring_config_override).__name__} is incompatible "
+                        f"with {self._attack_class.__name__} (requires {required_type.__name__}). "
+                        f"Using attack's built-in scorer instead."
+                    )
+                # SKIP: silently use attack's built-in scorer
         if "attack_adversarial_config" in accepted_params:
             if attack_adversarial_config_override is not None:
                 kwargs["attack_adversarial_config"] = attack_adversarial_config_override
@@ -218,6 +267,69 @@ class AttackTechniqueFactory(Identifiable):
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
             )
         }
+
+    def _get_scoring_config_type(self) -> type | None:
+        """
+        Introspect the attack class to determine the required type for ``attack_scoring_config``.
+
+        Resolves the type annotation (handling ``Optional[X]`` / ``X | None``) and returns
+        the inner concrete type. Returns ``None`` if the annotation is the base
+        ``AttackScoringConfig`` or cannot be resolved — meaning any config is accepted.
+
+        Returns:
+            The narrowed type if the annotation is narrower than the base, else None.
+        """
+        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+
+        try:
+            # get_type_hints resolves string annotations from __future__ annotations
+            hints = typing.get_type_hints(
+                self._attack_class.__init__,
+                globalns=getattr(sys.modules.get(self._attack_class.__module__, None), "__dict__", None),
+            )
+        except Exception:
+            return None
+
+        annotation = hints.get("attack_scoring_config")
+        if annotation is None:
+            return None
+
+        inner = self._unwrap_optional(annotation)
+        if inner is None or inner is AttackScoringConfig:
+            # Base type or unresolvable — any config is accepted
+            return None
+        return inner
+
+    @staticmethod
+    def _unwrap_optional(annotation: Any) -> type | None:
+        """
+        Unwrap ``Optional[X]``, ``X | None``, or ``Union[X, None]`` to extract X.
+
+        Returns:
+            The inner type X, or None if the annotation cannot be unwrapped to a single type.
+        """
+        # Handle Python 3.10+ union syntax (types.UnionType): X | None
+        origin = typing.get_origin(annotation)
+        if origin is Union or (hasattr(annotation, "__args__") and origin is None and hasattr(annotation, "__or__")):
+            args = typing.get_args(annotation)
+            non_none = [a for a in args if a is not type(None)]
+            if len(non_none) == 1:
+                return non_none[0]
+            return None
+
+        # types.UnionType from PEP 604 at runtime (3.10+)
+        if hasattr(annotation, "__args__") and type(annotation).__name__ == "UnionType":
+            args = annotation.__args__
+            non_none = [a for a in args if a is not type(None)]
+            if len(non_none) == 1:
+                return non_none[0]
+            return None
+
+        # Plain type (not Optional)
+        if isinstance(annotation, type):
+            return annotation
+
+        return None
 
     @staticmethod
     def _serialize_value(value: Any) -> Any:
