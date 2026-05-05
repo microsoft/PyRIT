@@ -153,7 +153,7 @@ class TestFactoryCreate:
         factory = AttackTechniqueFactory(attack_class=_StubAttack)
         target = MagicMock(spec=PromptTarget)
 
-        technique = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert isinstance(technique, AttackTechnique)
         assert isinstance(technique.attack, _StubAttack)
@@ -166,7 +166,7 @@ class TestFactoryCreate:
         )
         target = MagicMock(spec=PromptTarget)
 
-        technique = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert technique.attack.max_turns == 42
 
@@ -175,7 +175,7 @@ class TestFactoryCreate:
         target = MagicMock(spec=PromptTarget)
         scoring = MagicMock(spec=AttackScoringConfig)
 
-        technique = factory.create(objective_target=target, attack_scoring_config_override=scoring)
+        technique = factory.create(objective_target=target, attack_scoring_config=scoring)
 
         assert technique.attack.attack_scoring_config is scoring
 
@@ -189,7 +189,7 @@ class TestFactoryCreate:
         target = MagicMock(spec=PromptTarget)
         override_scoring = MagicMock(spec=AttackScoringConfig)
 
-        technique = factory.create(objective_target=target, attack_scoring_config_override=override_scoring)
+        technique = factory.create(objective_target=target, attack_scoring_config=override_scoring)
 
         assert technique.attack.attack_scoring_config is override_scoring
         assert technique.attack.attack_scoring_config is not frozen_scoring
@@ -199,7 +199,7 @@ class TestFactoryCreate:
         factory = AttackTechniqueFactory(attack_class=_StubAttack, seed_technique=seeds)
         target = MagicMock(spec=PromptTarget)
 
-        technique = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert technique.seed_technique is seeds
 
@@ -213,8 +213,8 @@ class TestFactoryCreate:
         target2 = MagicMock(spec=PromptTarget)
         scoring = self._scoring()
 
-        technique1 = factory.create(objective_target=target1, attack_scoring_config_override=scoring)
-        technique2 = factory.create(objective_target=target2, attack_scoring_config_override=scoring)
+        technique1 = factory.create(objective_target=target1, attack_scoring_config=scoring)
+        technique2 = factory.create(objective_target=target2, attack_scoring_config=scoring)
 
         assert technique1.attack is not technique2.attack
         assert technique1.attack.objective_target is target1
@@ -238,12 +238,12 @@ class TestFactoryCreate:
         )
         target = MagicMock(spec=PromptTarget)
 
-        technique1 = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        technique1 = factory.create(objective_target=target, attack_scoring_config=self._scoring())
         assert technique1.attack.items == [1, 2, 3]
 
         # Mutating the original list is visible to future creates (shallow copy)
         mutable_list.append(999)
-        technique2 = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        technique2 = factory.create(objective_target=target, attack_scoring_config=self._scoring())
         assert technique2.attack.items == [1, 2, 3, 999]
 
     def test_create_without_optional_configs_omits_them(self):
@@ -268,7 +268,7 @@ class TestFactoryCreate:
 
         factory = AttackTechniqueFactory(attack_class=_SentinelAttack)
         target = MagicMock(spec=PromptTarget)
-        technique = factory.create(objective_target=target, attack_scoring_config_override=self._scoring())
+        technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
         assert not technique.attack.adversarial_was_passed
         assert not technique.attack.converter_was_passed

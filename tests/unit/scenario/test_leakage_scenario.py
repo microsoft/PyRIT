@@ -90,7 +90,7 @@ class TestLeakageInitialization:
         """Test initialization with custom scorer."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         assert scenario.name == "Leakage"
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_init_with_default_scorer(self):
         """Test initialization with default scorer."""
@@ -175,17 +175,17 @@ class TestLeakageProperties:
     def test_scenario_version_is_set(self, mock_objective_scorer):
         """Test that scenario version is properly set."""
         scenario = Leakage(objective_scorer=mock_objective_scorer)
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_get_strategy_class_returns_dynamic_class(self):
         """Test that get_strategy_class returns a dynamically generated strategy class."""
         strategy_class = Leakage.get_strategy_class()
         assert strategy_class is LeakageStrategy
 
-    def test_get_default_strategy_returns_all(self):
-        """Test that get_default_strategy returns the ALL aggregate."""
+    def test_get_default_strategy_returns_default(self):
+        """Test that get_default_strategy returns the DEFAULT aggregate."""
         default = Leakage.get_default_strategy()
-        assert default.value == "all"
+        assert default.value == "default"
 
     def test_required_datasets_returns_airt_leakage(self):
         """Test that required_datasets returns airt_leakage."""
@@ -214,17 +214,11 @@ class TestLeakageStrategyEnum:
         assert LeakageStrategy.MULTI_TURN.value == "multi_turn"
         assert "multi_turn" in LeakageStrategy.MULTI_TURN.tags
 
-    def test_strategy_ip_aggregate_exists(self):
-        """Test that IP aggregate strategy exists for intellectual property focused attacks."""
-        assert LeakageStrategy.IP is not None
-        assert LeakageStrategy.IP.value == "ip"
-        assert "ip" in LeakageStrategy.IP.tags
-
-    def test_strategy_sensitive_data_aggregate_exists(self):
-        """Test that SENSITIVE_DATA aggregate strategy exists for credentials/secrets attacks."""
-        assert LeakageStrategy.SENSITIVE_DATA is not None
-        assert LeakageStrategy.SENSITIVE_DATA.value == "sensitive_data"
-        assert "sensitive_data" in LeakageStrategy.SENSITIVE_DATA.tags
+    def test_strategy_default_aggregate_exists(self):
+        """Test that DEFAULT aggregate strategy exists."""
+        assert LeakageStrategy.DEFAULT is not None
+        assert LeakageStrategy.DEFAULT.value == "default"
+        assert "default" in LeakageStrategy.DEFAULT.tags
 
     def test_strategy_has_technique_members(self):
         """Test that the strategy has technique members from core + leakage techniques."""
