@@ -891,44 +891,47 @@ class TestValidateStoredScenario:
     def _make_scenario(self, *, name: str = "TestScenario", version: int = 1) -> ConcreteScenario:
         scenario = ConcreteScenario(name=name, version=version)
         scenario._scenario_result_id = "test-result-id"
+        # _validate_stored_scenario now also checks params
+        scenario.params = {}
         return scenario
 
-    def test_returns_true_when_name_and_version_match(self):
-        """Valid match returns True."""
+    def test_passes_when_name_and_version_match(self):
+        """Valid match does not raise."""
         scenario = self._make_scenario(name="TestScenario", version=2)
 
         stored_result = MagicMock(spec=ScenarioResult)
         stored_result.scenario_identifier = ScenarioIdentifier(name="ConcreteScenario", scenario_version=2)
         stored_result.scenario_run_state = "CREATED"
 
-        assert scenario._validate_stored_scenario(stored_result=stored_result) is True
+        # Should not raise
+        scenario._validate_stored_scenario(stored_result=stored_result)
 
-    def test_returns_false_when_name_mismatches(self, caplog):
-        """Mismatched name returns False and logs warning."""
+    def test_raises_when_name_mismatches(self):
+        """Mismatched name raises ValueError."""
         scenario = self._make_scenario(name="TestScenario", version=1)
 
         stored_result = MagicMock(spec=ScenarioResult)
         stored_result.scenario_identifier = ScenarioIdentifier(name="DifferentScenario", scenario_version=1)
 
-        assert scenario._validate_stored_scenario(stored_result=stored_result) is False
-        assert "mismatched name" in caplog.text
+        with pytest.raises(ValueError, match="belongs to scenario 'DifferentScenario'"):
+            scenario._validate_stored_scenario(stored_result=stored_result)
 
-    def test_returns_false_when_version_mismatches(self, caplog):
-        """Mismatched version returns False and logs warning."""
+    def test_raises_when_version_mismatches(self):
+        """Mismatched version raises ValueError."""
         scenario = self._make_scenario(name="TestScenario", version=2)
 
         stored_result = MagicMock(spec=ScenarioResult)
         stored_result.scenario_identifier = ScenarioIdentifier(name="ConcreteScenario", scenario_version=99)
 
-        assert scenario._validate_stored_scenario(stored_result=stored_result) is False
-        assert "mismatched version" in caplog.text
+        with pytest.raises(ValueError, match="version 99 but current version is 2"):
+            scenario._validate_stored_scenario(stored_result=stored_result)
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioResumption:
-    """Tests for scenario resumption logic in _initialize_scenario_result_async."""
+    """Tests for scenario resumption logic in initialize_async."""
 
-    async def test_resume_skips_creation_when_stored_result_matches(self, mock_objective_target, mock_atomic_attacks):
+    async def test_resume_succeeds_when_stored_result_matches(self, mock_objective_target, mock_atomic_attacks):
         """When scenario_result_id finds a matching result, no new result is created."""
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -955,8 +958,8 @@ class TestScenarioResumption:
         # Should reuse the same ID (no new creation)
         assert scenario2._scenario_result_id == original_id
 
-    async def test_resume_creates_new_result_when_id_not_found(self, mock_objective_target, mock_atomic_attacks):
-        """When scenario_result_id doesn't exist in memory, a new result is created."""
+    async def test_resume_raises_when_id_not_found(self, mock_objective_target, mock_atomic_attacks):
+        """When scenario_result_id doesn't exist in memory, ValueError is raised."""
         scenario = ConcreteScenario(
             name="Test Scenario",
             version=1,
@@ -964,8 +967,5 @@ class TestScenarioResumption:
             scenario_result_id="nonexistent-id",
         )
 
-        await scenario.initialize_async(objective_target=mock_objective_target)
-
-        # A new ID should be assigned (the nonexistent one is discarded)
-        assert scenario._scenario_result_id is not None
-        assert scenario._scenario_result_id != "nonexistent-id"
+        with pytest.raises(ValueError, match="not found in memory"):
+            await scenario.initialize_async(objective_target=mock_objective_target)

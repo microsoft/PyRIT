@@ -576,8 +576,8 @@ class TestFormatFunctions:
             registry_name="test",
             required_env_vars=(),
             supported_parameters=(
-                ("model_name", "The model to use", True, None),
-                ("temperature", "Sampling temperature", False, ["0.7"]),
+                ("model_name", "The model to use", None),
+                ("temperature", "Sampling temperature", ["0.7"]),
             ),
         )
 
@@ -585,7 +585,7 @@ class TestFormatFunctions:
 
         captured = capsys.readouterr()
         assert "Supported Parameters:" in captured.out
-        assert "model_name (required)" in captured.out
+        assert "model_name" in captured.out
         assert "temperature" in captured.out
         assert "[default: ['0.7']]" in captured.out
 
