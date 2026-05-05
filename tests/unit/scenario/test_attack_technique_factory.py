@@ -567,3 +567,8 @@ class TestUnwrapOptional:
         """NoneType alone is a plain type — returns itself."""
         result = AttackTechniqueFactory._unwrap_optional(type(None))
         assert result is type(None)
+
+    def test_unwrap_non_type_annotation_returns_none(self):
+        """A non-type annotation (e.g., string forward ref) returns None."""
+        result = AttackTechniqueFactory._unwrap_optional("SomeForwardRef")
+        assert result is None

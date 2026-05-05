@@ -882,3 +882,90 @@ async def test_execute_scenario_raises_when_scenario_result_id_is_none():
 
     with pytest.raises(ValueError, match="self._scenario_result_id is not initialized"):
         await scenario._execute_scenario_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestValidateStoredScenario:
+    """Tests for Scenario._validate_stored_scenario."""
+
+    def _make_scenario(self, *, name: str = "TestScenario", version: int = 1) -> ConcreteScenario:
+        scenario = ConcreteScenario(name=name, version=version)
+        scenario._scenario_result_id = "test-result-id"
+        return scenario
+
+    def test_returns_true_when_name_and_version_match(self):
+        """Valid match returns True."""
+        scenario = self._make_scenario(name="TestScenario", version=2)
+
+        stored_result = MagicMock(spec=ScenarioResult)
+        stored_result.scenario_identifier = ScenarioIdentifier(name="ConcreteScenario", scenario_version=2)
+        stored_result.scenario_run_state = "CREATED"
+
+        assert scenario._validate_stored_scenario(stored_result=stored_result) is True
+
+    def test_returns_false_when_name_mismatches(self, caplog):
+        """Mismatched name returns False and logs warning."""
+        scenario = self._make_scenario(name="TestScenario", version=1)
+
+        stored_result = MagicMock(spec=ScenarioResult)
+        stored_result.scenario_identifier = ScenarioIdentifier(name="DifferentScenario", scenario_version=1)
+
+        assert scenario._validate_stored_scenario(stored_result=stored_result) is False
+        assert "mismatched name" in caplog.text
+
+    def test_returns_false_when_version_mismatches(self, caplog):
+        """Mismatched version returns False and logs warning."""
+        scenario = self._make_scenario(name="TestScenario", version=2)
+
+        stored_result = MagicMock(spec=ScenarioResult)
+        stored_result.scenario_identifier = ScenarioIdentifier(name="ConcreteScenario", scenario_version=99)
+
+        assert scenario._validate_stored_scenario(stored_result=stored_result) is False
+        assert "mismatched version" in caplog.text
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScenarioResumption:
+    """Tests for scenario resumption logic in _initialize_scenario_result_async."""
+
+    async def test_resume_skips_creation_when_stored_result_matches(self, mock_objective_target, mock_atomic_attacks):
+        """When scenario_result_id finds a matching result, no new result is created."""
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+
+        await scenario.initialize_async(objective_target=mock_objective_target)
+
+        # Capture the created scenario_result_id
+        original_id = scenario._scenario_result_id
+        assert original_id is not None
+
+        # Now create a second scenario that reuses the same result id
+        scenario2 = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+            scenario_result_id=original_id,
+        )
+
+        await scenario2.initialize_async(objective_target=mock_objective_target)
+
+        # Should reuse the same ID (no new creation)
+        assert scenario2._scenario_result_id == original_id
+
+    async def test_resume_creates_new_result_when_id_not_found(self, mock_objective_target, mock_atomic_attacks):
+        """When scenario_result_id doesn't exist in memory, a new result is created."""
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+            scenario_result_id="nonexistent-id",
+        )
+
+        await scenario.initialize_async(objective_target=mock_objective_target)
+
+        # A new ID should be assigned (the nonexistent one is discarded)
+        assert scenario._scenario_result_id is not None
+        assert scenario._scenario_result_id != "nonexistent-id"
