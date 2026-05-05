@@ -11,7 +11,15 @@ import pytest
 
 from pyrit.executor.attack import AttackAdversarialConfig
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ScenarioIdentifier,
+    ScenarioResult,
+    SeedAttackGroup,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
@@ -571,3 +579,80 @@ class TestBenchmarkConstructorCascade:
         assert seen_overrides, "factory.create was never invoked"
         assert all(o is cfg for o in seen_overrides)
         assert all(o.system_prompt_path == "my/prompt.yaml" for o in seen_overrides)
+
+
+# ===========================================================================
+# ASR-sensibility tests (per-model breakdown math)
+# ===========================================================================
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestBenchmarkASRBreakdown:
+    """Verify the per-display-group ASR math the notebook sanity check relies on.
+
+    A higher per-group success rate must correspond to more ``AttackOutcome.SUCCESS``
+    results in that group.  This test pins the invariant that lets reviewers trust
+    the printed breakdown when comparing adversarial models or system prompts.
+    """
+
+    @staticmethod
+    def _result(*, conv_id: str, outcome: AttackOutcome) -> AttackResult:
+        return AttackResult(
+            conversation_id=conv_id,
+            objective="objective",
+            outcome=outcome,
+            executed_turns=1,
+        )
+
+    def test_per_model_breakdown_reflects_outcome_counts(self):
+        """High-success model > low-success model in per-group ASR; math invariants hold."""
+        # Two techniques × two models, mirroring how Benchmark keys atomic_attack_name
+        # ("{technique}__{model_label}__{dataset}") and folds them into model_label.
+        attack_results: dict[str, list[AttackResult]] = {
+            "role_play__model_high__hb": [
+                self._result(conv_id=f"high-rp-{i}", outcome=AttackOutcome.SUCCESS) for i in range(3)
+            ],
+            "context_compliance__model_high__hb": [
+                self._result(conv_id=f"high-cc-{i}", outcome=AttackOutcome.SUCCESS) for i in range(3)
+            ],
+            "role_play__model_low__hb": [
+                self._result(conv_id=f"low-rp-{i}", outcome=AttackOutcome.FAILURE) for i in range(3)
+            ],
+            "context_compliance__model_low__hb": [
+                self._result(conv_id=f"low-cc-{i}", outcome=AttackOutcome.FAILURE) for i in range(3)
+            ],
+        }
+        display_group_map = {
+            "role_play__model_high__hb": "model_high",
+            "context_compliance__model_high__hb": "model_high",
+            "role_play__model_low__hb": "model_low",
+            "context_compliance__model_low__hb": "model_low",
+        }
+        result = ScenarioResult(
+            scenario_identifier=ScenarioIdentifier(name="Benchmark", scenario_version=1),
+            objective_target_identifier=ComponentIdentifier(class_name="MockTarget", class_module="test"),
+            attack_results=attack_results,
+            objective_scorer_identifier=ComponentIdentifier(class_name="MockScorer", class_module="test"),
+            display_group_map=display_group_map,
+        )
+
+        groups = result.get_display_groups()
+        assert set(groups.keys()) == {"model_high", "model_low"}
+
+        per_group = {
+            label: int(sum(1 for r in rs if r.outcome == AttackOutcome.SUCCESS) / max(len(rs), 1) * 100)
+            for label, rs in groups.items()
+        }
+
+        # The whole point of the sanity check: more SUCCESSes ⇒ higher rate.
+        assert per_group["model_high"] == 100
+        assert per_group["model_low"] == 0
+        assert per_group["model_high"] > per_group["model_low"]
+        # Bounds invariant the notebook asserts.
+        assert all(0 <= rate <= 100 for rate in per_group.values())
+
+        # Overall rate matches the weighted average (6 SUCCESS / 12 total = 50%).
+        assert result.objective_achieved_rate() == 50
+
+        # Display grouping must not lose results.
+        assert sum(len(rs) for rs in groups.values()) == sum(len(rs) for rs in attack_results.values())

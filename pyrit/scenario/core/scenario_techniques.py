@@ -25,6 +25,7 @@ from pathlib import Path
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
+    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RedTeamingAttack,
@@ -95,6 +96,11 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         name="red_teaming",
         attack_class=RedTeamingAttack,
         strategy_tags=["core", "multi_turn", "light"],
+    ),
+    AttackTechniqueSpec(
+        name="context_compliance",
+        attack_class=ContextComplianceAttack,
+        strategy_tags=["core", "single_turn", "light"],
     ),
 ]
 
