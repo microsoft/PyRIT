@@ -4,16 +4,15 @@
 from __future__ import annotations
 
 import uuid
-import warnings
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 
 if TYPE_CHECKING:
+    from pyrit.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.message import Message
     from pyrit.models.score import Score
 
@@ -43,10 +42,10 @@ class MessagePiece:
         sequence: int = -1,
         labels: Optional[dict[str, str]] = None,
         prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        converter_identifiers: Optional[list[Union[ComponentIdentifier, dict[str, str]]]] = None,
-        prompt_target_identifier: Optional[Union[ComponentIdentifier, dict[str, Any]]] = None,
-        attack_identifier: Optional[Union[ComponentIdentifier, dict[str, str]]] = None,
-        scorer_identifier: Optional[Union[ComponentIdentifier, dict[str, str]]] = None,
+        converter_identifiers: Optional[list[ComponentIdentifier]] = None,
+        prompt_target_identifier: Optional[ComponentIdentifier] = None,
+        attack_identifier: Optional[ComponentIdentifier] = None,
+        scorer_identifier: Optional[ComponentIdentifier] = None,
         original_value_data_type: PromptDataType = "text",
         converted_value_data_type: Optional[PromptDataType] = None,
         response_error: PromptResponseError = "none",
@@ -76,7 +75,7 @@ class MessagePiece:
                 e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
                 Defaults to None.
             converter_identifiers: The converter identifiers for the prompt. Can be ComponentIdentifier
-                objects or dicts (deprecated, will be removed in 0.14.0). Defaults to None.
+                objects. Defaults to None.
             prompt_target_identifier: The target identifier for the prompt. Defaults to None.
             attack_identifier: The attack identifier for the prompt. Defaults to None.
             scorer_identifier: The scorer identifier for the prompt. Accepts a ComponentIdentifier.
@@ -128,33 +127,20 @@ class MessagePiece:
         self.labels = labels or {}
         self.prompt_metadata = prompt_metadata or {}
 
-        # Handle converter_identifiers: normalize to ComponentIdentifier (handles dict with deprecation warning)
-        self.converter_identifiers: list[ComponentIdentifier] = (
-            [ComponentIdentifier.normalize(conv_id) for conv_id in converter_identifiers]
-            if converter_identifiers
-            else []
-        )
+        self.converter_identifiers: list[ComponentIdentifier] = converter_identifiers if converter_identifiers else []
 
-        # Handle prompt_target_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
-        self.prompt_target_identifier: Optional[ComponentIdentifier] = (
-            ComponentIdentifier.normalize(prompt_target_identifier) if prompt_target_identifier else None
-        )
+        self.prompt_target_identifier: Optional[ComponentIdentifier] = prompt_target_identifier
 
-        # Handle attack_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
-        self.attack_identifier: Optional[ComponentIdentifier] = (
-            ComponentIdentifier.normalize(attack_identifier) if attack_identifier else None
-        )
+        self.attack_identifier: Optional[ComponentIdentifier] = attack_identifier
 
         # Handle scorer_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
         if scorer_identifier is not None:
-            warnings.warn(
-                "The 'scorer_identifier' parameter is deprecated and will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="MessagePiece(..., scorer_identifier=...)",
+                new_item="MessagePiece(...)",
+                removed_in="0.15.0",
             )
-        self.scorer_identifier: Optional[ComponentIdentifier] = (
-            ComponentIdentifier.normalize(scorer_identifier) if scorer_identifier else None
-        )
+        self.scorer_identifier: Optional[ComponentIdentifier] = scorer_identifier if scorer_identifier else None
 
         self.original_value = original_value
 
@@ -180,10 +166,10 @@ class MessagePiece:
         self.response_error = response_error
 
         if originator != "undefined":
-            warnings.warn(
-                "The 'originator' parameter is deprecated and will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="MessagePiece(..., originator=...)",
+                new_item="MessagePiece(...)",
+                removed_in="0.15.0",
             )
         self.originator = originator
 
@@ -191,19 +177,18 @@ class MessagePiece:
         self.original_prompt_id = original_prompt_id or self.id
 
         if scores is not None:
-            warnings.warn(
-                "The 'scores' parameter is deprecated and will be removed in a future release. "
-                "Scores are now hydrated by the memory layer.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="MessagePiece(..., scores=...)",
+                new_item="MessagePiece(...)",
+                removed_in="0.15.0",
             )
         self.scores = scores if scores else []
 
         if targeted_harm_categories is not None:
-            warnings.warn(
-                "The 'targeted_harm_categories' parameter is deprecated and will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="MessagePiece(..., targeted_harm_categories=...)",
+                new_item="MessagePiece(...)",
+                removed_in="0.15.0",
             )
         self.targeted_harm_categories = targeted_harm_categories if targeted_harm_categories else []
 
