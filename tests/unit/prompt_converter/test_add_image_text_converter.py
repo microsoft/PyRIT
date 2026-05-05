@@ -123,9 +123,7 @@ def test_add_image_text_converter_font_size_tuple_zero_min(image_text_converter_
 
 
 def test_image_text_converter_add_text_to_image(image_text_converter_sample_image):
-    converter = AddImageTextConverter(
-        img_to_add=image_text_converter_sample_image, color=(255, 255, 255)
-    )
+    converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image, color=(255, 255, 255))
     with Image.open(image_text_converter_sample_image) as image:
         pixels_before = list(image.get_flattened_data())
     updated_image = converter._add_text_to_image("Sample Text!")
