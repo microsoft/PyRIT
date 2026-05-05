@@ -12,7 +12,6 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
-from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
@@ -118,73 +117,6 @@ class TestAttackTechniqueRegistryRegister:
 
         assert len(self.registry) == 2
         assert self.registry.get_names() == ["stub_20", "stub_5"]
-
-
-class TestAttackTechniqueRegistryCreateTechnique:
-    """Tests for create_technique()."""
-
-    def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
-        self.registry = AttackTechniqueRegistry.get_registry_singleton()
-
-    def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
-
-    def test_create_technique_returns_attack_technique(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
-        self.registry.register_technique(name="stub", factory=factory)
-        target = MagicMock(spec=PromptTarget)
-        scoring = MagicMock(spec=AttackScoringConfig)
-
-        technique = self.registry.create_technique(
-            "stub", objective_target=target, attack_scoring_config_override=scoring
-        )
-
-        assert isinstance(technique, AttackTechnique)
-        assert isinstance(technique.attack, _StubAttack)
-        assert technique.attack.objective_target is target
-
-    def test_create_technique_passes_scoring_config(self):
-        class _ScoringStub:
-            def __init__(self, *, objective_target, attack_scoring_config=None):
-                self.objective_target = objective_target
-                self.attack_scoring_config = attack_scoring_config
-
-            def get_identifier(self):
-                return ComponentIdentifier(class_name="_ScoringStub", class_module="test")
-
-        factory = AttackTechniqueFactory(attack_class=_ScoringStub)
-        self.registry.register_technique(name="scoring_stub", factory=factory)
-        target = MagicMock(spec=PromptTarget)
-        scoring = MagicMock(spec=AttackScoringConfig)
-
-        technique = self.registry.create_technique(
-            "scoring_stub", objective_target=target, attack_scoring_config_override=scoring
-        )
-
-        assert technique.attack.attack_scoring_config is scoring
-
-    def test_create_technique_raises_on_missing_name(self):
-        with pytest.raises(KeyError, match="No technique registered with name 'nonexistent'"):
-            self.registry.create_technique(
-                "nonexistent",
-                objective_target=MagicMock(spec=PromptTarget),
-                attack_scoring_config_override=MagicMock(spec=AttackScoringConfig),
-            )
-
-    def test_create_technique_preserves_frozen_kwargs(self):
-        factory = AttackTechniqueFactory(
-            attack_class=_StubAttack,
-            attack_kwargs={"max_turns": 42},
-        )
-        self.registry.register_technique(name="custom", factory=factory)
-        target = MagicMock(spec=PromptTarget)
-
-        technique = self.registry.create_technique(
-            "custom", objective_target=target, attack_scoring_config_override=MagicMock(spec=AttackScoringConfig)
-        )
-
-        assert technique.attack.max_turns == 42
 
 
 class TestAttackTechniqueRegistryMetadata:
@@ -380,7 +312,7 @@ class TestScorerOverrideTypeInference:
         with pytest.raises(ValueError, match="incompatible"):
             factory.create(
                 objective_target=target,
-                attack_scoring_config_override=generic_config,
+                attack_scoring_config=generic_config,
             )
 
     def test_tap_factory_warns_on_generic_config_with_warn_policy(self, caplog):
@@ -403,7 +335,7 @@ class TestScorerOverrideTypeInference:
             with pytest.raises(Exception) as exc_info:
                 factory.create(
                     objective_target=target,
-                    attack_scoring_config_override=generic_config,
+                    attack_scoring_config=generic_config,
                 )
 
         # The downstream error should NOT be about scorer incompatibility
@@ -429,7 +361,7 @@ class TestScorerOverrideTypeInference:
             with pytest.raises(Exception) as exc_info:
                 factory.create(
                     objective_target=target,
-                    attack_scoring_config_override=generic_config,
+                    attack_scoring_config=generic_config,
                 )
 
         # No warning about incompatibility should be logged
@@ -460,7 +392,7 @@ class TestScorerOverrideTypeInference:
         with pytest.raises(Exception) as exc_info:
             factory.create(
                 objective_target=target,
-                attack_scoring_config_override=tap_config,
+                attack_scoring_config=tap_config,
             )
 
         # The error should NOT be about scorer compatibility
@@ -485,7 +417,7 @@ class TestScorerOverrideTypeInference:
             # Should NOT raise — PromptSendingAttack accepts base AttackScoringConfig
             technique = factory.create(
                 objective_target=target,
-                attack_scoring_config_override=generic_config,
+                attack_scoring_config=generic_config,
             )
             assert technique is not None
         finally:
@@ -514,7 +446,7 @@ class TestScorerOverrideTypeInference:
             # TAPAttackScoringConfig is-a AttackScoringConfig, so it passes isinstance check
             technique = factory.create(
                 objective_target=target,
-                attack_scoring_config_override=tap_config,
+                attack_scoring_config=tap_config,
             )
             assert technique is not None
         finally:
@@ -533,7 +465,7 @@ class TestScorerOverrideTypeInference:
         with pytest.raises(ValueError, match="does not accept"):
             factory.create(
                 objective_target=target,
-                attack_scoring_config_override=generic_config,
+                attack_scoring_config=generic_config,
             )
 
     def test_factory_warns_when_attack_has_no_scoring_param_and_policy_warn(self, caplog):
@@ -551,7 +483,7 @@ class TestScorerOverrideTypeInference:
         with caplog.at_level(logging.WARNING):
             technique = factory.create(
                 objective_target=target,
-                attack_scoring_config_override=generic_config,
+                attack_scoring_config=generic_config,
             )
 
         assert technique is not None
@@ -572,7 +504,7 @@ class TestScorerOverrideTypeInference:
         with caplog.at_level(logging.WARNING):
             technique = factory.create(
                 objective_target=target,
-                attack_scoring_config_override=generic_config,
+                attack_scoring_config=generic_config,
             )
 
         assert technique is not None

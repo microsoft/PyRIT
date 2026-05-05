@@ -5,8 +5,8 @@
 AttackTechniqueRegistry — Singleton registry of reusable attack technique factories.
 
 Scenarios and initializers register technique factories (capturing technique-specific
-config). Scenarios retrieve them via ``create_technique()``, which calls the factory
-with the scenario's objective target and scorer.
+config). Scenarios retrieve factories via ``get_factories()`` and call
+``factory.create()`` with the scenario's objective target and scorer.
 """
 
 from __future__ import annotations
@@ -21,16 +21,11 @@ from pyrit.registry.object_registries.base_instance_registry import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_config import (
-        AttackAdversarialConfig,
-        AttackConverterConfig,
-        AttackScoringConfig,
-    )
     from pyrit.models import SeedAttackTechniqueGroup
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptChatTarget
     from pyrit.registry.tag_query import TagQuery
-    from pyrit.scenario.core.attack_technique import AttackTechnique
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+    from pyrit.scenario import AttackTechniqueFactory
+    from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -118,15 +113,16 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
     Singleton registry of reusable attack technique factories.
 
     Scenarios and initializers register technique factories (capturing
-    technique-specific config). Scenarios retrieve them via ``create_technique()``,
-    which calls the factory with the scenario's objective target and scorer.
+    technique-specific config). Scenarios retrieve factories via
+    ``get_factories()`` and call ``factory.create()`` with the scenario's
+    objective target and scorer.
     """
 
     def __init__(self) -> None:
         """Initialize the registry with the default scorer override policy."""
-        super().__init__()
         from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
 
+        super().__init__()
         self._scorer_override_policy = ScorerOverridePolicy.WARN
 
     def register_technique(
@@ -170,44 +166,6 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
     def scorer_override_policy(self, value: ScorerOverridePolicy) -> None:
         self._scorer_override_policy = value
 
-    def create_technique(
-        self,
-        name: str,
-        *,
-        objective_target: PromptTarget,
-        attack_scoring_config_override: AttackScoringConfig | None = None,
-        attack_adversarial_config_override: AttackAdversarialConfig | None = None,
-        attack_converter_config_override: AttackConverterConfig | None = None,
-    ) -> AttackTechnique:
-        """
-        Retrieve a factory by name and produce a fresh attack technique.
-
-        Args:
-            name: The registry name of the technique.
-            objective_target: The target to attack.
-            attack_scoring_config_override: When non-None, replaces any scoring
-                config baked into the factory.
-            attack_adversarial_config_override: When non-None, replaces any
-                adversarial config baked into the factory.
-            attack_converter_config_override: When non-None, replaces any
-                converter config baked into the factory.
-
-        Returns:
-            A fresh AttackTechnique with a newly-constructed attack strategy.
-
-        Raises:
-            KeyError: If no technique is registered with the given name.
-        """
-        entry = self._registry_items.get(name)
-        if entry is None:
-            raise KeyError(f"No technique registered with name '{name}'")
-        return entry.instance.create(
-            objective_target=objective_target,
-            attack_scoring_config_override=attack_scoring_config_override,
-            attack_adversarial_config_override=attack_adversarial_config_override,
-            attack_converter_config_override=attack_converter_config_override,
-        )
-
     @staticmethod
     def build_strategy_class_from_specs(
         *,
@@ -239,7 +197,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Returns:
             A ``ScenarioStrategy`` subclass with the generated members.
         """
-        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+        from pyrit.scenario import ScenarioStrategy
 
         all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
 
@@ -283,9 +241,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         ``attack_adversarial_config``.
 
         Args:
-            spec: The technique specification. Must not contain
-                ``attack_adversarial_config`` in ``extra_kwargs``; use
-                ``spec.adversarial_chat`` instead.
+            spec: The technique specification.
             scorer_override_policy: Policy for incompatible scorer overrides.
                 Defaults to WARN when None.
 
@@ -297,13 +253,10 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
                 ``attack_adversarial_config``.
         """
         from pyrit.executor.attack import AttackAdversarialConfig
-        from pyrit.scenario.core.attack_technique_factory import (
-            AttackTechniqueFactory,
-            ScorerOverridePolicy,
-        )
+        from pyrit.scenario import AttackTechniqueFactory
+        from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
 
-        if scorer_override_policy is None:
-            scorer_override_policy = ScorerOverridePolicy.WARN
+        scorer_override_policy = scorer_override_policy or ScorerOverridePolicy.WARN
 
         if "attack_adversarial_config" in spec.extra_kwargs:
             raise ValueError(

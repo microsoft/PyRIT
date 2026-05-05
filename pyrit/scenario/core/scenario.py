@@ -664,7 +664,7 @@ class Scenario(ABC):
 
                 attack_technique = factory.create(
                     objective_target=self._objective_target,
-                    attack_scoring_config_override=scoring_config,
+                    attack_scoring_config=scoring_config,
                 )
                 display_group = self._build_display_group(
                     technique_name=technique_name,

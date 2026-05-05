@@ -164,7 +164,7 @@ class AttackTechniqueFactory(Identifiable):
         self,
         *,
         objective_target: PromptTarget,
-        attack_scoring_config_override: AttackScoringConfig | None = None,
+        attack_scoring_config: AttackScoringConfig,
         attack_adversarial_config_override: AttackAdversarialConfig | None = None,
         attack_converter_config_override: AttackConverterConfig | None = None,
     ) -> AttackTechnique:
@@ -185,16 +185,11 @@ class AttackTechniqueFactory(Identifiable):
         This allows a single call site to safely pass all available overrides
         without breaking attacks that don't support them.
 
-        Some attacks (e.g., TAP) create their own scoring config internally
-        when none is provided.  Pass ``None`` (the default) for
-        ``attack_scoring_config_override`` to let those attacks use their
-        built-in defaults.
-
         Args:
             objective_target: The target to attack (always required at create time).
-            attack_scoring_config_override: When non-None, replaces any scoring
-                config baked into the factory.  Only forwarded if the attack
-                class constructor accepts ``attack_scoring_config``.
+            attack_scoring_config: The scoring config to use for the attack. This is important
+                for attacks like TAP that may need a more specific scorer than the
+                scorer the scenario provides.
             attack_adversarial_config_override: When non-None, replaces any
                 adversarial config baked into the factory.  Only forwarded if
                 the attack class constructor accepts ``attack_adversarial_config``.
@@ -212,37 +207,12 @@ class AttackTechniqueFactory(Identifiable):
         kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
 
-        # Only forward overrides when the attack class accepts the underlying param
         accepted_params = self._get_accepted_params()
-        if attack_scoring_config_override is not None:
-            if "attack_scoring_config" not in accepted_params:
-                # Attack doesn't accept scoring config at all
-                if self._scorer_override_policy == ScorerOverridePolicy.RAISE:
-                    raise ValueError(
-                        f"Scorer override provided but {self._attack_class.__name__} "
-                        f"does not accept 'attack_scoring_config'."
-                    )
-                elif self._scorer_override_policy == ScorerOverridePolicy.WARN:
-                    logger.warning(
-                        f"Scorer override provided but {self._attack_class.__name__} "
-                        f"does not accept 'attack_scoring_config'. Using attack's built-in scorer instead."
-                    )
-            else:
-                required_type = self._get_scoring_config_type()
-                if required_type is None or isinstance(attack_scoring_config_override, required_type):
-                    kwargs["attack_scoring_config"] = attack_scoring_config_override
-                elif self._scorer_override_policy == ScorerOverridePolicy.RAISE:
-                    raise ValueError(
-                        f"Scorer override of type {type(attack_scoring_config_override).__name__} is incompatible "
-                        f"with {self._attack_class.__name__} which requires {required_type.__name__}."
-                    )
-                elif self._scorer_override_policy == ScorerOverridePolicy.WARN:
-                    logger.warning(
-                        f"Scorer override of type {type(attack_scoring_config_override).__name__} is incompatible "
-                        f"with {self._attack_class.__name__} (requires {required_type.__name__}). "
-                        f"Using attack's built-in scorer instead."
-                    )
-                # SKIP: silently use attack's built-in scorer
+        if self._should_apply_scoring_config(
+            attack_scoring_config=attack_scoring_config,
+            accepted_params=accepted_params,
+        ):
+            kwargs["attack_scoring_config"] = attack_scoring_config
         if "attack_adversarial_config" in accepted_params:
             if attack_adversarial_config_override is not None:
                 kwargs["attack_adversarial_config"] = attack_adversarial_config_override
@@ -267,6 +237,64 @@ class AttackTechniqueFactory(Identifiable):
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
             )
         }
+
+    def _should_apply_scoring_config(
+        self,
+        *,
+        attack_scoring_config: AttackScoringConfig,
+        accepted_params: set[str],
+    ) -> bool:
+        """
+        Determine whether the scoring config should be forwarded to the attack constructor.
+
+        Checks two conditions:
+        1. The attack class accepts an ``attack_scoring_config`` parameter.
+        2. The provided config is type-compatible with the attack's annotation.
+
+        When either condition fails, the ``scorer_override_policy`` determines
+        behavior: RAISE raises ValueError, WARN logs and returns False, SKIP
+        silently returns False.
+
+        Args:
+            attack_scoring_config: The scoring config to evaluate.
+            accepted_params: The set of parameter names the attack class accepts.
+
+        Returns:
+            True if the config should be applied, False otherwise.
+
+        Raises:
+            ValueError: If the policy is RAISE and the config cannot be applied.
+        """
+        if "attack_scoring_config" not in accepted_params:
+            self._apply_scorer_policy(
+                f"Scorer config provided but {self._attack_class.__name__} does not accept 'attack_scoring_config'."
+            )
+            return False
+
+        required_type = self._get_scoring_config_type()
+        if required_type is None or isinstance(attack_scoring_config, required_type):
+            return True
+
+        self._apply_scorer_policy(
+            f"Scorer config of type {type(attack_scoring_config).__name__} is incompatible "
+            f"with {self._attack_class.__name__} (requires {required_type.__name__})."
+        )
+        return False
+
+    def _apply_scorer_policy(self, message: str) -> None:
+        """
+        Apply the scorer override policy for an incompatibility.
+
+        Args:
+            message: Description of the incompatibility.
+
+        Raises:
+            ValueError: If the policy is RAISE.
+        """
+        if self._scorer_override_policy == ScorerOverridePolicy.RAISE:
+            raise ValueError(message)
+        if self._scorer_override_policy == ScorerOverridePolicy.WARN:
+            logger.warning(message)
 
     def _get_scoring_config_type(self) -> type | None:
         """

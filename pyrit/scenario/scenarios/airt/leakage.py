@@ -89,8 +89,6 @@ def _build_leakage_strategy() -> type[ScenarioStrategy]:
             "default": TagQuery.any_of("default"),
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
-            "ip": TagQuery.any_of("ip"),
-            "sensitive_data": TagQuery.any_of("sensitive_data"),
         },
     )
 
@@ -104,7 +102,7 @@ class Leakage(Scenario):
     construct attack techniques.
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     @classmethod
@@ -117,13 +115,13 @@ class Leakage(Scenario):
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
         """
-        Return the default strategy member (ALL).
+        Return the default strategy member (DEFAULT).
 
         Returns:
-            ScenarioStrategy: The ALL strategy value.
+            ScenarioStrategy: The DEFAULT strategy value.
         """
         strategy_class = cls.get_strategy_class()
-        return strategy_class("all")
+        return strategy_class("default")
 
     @classmethod
     def required_datasets(cls) -> list[str]:
