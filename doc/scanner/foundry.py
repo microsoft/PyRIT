@@ -17,7 +17,7 @@
 # and DIFFICULT.
 #
 # For full programming details, see
-# [Scenario Parameters](../code/scenarios/1_scenario_parameters.ipynb).
+# [Common Scenario Parameters](../code/scenarios/1_common_scenario_parameters.ipynb).
 
 # %%
 from pathlib import Path

@@ -164,7 +164,8 @@ project:
             - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
-            - file: code/scenarios/1_scenario_parameters.ipynb
+            - file: code/scenarios/1_common_scenario_parameters.ipynb
+            - file: code/scenarios/2_custom_scenario_parameters.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb
