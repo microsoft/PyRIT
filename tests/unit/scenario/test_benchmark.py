@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.executor.attack import AttackAdversarialConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -37,15 +38,15 @@ _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"test question {i}", "answer": f"test 
 # ---------------------------------------------------------------------------
 
 
-def _mock_id(name: str) -> ComponentIdentifier:
-    return ComponentIdentifier(class_name=name, class_module="test")
+def _mock_id(name: str, *, params: dict | None = None) -> ComponentIdentifier:
+    return ComponentIdentifier(class_name=name, class_module="test", params=params or {})
 
 
-def _make_adversarial_target(name: str) -> MagicMock:
-    """Create a mock PromptChatTarget with a given model name."""
+def _make_adversarial_target(name: str, *, params: dict | None = None) -> MagicMock:
+    """Create a mock PromptChatTarget with a given model name and optional identifier params."""
     mock = MagicMock(spec=PromptChatTarget)
     mock._model_name = name
-    mock.get_identifier.return_value = _mock_id(name)
+    mock.get_identifier.return_value = _mock_id(name, params=params)
     return mock
 
 
@@ -142,10 +143,15 @@ class TestBenchmarkTypes:
         with pytest.raises(ValueError, match="non-empty"):
             Benchmark(adversarial_models={})
 
-    def test_non_dict_adversarial_models_raises(self):
-        """Passing a list (legacy 1662 shape) must raise ValueError."""
+    def test_empty_list_adversarial_models_raises(self):
+        """Passing an empty list must raise ValueError."""
         with pytest.raises(ValueError, match="non-empty"):
-            Benchmark(adversarial_models=[MagicMock(spec=PromptChatTarget)])  # type: ignore[arg-type]
+            Benchmark(adversarial_models=[])
+
+    def test_unsupported_type_adversarial_models_raises(self):
+        """Passing a non-dict, non-list type must raise ValueError."""
+        with pytest.raises(ValueError, match="dict or a list"):
+            Benchmark(adversarial_models="not-a-dict-or-list")  # type: ignore[arg-type]
 
     def test_version_is_1(self):
         assert Benchmark.VERSION == 1
@@ -408,3 +414,144 @@ class TestBenchmarkRuntime:
         )
         for a in attacks:
             assert len(a.objectives) > 0
+
+
+# ===========================================================================
+# Constructor cascade tests (list / mixed / dedupe / system-prompt flow)
+# ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestBenchmarkConstructorCascade:
+    """Tests for the list/dict + target/config normalization pipeline in __init__."""
+
+    def test_list_of_targets_infers_labels_from_model_name(self):
+        """A list of bare targets is normalized to {model_name: AttackAdversarialConfig}."""
+        t1 = _make_adversarial_target("t1", params={"model_name": "alpha"})
+        t2 = _make_adversarial_target("t2", params={"model_name": "beta"})
+        scenario = _make_benchmark([t1, t2])
+        assert set(scenario._adversarial_configs.keys()) == {"alpha", "beta"}
+        assert all(isinstance(v, AttackAdversarialConfig) for v in scenario._adversarial_configs.values())
+        assert scenario._adversarial_configs["alpha"].target is t1
+        assert scenario._adversarial_configs["beta"].target is t2
+
+    def test_list_falls_back_to_underlying_model_name(self):
+        """``underlying_model_name`` is preferred over ``model_name`` when present."""
+        t = _make_adversarial_target("t", params={"underlying_model_name": "gpt-4o", "model_name": "wrapper"})
+        scenario = _make_benchmark([t])
+        assert "gpt-4o" in scenario._adversarial_configs
+
+    def test_list_of_configs_preserves_system_prompt_path(self):
+        """A list of AttackAdversarialConfig instances keeps each config's fields intact.
+
+        The dict value must be the exact same config object the user passed in
+        so ``system_prompt_path`` and ``seed_prompt`` are preserved end-to-end.
+        """
+        t = _make_adversarial_target("t", params={"model_name": "alpha"})
+        cfg = AttackAdversarialConfig(target=t, system_prompt_path="some/prompt.yaml")
+        scenario = _make_benchmark([cfg])
+        stored = scenario._adversarial_configs["alpha"]
+        assert stored is cfg
+        assert stored.system_prompt_path == "some/prompt.yaml"
+
+    def test_dict_with_bare_target_is_wrapped(self):
+        """Bare targets in a dict are wrapped into AttackAdversarialConfig."""
+        t = _make_adversarial_target("t")
+        scenario = _make_benchmark({"label": t})
+        cfg = scenario._adversarial_configs["label"]
+        assert isinstance(cfg, AttackAdversarialConfig)
+        assert cfg.target is t
+
+    def test_dict_with_config_passes_through_unchanged(self):
+        """Existing configs in a dict pass through Stage B without re-wrapping."""
+        t = _make_adversarial_target("t")
+        cfg = AttackAdversarialConfig(target=t, system_prompt_path="x.yaml")
+        scenario = _make_benchmark({"label": cfg})
+        assert scenario._adversarial_configs["label"] is cfg
+
+    def test_dict_with_mixed_target_and_config(self):
+        """A dict mixing bare targets and configs normalizes all values to configs."""
+        t1 = _make_adversarial_target("t1")
+        t2 = _make_adversarial_target("t2")
+        cfg2 = AttackAdversarialConfig(target=t2, system_prompt_path="x.yaml")
+        scenario = _make_benchmark({"a": t1, "b": cfg2})
+        assert isinstance(scenario._adversarial_configs["a"], AttackAdversarialConfig)
+        assert scenario._adversarial_configs["a"].target is t1
+        assert scenario._adversarial_configs["b"] is cfg2
+
+    def test_list_dedupe_silent_for_identical_setup(self, caplog):
+        """The same target instance passed twice in a list collapses to one entry, silently."""
+        t = _make_adversarial_target("t", params={"model_name": "alpha"})
+        with caplog.at_level("WARNING"):
+            scenario = _make_benchmark([t, t])
+        assert list(scenario._adversarial_configs.keys()) == ["alpha"]
+        assert "collided" not in caplog.text
+
+    def test_list_collision_suffixes_distinct_setups_and_warns(self, caplog):
+        """Two distinct targets that infer the same name get suffixed and a warning is logged."""
+        t1 = _make_adversarial_target("t1", params={"model_name": "alpha", "endpoint": "ep1"})
+        t2 = _make_adversarial_target("t2", params={"model_name": "alpha", "endpoint": "ep2"})
+        with caplog.at_level("WARNING"):
+            scenario = _make_benchmark([t1, t2])
+        assert set(scenario._adversarial_configs.keys()) == {"alpha", "alpha_2"}
+        assert "collided" in caplog.text
+
+    def test_list_of_configs_same_target_different_system_prompt_kept_distinct(self, caplog):
+        """Same target hash but different system_prompt_path → two distinct entries."""
+        t = _make_adversarial_target("t", params={"model_name": "alpha"})
+        cfg_a = AttackAdversarialConfig(target=t, system_prompt_path="prompt_a.yaml")
+        cfg_b = AttackAdversarialConfig(target=t, system_prompt_path="prompt_b.yaml")
+        with caplog.at_level("WARNING"):
+            scenario = _make_benchmark([cfg_a, cfg_b])
+        assert set(scenario._adversarial_configs.keys()) == {"alpha", "alpha_2"}
+        # Both configs preserved (object identity check).
+        stored = list(scenario._adversarial_configs.values())
+        assert cfg_a in stored
+        assert cfg_b in stored
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_flows_to_factory_create(self, mock_objective_target):
+        """An AttackAdversarialConfig.system_prompt_path reaches factory.create unchanged."""
+        t = _make_adversarial_target("t", params={"model_name": "alpha"})
+        cfg = AttackAdversarialConfig(target=t, system_prompt_path="my/prompt.yaml")
+
+        seen_overrides: list[AttackAdversarialConfig] = []
+
+        class _StubFactory:
+            def create(self, **kwargs):
+                seen_overrides.append(kwargs["attack_adversarial_config_override"])
+                stub = MagicMock()
+                stub.attack = MagicMock()
+                return stub
+
+        # NOTE: temporary workaround for a separate strategy-filter bug
+        # (`TagQuery.all("all").filter(specs)` returns 0 specs, so aggregates
+        # don't expand to concrete techniques).  Once that's fixed in a
+        # follow-up, drop the manual `_scenario_strategies` override below.
+        real_spec_name = next(iter(_BENCHMARKABLE_TECHNIQUE_NAMES))
+        fake_strat = MagicMock()
+        fake_strat.value = real_spec_name
+
+        with (
+            patch.object(
+                DatasetConfiguration,
+                "get_seed_attack_groups",
+                return_value={"harmbench": _make_seed_groups("harmbench")},
+            ),
+            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
+            patch.object(
+                AttackTechniqueRegistry,
+                "build_factory_from_spec",
+                return_value=_StubFactory(),
+            ),
+        ):
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = Benchmark(adversarial_models={"alpha": cfg})
+            await scenario.initialize_async(objective_target=mock_objective_target)
+            scenario._scenario_strategies = [fake_strat]
+            await scenario._get_atomic_attacks_async()
+
+        # At least one factory.create call must have received our exact config.
+        assert seen_overrides, "factory.create was never invoked"
+        assert all(o is cfg for o in seen_overrides)
+        assert all(o.system_prompt_path == "my/prompt.yaml" for o in seen_overrides)
