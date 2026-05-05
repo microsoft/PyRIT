@@ -162,10 +162,6 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         """The policy applied when a scenario scorer is incompatible with an attack's annotation."""
         return self._scorer_override_policy
 
-    @scorer_override_policy.setter
-    def scorer_override_policy(self, value: ScorerOverridePolicy) -> None:
-        self._scorer_override_policy = value
-
     @staticmethod
     def build_strategy_class_from_specs(
         *,

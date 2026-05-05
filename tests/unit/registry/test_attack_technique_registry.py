@@ -235,20 +235,18 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
         """Registry defaults to WARN policy."""
         assert self.registry.scorer_override_policy == ScorerOverridePolicy.WARN
 
-    def test_policy_can_be_set(self):
-        """Policy can be changed via setter."""
-        self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE
-        assert self.registry.scorer_override_policy == ScorerOverridePolicy.RAISE
+    def test_policy_is_read_only(self):
+        """Policy property has no setter — it's read-only."""
+        with pytest.raises(AttributeError):
+            self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE
 
     def test_policy_passed_to_factories_via_register_from_specs(self):
-        """Factories built via register_from_specs inherit the registry's policy."""
-        self.registry.scorer_override_policy = ScorerOverridePolicy.SKIP
-
+        """Factories built via register_from_specs inherit the registry's default policy."""
         spec = AttackTechniqueSpec(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
         self.registry.register_from_specs([spec])
 
         factory = self.registry._registry_items["stub_policy"].instance
-        assert factory._scorer_override_policy == ScorerOverridePolicy.SKIP
+        assert factory._scorer_override_policy == ScorerOverridePolicy.WARN
 
 
 class TestScenarioTechniqueSpecsValid:
