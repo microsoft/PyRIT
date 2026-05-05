@@ -341,17 +341,13 @@ class AttackTechniqueFactory(Identifiable):
         if origin is Union or (hasattr(annotation, "__args__") and origin is None and hasattr(annotation, "__or__")):
             args = typing.get_args(annotation)
             non_none = [a for a in args if a is not type(None)]
-            if len(non_none) == 1:
-                return non_none[0]
-            return None
+            return non_none[0] if len(non_none) == 1 else None
 
         # types.UnionType from PEP 604 at runtime (3.10+)
         if hasattr(annotation, "__args__") and type(annotation).__name__ == "UnionType":
             args = annotation.__args__
             non_none = [a for a in args if a is not type(None)]
-            if len(non_none) == 1:
-                return non_none[0]
-            return None
+            return non_none[0] if len(non_none) == 1 else None
 
         # Plain type (not Optional)
         if isinstance(annotation, type):

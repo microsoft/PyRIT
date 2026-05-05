@@ -13,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 
 
 def _make_seed_technique() -> SeedAttackTechniqueGroup:
@@ -394,3 +394,176 @@ class TestFactoryIdentifier:
         factory2 = AttackTechniqueFactory(attack_class=_StubAttack, seed_technique=seed2)
 
         assert factory1.get_identifier().hash != factory2.get_identifier().hash
+
+
+class TestScorerPolicy:
+    """Tests for scorer override policy logic (_should_apply_scoring_config, _apply_scorer_policy)."""
+
+    def test_should_apply_returns_true_when_type_compatible(self):
+        """Config passes through when the attack accepts base AttackScoringConfig."""
+        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        config = MagicMock(spec=AttackScoringConfig)
+
+        result = factory._should_apply_scoring_config(
+            attack_scoring_config=config,
+            accepted_params=factory._get_accepted_params(),
+        )
+
+        assert result is True
+
+    def test_should_apply_returns_false_when_param_not_accepted(self):
+        """If the attack class doesn't accept attack_scoring_config, return False."""
+
+        class _NoScoringAttack:
+            def __init__(self, *, objective_target):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NoScoringAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            attack_class=_NoScoringAttack,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+        )
+        config = MagicMock(spec=AttackScoringConfig)
+
+        result = factory._should_apply_scoring_config(
+            attack_scoring_config=config,
+            accepted_params=factory._get_accepted_params(),
+        )
+
+        assert result is False
+
+    def test_should_apply_returns_false_when_type_incompatible_warn(self, caplog):
+        """When annotation is narrowed and config doesn't match, WARN returns False and logs."""
+
+        class _NarrowedScoringConfig(AttackScoringConfig):
+            pass
+
+        class _NarrowedAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: _NarrowedScoringConfig | None = None):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            attack_class=_NarrowedAttack,
+            scorer_override_policy=ScorerOverridePolicy.WARN,
+        )
+        config = MagicMock(spec=AttackScoringConfig)
+
+        result = factory._should_apply_scoring_config(
+            attack_scoring_config=config,
+            accepted_params=factory._get_accepted_params(),
+        )
+
+        assert result is False
+        assert "incompatible" in caplog.text
+
+    def test_should_apply_raises_when_type_incompatible_raise_policy(self):
+        """When annotation is narrowed and policy is RAISE, ValueError is raised."""
+
+        class _NarrowedScoringConfig(AttackScoringConfig):
+            pass
+
+        class _NarrowedAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: _NarrowedScoringConfig | None = None):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            attack_class=_NarrowedAttack,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+        )
+        config = MagicMock(spec=AttackScoringConfig)
+
+        with pytest.raises(ValueError, match="incompatible"):
+            factory._should_apply_scoring_config(
+                attack_scoring_config=config,
+                accepted_params=factory._get_accepted_params(),
+            )
+
+    def test_should_apply_accepts_subclass_of_narrowed_type(self):
+        """A subclass of the narrowed annotation type should pass through."""
+
+        class _NarrowedScoringConfig(AttackScoringConfig):
+            pass
+
+        class _NarrowedAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: _NarrowedScoringConfig | None = None):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            attack_class=_NarrowedAttack,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+        )
+        config = MagicMock(spec=_NarrowedScoringConfig)
+
+        result = factory._should_apply_scoring_config(
+            attack_scoring_config=config,
+            accepted_params=factory._get_accepted_params(),
+        )
+
+        assert result is True
+
+    def test_apply_scorer_policy_skip_is_silent(self, caplog):
+        """SKIP policy should not log or raise."""
+        factory = AttackTechniqueFactory(
+            attack_class=_StubAttack,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+        )
+
+        factory._apply_scorer_policy("some incompatibility message")
+
+        assert "some incompatibility message" not in caplog.text
+
+    def test_apply_scorer_policy_warn_logs(self, caplog):
+        """WARN policy should log a warning."""
+        factory = AttackTechniqueFactory(
+            attack_class=_StubAttack,
+            scorer_override_policy=ScorerOverridePolicy.WARN,
+        )
+
+        factory._apply_scorer_policy("scorer mismatch detail")
+
+        assert "scorer mismatch detail" in caplog.text
+
+    def test_apply_scorer_policy_raise_raises(self):
+        """RAISE policy should raise ValueError with the message."""
+        factory = AttackTechniqueFactory(
+            attack_class=_StubAttack,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+        )
+
+        with pytest.raises(ValueError, match="error detail"):
+            factory._apply_scorer_policy("error detail")
+
+
+class TestUnwrapOptional:
+    """Tests for AttackTechniqueFactory._unwrap_optional static method."""
+
+    def test_unwrap_union_with_none(self):
+        """X | None should unwrap to X."""
+        result = AttackTechniqueFactory._unwrap_optional(AttackScoringConfig | None)
+        assert result is AttackScoringConfig
+
+    def test_unwrap_plain_type(self):
+        """A bare type (no Optional wrapping) returns itself."""
+        result = AttackTechniqueFactory._unwrap_optional(AttackScoringConfig)
+        assert result is AttackScoringConfig
+
+    def test_unwrap_multi_union_returns_none(self):
+        """Union of more than one non-None type returns None (ambiguous)."""
+        result = AttackTechniqueFactory._unwrap_optional(int | str | None)
+        assert result is None
+
+    def test_unwrap_none_type_alone(self):
+        """NoneType alone is a plain type — returns itself."""
+        result = AttackTechniqueFactory._unwrap_optional(type(None))
+        assert result is type(None)
