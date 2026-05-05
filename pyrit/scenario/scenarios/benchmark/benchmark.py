@@ -62,6 +62,7 @@ class Benchmark(Scenario):
         """
         if cls._cached_strategy_class is None:
             cls._cached_strategy_class = Benchmark._build_benchmark_strategy()
+
         return cls._cached_strategy_class
 
     @classmethod
@@ -151,12 +152,11 @@ class Benchmark(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
-        self._include_baseline = False
-
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             strategy_class=self.get_strategy_class(),
+            include_default_baseline=False,
             scenario_result_id=scenario_result_id,
         )
 
@@ -298,9 +298,9 @@ class Benchmark(Scenario):
         specs = Benchmark._get_benchmarkable_specs()
         return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
             class_name="BenchmarkStrategy",
-            specs=TagQuery.all("all").filter(specs),
+            specs=TagQuery.all("core").filter(specs),
             aggregate_tags={
-                "all": TagQuery.any_of("core"),
+                "default": TagQuery.any_of("default"),
                 "single_turn": TagQuery.any_of("single_turn"),
                 "multi_turn": TagQuery.any_of("multi_turn"),
                 "light": TagQuery.any_of("light"),

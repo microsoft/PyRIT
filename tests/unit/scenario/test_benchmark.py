@@ -15,17 +15,26 @@ from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario.core import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 from pyrit.scenario.scenarios.benchmark.benchmark import Benchmark
 from pyrit.score import TrueFalseScorer
 
-# Pin the technique count to whatever production currently considers benchmarkable.
-# Self-pinning: any change to ``_get_benchmarkable_specs`` is reflected here, but
-# count-based assertions stay correct without hard-coding a magic number.
-_NUM_ADVERSARIAL_TECHNIQUES = len(Benchmark._get_benchmarkable_specs())
-_BENCHMARKABLE_TECHNIQUE_NAMES = {spec.name for spec in Benchmark._get_benchmarkable_specs()}
-_BENCHMARKABLE_ATTACK_CLASSES = {spec.attack_class for spec in Benchmark._get_benchmarkable_specs()}
+# Self-pinned: any change to ``_get_benchmarkable_specs`` (or to the ``light`` tag
+# membership in SCENARIO_TECHNIQUES) is reflected automatically — no magic numbers.
+#
+# ``_BENCHMARKABLE_*`` covers every adversarial-capable spec (used to verify the
+# strategy enum's full concrete-member roster).  ``_LIGHT_BENCHMARKABLE_*`` covers
+# only the subset tagged ``"light"`` (used for runtime expectations under the
+# default ``"light"`` strategy).
+_BENCHMARKABLE_SPECS = Benchmark._get_benchmarkable_specs()
+_NUM_ADVERSARIAL_TECHNIQUES = len(_BENCHMARKABLE_SPECS)
+_BENCHMARKABLE_TECHNIQUE_NAMES = {spec.name for spec in _BENCHMARKABLE_SPECS}
+_BENCHMARKABLE_ATTACK_CLASSES = {spec.attack_class for spec in _BENCHMARKABLE_SPECS}
+
+_LIGHT_BENCHMARKABLE_SPECS = [spec for spec in _BENCHMARKABLE_SPECS if "light" in spec.strategy_tags]
+_NUM_LIGHT_BENCHMARKABLE = len(_LIGHT_BENCHMARKABLE_SPECS)
 
 # ---------------------------------------------------------------------------
 # Synthetic many-shot examples — prevents reading the real JSON during tests
@@ -215,10 +224,10 @@ class TestBenchmarkStrategy:
         assert s1._strategy_class is s2._strategy_class
         assert s1._strategy_class is Benchmark.get_strategy_class()
 
-    def test_default_strategy_is_all(self):
+    def test_default_strategy_is_light(self):
         """Default expands to every benchmarkable technique via the ``all`` aggregate."""
         default = Benchmark.get_default_strategy()
-        assert default.value == "all"
+        assert default.value == "light"
 
     def test_benchmarkable_specs_have_no_adversarial_chat(self):
         """Filtered specs must leave adversarial_chat unset — the scenario injects its own."""
@@ -273,7 +282,7 @@ class TestBenchmarkRuntime:
         adversarial_models,
         seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
         strategies=None,
-    ):
+    ) -> tuple[Benchmark, list[AtomicAttack]]:
         """Helper: create Benchmark, initialize, return (scenario, attacks)."""
         groups = seed_groups or {"harmbench": _make_seed_groups("harmbench")}
         with (
@@ -290,13 +299,13 @@ class TestBenchmarkRuntime:
             return scenario, attacks
 
     @pytest.mark.asyncio
-    async def test_default_strategy_runs_all_techniques(self, mock_objective_target, two_adversarial_models):
-        """With no strategies passed, default ``all`` produces N_techniques x N_models attacks."""
+    async def test_default_strategy_runs_light_techniques(self, mock_objective_target, two_adversarial_models):
+        """With no strategies passed, default ``light`` produces N_light x N_models attacks."""
         _, attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=two_adversarial_models,
         )
-        assert len(attacks) == _NUM_ADVERSARIAL_TECHNIQUES * 2
+        assert len(attacks) == _NUM_LIGHT_BENCHMARKABLE * 2
 
     @pytest.mark.asyncio
     async def test_all_strategy_produces_full_cross_product(self, mock_objective_target, two_adversarial_models):
@@ -383,7 +392,7 @@ class TestBenchmarkRuntime:
 
     @pytest.mark.asyncio
     async def test_multiple_datasets_multiplies_attacks(self, mock_objective_target, single_adversarial_model):
-        """1 model x N_techniques x 2 datasets = 2 * N_techniques atomic attacks."""
+        """1 model x N_light_techniques x 2 datasets = 2 * N_light atomic attacks (default ``light``)."""
         two_datasets = {
             "harmbench": _make_seed_groups("harmbench"),
             "extra": _make_seed_groups("extra"),
@@ -393,14 +402,16 @@ class TestBenchmarkRuntime:
             adversarial_models=single_adversarial_model,
             seed_groups=two_datasets,
         )
-        assert len(attacks) == _NUM_ADVERSARIAL_TECHNIQUES * 2
+        assert len(attacks) == _NUM_LIGHT_BENCHMARKABLE * 2
 
     @pytest.mark.asyncio
     async def test_attacks_use_all_benchmarkable_attack_classes(self, mock_objective_target, single_adversarial_model):
-        """Atomic attacks must cover every adversarial-capable attack class."""
+        """Under the ``all`` strategy, atomic attacks must cover every adversarial-capable attack class."""
+        scenario_class_strategies = Benchmark.get_strategy_class()
         _, attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
+            strategies=[scenario_class_strategies("all")],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == _BENCHMARKABLE_ATTACK_CLASSES
@@ -414,6 +425,20 @@ class TestBenchmarkRuntime:
         )
         for a in attacks:
             assert len(a.objectives) > 0
+
+    @pytest.mark.asyncio
+    async def test_baseline_excluded(self, mock_objective_target, single_adversarial_model):
+        """Benchmark must opt out of the parent's default baseline.
+
+        Verifies both the configuration toggle (``_include_baseline is False``) and
+        the observable property (no atomic attack is named ``"baseline"``).
+        """
+        scenario, attacks = await self._init_and_get_attacks(
+            mock_objective_target=mock_objective_target,
+            adversarial_models=single_adversarial_model,
+        )
+        assert scenario._include_baseline is False
+        assert not any(a.atomic_attack_name == "baseline" for a in attacks)
 
 
 # ===========================================================================
@@ -524,14 +549,6 @@ class TestBenchmarkConstructorCascade:
                 stub.attack = MagicMock()
                 return stub
 
-        # NOTE: temporary workaround for a separate strategy-filter bug
-        # (`TagQuery.all("all").filter(specs)` returns 0 specs, so aggregates
-        # don't expand to concrete techniques).  Once that's fixed in a
-        # follow-up, drop the manual `_scenario_strategies` override below.
-        real_spec_name = next(iter(_BENCHMARKABLE_TECHNIQUE_NAMES))
-        fake_strat = MagicMock()
-        fake_strat.value = real_spec_name
-
         with (
             patch.object(
                 DatasetConfiguration,
@@ -548,7 +565,6 @@ class TestBenchmarkConstructorCascade:
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
             scenario = Benchmark(adversarial_models={"alpha": cfg})
             await scenario.initialize_async(objective_target=mock_objective_target)
-            scenario._scenario_strategies = [fake_strat]
             await scenario._get_atomic_attacks_async()
 
         # At least one factory.create call must have received our exact config.
