@@ -208,11 +208,16 @@ class Scorer(Identifiable, abc.ABC):
         if infer_objective_from_request and (not objective):
             objective = self._extract_objective_from_response(message)
 
+        # When score_blocked_content is enabled, create a modified message where blocked pieces
+        # with partial content are replaced with text-type substitutes (response_error="none").
+        # This is done here (not in _score_async) so that _score_async's signature remains
+        # (self, message, *, objective=None) — preserving backward compatibility for subclasses.
+        scoring_message = self._apply_blocked_content_substitution(message) if score_blocked_content else message
+
         try:
             scores = await self._score_async(
-                message,
+                scoring_message,
                 objective=objective,
-                score_blocked_content=score_blocked_content,
             )
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
@@ -228,9 +233,7 @@ class Scorer(Identifiable, abc.ABC):
 
         return scores
 
-    async def _score_async(
-        self, message: Message, *, objective: Optional[str] = None, score_blocked_content: bool = False
-    ) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -238,16 +241,9 @@ class Scorer(Identifiable, abc.ABC):
         and returns a flattened list of scores. Subclasses can override this method
         to implement custom scoring logic (e.g., aggregating scores).
 
-        When score_blocked_content is True, blocked pieces with partial content in
-        prompt_metadata["partial_content"] are substituted with text-type copies
-        (with response_error="none") so they pass the validator and are scored
-        by the LLM without triggering blocked short-circuits.
-
         Args:
             message (Message): The message to score.
             objective (Optional[str]): The objective to evaluate against. Defaults to None.
-            score_blocked_content (bool): If True, substitute blocked pieces that have
-                partial content with text-type copies. Defaults to False.
 
         Returns:
             list[Score]: A list of Score objects.
@@ -257,20 +253,6 @@ class Scorer(Identifiable, abc.ABC):
 
         # Score only the supported pieces
         supported_pieces = self._get_supported_pieces(message)
-
-        # When score_blocked_content is enabled, substitute blocked pieces that have partial content.
-        # Substitutes replace the original blocked piece (if present) or are added if not.
-        if score_blocked_content:
-            already_supported_ids = {p.id for p in supported_pieces}
-            for piece in message.message_pieces:
-                if piece.is_blocked() and "partial_content" in piece.prompt_metadata:
-                    substitute = self._create_text_piece_from_blocked(piece)
-                    if substitute and self._validator.is_message_piece_supported(message_piece=substitute):
-                        # Replace original blocked piece if it was already in supported_pieces
-                        if piece.id in already_supported_ids:
-                            supported_pieces = [substitute if p.id == piece.id else p for p in supported_pieces]
-                        else:
-                            supported_pieces.append(substitute)
 
         tasks = [self._score_piece_async(message_piece=piece, objective=objective) for piece in supported_pieces]
 
@@ -324,6 +306,39 @@ class Scorer(Identifiable, abc.ABC):
             response_error="none",
             timestamp=piece.timestamp,
         )
+
+    def _apply_blocked_content_substitution(self, message: Message) -> Message:
+        """
+        Create a copy of the message where blocked pieces with partial content are substituted.
+
+        Each blocked piece that has prompt_metadata["partial_content"] is replaced with a
+        text-typed copy (response_error="none", converted_value=partial_content). Non-blocked
+        pieces and blocked pieces without partial content are kept as-is.
+
+        This is called in score_async (not _score_async) so that subclass overrides of
+        _score_async do not need to accept the score_blocked_content parameter.
+
+        Args:
+            message: The original message potentially containing blocked pieces.
+
+        Returns:
+            A new Message with substituted pieces, or the original if no substitution was needed.
+        """
+        substituted = False
+        new_pieces: list[MessagePiece] = []
+        for piece in message.message_pieces:
+            if piece.is_blocked() and "partial_content" in piece.prompt_metadata:
+                substitute = self._create_text_piece_from_blocked(piece)
+                if substitute:
+                    new_pieces.append(substitute)
+                    substituted = True
+                    continue
+            new_pieces.append(piece)
+
+        if not substituted:
+            return message
+
+        return Message(message_pieces=new_pieces)
 
     def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
         """
