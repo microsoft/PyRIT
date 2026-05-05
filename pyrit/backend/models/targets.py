@@ -28,15 +28,11 @@ class TargetCapabilitiesInfo(BaseModel):
     supports_json_schema: bool = Field(
         ..., description="Whether the target supports constraining output to a JSON schema"
     )
-    supports_json_output: bool = Field(
-        ..., description="Whether the target supports JSON output format"
-    )
+    supports_json_output: bool = Field(..., description="Whether the target supports JSON output format")
     supports_editable_history: bool = Field(
         ..., description="Whether the target allows the attack history to be modified"
     )
-    supports_system_prompt: bool = Field(
-        ..., description="Whether the target supports system prompts"
-    )
+    supports_system_prompt: bool = Field(..., description="Whether the target supports system prompts")
 
 
 class TargetInstance(BaseModel):
