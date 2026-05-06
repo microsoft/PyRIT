@@ -10,7 +10,7 @@ the metadata about available scenarios (listing) and scenario execution (runs).
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -64,13 +64,27 @@ class RunScenarioRequest(BaseModel):
         None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"
     )
     strategies: list[str] | None = Field(None, description="Strategy names to use (uses scenario default if omitted)")
-    dataset_names: list[str] | None = Field(
-        None, description="Dataset names to use (uses scenario default if omitted)"
-    )
+    dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
     max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
     max_concurrency: int = Field(10, ge=1, le=100, description="Maximum concurrent operations")
-    max_retries: int = Field(0, ge=0, le=10, description="Maximum retry attempts on failure")
+    max_retries: int = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
     memory_labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")
+    scenario_params: dict[str, Any] | None = Field(
+        None,
+        description="Custom parameters for the scenario (passed to scenario.set_params_from_args). "
+        "Keys are parameter names declared by the scenario's supported_parameters().",
+    )
+    initializer_args: dict[str, dict[str, Any]] | None = Field(
+        None,
+        description="Per-initializer arguments keyed by initializer name. "
+        "Each value is a dict of args passed to that initializer's set_params_from_args(). "
+        "Example: {'target': {'endpoint': 'https://...'}}.",
+    )
+    scenario_result_id: str | None = Field(
+        None,
+        description="Optional ID of an existing ScenarioResult to resume. "
+        "If provided, the scenario will resume from prior progress instead of starting fresh.",
+    )
 
 
 class ScenarioRunResult(BaseModel):

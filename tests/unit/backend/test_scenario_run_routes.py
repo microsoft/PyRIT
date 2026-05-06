@@ -79,9 +79,7 @@ class TestStartScenarioRunRoute:
         """Test that an invalid scenario returns 400."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.start_run_async = AsyncMock(
-                side_effect=ValueError("'bad.scenario' not found in registry.")
-            )
+            mock_service.start_run_async = AsyncMock(side_effect=ValueError("'bad.scenario' not found in registry."))
             mock_get.return_value = mock_service
 
             response = client.post(
@@ -118,6 +116,8 @@ class TestStartScenarioRunRoute:
                     "max_concurrency": 5,
                     "max_retries": 2,
                     "memory_labels": {"team": "red"},
+                    "scenario_params": {"max_turns": 10, "threshold": 0.8},
+                    "initializer_args": {"target": {"endpoint": "https://example.com"}},
                 },
             )
 
@@ -218,9 +218,7 @@ class TestCancelScenarioRunRoute:
         """Test that cancelling a completed run returns 409 Conflict."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.cancel_run_async = AsyncMock(
-                side_effect=ValueError("Cannot cancel run in 'completed' state.")
-            )
+            mock_service.cancel_run_async = AsyncMock(side_effect=ValueError("Cannot cancel run in 'completed' state."))
             mock_get.return_value = mock_service
 
             response = client.delete("/api/scenarios/runs/test-run-id")

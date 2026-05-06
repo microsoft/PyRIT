@@ -42,6 +42,7 @@ class _RunInfo:
     task: asyncio.Task[None] | None = None
     error: str | None = None
     result: ScenarioRunResult | None = None
+    scenario: Any = None
 
 
 class ScenarioRunService:
@@ -59,16 +60,20 @@ class ScenarioRunService:
         """
         Start a new scenario run as a background task.
 
-        Validates inputs synchronously, then spawns an asyncio task for execution.
+        Performs all validation and initialization eagerly (initializers, target
+        resolution, strategy validation, scenario.initialize_async) so errors are
+        returned immediately. On success, spawns a background task that only
+        executes scenario.run_async.
 
         Args:
             request: The run request with scenario name, target, and options.
 
         Returns:
-            ScenarioRunResponse with run_id and PENDING status.
+            ScenarioRunResponse with run_id and RUNNING status.
 
         Raises:
-            ValueError: If scenario or target cannot be found, or concurrent limit exceeded.
+            ValueError: If scenario, target, initializer, or strategy cannot be found,
+                or concurrent limit exceeded.
         """
         # Check concurrent run limit
         active_count = sum(
@@ -82,24 +87,18 @@ class ScenarioRunService:
                 "Wait for an existing run to complete or cancel one."
             )
 
-        # Validate scenario exists
-        from pyrit.registry import ScenarioRegistry
+        # Perform all initialization eagerly — errors propagate to caller
+        scenario = await self._initialize_run_async(request=request)
 
-        scenario_registry = ScenarioRegistry.get_registry_singleton()
-        try:
-            scenario_registry.get_class(request.scenario_name)
-        except KeyError as e:
-            raise ValueError(str(e)) from None
-
-        # Create run info
+        # Create run info in RUNNING state (initialization already complete)
         run_id = str(uuid.uuid4())
-        info = _RunInfo(run_id=run_id, request=request)
+        info = _RunInfo(run_id=run_id, request=request, status=ScenarioRunStatus.RUNNING, scenario=scenario)
         self._runs[run_id] = info
 
         # Evict old completed runs if over limit
         self._evict_completed_runs()
 
-        # Spawn background task
+        # Spawn background task (only runs scenario.run_async)
         task = asyncio.create_task(self._execute_run_async(run_id=run_id))
         info.task = task
 
@@ -159,103 +158,122 @@ class ScenarioRunService:
         info.updated_at = datetime.now(timezone.utc)
         return self._to_response(info)
 
+    async def _initialize_run_async(self, *, request: RunScenarioRequest) -> Any:
+        """
+        Validate inputs and initialize the scenario eagerly.
+
+        Performs all validation (scenario, initializers, target, strategies) and
+        calls scenario.initialize_async so that any errors are raised immediately
+        to the caller.
+
+        Args:
+            request: The run request with scenario name, target, and options.
+
+        Returns:
+            The fully initialized Scenario instance ready for run_async.
+
+        Raises:
+            ValueError: If any validation fails (bad scenario name, missing target,
+                invalid strategy, unknown initializer, etc.).
+        """
+        from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
+        from pyrit.scenario.core import DatasetConfiguration
+
+        # Validate scenario exists
+        scenario_registry = ScenarioRegistry.get_registry_singleton()
+        try:
+            scenario_class = scenario_registry.get_class(request.scenario_name)
+        except KeyError as e:
+            raise ValueError(str(e)) from None
+
+        # Validate and run initializers
+        if request.initializers:
+            initializer_registry = InitializerRegistry.get_registry_singleton()
+            for initializer_name in request.initializers:
+                try:
+                    initializer_class = initializer_registry.get_class(initializer_name)
+                except KeyError as e:
+                    raise ValueError(f"Initializer not found: {e}") from None
+                instance = initializer_class()
+                if request.initializer_args and initializer_name in request.initializer_args:
+                    instance.set_params_from_args(args=request.initializer_args[initializer_name])
+                await instance.initialize_async()
+
+        # Resolve target
+        target_registry = TargetRegistry.get_registry_singleton()
+        objective_target = target_registry.get_instance_by_name(request.target_name)
+        if objective_target is None:
+            available_names = target_registry.get_names()
+            if not available_names:
+                raise ValueError(
+                    f"Target '{request.target_name}' not found. The target registry is empty. "
+                    "Make sure to include an initializer that registers targets "
+                    "(e.g., initializers: ['target'])."
+                )
+            raise ValueError(
+                f"Target '{request.target_name}' not found in registry. "
+                f"Available targets: {', '.join(available_names)}"
+            )
+
+        # Build init kwargs
+        init_kwargs: dict[str, Any] = {
+            "objective_target": objective_target,
+            "max_concurrency": request.max_concurrency,
+            "max_retries": request.max_retries,
+        }
+
+        if request.memory_labels:
+            init_kwargs["memory_labels"] = request.memory_labels
+
+        # Validate and resolve strategies
+        if request.strategies:
+            strategy_class = scenario_class.get_strategy_class()
+            strategy_enums = []
+            for name in request.strategies:
+                try:
+                    strategy_enums.append(strategy_class(name))
+                except ValueError:
+                    available_strategies = [s.value for s in strategy_class]
+                    raise ValueError(
+                        f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
+                        f"Available: {', '.join(available_strategies)}"
+                    ) from None
+            init_kwargs["scenario_strategies"] = strategy_enums
+
+        # Build dataset config
+        if request.dataset_names:
+            init_kwargs["dataset_config"] = DatasetConfiguration(
+                dataset_names=request.dataset_names,
+                max_dataset_size=request.max_dataset_size,
+            )
+        elif request.max_dataset_size is not None:
+            default_config = scenario_class.default_dataset_config()
+            default_config.max_dataset_size = request.max_dataset_size
+            init_kwargs["dataset_config"] = default_config
+
+        # Instantiate and initialize scenario
+        constructor_kwargs: dict[str, Any] = {}
+        if request.scenario_result_id:
+            constructor_kwargs["scenario_result_id"] = request.scenario_result_id
+        scenario = scenario_class(**constructor_kwargs)  # type: ignore[call-arg]
+        scenario.set_params_from_args(args=request.scenario_params or {})
+        await scenario.initialize_async(**init_kwargs)
+        return scenario
+
     async def _execute_run_async(self, *, run_id: str) -> None:
         """
         Execute a scenario run (background task entry point).
 
-        Mirrors the flow in pyrit.cli.frontend_core.run_scenario_async.
+        Only calls scenario.run_async on the already-initialized scenario.
 
         Args:
             run_id: The run to execute.
         """
         info = self._runs[run_id]
-        request = info.request
 
         try:
-            # --- Phase 1: Initialize ---
-            info.status = ScenarioRunStatus.INITIALIZING
-            info.updated_at = datetime.now(timezone.utc)
+            scenario_result = await info.scenario.run_async()
 
-            from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
-            from pyrit.scenario.core import DatasetConfiguration
-
-            # Run initializers if requested
-            if request.initializers:
-                initializer_registry = InitializerRegistry.get_registry_singleton()
-                for initializer_name in request.initializers:
-                    try:
-                        initializer_class = initializer_registry.get_class(initializer_name)
-                    except KeyError as e:
-                        raise ValueError(f"Initializer not found: {e}") from None
-                    instance = initializer_class()
-                    await instance.initialize_async()
-
-            # Resolve target
-            target_registry = TargetRegistry.get_registry_singleton()
-            objective_target = target_registry.get_instance_by_name(request.target_name)
-            if objective_target is None:
-                available_names = target_registry.get_names()
-                if not available_names:
-                    raise ValueError(
-                        f"Target '{request.target_name}' not found. The target registry is empty. "
-                        "Make sure to include an initializer that registers targets "
-                        "(e.g., initializers: ['target'])."
-                    )
-                raise ValueError(
-                    f"Target '{request.target_name}' not found in registry. "
-                    f"Available targets: {', '.join(available_names)}"
-                )
-
-            # Resolve scenario class
-            scenario_registry = ScenarioRegistry.get_registry_singleton()
-            scenario_class = scenario_registry.get_class(request.scenario_name)
-
-            # --- Phase 2: Run ---
-            info.status = ScenarioRunStatus.RUNNING
-            info.updated_at = datetime.now(timezone.utc)
-
-            # Build init kwargs
-            init_kwargs: dict[str, Any] = {
-                "objective_target": objective_target,
-                "max_concurrency": request.max_concurrency,
-                "max_retries": request.max_retries,
-            }
-
-            if request.memory_labels:
-                init_kwargs["memory_labels"] = request.memory_labels
-
-            # Resolve strategies
-            if request.strategies:
-                strategy_class = scenario_class.get_strategy_class()
-                strategy_enums = []
-                for name in request.strategies:
-                    try:
-                        strategy_enums.append(strategy_class(name))
-                    except ValueError:
-                        available_strategies = [s.value for s in strategy_class]
-                        raise ValueError(
-                            f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
-                            f"Available: {', '.join(available_strategies)}"
-                        ) from None
-                init_kwargs["scenario_strategies"] = strategy_enums
-
-            # Build dataset config
-            if request.dataset_names:
-                init_kwargs["dataset_config"] = DatasetConfiguration(
-                    dataset_names=request.dataset_names,
-                    max_dataset_size=request.max_dataset_size,
-                )
-            elif request.max_dataset_size is not None:
-                default_config = scenario_class.default_dataset_config()
-                default_config.max_dataset_size = request.max_dataset_size
-                init_kwargs["dataset_config"] = default_config
-
-            # Instantiate and execute
-            scenario = scenario_class()  # type: ignore[call-arg]
-            await scenario.initialize_async(**init_kwargs)
-            scenario_result = await scenario.run_async()
-
-            # --- Phase 3: Store result ---
             info.status = ScenarioRunStatus.COMPLETED
             info.updated_at = datetime.now(timezone.utc)
             info.result = ScenarioRunResult(
@@ -318,17 +336,13 @@ class ScenarioRunService:
             return None
 
         if info.status != ScenarioRunStatus.COMPLETED or info.result is None:
-            raise ValueError(
-                f"Results are only available for completed runs. Current status: '{info.status}'."
-            )
+            raise ValueError(f"Results are only available for completed runs. Current status: '{info.status}'.")
 
         # Retrieve from CentralMemory
         memory = CentralMemory.get_memory_instance()
         results = memory.get_scenario_results(scenario_result_ids=[info.result.scenario_result_id])
         if not results:
-            raise ValueError(
-                f"Scenario result '{info.result.scenario_result_id}' not found in memory."
-            )
+            raise ValueError(f"Scenario result '{info.result.scenario_result_id}' not found in memory.")
 
         scenario_result = results[0]
         display_groups = scenario_result.get_display_groups()
@@ -347,7 +361,9 @@ class ScenarioRunService:
 
                 last_response_text = None
                 if ar.last_response is not None:
-                    last_response_text = ar.last_response.value if hasattr(ar.last_response, "value") else str(ar.last_response)
+                    last_response_text = (
+                        ar.last_response.value if hasattr(ar.last_response, "value") else str(ar.last_response)
+                    )
 
                 details.append(
                     AttackResultDetail(

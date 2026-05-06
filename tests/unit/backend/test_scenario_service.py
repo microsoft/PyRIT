@@ -210,7 +210,7 @@ class TestScenarioRoutes:
     """Tests for scenario API routes."""
 
     def test_list_scenarios_returns_200(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios returns 200."""
+        """Test that GET /api/scenarios/catalog returns 200."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
@@ -221,7 +221,7 @@ class TestScenarioRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios")
+            response = client.get("/api/scenarios/catalog")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -229,7 +229,7 @@ class TestScenarioRoutes:
             assert data["pagination"]["has_more"] is False
 
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios returns scenario data."""
+        """Test that GET /api/scenarios/catalog returns scenario data."""
         summary = ScenarioSummary(
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
@@ -251,7 +251,7 @@ class TestScenarioRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios")
+            response = client.get("/api/scenarios/catalog")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -277,13 +277,13 @@ class TestScenarioRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios?limit=10&cursor=test.scenario_1")
+            response = client.get("/api/scenarios/catalog?limit=10&cursor=test.scenario_1")
 
             assert response.status_code == status.HTTP_200_OK
             mock_service.list_scenarios_async.assert_called_once_with(limit=10, cursor="test.scenario_1")
 
     def test_get_scenario_returns_200(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios/{name} returns 200 when found."""
+        """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""
         summary = ScenarioSummary(
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
@@ -300,20 +300,20 @@ class TestScenarioRoutes:
             mock_service.get_scenario_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios/foundry.red_team_agent")
+            response = client.get("/api/scenarios/catalog/foundry.red_team_agent")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["scenario_name"] == "foundry.red_team_agent"
 
     def test_get_scenario_returns_404_when_not_found(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios/{name} returns 404 when not found."""
+        """Test that GET /api/scenarios/catalog/{name} returns 404 when not found."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_scenario_async = AsyncMock(return_value=None)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios/nonexistent")
+            response = client.get("/api/scenarios/catalog/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -335,7 +335,7 @@ class TestScenarioRoutes:
             mock_service.get_scenario_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios/garak.encoding")
+            response = client.get("/api/scenarios/catalog/garak.encoding")
 
             assert response.status_code == status.HTTP_200_OK
             mock_service.get_scenario_async.assert_called_once_with(scenario_name="garak.encoding")
