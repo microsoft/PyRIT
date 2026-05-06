@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
@@ -199,9 +198,10 @@ class Jailbreak(Scenario):
             OpenAIChatTarget: A fresh adversarial target using an unfiltered endpoint.
         """
         endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
+        api_key = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY")
         return OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
+            api_key=api_key,
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
             temperature=1.2,
         )

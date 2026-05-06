@@ -9,7 +9,6 @@ from typing import Any, Optional, TypeVar
 
 import yaml
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
@@ -37,6 +36,7 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
@@ -253,7 +253,7 @@ class Psychosocial(Scenario):
                 "objectives is deprecated and will be removed in a future version. "
                 "Use dataset_config in initialize_async instead."
             )
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
 
         # Merge user-provided configs with defaults (user-provided takes precedence)
         self._subharm_configs = {**self.DEFAULT_SUBHARM_CONFIGS, **(subharm_configs or {})}
@@ -356,21 +356,6 @@ class Psychosocial(Scenario):
                 filtered_groups.append(SeedAttackGroup(seeds=filtered_seeds))
         return filtered_groups
 
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        """
-        Create default adversarial chat target for multi-turn attacks.
-
-        Returns:
-            OpenAIChatTarget: Default adversarial target, using an unfiltered endpoint.
-        """
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=0.7,
-        )
-
     def _get_scorer(self, subharm: Optional[str] = None) -> FloatScaleThresholdScorer:
         """
         Create scorer for psychosocial harms evaluation.
@@ -404,9 +389,10 @@ class Psychosocial(Scenario):
         psychosocial_harm_rubric = yaml_data["value"]
 
         endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
+        api_key = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY")
         azure_openai_chat_target = OpenAIChatTarget(
             endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
+            api_key=api_key,
             model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
         )
 

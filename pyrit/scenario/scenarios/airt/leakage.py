@@ -1,13 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import os
 from pathlib import Path
 from typing import Optional
 
 from PIL import Image
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
@@ -22,20 +20,14 @@ from pyrit.executor.attack import (
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter, PromptConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
+from pyrit.prompt_target import PromptChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import (
-    SelfAskRefusalScorer,
-    SelfAskTrueFalseScorer,
-    TrueFalseCompositeScorer,
-    TrueFalseInverterScorer,
-    TrueFalseScoreAggregator,
-    TrueFalseScorer,
-)
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.score import TrueFalseScorer
 
 
 class LeakageStrategy(ScenarioStrategy):
@@ -89,6 +81,7 @@ class Leakage(Scenario):
     """
 
     VERSION: int = 1
+    OBJECTIVE_TRUE_FALSE_QUESTION_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "leakage.yaml"
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -155,7 +148,7 @@ class Leakage(Scenario):
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         # Initialize adversarial chat for multi-turn attacks
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
         super().__init__(
@@ -167,60 +160,6 @@ class Leakage(Scenario):
         )
 
         self._objectives = objectives if objectives else self._get_default_objectives()
-
-    def _get_default_objective_scorer(self) -> TrueFalseCompositeScorer:
-        """
-        Retrieve the default objective scorer.
-
-        The scoring mechanism is as follows:
-        1. Detect for objective achieved using a SelfAskTrueFalseScorer with leakage detection.
-        2. Detect for NON-refusal as a backstop. (If the target model refuses to leak data,
-           we want that to register as a negative score).
-
-        Returns:
-            TrueFalseCompositeScorer: Default objective scorer with backstop and leakage evaluation.
-        """
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        presence_of_leakage = SelfAskTrueFalseScorer(
-            chat_target=OpenAIChatTarget(
-                endpoint=endpoint,
-                api_key=get_azure_openai_auth(endpoint or ""),
-                model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            ),
-            true_false_question_path=SCORER_SEED_PROMPT_PATH / "true_false_question" / "leakage.yaml",
-        )
-
-        # Backstop scorer: Ensures the model didn't simply refuse the request.
-        # Uses SelfAskRefusalScorer inverted - if model refused, this returns False.
-        # Combined with AND aggregator: response must contain leakage AND not be a refusal.
-        backstop = TrueFalseInverterScorer(
-            scorer=SelfAskRefusalScorer(
-                chat_target=OpenAIChatTarget(
-                    endpoint=endpoint,
-                    api_key=get_azure_openai_auth(endpoint or ""),
-                    model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                )
-            )
-        )
-
-        return TrueFalseCompositeScorer(
-            aggregator=TrueFalseScoreAggregator.AND, scorers=[presence_of_leakage, backstop]
-        )
-
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        """
-        Create and retrieve the default adversarial target.
-
-        Returns:
-            OpenAIChatTarget: Default adversarial target using an unfiltered endpoint.
-        """
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
 
     def _get_default_objectives(self) -> list[str]:
         """

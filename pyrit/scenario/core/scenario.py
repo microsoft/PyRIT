@@ -16,6 +16,7 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
 from tqdm.auto import tqdm
@@ -27,14 +28,20 @@ from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.registry import ScorerRegistry
+from pyrit.registry.object_registries.scorer_registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
+from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
+from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score.true_false.self_ask_refusal_scorer import SelfAskRefusalScorer
+from pyrit.score.true_false.self_ask_true_false_scorer import SelfAskTrueFalseScorer
+from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
+from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -106,6 +113,11 @@ class Scenario(ABC):
     #: Capability requirements placed on ``objective_target``. Subclasses override to declare
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    #: Optional true/false question prompt path for objective scoring.
+    #: When set, the default objective scorer becomes
+    #: ``SelfAskTrueFalseScorer(path) AND NOT(SelfAskRefusalScorer)``.
+    OBJECTIVE_TRUE_FALSE_QUESTION_PATH: ClassVar[Path | None] = None
 
     def __init__(
         self,
@@ -310,17 +322,27 @@ class Scenario(ABC):
         return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        # Deferred import to avoid circular dependency:
+        if type(self).OBJECTIVE_TRUE_FALSE_QUESTION_PATH is not None:
+            chat_target = get_default_scorer_target()
+            objective_scorer = SelfAskTrueFalseScorer(
+                chat_target=chat_target,
+                true_false_question_path=type(self).OBJECTIVE_TRUE_FALSE_QUESTION_PATH,
+            )
+            backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+            return TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.AND,
+                scorers=[objective_scorer, backstop_scorer],
+            )
+
+        # Deferred import to avoid circular dependency.
         from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
 
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
-            scorer = entries[0].instance
-            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
-            return scorer
-        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
-        logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
-        return scorer
+            return entries[0].instance
+
+        chat_target = get_default_scorer_target()
+        return TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
         """
