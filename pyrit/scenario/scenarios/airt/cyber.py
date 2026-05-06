@@ -64,7 +64,7 @@ class Cyber(Scenario):
     """
 
     VERSION: int = 2
-    OBJECTIVE_TRUE_FALSE_QUESTION_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"
+    COMPOSITE_SCORER_QUESTIONS_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     @classmethod

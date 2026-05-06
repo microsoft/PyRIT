@@ -117,7 +117,7 @@ class Scenario(ABC):
     #: Optional true/false question prompt path for objective scoring.
     #: When set, the default objective scorer becomes
     #: ``SelfAskTrueFalseScorer(path) AND NOT(SelfAskRefusalScorer)``.
-    OBJECTIVE_TRUE_FALSE_QUESTION_PATH: ClassVar[Path | None] = None
+    COMPOSITE_SCORER_QUESTIONS_PATH: ClassVar[Path | None] = None
 
     def __init__(
         self,
@@ -322,11 +322,13 @@ class Scenario(ABC):
         return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        if type(self).OBJECTIVE_TRUE_FALSE_QUESTION_PATH is not None:
+        composite_scorer_questions_path = type(self).COMPOSITE_SCORER_QUESTIONS_PATH
+
+        if composite_scorer_questions_path is not None:
             chat_target = get_default_scorer_target()
             objective_scorer = SelfAskTrueFalseScorer(
                 chat_target=chat_target,
-                true_false_question_path=type(self).OBJECTIVE_TRUE_FALSE_QUESTION_PATH,
+                true_false_question_path=composite_scorer_questions_path,
             )
             backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
             return TrueFalseCompositeScorer(

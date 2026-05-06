@@ -83,7 +83,7 @@ class Scam(Scenario):
     """
 
     VERSION: int = 1
-    OBJECTIVE_TRUE_FALSE_QUESTION_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml"
+    COMPOSITE_SCORER_QUESTIONS_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml"
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
