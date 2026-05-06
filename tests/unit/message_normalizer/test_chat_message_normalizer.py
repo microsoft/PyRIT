@@ -41,14 +41,12 @@ def _make_multipart_message(role: ChatMessageRole, pieces_data: list[tuple[str, 
 class TestChatMessageNormalizerNormalizeAsync:
     """Tests for ChatMessageNormalizer.normalize_async."""
 
-    @pytest.mark.asyncio
     async def test_empty_list_raises(self):
         """Test that empty message list raises ValueError."""
         normalizer = ChatMessageNormalizer()
         with pytest.raises(ValueError, match="Messages list cannot be empty"):
             await normalizer.normalize_async(messages=[])
 
-    @pytest.mark.asyncio
     async def test_single_text_message(self):
         """Test normalizing a single text message."""
         normalizer = ChatMessageNormalizer()
@@ -61,7 +59,6 @@ class TestChatMessageNormalizerNormalizeAsync:
         assert result[0].role == "user"
         assert result[0].content == "Hello world"
 
-    @pytest.mark.asyncio
     async def test_multiple_messages(self):
         """Test normalizing multiple messages."""
         normalizer = ChatMessageNormalizer()
@@ -81,7 +78,6 @@ class TestChatMessageNormalizerNormalizeAsync:
         assert result[2].role == "assistant"
         assert result[2].content == "Hi there!"
 
-    @pytest.mark.asyncio
     async def test_developer_role_translation(self):
         """Test that system role is translated to developer when configured."""
         normalizer = ChatMessageNormalizer(use_developer_role=True)
@@ -95,7 +91,6 @@ class TestChatMessageNormalizerNormalizeAsync:
         assert result[0].role == "developer"
         assert result[1].role == "user"
 
-    @pytest.mark.asyncio
     async def test_system_message_behavior_squash(self):
         """Test that system_message_behavior='squash' merges system into user message."""
         normalizer = ChatMessageNormalizer(system_message_behavior="squash")
@@ -112,7 +107,6 @@ class TestChatMessageNormalizerNormalizeAsync:
         assert "You are helpful" in result[0].content
         assert "Hello" in result[0].content
 
-    @pytest.mark.asyncio
     async def test_multipart_text_message(self):
         """Test that multipart text messages have list content."""
         normalizer = ChatMessageNormalizer()
@@ -132,7 +126,6 @@ class TestChatMessageNormalizerNormalizeAsync:
         assert result[0].content[0] == {"type": "text", "text": "Part 1"}
         assert result[0].content[1] == {"type": "text", "text": "Part 2"}
 
-    @pytest.mark.asyncio
     async def test_image_path_conversion(self):
         """Test that image_path is converted to base64 data URL."""
         normalizer = ChatMessageNormalizer()
@@ -160,7 +153,6 @@ class TestChatMessageNormalizerNormalizeAsync:
             assert result[0].content[0]["type"] == "image_url"
             assert result[0].content[0]["image_url"]["url"] == "data:image/png;base64,abc123"
 
-    @pytest.mark.asyncio
     async def test_url_conversion(self):
         """Test that URL data type is converted to image_url format."""
         normalizer = ChatMessageNormalizer()
@@ -181,7 +173,6 @@ class TestChatMessageNormalizerNormalizeAsync:
         assert result[0].content[0]["type"] == "image_url"
         assert result[0].content[0]["image_url"]["url"] == "https://example.com/image.png"
 
-    @pytest.mark.asyncio
     async def test_unsupported_data_type_raises(self):
         """Test that unsupported data type raises ValueError at MessagePiece creation."""
         with pytest.raises(ValueError, match="is not a valid data type"):
@@ -196,7 +187,6 @@ class TestChatMessageNormalizerNormalizeAsync:
 class TestChatMessageNormalizerAudioConversion:
     """Tests for ChatMessageNormalizer audio conversion."""
 
-    @pytest.mark.asyncio
     async def test_audio_file_not_found_raises(self):
         """Test that non-existent audio file raises FileNotFoundError."""
         normalizer = ChatMessageNormalizer()
@@ -214,7 +204,6 @@ class TestChatMessageNormalizerAudioConversion:
         with pytest.raises(FileNotFoundError, match="Audio file not found"):
             await normalizer.normalize_async([message])
 
-    @pytest.mark.asyncio
     async def test_unsupported_audio_format_raises(self):
         """Test that unsupported audio format raises ValueError."""
         normalizer = ChatMessageNormalizer()
@@ -232,7 +221,6 @@ class TestChatMessageNormalizerAudioConversion:
         with pytest.raises(ValueError, match="Unsupported audio format"):
             await normalizer.normalize_async([message])
 
-    @pytest.mark.asyncio
     async def test_wav_audio_conversion(self):
         """Test that WAV audio file is converted to input_audio format."""
         normalizer = ChatMessageNormalizer()
@@ -263,7 +251,6 @@ class TestChatMessageNormalizerAudioConversion:
         finally:
             os.unlink(temp_path)
 
-    @pytest.mark.asyncio
     async def test_mp3_audio_conversion(self):
         """Test that MP3 audio file is converted to input_audio format."""
         normalizer = ChatMessageNormalizer()
@@ -295,7 +282,6 @@ class TestChatMessageNormalizerAudioConversion:
 class TestChatMessageNormalizerNormalizeStringAsync:
     """Tests for ChatMessageNormalizer.normalize_string_async."""
 
-    @pytest.mark.asyncio
     async def test_returns_json_string(self):
         """Test that normalize_string_async returns valid JSON."""
         normalizer = ChatMessageNormalizer()
@@ -318,7 +304,6 @@ class TestChatMessageNormalizerNormalizeStringAsync:
 class TestChatMessageNormalizerToDictsAsync:
     """Tests for ChatMessageNormalizer.normalize_to_dicts_async (inherited)."""
 
-    @pytest.mark.asyncio
     async def test_returns_list_of_dicts(self):
         """Test that normalize_to_dicts_async returns list of dicts."""
         normalizer = ChatMessageNormalizer()

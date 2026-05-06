@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ZalgoConverter
 
 
-@pytest.mark.asyncio
 async def test_zalgo_output_changes_text():
     prompt = "hello"
     converter = ZalgoConverter(intensity=5, seed=42)
@@ -15,7 +14,6 @@ async def test_zalgo_output_changes_text():
     assert all(c in result.output_text for c in prompt)  # should still contain all original letters
 
 
-@pytest.mark.asyncio
 async def test_zalgo_reproducible_seed():
     prompt = "seed test"
     converter1 = ZalgoConverter(intensity=5, seed=123)
@@ -25,7 +23,6 @@ async def test_zalgo_reproducible_seed():
     assert result1.output_text == result2.output_text
 
 
-@pytest.mark.asyncio
 async def test_zalgo_zero_intensity_returns_original():
     prompt = "no chaos please"
     converter = ZalgoConverter(intensity=0)
@@ -33,7 +30,6 @@ async def test_zalgo_zero_intensity_returns_original():
     assert result.output_text == prompt
 
 
-@pytest.mark.asyncio
 async def test_zalgo_intensity_caps_at_max(caplog):
     prompt = "much zalgo!"
     converter = ZalgoConverter(intensity=1000, seed=1)
@@ -48,7 +44,6 @@ async def test_zalgo_intensity_caps_at_max(caplog):
     assert len(result.output_text) > len(prompt)
 
 
-@pytest.mark.asyncio
 async def test_zalgo_float_intensity():
     prompt = "test string"
     converter = ZalgoConverter(intensity=5.5, seed=1)
@@ -57,7 +52,6 @@ async def test_zalgo_float_intensity():
     assert len(result.output_text) > len(prompt)
 
 
-@pytest.mark.asyncio
 async def test_zalgo_string_intensity():
     prompt = "test string"
     converter = ZalgoConverter(intensity="7", seed=1)
@@ -66,7 +60,6 @@ async def test_zalgo_string_intensity():
     assert len(result.output_text) > len(prompt)
 
 
-@pytest.mark.asyncio
 async def test_zalgo_negative_intensity(caplog):
     prompt = "test string"
     converter = ZalgoConverter(intensity=-300, seed=1)
@@ -79,7 +72,6 @@ async def test_zalgo_negative_intensity(caplog):
     )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("bad_intensity", ["this isn't an int", None])
 async def test_zalgo_invalid_intensity(bad_intensity):
     with pytest.raises(ValueError):

@@ -13,7 +13,7 @@ import pytest
 
 from pyrit.cli import frontend_core
 from pyrit.cli._cli_args import _ArgSpec, _parse_shell_arguments
-from pyrit.registry import InitializerMetadata, ScenarioMetadata
+from pyrit.registry import InitializerMetadata, ScenarioMetadata, ScenarioParameterMetadata
 
 
 class TestFrontendCore:
@@ -393,8 +393,6 @@ class TestPrintFunctions:
                 class_module="test.initializers",
                 class_description="Test initializer",
                 registry_name="test",
-                display_name="test",
-                execution_order=100,
                 required_env_vars=(),
             )
         ]
@@ -488,6 +486,55 @@ class TestFormatFunctions:
         assert "strategy2" in captured.out
         assert "Default Strategy" in captured.out
 
+    def test_format_scenario_metadata_with_supported_parameters(self, capsys):
+        """Test format_scenario_metadata renders the supported_parameters section."""
+        scenario_metadata = ScenarioMetadata(
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="",
+            registry_name="test",
+            default_strategy="",
+            all_strategies=(),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+            supported_parameters=(
+                ScenarioParameterMetadata("max_turns", "Conversation turn cap", 5, "int", None),
+                ScenarioParameterMetadata("mode", "Run mode", "fast", "str", "'fast', 'slow'"),
+                ScenarioParameterMetadata("optional_param", "Optional input", None, "str", None),
+            ),
+        )
+
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
+
+        captured = capsys.readouterr()
+        assert "Supported Parameters:" in captured.out
+        assert "max_turns" in captured.out
+        assert "(int)" in captured.out
+        assert "[default: 5]" in captured.out
+        assert "Conversation turn cap" in captured.out
+        assert "[choices: 'fast', 'slow']" in captured.out
+        assert "optional_param" in captured.out
+
+    def test_format_scenario_metadata_omits_section_when_no_parameters(self, capsys):
+        """A scenario without declared parameters should not print the Supported Parameters header."""
+        scenario_metadata = ScenarioMetadata(
+            class_name="TestScenario",
+            class_module="test.scenarios",
+            class_description="",
+            registry_name="test",
+            default_strategy="",
+            all_strategies=(),
+            aggregate_strategies=(),
+            default_datasets=(),
+            max_dataset_size=None,
+        )
+
+        frontend_core.format_scenario_metadata(scenario_metadata=scenario_metadata)
+
+        captured = capsys.readouterr()
+        assert "Supported Parameters" not in captured.out
+
     def test_format_initializer_metadata_basic(self, capsys) -> None:
         """Test format_initializer_metadata with basic metadata."""
         initializer_metadata = InitializerMetadata(
@@ -495,9 +542,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="",
             registry_name="test",
-            display_name="test",
             required_env_vars=(),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -505,7 +550,6 @@ class TestFormatFunctions:
         captured = capsys.readouterr()
         assert "test" in captured.out
         assert "TestInit" in captured.out
-        assert "100" in captured.out
 
     def test_format_initializer_metadata_with_env_vars(self, capsys) -> None:
         """Test format_initializer_metadata with environment variables."""
@@ -514,9 +558,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="",
             registry_name="test",
-            display_name="test",
             required_env_vars=("VAR1", "VAR2"),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -532,9 +574,7 @@ class TestFormatFunctions:
             class_module="test.initializers",
             class_description="Test description",
             registry_name="test",
-            display_name="test",
             required_env_vars=(),
-            execution_order=100,
         )
 
         frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
@@ -860,7 +900,6 @@ class TestParseListTargetsArguments:
             frontend_core.parse_list_targets_arguments(args_string="--unknown-flag")
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsync:
     """Tests for run_scenario_async function."""
@@ -1253,7 +1292,6 @@ class TestWithOverrides:
         assert result["target"] is None
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunScenarioAsyncTarget:
     """Tests for target resolution in run_scenario_async."""
@@ -1390,7 +1428,6 @@ class TestRunScenarioAsyncTarget:
         assert "objective_target" not in call_kwargs
 
 
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 class TestPrintTargetsList:
     """Tests for print_targets_list_async function."""
@@ -1473,3 +1510,115 @@ class TestPrintTargetsList:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["initialization_scripts"] == ["/path/to/script.py"]
         assert call_kwargs["initializers"] is None
+
+
+class TestParseRunArgumentsScenarioParams:
+    """Tests for declared-parameter augmentation in parse_run_arguments."""
+
+    def test_parse_with_no_declared_params_unchanged(self):
+        """Existing behavior: declared_params=None leaves built-in parsing intact."""
+        result = frontend_core.parse_run_arguments(args_string="my_scenario --max-concurrency 5")
+
+        assert result["scenario_name"] == "my_scenario"
+        assert result["max_concurrency"] == 5
+
+    def test_int_param_coerced(self):
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario --max-turns 10",
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)],
+        )
+        assert result["scenario__max_turns"] == 10
+
+    def test_bool_param_uses_safe_coercion(self):
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario --enabled false",
+            declared_params=[Parameter(name="enabled", description="d", param_type=bool)],
+        )
+        assert result["scenario__enabled"] is False
+
+    def test_list_param_collects_multiple_values(self):
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario --datasets a b c",
+            declared_params=[Parameter(name="datasets", description="d", param_type=list[str])],
+        )
+        assert result["scenario__datasets"] == ["a", "b", "c"]
+
+    def test_unset_scenario_flag_is_none(self):
+        """Shell parser initializes absent flags to None; extract_scenario_args drops them."""
+        from pyrit.common import Parameter
+
+        result = frontend_core.parse_run_arguments(
+            args_string="my_scenario",
+            declared_params=[Parameter(name="max_turns", description="d", param_type=int, default=5)],
+        )
+        assert result["scenario__max_turns"] is None
+
+    def test_collision_with_built_in_flag_raises(self):
+        from pyrit.common import Parameter
+
+        with pytest.raises(ValueError, match="collides with a built-in flag"):
+            frontend_core.parse_run_arguments(
+                args_string="my_scenario --max-concurrency 5",
+                declared_params=[Parameter(name="max_concurrency", description="d", param_type=int)],
+            )
+
+    def test_scenario_vs_scenario_collision_raises(self):
+        """Two declared params normalizing to the same flag fail at parser-build time."""
+        from pyrit.common import Parameter
+
+        # foo_bar and foo-bar both normalize to --foo-bar
+        with pytest.raises(ValueError, match="normalize to the same CLI flag"):
+            frontend_core.parse_run_arguments(
+                args_string="my_scenario --foo-bar 1",
+                declared_params=[
+                    Parameter(name="foo_bar", description="d", param_type=int),
+                    Parameter(name="foo-bar", description="d", param_type=int),
+                ],
+            )
+
+
+class TestExtractScenarioArgs:
+    """Tests for extract_scenario_args helper."""
+
+    def test_no_scenario_keys_returns_empty(self):
+        result = frontend_core.extract_scenario_args(parsed={"scenario_name": "x", "max_concurrency": 5})
+        assert result == {}
+
+    def test_scenario_keys_extracted_with_prefix_stripped(self):
+        result = frontend_core.extract_scenario_args(
+            parsed={"scenario_name": "x", "scenario__max_turns": 10, "scenario__mode": "fast"}
+        )
+        assert result == {"max_turns": 10, "mode": "fast"}
+
+    def test_none_values_dropped(self):
+        """Absent shell flags (initialized to None) must not reach set_params_from_args."""
+        result = frontend_core.extract_scenario_args(parsed={"scenario__max_turns": None, "scenario__mode": "fast"})
+        assert result == {"mode": "fast"}
+
+
+class TestParamTypeDisplay:
+    """Tests for the registry's _param_type_display helper."""
+
+    def test_none_renders_as_any(self):
+        from pyrit.registry.class_registries.scenario_registry import _param_type_display
+
+        assert _param_type_display(None) == "any"
+
+    def test_builtin_types(self):
+        from pyrit.registry.class_registries.scenario_registry import _param_type_display
+
+        assert _param_type_display(int) == "int"
+        assert _param_type_display(str) == "str"
+        assert _param_type_display(bool) == "bool"
+
+    def test_parameterized_generic_uses_repr(self):
+        """list[str] has no __name__; falls back to repr."""
+        from pyrit.registry.class_registries.scenario_registry import _param_type_display
+
+        assert _param_type_display(list[str]) == "list[str]"

@@ -96,7 +96,6 @@ def test_executors_serialize():
     assert entry.attack_identifier.class_module == "pyrit.executor.attack.single_turn.prompt_sending"
 
 
-@pytest.mark.asyncio
 async def test_hashes_generated():
     entry = MessagePiece(
         role="user",
@@ -108,7 +107,6 @@ async def test_hashes_generated():
     assert entry.converted_value_sha256 == "be98c2510e417405647facb89399582fc499c3de4452b3014857f92e6baad9a9"
 
 
-@pytest.mark.asyncio
 async def test_hashes_generated_files():
     filename = ""
     with tempfile.NamedTemporaryFile(delete=False) as f:
@@ -130,7 +128,6 @@ async def test_hashes_generated_files():
     os.remove(filename)
 
 
-@pytest.mark.asyncio
 async def test_converted_datatype_default():
     filename = ""
     with tempfile.NamedTemporaryFile(delete=False) as f:
@@ -373,7 +370,6 @@ def test_message_piece_no_roles():
         )
 
 
-@pytest.mark.asyncio
 async def test_message_piece_sets_original_sha256():
     entry = MessagePiece(
         role="user",
@@ -385,7 +381,6 @@ async def test_message_piece_sets_original_sha256():
     assert entry.original_value_sha256 == "70e01503173b8e904d53b40b3ebb3bded5e5d3add087d3463a4b1abe92f1a8ca"
 
 
-@pytest.mark.asyncio
 async def test_message_piece_sets_converted_sha256():
     entry = MessagePiece(
         role="user",
@@ -769,26 +764,6 @@ def test_message_piece_to_dict():
     assert result["originator"] == entry.originator
     assert result["original_prompt_id"] == str(entry.original_prompt_id)
     assert result["scores"] == [score.to_dict() for score in entry.scores]
-
-
-def test_message_piece_scorer_identifier_dict_backward_compatibility():
-    """Test that passing a dict for scorer_identifier normalizes to ComponentIdentifier."""
-
-    scorer_dict = {
-        "class_name": "TestScorer",
-        "class_module": "pyrit.score.test_scorer",
-    }
-
-    entry = MessagePiece(
-        role="user",
-        original_value="Hello",
-        scorer_identifier=scorer_dict,
-    )
-
-    # Check that scorer_identifier is now a ComponentIdentifier
-    assert isinstance(entry.scorer_identifier, ComponentIdentifier)
-    assert entry.scorer_identifier.class_name == "TestScorer"
-    assert entry.scorer_identifier.class_module == "pyrit.score.test_scorer"
 
 
 def test_message_piece_scorer_identifier_none_default():

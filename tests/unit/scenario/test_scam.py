@@ -173,7 +173,6 @@ class TestScamInitialization:
             assert scenario._adversarial_chat == adversarial_chat
             assert scenario._adversarial_config.target == adversarial_chat
 
-    @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -190,7 +189,6 @@ class TestScamInitialization:
 class TestScamAttackGeneration:
     """Tests for Scam attack generation."""
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_all(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -204,7 +202,6 @@ class TestScamAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_singleturn_async(
         self,
         *,
@@ -228,7 +225,6 @@ class TestScamAttackGeneration:
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, (ContextComplianceAttack, RolePlayAttack))
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_multiturn_async(
         self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
     ):
@@ -247,7 +243,6 @@ class TestScamAttackGeneration:
         for run in atomic_attacks:
             assert isinstance(run.attack_technique.attack, RedTeamingAttack)
 
-    @pytest.mark.asyncio
     async def test_attack_runs_include_objectives_async(
         self,
         *,
@@ -269,7 +264,6 @@ class TestScamAttackGeneration:
             for index, objective in enumerate(run.objectives):
                 assert mock_memory_seeds[index].value in objective
 
-    @pytest.mark.asyncio
     async def test_get_atomic_attacks_async_returns_attacks(
         self,
         *,
@@ -289,10 +283,55 @@ class TestScamAttackGeneration:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+class TestScamMaxTurnsParameter:
+    """Tests for the declared max_turns parameter (Stage 6 POC)."""
+
+    def test_supported_parameters_declares_max_turns(self):
+        """Scam exposes max_turns via supported_parameters."""
+        params = Scam.supported_parameters()
+        names = [p.name for p in params]
+        assert "max_turns" in names
+
+    async def test_max_turns_default_used_when_unset_async(
+        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+    ):
+        """When set_params_from_args isn't given max_turns, the declared default (5) is used."""
+        scenario = Scam(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={})
+
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[multi_turn_strategy],
+            dataset_config=mock_dataset_config,
+        )
+        atomic_attacks = await scenario._get_atomic_attacks_async()
+
+        for run in atomic_attacks:
+            assert isinstance(run.attack_technique.attack, RedTeamingAttack)
+            assert run.attack_technique.attack._max_turns == 5
+
+    async def test_max_turns_override_flows_into_attack_async(
+        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+    ):
+        """A user-supplied max_turns overrides the default and reaches the underlying attack."""
+        scenario = Scam(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={"max_turns": 10})
+
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[multi_turn_strategy],
+            dataset_config=mock_dataset_config,
+        )
+        atomic_attacks = await scenario._get_atomic_attacks_async()
+
+        for run in atomic_attacks:
+            assert run.attack_technique.attack._max_turns == 10
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestScamLifecycle:
     """Tests for Scam lifecycle behavior."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_max_concurrency(
         self,
         *,
@@ -309,7 +348,6 @@ class TestScamLifecycle:
             )
             assert scenario._max_concurrency == 20
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_memory_labels(
         self,
         *,
@@ -347,7 +385,6 @@ class TestScamProperties:
 
         assert scenario.VERSION == 1
 
-    @pytest.mark.asyncio
     async def test_no_target_duplication_async(
         self, *, mock_objective_target: PromptTarget, mock_memory_seed_groups: list[SeedGroup], mock_dataset_config
     ) -> None:

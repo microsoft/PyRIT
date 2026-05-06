@@ -34,7 +34,6 @@ def mock_harmbench_mm_data():
     ]
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset(mock_harmbench_mm_data):
     loader = _HarmBenchMultimodalDataset()
 
@@ -54,7 +53,6 @@ async def test_fetch_dataset(mock_harmbench_mm_data):
     assert text_prompt.value == "Describe harmful content in this image"
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_skips_failed_images():
     data = [
         {
@@ -88,7 +86,6 @@ async def test_fetch_dataset_skips_failed_images():
     assert len(dataset.seeds) == 2
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_filters_by_category():
     data = [
         {
@@ -119,7 +116,6 @@ async def test_fetch_dataset_filters_by_category():
     assert all(p.harm_categories == ["illegal"] for p in dataset.seeds)
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_missing_keys_raises():
     loader = _HarmBenchMultimodalDataset()
     bad_data = [{"Behavior": "test"}]
@@ -146,7 +142,6 @@ def test_init_rejects_raw_string_matching_enum_value_for_categories():
         _HarmBenchMultimodalDataset(categories=["illegal"])
 
 
-@pytest.mark.asyncio
 async def test_fetch_and_save_image_raises_when_memory_not_configured():
     """Test that _fetch_and_save_image_async raises RuntimeError when serializer memory is not configured."""
     from unittest.mock import MagicMock
@@ -166,7 +161,6 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
             await loader._fetch_and_save_image_async(behavior_id="test_id", image_url="https://example.com/img.png")
 
 
-@pytest.mark.asyncio
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
     from unittest.mock import MagicMock

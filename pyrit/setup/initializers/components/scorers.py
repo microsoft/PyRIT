@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.common.parameter import Parameter
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
     AzureContentFilterScorer,
@@ -41,7 +42,7 @@ from pyrit.score import (
     TrueFalseScorer,
     find_objective_metrics_by_eval_hash,
 )
-from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 if TYPE_CHECKING:
     from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
@@ -120,11 +121,11 @@ _PREFERRED_BEST: dict[str, tuple[str, str]] = {
 
 class ScorerInitializer(PyRITInitializer):
     """
-    Scorer Initializer for registering pre-configured scorers.
+    Instantiates a collection of scorers using targets from the TargetRegistry and adds them to the ScorerRegistry.
 
     This initializer registers all evaluation scorers into the ScorerRegistry.
     Targets are pulled from the TargetRegistry (populated by TargetInitializer),
-    so this initializer must run after the target initializer (enforced via execution_order).
+    so this initializer should be listed after TargetInitializer in the initializers list.
     Scorers that fail to initialize (e.g., due to missing targets) are skipped with a warning.
 
     Every scorer category follows the same pattern:
@@ -134,38 +135,15 @@ class ScorerInitializer(PyRITInitializer):
     """
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """Get the list of parameters this initializer accepts."""
         return [
-            InitializerParameter(
+            Parameter(
                 name="tags",
                 description="Tags for filtering (e.g., ['default'])",
                 default=["default"],
             ),
         ]
-
-    @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "Scorer Initializer"
-
-    @property
-    def execution_order(self) -> int:
-        """
-        Get the execution order for this initializer.
-
-        Returns 2 to ensure this runs after TargetInitializer (order=1),
-        which populates the TargetRegistry that scorers depend on.
-        """
-        return 2
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Instantiates a collection of scorers using targets from "
-            "the TargetRegistry and adds them to the ScorerRegistry"
-        )
 
     @property
     def required_env_vars(self) -> list[str]:

@@ -158,7 +158,6 @@ class TestPsychosocialInitialization:
         scenario = Psychosocial(max_turns=10, objective_scorer=mock_objective_scorer)
         assert scenario._max_turns == 10
 
-    @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer
     ):
@@ -175,7 +174,6 @@ class TestPsychosocialInitialization:
 class TestPsychosocialAttackGeneration:
     """Tests for Psychosocial attack generation."""
 
-    @pytest.mark.asyncio
     async def test_attack_generation_for_all(
         self,
         mock_objective_target,
@@ -193,7 +191,6 @@ class TestPsychosocialAttackGeneration:
             assert len(atomic_attacks) > 0
             assert all(run.attack_technique is not None for run in atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_attack_runs_include_objectives_async(
         self,
         *,
@@ -214,7 +211,6 @@ class TestPsychosocialAttackGeneration:
             for run in atomic_attacks:
                 assert len(run.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_get_atomic_attacks_async_returns_attacks(
         self,
         *,
@@ -239,7 +235,6 @@ class TestPsychosocialAttackGeneration:
 class TestPsychosocialHarmsLifecycle:
     """Tests for Psychosocial lifecycle behavior."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_max_concurrency(
         self,
         *,
@@ -256,7 +251,6 @@ class TestPsychosocialHarmsLifecycle:
             )
             assert scenario._max_concurrency == 20
 
-    @pytest.mark.asyncio
     async def test_initialize_async_with_memory_labels(
         self,
         *,
@@ -302,7 +296,6 @@ class TestPsychosocialProperties:
         """Test that the default strategy is ALL."""
         assert Psychosocial.get_default_strategy() == PsychosocialStrategy.ALL
 
-    @pytest.mark.asyncio
     async def test_no_target_duplication_async(
         self,
         *,
@@ -321,6 +314,67 @@ class TestPsychosocialProperties:
             assert objective_target != adversarial_target
             # Scorer target is embedded in the scorer itself
             assert scenario._objective_scorer is not None
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestPsychosocialTargetRequirements:
+    """Tests for Psychosocial TARGET_REQUIREMENTS declaration and enforcement."""
+
+    def test_target_requirements_declares_editable_history_natively(self):
+        """Psychosocial runs CrescendoAttack, so it must require EDITABLE_HISTORY natively."""
+        from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+        assert CapabilityName.EDITABLE_HISTORY in Psychosocial.TARGET_REQUIREMENTS.native_required
+
+    @pytest.mark.asyncio
+    async def test_initialize_async_invokes_target_requirements_validate(
+        self,
+        mock_objective_target,
+        mock_objective_scorer,
+        mock_resolved_seed_data,
+        mock_dataset_config,
+    ):
+        """initialize_async must delegate capability validation to TARGET_REQUIREMENTS.validate."""
+        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+            scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+            with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
+                await scenario.initialize_async(
+                    objective_target=mock_objective_target,
+                    dataset_config=mock_dataset_config,
+                )
+
+            # Scorers / attacks also validate; ensure the scenario itself validated objective_target.
+            assert any(call.kwargs.get("target") is mock_objective_target for call in mock_validate.call_args_list), (
+                "Expected TARGET_REQUIREMENTS.validate to be called with objective_target"
+            )
+
+    @pytest.mark.asyncio
+    async def test_initialize_async_rejects_target_missing_editable_history(
+        self,
+        mock_objective_scorer,
+        mock_resolved_seed_data,
+        mock_dataset_config,
+    ):
+        """A target that does not natively support EDITABLE_HISTORY must be rejected."""
+        from pyrit.prompt_target import PromptTarget
+        from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+        non_chat_target = MagicMock(spec=PromptTarget)
+        non_chat_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="NonChatTarget", class_module="test"
+        )
+        # Configuration reports no EDITABLE_HISTORY support
+        non_chat_target.configuration.includes.side_effect = (
+            lambda *, capability: capability != CapabilityName.EDITABLE_HISTORY
+        )
+
+        with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
+            scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+            with pytest.raises(ValueError, match="editable_history"):
+                await scenario.initialize_async(
+                    objective_target=non_chat_target,
+                    dataset_config=mock_dataset_config,
+                )
 
 
 @pytest.mark.usefixtures(*FIXTURES)

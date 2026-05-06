@@ -15,7 +15,6 @@ from integration.mocks import MockPromptTarget
 from pyrit.prompt_converter import TranslationConverter
 
 
-@pytest.mark.asyncio
 async def test_translation_converter_exponential_backoff_timing(sqlite_instance):
     """
     Integration test: Verify TranslationConverter uses exponential backoff with real delays.

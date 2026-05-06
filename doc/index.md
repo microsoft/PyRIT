@@ -98,7 +98,7 @@ Get started immediately with a pre-configured environment:
 **Custom Setup**
 
 Install PyRIT directly on your machine:
-- ✅ Pip, uv, or conda
+- ✅ Pip or uv
 - ✅ Full Python environment control
 - ✅ Easy integration with existing workflows
 ::::
@@ -135,7 +135,7 @@ After installing, configure PyRIT with your AI endpoint credentials and initiali
 :link: getting_started/populating_secrets
 **Set Up Your .env File**
 
-Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, and more.
+Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, HuggingFace, and more.
 ::::
 
 ::::{card} 📄 Config File (Recommended)

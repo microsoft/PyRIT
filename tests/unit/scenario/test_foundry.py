@@ -103,7 +103,6 @@ class TestFoundryInitialization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_init_with_single_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -129,7 +128,6 @@ class TestFoundryInitialization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_init_with_multiple_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -195,7 +193,6 @@ class TestFoundryInitialization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_init_with_memory_labels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -251,7 +248,6 @@ class TestFoundryInitialization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
@@ -274,7 +270,6 @@ class TestFoundryStrategyNormalization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_normalize_easy_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -300,7 +295,6 @@ class TestFoundryStrategyNormalization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_normalize_moderate_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -326,7 +320,6 @@ class TestFoundryStrategyNormalization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_normalize_difficult_strategies(
         self, mock_objective_target, mock_float_threshold_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -353,7 +346,6 @@ class TestFoundryStrategyNormalization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_normalize_mixed_difficulty_levels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -379,7 +371,6 @@ class TestFoundryStrategyNormalization:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_normalize_with_specific_and_difficulty_levels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -413,7 +404,6 @@ class TestFoundryAttackCreation:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_get_attack_from_single_turn_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -444,7 +434,6 @@ class TestFoundryAttackCreation:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_get_attack_from_multi_turn_strategy(
         self,
         mock_objective_target,
@@ -486,7 +475,6 @@ class TestFoundryGetAttack:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_get_attack_single_turn_with_converters(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -517,7 +505,6 @@ class TestFoundryGetAttack:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_get_attack_multi_turn_with_adversarial_target(
         self,
         mock_objective_target,
@@ -585,7 +572,6 @@ class TestFoundryAllStrategies:
             FoundryStrategy.Jailbreak,
         ],
     )
-    @pytest.mark.asyncio
     async def test_all_single_turn_strategies_create_attack_runs(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config, strategy
     ):
@@ -621,7 +607,6 @@ class TestFoundryAllStrategies:
             FoundryStrategy.Crescendo,
         ],
     )
-    @pytest.mark.asyncio
     async def test_all_multi_turn_strategies_create_attack_runs(
         self,
         mock_objective_target,
@@ -662,7 +647,6 @@ class TestFoundryProperties:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_scenario_composites_set_after_initialize(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -712,7 +696,6 @@ class TestFoundryProperties:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_scenario_atomic_attack_count_matches_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -744,7 +727,6 @@ class TestFoundryProperties:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_initialize_with_foundry_composite_directly(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -776,7 +758,6 @@ class TestFoundryProperties:
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
         },
     )
-    @pytest.mark.asyncio
     async def test_initialize_with_mixed_composites_and_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -808,7 +789,6 @@ class TestFoundryProperties:
         },
     )
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    @pytest.mark.asyncio
     async def test_initialize_converts_scenario_composite_strategy_to_foundry_composite(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -840,7 +820,6 @@ class TestFoundryProperties:
         },
     )
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    @pytest.mark.asyncio
     async def test_initialize_converts_converter_first_composite_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -871,7 +850,6 @@ class TestFoundryProperties:
         },
     )
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-    @pytest.mark.asyncio
     async def test_initialize_converts_converter_only_composite_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):

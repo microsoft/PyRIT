@@ -91,7 +91,6 @@ async def _assert_can_send_video_prompt(target):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name", "supports_seed"),
     [
@@ -159,7 +158,6 @@ async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, a
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -199,7 +197,6 @@ async def test_connect_required_openai_response_targets(sqlite_instance, endpoin
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -222,7 +219,6 @@ async def test_connect_required_realtime_targets(sqlite_instance, endpoint, api_
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -261,7 +257,6 @@ async def test_realtime_target_multi_objective(sqlite_instance, endpoint, api_ke
         assert len(result.last_response.converted_value) > 0
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key"),
     [
@@ -281,7 +276,6 @@ async def test_connect_required_aml_text_targets(sqlite_instance, endpoint, api_
     await _assert_can_send_prompt(target)
 
 
-@pytest.mark.asyncio
 async def test_connect_openai_completion(sqlite_instance):
     endpoint_value = _get_required_env_var("OPENAI_COMPLETION_ENDPOINT")
     api_key_value = _get_required_env_var("OPENAI_COMPLETION_API_KEY")
@@ -297,7 +291,6 @@ async def test_connect_openai_completion(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -339,7 +332,6 @@ SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_image_editing_single_image_api_key(sqlite_instance):
     """
     Test image editing with a single image input using API key authentication.
@@ -388,7 +380,6 @@ async def test_image_editing_single_image_api_key(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_image_editing_multiple_images_api_key(sqlite_instance):
     """
     Test image editing with multiple image inputs using API key authentication.
@@ -442,7 +433,6 @@ async def test_image_editing_multiple_images_api_key(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -465,7 +455,6 @@ async def test_connect_tts(sqlite_instance, endpoint, api_key, model_name):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -493,7 +482,6 @@ async def test_connect_video(sqlite_instance, endpoint, api_key, model_name):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     """
     Test that sending multiple prompts to video API using PromptSendingAttack
@@ -563,7 +551,6 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_video_remix_chain(sqlite_instance):
     """Test text-to-video followed by remix using the returned video_id."""
     endpoint_value = _get_required_env_var("OPENAI_VIDEO2_ENDPOINT")
@@ -610,7 +597,6 @@ async def test_video_remix_chain(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_video_image_to_video(sqlite_instance):
     """Test image-to-video mode using an image as the first frame."""
     endpoint_value = _get_required_env_var("OPENAI_VIDEO2_ENDPOINT")
@@ -667,7 +653,6 @@ async def test_video_image_to_video(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [

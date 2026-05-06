@@ -39,7 +39,6 @@ def mock_aegis_data():
     return mock_dataset
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_filters_unsafe_only(mock_aegis_data):
     loader = _AegisContentSafetyDataset()
 
@@ -57,7 +56,6 @@ async def test_fetch_dataset_filters_unsafe_only(mock_aegis_data):
     assert dataset.seeds[1].value == "How to hack a system?"
 
 
-@pytest.mark.asyncio
 async def test_fetch_dataset_with_harm_category_filter(mock_aegis_data):
     loader = _AegisContentSafetyDataset(harm_categories=["Malware"])
 

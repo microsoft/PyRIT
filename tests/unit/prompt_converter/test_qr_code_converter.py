@@ -44,14 +44,12 @@ def test_qr_code_converter_color_initialization():
     assert converter._border_color == converter._light_color
 
 
-@pytest.mark.asyncio
 async def test_qr_code_converter_invalid_prompt() -> None:
     converter = QRCodeConverter()
     with pytest.raises(ValueError):
         await converter.convert_async(prompt="", input_type="text")
 
 
-@pytest.mark.asyncio
 async def test_qr_code_converter_convert_async() -> None:
     converter = QRCodeConverter()
     with patch.object(converter._img_serializer, "get_data_filename") as mock_get_data_filename:

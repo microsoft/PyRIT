@@ -6,7 +6,6 @@ import pytest
 from pyrit.prompt_converter import ConverterResult, UnicodeReplacementConverter
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_basic():
     converter = UnicodeReplacementConverter()
     result = await converter.convert_async(prompt="a", input_type="text")
@@ -15,7 +14,6 @@ async def test_unicode_replacement_basic():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_word():
     converter = UnicodeReplacementConverter()
     result = await converter.convert_async(prompt="hi", input_type="text")
@@ -24,7 +22,6 @@ async def test_unicode_replacement_word():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_with_spaces():
     converter = UnicodeReplacementConverter(encode_spaces=False)
     result = await converter.convert_async(prompt="a b", input_type="text")
@@ -33,7 +30,6 @@ async def test_unicode_replacement_with_spaces():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_encode_spaces():
     converter = UnicodeReplacementConverter(encode_spaces=True)
     result = await converter.convert_async(prompt="a b", input_type="text")
@@ -42,7 +38,6 @@ async def test_unicode_replacement_encode_spaces():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_empty():
     converter = UnicodeReplacementConverter()
     result = await converter.convert_async(prompt="", input_type="text")
@@ -51,7 +46,6 @@ async def test_unicode_replacement_empty():
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_unicode_replacement_input_not_supported():
     converter = UnicodeReplacementConverter()
     with pytest.raises(ValueError):

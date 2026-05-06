@@ -17,7 +17,6 @@ def mock_chat_target(patch_central_database):
     return MagicMock(spec=PromptChatTarget)
 
 
-@pytest.mark.asyncio
 async def test_insecure_code_scorer_valid_response(mock_chat_target):
     # Initialize the scorer
     scorer = InsecureCodeScorer(
@@ -55,7 +54,6 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             mock_add_scores.assert_called_once_with(scores=[scores[0]])
 
 
-@pytest.mark.asyncio
 async def test_insecure_code_scorer_invalid_json(mock_chat_target):
     # Initialize the scorer
     scorer = InsecureCodeScorer(
@@ -77,7 +75,6 @@ async def test_insecure_code_scorer_invalid_json(mock_chat_target):
             mock_add_scores.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_score_async_unsupported_data_type_returns_empty_list(mock_chat_target, patch_central_database):
     scorer = InsecureCodeScorer(
         chat_target=mock_chat_target,

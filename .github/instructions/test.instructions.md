@@ -6,6 +6,11 @@ applyTo: '**/tests/**'
 
 Readable, maintainable tests. Reuse helpers from `conftest.py` and `mocks.py` in each test tier.
 
+## General Rules
+
+- Do NOT add `@pytest.mark.asyncio` — `asyncio_mode = "auto"` is configured project-wide so all async tests are discovered automatically.
+- Use `AsyncMock` for async methods, `MagicMock` for sync.
+
 ## Test Tiers
 
 Most tests should be unit tests. Integration and end-to-end tests are for testing that systems work toegether.
@@ -20,7 +25,6 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 - File naming: `test_[component].py`
 - Group tests in classes prefixed with `Test`
 - Use `@pytest.mark.usefixtures("patch_central_database")` on classes touching Central Memory
-- Use `@pytest.mark.asyncio` and `AsyncMock` for async methods
 - Reuse `tests/unit/mocks.py` helpers: `MockPromptTarget`, `get_sample_conversations`, `get_mock_target_identifier`, `openai_chat_response_json_dict`
 - Key fixtures from `tests/unit/conftest.py`: `patch_central_database`, `sqlite_instance`
 - No network calls should ever happen in unit tests, but file access is okay
@@ -43,7 +47,6 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 
 - Use `unittest.mock.patch` / `patch.object` — not `monkeypatch`
 - Prefer `patch.object(instance, "method", new_callable=AsyncMock)` over broad module-path patches
-- Use `AsyncMock` directly for async methods, `MagicMock` for sync
 - Use `spec=ClassName` on mocks when you need to constrain to a real interface
 - Use `side_effect` for sequences or raising exceptions
 - For environment variables: `patch.dict("os.environ", {...})`

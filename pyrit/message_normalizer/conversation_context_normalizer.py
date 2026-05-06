@@ -15,11 +15,11 @@ class ConversationContextNormalizer(MessageStringNormalizer):
     The output format is:
 
         Turn 1:
-        User: <content>
-        Assistant: <content>
+        user: <content>
+        assistant: <content>
 
         Turn 2:
-        User: <content>
+        user: <content>
         ...
     """
 
@@ -55,8 +55,7 @@ class ConversationContextNormalizer(MessageStringNormalizer):
 
                 # Format the piece content
                 content = self._format_piece_content(piece)
-                role_label = "User" if piece.api_role == "user" else "Assistant"
-                context_parts.append(f"{role_label}: {content}")
+                context_parts.append(f"{piece.api_role}: {content}")
 
         return "\n".join(context_parts)
 

@@ -49,7 +49,6 @@ def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
     )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scale_arguments_path, system_prompt_path",
     [
@@ -137,7 +136,6 @@ def test_validate_scale_arguments_missing_args_raises_value_error(scale_args, sc
         scale_scorer._validate_scale_arguments_set(scale_args)
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -164,7 +162,6 @@ async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_
     assert score[0].objective == "task"
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -201,7 +198,6 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
     assert score[0].objective == "task"
 
 
-@pytest.mark.asyncio
 async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -230,3 +226,44 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
 
     await scorer.score_text_async(text="example text", objective="task")
     assert scorer._score_value_with_llm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database):
+    """Test that non-text content (e.g., image_path) uses prepended text for objective context."""
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskScaleScorer(
+        chat_target=chat_target,
+        scale_arguments_path=SelfAskScaleScorer.ScalePaths.TASK_ACHIEVED_SCALE.value,
+        system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+        validator=ScorerPromptValidator(supported_data_types=["image_path"], is_objective_required=True),
+    )
+
+    score = UnvalidatedScore(
+        raw_score_value="95",
+        score_rationale="Image matches objective",
+        score_category=["task_achievement"],
+        score_value_description="description",
+        score_metadata={},
+        scorer_class_identifier=ComponentIdentifier(
+            class_name="SelfAskScaleScorer",
+            class_module="pyrit.score",
+        ),
+        message_piece_id=str(uuid.uuid4()),
+        objective="Generate a cat",
+    )
+
+    scorer._score_value_with_llm = AsyncMock(return_value=score)
+
+    await scorer.score_image_async(image_path="/path/to/image.png", objective="Generate a cat")
+
+    scorer._score_value_with_llm.assert_called_once()
+    call_kwargs = scorer._score_value_with_llm.call_args
+    # Non-text content should send prepended_text_message_piece with objective
+    assert call_kwargs.kwargs["prepended_text_message_piece"] == "objective: Generate a cat\nresponse:"
+    assert call_kwargs.kwargs["message_data_type"] == "image_path"
+    assert call_kwargs.kwargs["message_value"] == "/path/to/image.png"

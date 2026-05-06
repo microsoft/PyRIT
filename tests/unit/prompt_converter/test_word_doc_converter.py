@@ -24,7 +24,6 @@ def test_input_supported(word_doc_converter_no_template: WordDocConverter) -> No
     assert word_doc_converter_no_template.input_supported("image") is False
 
 
-@pytest.mark.asyncio
 async def test_convert_async_creates_new_docx(word_doc_converter_no_template: WordDocConverter) -> None:
     """convert_async should generate a new document when no existing_docx is configured."""
     prompt = "Hello, Word!"
@@ -56,7 +55,6 @@ async def test_convert_async_creates_new_docx(word_doc_converter_no_template: Wo
     assert result.output_text == "mock_path.docx"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_injects_into_existing_docx(tmp_path: Path) -> None:
     """convert_async should inject into an existing document when existing_docx is configured."""
     existing_docx_path = tmp_path / "template.docx"
@@ -91,7 +89,6 @@ async def test_convert_async_injects_into_existing_docx(tmp_path: Path) -> None:
     assert result.output_text == "injected.docx"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_unsupported_input_type(word_doc_converter_no_template: WordDocConverter) -> None:
     """convert_async should raise for unsupported input types."""
     with pytest.raises(ValueError, match="Input type not supported"):
@@ -283,7 +280,6 @@ def test_inject_no_placeholder_in_document_logs_warning(tmp_path: Path) -> None:
         mock_logger.warning.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_convert_async_end_to_end_new_doc(sqlite_instance) -> None:
     """End-to-end: convert_async creates a valid docx file (no mocking of internal logic)."""
     converter = WordDocConverter()
@@ -294,7 +290,6 @@ async def test_convert_async_end_to_end_new_doc(sqlite_instance) -> None:
     assert result.output_text  # non-empty path
 
 
-@pytest.mark.asyncio
 async def test_convert_async_end_to_end_injection(tmp_path: Path, sqlite_instance) -> None:
     """End-to-end: convert_async injects into an existing docx (no mocking of internal logic)."""
     existing_docx_path = tmp_path / "e2e_template.docx"

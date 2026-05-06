@@ -9,6 +9,7 @@ import uuid
 import jsonschema
 import pytest
 
+from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
 
@@ -23,7 +24,6 @@ def gpt5_args():
     }
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -34,7 +34,7 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
         original_value="You are a helpful assistant.",
         original_value_data_type="text",
         conversation_id=conv_id,
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
     sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
 
@@ -55,7 +55,6 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     assert "Paris" in result[0].message_pieces[1].converted_value
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -66,7 +65,7 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
         original_value="You are an expert in the lore of cats.",
         original_value_data_type="text",
         conversation_id=conv_id,
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
     sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
 
@@ -107,7 +106,6 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
     jsonschema.validate(instance=response_json, schema=cat_schema)
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -118,7 +116,7 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
         original_value="You are an expert in the lore of cats.",
         original_value_data_type="text",
         conversation_id=conv_id,
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
 
     sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
@@ -143,7 +141,6 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
     # Can't assert more, since the failure could be due to a bad generation by the model
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_reasoning_effort(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args, reasoning_effort="low")
 
@@ -162,7 +159,6 @@ async def test_openai_responses_gpt5_reasoning_effort(sqlite_instance, gpt5_args
     assert any(p.converted_value_data_type == "text" for p in result[0].message_pieces)
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_reasoning_summary(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args, reasoning_effort="low", reasoning_summary="auto")
 

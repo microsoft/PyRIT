@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.common import apply_defaults
+from pyrit.common import Parameter, apply_defaults
 from pyrit.common.path import (
     EXECUTOR_RED_TEAM_PATH,
     SCORER_SEED_PROMPT_PATH,
@@ -126,6 +126,23 @@ class Scam(Scenario):
             DatasetConfiguration: Configuration with airt_scams dataset.
         """
         return DatasetConfiguration(dataset_names=["airt_scams"], max_dataset_size=4)
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare custom parameters this scenario accepts from the CLI / config file.
+
+        Returns:
+            list[Parameter]: Parameters configurable per-run.
+        """
+        return [
+            Parameter(
+                name="max_turns",
+                description="Maximum conversation turns for the persuasive_rta strategy.",
+                param_type=int,
+                default=5,
+            ),
+        ]
 
     @apply_defaults
     def __init__(
@@ -263,7 +280,7 @@ class Scam(Scenario):
                 objective_target=self._objective_target,
                 attack_scoring_config=self._scorer_config,
                 attack_adversarial_config=self._adversarial_config,
-                max_turns=5,
+                max_turns=self.params["max_turns"],
             )
         elif strategy == "role_play":
             attack_strategy = RolePlayAttack(

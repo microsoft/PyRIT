@@ -44,7 +44,6 @@ def test_prompt_denylist_init_template_provided(sqlite_instance, mock_template) 
     assert converter._system_prompt_template == mock_template
 
 
-@pytest.mark.asyncio
 async def test_denylist_not_provided() -> None:
     converter = DenylistConverter(converter_target=MockPromptTarget(), system_prompt_template=None)
     output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
@@ -52,7 +51,6 @@ async def test_denylist_not_provided() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_denylist_no_match() -> None:
     converter = DenylistConverter(converter_target=MockPromptTarget(), system_prompt_template=None, denylist=["branch"])
     output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
@@ -60,7 +58,6 @@ async def test_denylist_no_match() -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_denylist_word_match(sqlite_instance, mock_target) -> None:
     converter = DenylistConverter(converter_target=mock_target, system_prompt_template=None, denylist=["tree"])
     output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
@@ -68,7 +65,6 @@ async def test_denylist_word_match(sqlite_instance, mock_target) -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_denylist_phrase_match(sqlite_instance, mock_target) -> None:
     converter = DenylistConverter(converter_target=mock_target, system_prompt_template=None, denylist=["cut down"])
     output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
@@ -76,7 +72,6 @@ async def test_denylist_phrase_match(sqlite_instance, mock_target) -> None:
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_denylist_phrase_and_word_match(sqlite_instance) -> None:
     converter = DenylistConverter(
         converter_target=MockPromptTarget(), system_prompt_template=None, denylist=["cut down", "tree"]

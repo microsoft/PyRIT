@@ -51,7 +51,6 @@ def test_generate_perturbed_prompts(homoglyphs_converter):
     assert perturbed_prompt != prompt
 
 
-@pytest.mark.asyncio
 async def test_homoglyphs_converter_convert_async(homoglyphs_converter):
     prompt = "This is a test."
     result = await homoglyphs_converter.convert_async(prompt=prompt, input_type="text")
@@ -63,7 +62,6 @@ async def test_homoglyphs_converter_convert_async(homoglyphs_converter):
         assert isinstance(p_prompt, str)
 
 
-@pytest.mark.asyncio
 async def test_confusables_converter_convert_async(confusables_converter) -> None:
     confusables_converter._deterministic = True
     output = await confusables_converter.convert_async(prompt="lorem ipsum dolor sit amet", input_type="text")
@@ -71,13 +69,11 @@ async def test_confusables_converter_convert_async(confusables_converter) -> Non
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_input_not_supported(homoglyphs_converter):
     with pytest.raises(ValueError):
         await homoglyphs_converter.convert_async(prompt="This is a test.", input_type="image")
 
 
-@pytest.mark.asyncio
 async def test_convert_async_non_ascii_word(homoglyphs_converter, confusables_converter):
     prompt = "café"
     result = await homoglyphs_converter.convert_async(prompt=prompt, input_type="text")
@@ -108,7 +104,6 @@ def test_get_homoglyph_variants_unicode_error(mock_is_confusable, homoglyphs_con
     assert variants == []  # Ensure the result is an empty list when the exception is raised
 
 
-@pytest.mark.asyncio
 async def test_convert_async_empty_prompt(homoglyphs_converter, confusables_converter):
     prompt = ""
     result = await homoglyphs_converter.convert_async(prompt=prompt, input_type="text")
@@ -119,14 +114,12 @@ async def test_convert_async_empty_prompt(homoglyphs_converter, confusables_conv
     assert result_confusables.output_text == ""
 
 
-@pytest.mark.asyncio
 async def test_confusables_converter_space_input(confusables_converter) -> None:
     output = await confusables_converter.convert_async(prompt="  ", input_type="text")
     assert output.output_text == "  "
     assert output.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_long_prompt(homoglyphs_converter, confusables_converter):
     prompt = (
         "This is a long prompt intended to test how the ConfusableConverter handles larger inputs. "

@@ -55,6 +55,35 @@ class InitializerConfig:
 
 
 @dataclass
+class ScenarioConfig:
+    """
+    Configuration for a scenario referenced by a config file.
+
+    Attributes:
+        name: Scenario name (registered in ScenarioRegistry; normalized to snake_case).
+        args: Optional map of scenario-declared parameter values.
+    """
+
+    name: str
+    args: Optional[dict[str, YamlValue]] = None
+
+
+def _scenario_config_to_dict(config: ScenarioConfig) -> dict[str, Any]:
+    """
+    Serialize a ``ScenarioConfig`` back to the YAML-style dict shape.
+
+    Args:
+        config (ScenarioConfig): The config to serialize.
+
+    Returns:
+        dict[str, Any]: ``{"name": ..., "args": ...}`` (args omitted when empty).
+    """
+    if config.args:
+        return {"name": config.name, "args": config.args}
+    return {"name": config.name}
+
+
+@dataclass
 class ConfigurationLoader(YamlLoadable):
     """
     Loader for PyRIT configuration from YAML files.
@@ -102,11 +131,13 @@ class ConfigurationLoader(YamlLoadable):
     silent: bool = False
     operator: Optional[str] = None
     operation: Optional[str] = None
+    scenario: Optional[Union[str, dict[str, Any]]] = None
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
         self._normalize_memory_db_type()
         self._normalize_initializers()
+        self._normalize_scenario()
 
     def _normalize_memory_db_type(self) -> None:
         """
@@ -165,6 +196,50 @@ class ConfigurationLoader(YamlLoadable):
             else:
                 raise ValueError(f"Initializer entry must be a string or dict, got: {type(entry).__name__}")
         self._initializer_configs = normalized
+
+    def _normalize_scenario(self) -> None:
+        """
+        Normalize the optional ``scenario`` block to a ``ScenarioConfig``.
+
+        Accepts:
+        - ``None``: no scenario configured at the config-file layer.
+        - ``"name"``: shorthand for ``ScenarioConfig(name="name", args=None)``.
+        - ``{"name": "name", "args": {...}}``: full form. ``args`` is optional.
+
+        The name is normalized to snake_case (matching initializer naming).
+
+        Raises:
+            ValueError: For any other shape.
+        """
+        if self.scenario is None:
+            self._scenario_config: Optional[ScenarioConfig] = None
+            return
+
+        if isinstance(self.scenario, str):
+            self._scenario_config = ScenarioConfig(name=class_name_to_snake_case(self.scenario, suffix="Scenario"))
+            return
+
+        if isinstance(self.scenario, dict):
+            if "name" not in self.scenario:
+                raise ValueError(f"Scenario configuration must have a 'name' field. Got: {self.scenario}")
+            name = self.scenario["name"]
+            if not isinstance(name, str):
+                raise ValueError(f"Scenario 'name' must be a string. Got: {type(name).__name__}")
+            args = self.scenario.get("args")
+            if args is not None and not isinstance(args, dict):
+                raise ValueError(f"Scenario 'args' must be a dict or omitted. Got: {type(args).__name__}")
+            self._scenario_config = ScenarioConfig(
+                name=class_name_to_snake_case(name, suffix="Scenario"),
+                args=args,
+            )
+            return
+
+        raise ValueError(f"Scenario entry must be a string or dict, got: {type(self.scenario).__name__}")
+
+    @property
+    def scenario_config(self) -> Optional[ScenarioConfig]:
+        """The normalized ``scenario:`` block, or ``None`` when not configured."""
+        return self._scenario_config
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
@@ -249,6 +324,8 @@ class ConfigurationLoader(YamlLoadable):
                     config_data["operator"] = default_config.operator
                 if default_config.operation:
                     config_data["operation"] = default_config.operation
+                if default_config._scenario_config is not None:
+                    config_data["scenario"] = _scenario_config_to_dict(default_config._scenario_config)
             except Exception as e:
                 logger.warning(f"Failed to load default config file {default_config_path}: {e}")
 
@@ -272,6 +349,12 @@ class ConfigurationLoader(YamlLoadable):
                 config_data["operator"] = explicit_config.operator
             if explicit_config.operation:
                 config_data["operation"] = explicit_config.operation
+            # Explicit config wins over default config for scenario block too.
+            config_data["scenario"] = (
+                _scenario_config_to_dict(explicit_config._scenario_config)
+                if explicit_config._scenario_config is not None
+                else None
+            )
 
         # 3. Apply overrides (non-None values take precedence)
         # Convert Sequence to list to match dataclass field types

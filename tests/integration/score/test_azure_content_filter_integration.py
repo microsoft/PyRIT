@@ -18,7 +18,6 @@ def memory() -> Generator[MemoryInterface, None, None]:
     yield from get_memory_interface()
 
 
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_image_integration(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer with image input.
@@ -49,7 +48,6 @@ async def test_azure_content_filter_scorer_image_integration(memory) -> None:
         assert max_score < 0.5, "Architecture diagram should have low harm scores"
 
 
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_long_text_chunking_integration(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer with text longer than 10,000 characters.
@@ -82,7 +80,6 @@ async def test_azure_content_filter_scorer_long_text_chunking_integration(memory
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer image scoring with explicit API key auth.
@@ -111,7 +108,6 @@ async def test_azure_content_filter_scorer_image_with_api_key(memory) -> None:
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_azure_content_filter_scorer_text_with_api_key(memory) -> None:
     """
     Integration test for Azure Content Filter Scorer text scoring with explicit API key auth.

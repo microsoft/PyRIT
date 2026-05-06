@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
+from pyrit.common.parameter import Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
     OpenAIChatTarget,
@@ -32,7 +33,7 @@ from pyrit.prompt_target import (
     RealtimeTarget,
 )
 from pyrit.registry import TargetRegistry
-from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -485,33 +486,15 @@ class TargetInitializer(PyRITInitializer):
     """
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """Get the list of parameters this initializer accepts."""
         return [
-            InitializerParameter(
+            Parameter(
                 name="tags",
                 description="Target tags to register (e.g., ['default'], ['default', 'scorer'], or ['all'])",
                 default=["default"],
             ),
         ]
-
-    @property
-    def name(self) -> str:
-        """Get the name of this initializer."""
-        return "Target Initializer"
-
-    @property
-    def execution_order(self) -> int:
-        """Get the execution order. Runs before ScorerInitializer (order=2)."""
-        return 1
-
-    @property
-    def description(self) -> str:
-        """Get the description of this initializer."""
-        return (
-            "Instantiates a collection of targets from "
-            "available environment variables and adds them to the TargetRegistry"
-        )
 
     @property
     def required_env_vars(self) -> list[str]:

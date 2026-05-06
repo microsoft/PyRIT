@@ -45,7 +45,6 @@ def sample_conversations() -> MutableSequence[MessagePiece]:
     return Message.flatten_to_message_pieces(conversations)
 
 
-@pytest.mark.asyncio
 async def test_azure_completion_validate_request_length(azure_completion_target: OpenAICompletionTarget):
     request = Message(
         message_pieces=[
@@ -61,7 +60,6 @@ async def test_azure_completion_validate_request_length(azure_completion_target:
         await azure_completion_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_azure_completion_validate_prompt_type(azure_completion_target: OpenAICompletionTarget):
     request = Message(message_pieces=[get_image_message_piece()])
     with pytest.raises(
@@ -72,7 +70,6 @@ async def test_azure_completion_validate_prompt_type(azure_completion_target: Op
         await azure_completion_target.send_prompt_async(message=request)
 
 
-@pytest.mark.asyncio
 async def test_azure_complete_async_return(
     completions_response_json: dict,
     azure_completion_target: OpenAICompletionTarget,
