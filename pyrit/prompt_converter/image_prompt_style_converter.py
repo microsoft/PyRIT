@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
-import pathlib
 import random
 import uuid
+from pathlib import Path
 
 import yaml
 
@@ -22,8 +22,8 @@ from pyrit.prompt_target import PromptChatTarget
 
 logger = logging.getLogger(__name__)
 
-IMAGE_PROMPT_STYLE_DIR = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
-_SYSTEM_PROMPT_FILENAME = "image_prompt_style_system_prompt.yaml"
+IMAGE_PROMPT_STYLE_DIR = Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
+SYSTEM_PROMPT_FILENAME = "image_prompt_style_system_prompt.yaml"
 
 
 class ImagePromptStyleConverter(PromptConverter):
@@ -44,7 +44,7 @@ class ImagePromptStyleConverter(PromptConverter):
         *,
         converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         filter_name: str | None = None,
-        filter_path: str | pathlib.Path | None = None,
+        filter_path: str | Path | None = None,
         variation: str | None = None,
     ) -> None:
         """
@@ -61,7 +61,7 @@ class ImagePromptStyleConverter(PromptConverter):
             filter_path: Path to a custom filter YAML file.  Mutually exclusive with
                 ``filter_name``.
             variation: Name of the variation to use (matched by key name in the YAML variations
-                mapping, e.g. "Wide Mirror Shot"). This is case-insensitive. If None, a random
+                mapping, e.g. "wide_mirror_shot"). This is case-insensitive. If None, a random
                 variation is selected on each call to convert_async.
 
         Raises:
@@ -77,12 +77,12 @@ class ImagePromptStyleConverter(PromptConverter):
         self._variation = variation
 
         # Load the shared system prompt template
-        system_prompt_path = IMAGE_PROMPT_STYLE_DIR / _SYSTEM_PROMPT_FILENAME
+        system_prompt_path = IMAGE_PROMPT_STYLE_DIR / SYSTEM_PROMPT_FILENAME
         self._system_prompt_template = SeedPrompt.from_yaml_file(system_prompt_path)
 
         # Resolve the filter YAML file
         if filter_path is not None:
-            resolved_path = pathlib.Path(filter_path)
+            resolved_path = Path(filter_path)
             if not resolved_path.exists():
                 raise ValueError(f"Filter path '{filter_path}' does not exist.")
             self._filter_name = resolved_path.stem
@@ -143,7 +143,7 @@ class ImagePromptStyleConverter(PromptConverter):
         Convert a short objective into a detailed, styled image generation prompt.
 
         Args:
-            prompt (str): The user's short objective (e.g., "two people on a beach applying sunscreen").
+            prompt (str): The user's short objective
             input_type (PromptDataType): The type of input data.
 
         Returns:
@@ -204,4 +204,28 @@ class ImagePromptStyleConverter(PromptConverter):
         Returns:
             List of filter names (YAML filenames without extension), excluding the system prompt.
         """
-        return sorted(p.stem for p in IMAGE_PROMPT_STYLE_DIR.glob("*.yaml") if p.name != _SYSTEM_PROMPT_FILENAME)
+        return sorted(p.stem for p in IMAGE_PROMPT_STYLE_DIR.glob("*.yaml") if p.name != SYSTEM_PROMPT_FILENAME)
+
+    @classmethod
+    def list_available_variations(cls, *, filter_name: str) -> list[str]:
+        """
+        List all available variation names for a given filter.
+
+        Args:
+            filter_name: Name of a built-in filter YAML file (without extension).
+
+        Returns:
+            Sorted list of variation key names defined in the filter.
+
+        Raises:
+            ValueError: If filter_name does not correspond to an existing YAML file.
+        """
+        resolved_path = IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
+        if not resolved_path.exists():
+            available = cls.list_available_filters()
+            raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
+
+        with open(resolved_path, encoding="utf-8") as f:
+            filter_data = yaml.safe_load(f)
+
+        return sorted(filter_data.get("variations", {}).keys())

@@ -313,7 +313,7 @@ print("Scientific Translation:", await scientific_translation_converter.convert_
 
 # Image filter converter transforms simple prompt into an image filter style prompt (ie "draw me a picture in the style of ..")
 converter = ImagePromptStyleConverter(
-    converter_target=attack_llm, filter_name="laundromat_fisheye", variation="Wide Mirror Shot"
+    converter_target=attack_llm, filter_name="laundromat_fisheye", variation="wide_mirror_shot"
 )
-result = await converter.convert_async(prompt=prompt)
+result = await converter.convert_async(prompt="make a raccoon in a pirate ship")
 print("Image Filter Conversion:", result.output_text)  # type: ignore

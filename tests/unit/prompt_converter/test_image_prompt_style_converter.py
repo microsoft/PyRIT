@@ -31,11 +31,11 @@ def test_init_valid_filter_and_variation(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
-        variation="Bodycam Footage",
+        variation="bodycam_footage",
     )
     assert converter._filter_name == "gritty_documentary"
-    assert converter._variation == "Bodycam Footage"
-    assert "bodycam footage" in converter._variation_map
+    assert converter._variation == "bodycam_footage"
+    assert "bodycam_footage" in converter._variation_map
 
 
 def test_init_no_filter_picks_random(mock_target) -> None:
@@ -49,14 +49,14 @@ def test_init_no_filter_picks_random(mock_target) -> None:
 
 def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
     custom_yaml = tmp_path / "custom_filter.yaml"
-    custom_yaml.write_text("style_instructions: custom style\nvariations:\n  My Variation: description of variation\n")
+    custom_yaml.write_text("style_instructions: custom style\nvariations:\n  my_variation: description of variation\n")
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_path=custom_yaml,
-        variation="My Variation",
+        variation="my_variation",
     )
     assert converter._filter_name == "custom_filter"
-    assert "my variation" in converter._variation_map
+    assert "my_variation" in converter._variation_map
 
 
 def test_init_filter_path_nonexistent_raises(mock_target) -> None:
@@ -90,10 +90,10 @@ def test_init_variation_not_case_sensitive(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
-        variation="bodycam footage",
+        variation="BODYCAM_FOOTAGE",
     )
-    assert converter._variation == "bodycam footage"
-    assert "bodycam footage" in converter._variation_map
+    assert converter._variation == "BODYCAM_FOOTAGE"
+    assert "bodycam_footage" in converter._variation_map
 
 
 def test_init_invalid_filter_name_raises(mock_target) -> None:
@@ -125,13 +125,13 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
         filter_name="gritty_documentary",
-        variation="Bodycam Footage",
+        variation="bodycam_footage",
     )
     result = await converter.convert_async(prompt="person walking through a dark alley")
 
     mock_target.set_system_prompt.assert_called_once()
     system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
-    assert "Bodycam Footage" in system_arg
+    assert "bodycam_footage" in system_arg
     assert "style_instructions" not in system_arg or "CRITICAL INSTRUCTION" in system_arg
 
     mock_target.send_prompt_async.assert_called_once()
@@ -172,8 +172,8 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
     duplicate_yaml = {
         "style_instructions": "test style",
         "variations": {
-            "Bodycam Footage": "first version",
-            "bodycam footage": "second version",
+            "bodycam_footage": "first version",
+            "BODYCAM_FOOTAGE": "second version",
         },
     }
 
@@ -195,4 +195,4 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
         )
 
     assert "Duplicate variation key" in caplog.text
-    assert converter._variation_map["bodycam footage"] == "bodycam footage"
+    assert converter._variation_map["bodycam_footage"] == "BODYCAM_FOOTAGE"
