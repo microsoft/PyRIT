@@ -6,12 +6,16 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
+#   kernelspec:
+#     display_name: pyrit
+#     language: python
+#     name: python3
 # ---
 
 # %% [markdown]
-# # Benchmark Scenario
+# # AdversarialBenchmark Scenario
 #
-# The benchmark scenario compares the effectiveness of multiple adversarial models in attaining an objective through various attack strategies.
+# The adversarial benchmark scenario compares the effectiveness of multiple adversarial models in attaining an objective through various attack strategies.
 
 # %%
 # %load_ext autoreload
@@ -24,7 +28,7 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.models import AttackOutcome
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
-from pyrit.scenario.scenarios.benchmark import Benchmark
+from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets
 
@@ -41,7 +45,7 @@ gpt4o_adv = OpenAIChatTarget(
     temperature=1.1,
 )
 
-benchmark_scenario = Benchmark(
+benchmark_scenario = AdversarialBenchmark(
     adversarial_models={
         "gemma_adv": gemma_adv,
         "gpt4o_adv": gpt4o_adv,
@@ -54,7 +58,7 @@ await benchmark_scenario.initialize_async(  # type: ignore
 
 baseline_result = await benchmark_scenario.run_async()  # type: ignore
 
-# Resume handle: re-run with `Benchmark(..., scenario_result_id=<this id>)` to pick
+# Resume handle: re-run with `AdversarialBenchmark(..., scenario_result_id=<this id>)` to pick
 # up where this run left off (constructor args must match the original run).
 print(f"Scenario result id: {baseline_result.id}")
 
@@ -89,14 +93,14 @@ await printer.print_summary_async(baseline_result)  # type: ignore
 # Compare a hand-picked set of techniques against both adversarial models.
 # Reuses gemma_adv and gpt4o_adv from the cell above so the comparison is
 # isolated to the technique axis.
-techniques_benchmark = Benchmark(
+techniques_benchmark = AdversarialBenchmark(
     adversarial_models={
         "gemma_adv": gemma_adv,
         "gpt4o_adv": gpt4o_adv,
     }
 )
 
-strategy_class = Benchmark.get_strategy_class()
+strategy_class = AdversarialBenchmark.get_strategy_class()
 selected_strategies = [
     strategy_class("role_play"),
     strategy_class("red_teaming"),

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the Benchmark scenario."""
+"""Tests for the AdversarialBenchmark scenario."""
 
 import copy
 from dataclasses import FrozenInstanceError
@@ -26,7 +26,7 @@ from pyrit.registry.object_registries.attack_technique_registry import AttackTec
 from pyrit.scenario.core import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
-from pyrit.scenario.scenarios.benchmark.benchmark import Benchmark
+from pyrit.scenario.scenarios.benchmark.benchmark import AdversarialBenchmark
 from pyrit.score import TrueFalseScorer
 
 # Self-pinned: any change to ``_get_benchmarkable_specs`` (or to the ``light`` tag
@@ -36,7 +36,7 @@ from pyrit.score import TrueFalseScorer
 # strategy enum's full concrete-member roster).  ``_LIGHT_BENCHMARKABLE_*`` covers
 # only the subset tagged ``"light"`` (used for runtime expectations under the
 # default ``"light"`` strategy).
-_BENCHMARKABLE_SPECS = Benchmark._get_benchmarkable_specs()
+_BENCHMARKABLE_SPECS = AdversarialBenchmark._get_benchmarkable_specs()
 _NUM_ADVERSARIAL_TECHNIQUES = len(_BENCHMARKABLE_SPECS)
 _BENCHMARKABLE_TECHNIQUE_NAMES = {spec.name for spec in _BENCHMARKABLE_SPECS}
 _BENCHMARKABLE_ATTACK_CLASSES = {spec.attack_class for spec in _BENCHMARKABLE_SPECS}
@@ -112,11 +112,11 @@ def reset_technique_registry():
 
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    Benchmark._cached_strategy_class = None
+    AdversarialBenchmark._cached_strategy_class = None
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    Benchmark._cached_strategy_class = None
+    AdversarialBenchmark._cached_strategy_class = None
 
 
 @pytest.fixture(autouse=True)
@@ -158,29 +158,29 @@ class TestBenchmarkTypes:
     def test_empty_adversarial_models_raises(self):
         """Passing an empty dict must raise ValueError."""
         with pytest.raises(ValueError, match="non-empty"):
-            Benchmark(adversarial_models={})
+            AdversarialBenchmark(adversarial_models={})
 
     def test_empty_list_adversarial_models_raises(self):
         """Passing an empty list must raise ValueError."""
         with pytest.raises(ValueError, match="non-empty"):
-            Benchmark(adversarial_models=[])
+            AdversarialBenchmark(adversarial_models=[])
 
     def test_unsupported_type_adversarial_models_raises(self):
         """Passing a non-dict, non-list type must raise ValueError."""
         with pytest.raises(ValueError, match="dict or a list"):
-            Benchmark(adversarial_models="not-a-dict-or-list")  # type: ignore[arg-type]
+            AdversarialBenchmark(adversarial_models="not-a-dict-or-list")  # type: ignore[arg-type]
 
     def test_version_is_1(self):
-        assert Benchmark.VERSION == 1
+        assert AdversarialBenchmark.VERSION == 1
 
     def test_default_dataset_config_uses_harmbench(self):
-        config = Benchmark.default_dataset_config()
+        config = AdversarialBenchmark.default_dataset_config()
         assert isinstance(config, DatasetConfiguration)
         names = config.get_default_dataset_names()
         assert "harmbench" in names
 
     def test_default_dataset_config_max_size_is_8(self):
-        config = Benchmark.default_dataset_config()
+        config = AdversarialBenchmark.default_dataset_config()
         assert config.max_dataset_size == 8
 
     def test_frozen_spec_cannot_be_mutated(self):
@@ -196,10 +196,10 @@ class TestBenchmarkTypes:
 
 
 def _make_benchmark(adversarial_models):
-    """Helper to create a Benchmark with mocked default scorer."""
+    """Helper to create a AdversarialBenchmark with mocked default scorer."""
     with patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer:
         mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-        return Benchmark(adversarial_models=adversarial_models)
+        return AdversarialBenchmark(adversarial_models=adversarial_models)
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -208,19 +208,19 @@ class TestBenchmarkStrategy:
 
     def test_strategy_includes_all_adversarial_techniques(self, all_supported_attacks):
         """get_strategy_class() concrete members match the adversarial-capable spec set."""
-        strat = Benchmark.get_strategy_class()
+        strat = AdversarialBenchmark.get_strategy_class()
         values = {s.value for s in strat.get_all_strategies()}
         assert values == all_supported_attacks
 
     def test_strategy_has_no_permuted_members(self):
         """No ``__model`` suffixes — models are a runtime parameter, not a strategy axis."""
-        strat = Benchmark.get_strategy_class()
+        strat = AdversarialBenchmark.get_strategy_class()
         values = {s.value for s in strat.get_all_strategies()}
         assert not any("__" in v for v in values)
 
     def test_strategy_excludes_non_adversarial_techniques(self):
         """prompt_sending and many_shot don't accept an adversarial chat and must be excluded."""
-        strat = Benchmark.get_strategy_class()
+        strat = AdversarialBenchmark.get_strategy_class()
         values = {s.value for s in strat.get_all_strategies()}
         assert "prompt_sending" not in values
         assert "many_shot" not in values
@@ -230,21 +230,21 @@ class TestBenchmarkStrategy:
         s1 = _make_benchmark(single_adversarial_model)
         s2 = _make_benchmark(two_adversarial_models)
         assert s1._strategy_class is s2._strategy_class
-        assert s1._strategy_class is Benchmark.get_strategy_class()
+        assert s1._strategy_class is AdversarialBenchmark.get_strategy_class()
 
     def test_default_strategy_is_light(self):
         """Default expands to every benchmarkable technique via the ``all`` aggregate."""
-        default = Benchmark.get_default_strategy()
+        default = AdversarialBenchmark.get_default_strategy()
         assert default.value == "light"
 
     def test_benchmarkable_specs_have_no_adversarial_chat(self):
         """Filtered specs must leave adversarial_chat unset — the scenario injects its own."""
-        for spec in Benchmark._get_benchmarkable_specs():
+        for spec in AdversarialBenchmark._get_benchmarkable_specs():
             assert spec.adversarial_chat is None
 
     def test_benchmarkable_specs_accept_adversarial(self):
         """All filtered specs must accept attack_adversarial_config."""
-        for spec in Benchmark._get_benchmarkable_specs():
+        for spec in AdversarialBenchmark._get_benchmarkable_specs():
             assert AttackTechniqueRegistry._accepts_adversarial(spec.attack_class)
 
     def test_original_scenario_techniques_unmodified(self, two_adversarial_models):
@@ -269,9 +269,9 @@ class TestBenchmarkStrategy:
             _make_benchmark({"": model})
 
     def test_scenario_name(self, single_adversarial_model):
-        """Scenario name should be 'Benchmark'."""
+        """Scenario name should be 'AdversarialBenchmark'."""
         scenario = _make_benchmark(single_adversarial_model)
-        assert scenario.name == "Benchmark"
+        assert scenario.name == "AdversarialBenchmark"
 
 
 # ===========================================================================
@@ -290,15 +290,15 @@ class TestBenchmarkRuntime:
         adversarial_models,
         seed_groups: dict[str, list[SeedAttackGroup]] | None = None,
         strategies=None,
-    ) -> tuple[Benchmark, list[AtomicAttack]]:
-        """Helper: create Benchmark, initialize, return (scenario, attacks)."""
+    ) -> tuple[AdversarialBenchmark, list[AtomicAttack]]:
+        """Helper: create AdversarialBenchmark, initialize, return (scenario, attacks)."""
         groups = seed_groups or {"harmbench": _make_seed_groups("harmbench")}
         with (
             patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=adversarial_models)
+            scenario = AdversarialBenchmark(adversarial_models=adversarial_models)
             init_kwargs: dict = {"objective_target": mock_objective_target}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
@@ -327,7 +327,7 @@ class TestBenchmarkRuntime:
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=two_adversarial_models)
+            scenario = AdversarialBenchmark(adversarial_models=two_adversarial_models)
             all_strat = scenario._strategy_class("all")
             await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
             attacks = await scenario._get_atomic_attacks_async()
@@ -345,7 +345,7 @@ class TestBenchmarkRuntime:
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=two_adversarial_models)
+            scenario = AdversarialBenchmark(adversarial_models=two_adversarial_models)
             all_strat = scenario._strategy_class("all")
             await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
             attacks = await scenario._get_atomic_attacks_async()
@@ -364,7 +364,7 @@ class TestBenchmarkRuntime:
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=single_adversarial_model)
+            scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
             all_strat = scenario._strategy_class("all")
             await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
             attacks = await scenario._get_atomic_attacks_async()
@@ -384,7 +384,7 @@ class TestBenchmarkRuntime:
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=two_adversarial_models)
+            scenario = AdversarialBenchmark(adversarial_models=two_adversarial_models)
             all_strat = scenario._strategy_class("all")
             await scenario.initialize_async(objective_target=mock_objective_target, scenario_strategies=[all_strat])
             attacks = await scenario._get_atomic_attacks_async()
@@ -415,7 +415,7 @@ class TestBenchmarkRuntime:
     @pytest.mark.asyncio
     async def test_attacks_use_all_benchmarkable_attack_classes(self, mock_objective_target, single_adversarial_model):
         """Under the ``all`` strategy, atomic attacks must cover every adversarial-capable attack class."""
-        scenario_class_strategies = Benchmark.get_strategy_class()
+        scenario_class_strategies = AdversarialBenchmark.get_strategy_class()
         _, attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
@@ -436,7 +436,7 @@ class TestBenchmarkRuntime:
 
     @pytest.mark.asyncio
     async def test_baseline_excluded(self, mock_objective_target, single_adversarial_model):
-        """Benchmark must opt out of the parent's default baseline.
+        """AdversarialBenchmark must opt out of the parent's default baseline.
 
         Verifies both the configuration toggle (``_include_baseline is False``) and
         the observable property (no atomic attack is named ``"baseline"``).
@@ -516,8 +516,8 @@ class TestBenchmarkSupportedParameters:
     """Tests for the declared ``include_default_baseline`` parameter."""
 
     def test_supported_parameters_declares_include_default_baseline(self):
-        """Benchmark exposes include_default_baseline via supported_parameters."""
-        params = Benchmark.supported_parameters()
+        """AdversarialBenchmark exposes include_default_baseline via supported_parameters."""
+        params = AdversarialBenchmark.supported_parameters()
         names = [p.name for p in params]
         assert "include_default_baseline" in names
 
@@ -533,7 +533,7 @@ class TestBenchmarkSupportedParameters:
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=single_adversarial_model)
+            scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
             scenario.set_params_from_args(args={})
             await scenario.initialize_async(objective_target=mock_objective_target)
 
@@ -552,7 +552,7 @@ class TestBenchmarkSupportedParameters:
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models=single_adversarial_model)
+            scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
             scenario.set_params_from_args(args={"include_default_baseline": True})
             await scenario.initialize_async(objective_target=mock_objective_target)
 
@@ -585,7 +585,7 @@ class TestBenchmarkASRBreakdown:
 
     def test_per_model_breakdown_reflects_outcome_counts(self):
         """High-success model > low-success model in per-group ASR; math invariants hold."""
-        # Two techniques × two models, mirroring how Benchmark keys atomic_attack_name
+        # Two techniques × two models, mirroring how AdversarialBenchmark keys atomic_attack_name
         # ("{technique}__{model_label}__{dataset}") and folds them into model_label.
         attack_results: dict[str, list[AttackResult]] = {
             "role_play__model_high__hb": [
@@ -608,7 +608,7 @@ class TestBenchmarkASRBreakdown:
             "context_compliance__model_low__hb": "model_low",
         }
         result = ScenarioResult(
-            scenario_identifier=ScenarioIdentifier(name="Benchmark", scenario_version=1),
+            scenario_identifier=ScenarioIdentifier(name="AdversarialBenchmark", scenario_version=1),
             objective_target_identifier=ComponentIdentifier(class_name="MockTarget", class_module="test"),
             attack_results=attack_results,
             objective_scorer_identifier=ComponentIdentifier(class_name="MockScorer", class_module="test"),

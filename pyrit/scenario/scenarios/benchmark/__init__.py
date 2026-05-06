@@ -5,7 +5,7 @@
 
 from typing import Any
 
-from pyrit.scenario.scenarios.benchmark.benchmark import Benchmark
+from pyrit.scenario.scenarios.benchmark.benchmark import AdversarialBenchmark
 
 
 def __getattr__(name: str) -> Any:
@@ -18,9 +18,9 @@ def __getattr__(name: str) -> Any:
     Raises:
         AttributeError: If the attribute name is not recognized.
     """
-    if name == "BenchmarkStrategy":
-        return Benchmark.get_strategy_class()
+    if name == "AdversarialBenchmarkStrategy":
+        return AdversarialBenchmark.get_strategy_class()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["Benchmark", "BenchmarkStrategy"]
+__all__ = ["AdversarialBenchmark", "AdversarialBenchmarkStrategy"]

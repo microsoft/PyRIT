@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Benchmark scenario — compare adversarial-model attack success rate (ASR)
+AdversarialBenchmark scenario — compare adversarial-model attack success rate (ASR)
 across attack techniques.
 
 Strategies are built dynamically by filtering ``SCENARIO_TECHNIQUES`` to those
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Benchmark(Scenario):
+class AdversarialBenchmark(Scenario):
     """
     Benchmarking scenario that compares the attack success rate (ASR)
     of several different adversarial models.
@@ -53,13 +53,13 @@ class Benchmark(Scenario):
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         """
-        Return the BenchmarkStrategy enum, building on first access.
+        Return the AdversarialBenchmarkStrategy enum, building on first access.
 
         Returns:
             type[ScenarioStrategy]: The BenchmarkStrategy enum class.
         """
         if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = Benchmark._build_benchmark_strategy()
+            cls._cached_strategy_class = AdversarialBenchmark._build_benchmark_strategy()
 
         return cls._cached_strategy_class
 
@@ -116,7 +116,7 @@ class Benchmark(Scenario):
         scenario_result_id: str | None = None,
     ) -> None:
         """
-        Initialize the Benchmark scenario.
+        Initialize the AdversarialBenchmark scenario.
 
         Args:
             adversarial_models: Either a ``dict`` mapping user-chosen labels to
@@ -195,7 +195,7 @@ class Benchmark(Scenario):
         # ``self.params["include_default_baseline"]`` is guaranteed to be set.
         self._include_baseline = self.params.get("include_default_baseline", False)
 
-        benchmarkable_specs = Benchmark._get_benchmarkable_specs()
+        benchmarkable_specs = AdversarialBenchmark._get_benchmarkable_specs()
         local_factories = {
             spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in benchmarkable_specs
         }
@@ -302,7 +302,7 @@ class Benchmark(Scenario):
         Returns:
             type[ScenarioStrategy]: The dynamically generated strategy enum class.
         """
-        specs = Benchmark._get_benchmarkable_specs()
+        specs = AdversarialBenchmark._get_benchmarkable_specs()
         return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
             class_name="BenchmarkStrategy",
             specs=TagQuery.all("core").filter(specs),
