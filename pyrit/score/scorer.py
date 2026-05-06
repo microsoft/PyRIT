@@ -200,7 +200,9 @@ class Scorer(Identifiable, abc.ABC):
         if skip_on_error_result and message.is_error():
             # When score_blocked_content is enabled and the message has partial content,
             # don't skip — let _score_async handle the substitution.
-            has_partial = any("partial_content" in p.prompt_metadata for p in message.message_pieces if p.is_blocked())
+            has_partial = any(
+                p.prompt_metadata.get("partial_content") for p in message.message_pieces if p.is_blocked()
+            )
             if not (score_blocked_content and has_partial):
                 logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
                 return []
