@@ -4,7 +4,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import pyrit
 from pyrit.models import AttackOutcome, AttackResult
@@ -59,9 +59,9 @@ class ScenarioResult:
         self,
         *,
         scenario_identifier: ScenarioIdentifier,
-        objective_target_identifier: Union[dict[str, Any], "ComponentIdentifier"],
+        objective_target_identifier: "ComponentIdentifier",
         attack_results: dict[str, list[AttackResult]],
-        objective_scorer_identifier: Union[dict[str, Any], "ComponentIdentifier"],
+        objective_scorer_identifier: "ComponentIdentifier",
         scenario_run_state: ScenarioRunState = "CREATED",
         labels: Optional[dict[str, str]] = None,
         completion_time: Optional[datetime] = None,
@@ -74,9 +74,9 @@ class ScenarioResult:
 
         Args:
             scenario_identifier (ScenarioIdentifier): Identifier for the executed scenario.
-            objective_target_identifier (Union[Dict[str, Any], TargetIdentifier]): Target identifier.
+            objective_target_identifier (ComponentIdentifier): Target identifier.
             attack_results (dict[str, List[AttackResult]]): Results grouped by atomic attack name.
-            objective_scorer_identifier (Union[Dict[str, Any], ScorerIdentifier]): Objective scorer identifier.
+            objective_scorer_identifier (ComponentIdentifier): Objective scorer identifier.
             scenario_run_state (ScenarioRunState): Current scenario run state.
             labels (Optional[dict[str, str]]): Optional labels.
             completion_time (Optional[datetime]): Optional completion timestamp.
@@ -87,15 +87,12 @@ class ScenarioResult:
                 printer to aggregate results for user-facing output.
 
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
-
         self.id = id if id is not None else uuid.uuid4()
         self.scenario_identifier = scenario_identifier
 
-        # Normalize objective_target_identifier to ComponentIdentifier
-        self.objective_target_identifier = ComponentIdentifier.normalize(objective_target_identifier)
+        self.objective_target_identifier = objective_target_identifier
 
-        self.objective_scorer_identifier = ComponentIdentifier.normalize(objective_scorer_identifier)
+        self.objective_scorer_identifier = objective_scorer_identifier
 
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results

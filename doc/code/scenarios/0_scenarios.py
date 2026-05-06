@@ -38,7 +38,7 @@
 #
 # Scenarios should take almost no effort to run with default values. The [PyRIT Scanner](../../scanner/0_scanner.md) provides two CLIs for running scenarios: [pyrit_scan](../../scanner/1_pyrit_scan.ipynb) for automated execution and [pyrit_shell](../../scanner/2_pyrit_shell.md) for interactive exploration.
 #
-# For programmatic configuration — customizing datasets, strategies, scorers, and baseline mode — see [Scenario Parameters](./1_scenario_parameters.ipynb).
+# For programmatic configuration — customizing datasets, strategies, scorers, and baseline mode — see [Common Scenario Parameters](./1_common_scenario_parameters.ipynb).
 #
 # ## How It Works
 #
@@ -178,7 +178,7 @@ await print_scenarios_list_async(context=FrontendCore())  # type: ignore
 #
 # To run *only* the baseline (no attack strategies), create a `RedTeamAgent` with
 # `include_baseline=True` (the default) and pass `scenario_strategies=None`. See
-# [Scenario Parameters](./1_scenario_parameters.ipynb) for a working example.
+# [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a working example.
 
 # %% [markdown]
 #

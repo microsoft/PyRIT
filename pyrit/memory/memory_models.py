@@ -272,7 +272,7 @@ class PromptMemoryEntry(Base):
             MessagePiece: The reconstructed message piece with all its data and scores.
         """
         # Reconstruct ComponentIdentifiers with the stored pyrit_version
-        converter_ids: Optional[list[Union[ComponentIdentifier, dict[str, str]]]] = None
+        converter_ids: Optional[list[ComponentIdentifier]] = None
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         if self.converter_identifiers:
             converter_ids = [
@@ -301,9 +301,7 @@ class PromptMemoryEntry(Base):
             id=self.id,
             conversation_id=self.conversation_id,
             sequence=self.sequence,
-            labels=self.labels,
             prompt_metadata=self.prompt_metadata,
-            targeted_harm_categories=self.targeted_harm_categories,
             converter_identifiers=converter_ids,
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
@@ -314,6 +312,8 @@ class PromptMemoryEntry(Base):
             timestamp=_ensure_utc(self.timestamp),
         )
         message_piece.scores = [score.get_score() for score in self.scores]
+        message_piece.labels = self.labels or {}
+        message_piece.targeted_harm_categories = self.targeted_harm_categories or []
         return message_piece
 
     def __str__(self) -> str:
@@ -401,8 +401,7 @@ class ScoreEntry(Base):
         self.score_category = entry.score_category
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata
-        # Normalize to ComponentIdentifier (handles dict with deprecation warning) then convert to dict for JSON storage
-        normalized_scorer = ComponentIdentifier.normalize(entry.scorer_class_identifier)
+        normalized_scorer = entry.scorer_class_identifier
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
         if normalized_scorer.eval_hash is None:
             normalized_scorer = normalized_scorer.with_eval_hash(

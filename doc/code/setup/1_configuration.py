@@ -128,7 +128,7 @@ target3 = OpenAIChatTarget(
 #
 # You can pass these in as arguments to every class initialization, but it can be a huge pain to set these every time. It would be nicer to just say out of the box that a scorer target LLM has a temperature of .5 by default, and a converter target LLM has a temperature of 1.1 by default. And it turns out you can!
 #
-# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Scenario Parameters](../scenarios/1_scenario_parameters.ipynb) but is much easier because defaults are set.
+# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) but is much easier because defaults are set.
 
 # %%
 import os

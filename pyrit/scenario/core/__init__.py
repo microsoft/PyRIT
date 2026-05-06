@@ -3,6 +3,7 @@
 
 """Core scenario classes for running attack configurations."""
 
+from pyrit.common.parameter import Parameter
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -22,6 +23,7 @@ __all__ = [
     "DatasetConfiguration",
     "EXPLICIT_SEED_GROUPS_KEY",
     "SCENARIO_TECHNIQUES",
+    "Parameter",
     "Scenario",
     "ScenarioCompositeStrategy",
     "ScenarioStrategy",
