@@ -47,12 +47,12 @@ memory_db_type: sqlite
 initializers:
   - name: simple
   - name: load_default_datasets
-  - name: scorer
   - name: target
     args:
       tags:
         - default
         - scorer
+  - name: scorer
 
 # Default Scenario
 # ----------------
