@@ -1272,11 +1272,13 @@ class TestTargetObjectToInstance:
         """Test that a multimodal target reports all individual input types."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
-            input_modalities=frozenset({
-                frozenset({"text"}),
-                frozenset({"image_path"}),
-                frozenset({"text", "image_path"}),
-            }),
+            input_modalities=frozenset(
+                {
+                    frozenset({"text"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "image_path"}),
+                }
+            ),
         )
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1292,12 +1294,14 @@ class TestTargetObjectToInstance:
         """Test that a target supporting audio and video reports those types."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
-            input_modalities=frozenset({
-                frozenset({"text"}),
-                frozenset({"audio_path"}),
-                frozenset({"image_path"}),
-                frozenset({"text", "audio_path", "image_path"}),
-            }),
+            input_modalities=frozenset(
+                {
+                    frozenset({"text"}),
+                    frozenset({"audio_path"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "audio_path", "image_path"}),
+                }
+            ),
         )
         mock_identifier = ComponentIdentifier(class_name="RealtimeTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
