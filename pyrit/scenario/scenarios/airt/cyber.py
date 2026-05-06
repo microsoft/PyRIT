@@ -1,14 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""
-Cyber scenario — technique-based malware generation testing.
-
-Strategies select **attack techniques** (PromptSending, RedTeaming).
-Datasets control **what** is tested (malware generation objectives).
-Use ``--dataset-names`` to narrow which objectives to test.
-"""
-
 from __future__ import annotations
 
 import logging
