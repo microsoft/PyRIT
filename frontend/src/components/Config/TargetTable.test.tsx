@@ -173,9 +173,9 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    // Dashes for model, endpoint, and 6 capability columns (all unknown)
+    // Dashes for model, endpoint, 6 capability columns (all unknown), and params
     const dashes = screen.getAllByText('—')
-    expect(dashes.length).toBeGreaterThanOrEqual(2)
+    expect(dashes).toHaveLength(9)
   })
 
   it('should show dash for capability columns when capabilities is absent', () => {
@@ -188,7 +188,7 @@ describe('TargetTable', () => {
     // TextTarget has no capabilities — all 6 should be dashes
     const dashes = screen.getAllByText('—')
     // model (—) + endpoint (—) + 6 capabilities (—) + params (—) = 9
-    expect(dashes.length).toBeGreaterThanOrEqual(8)
+    expect(dashes).toHaveLength(9)
   })
 
   it('should display target_specific_params when present', () => {

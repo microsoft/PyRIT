@@ -49,15 +49,23 @@ const CAPABILITY_COLUMNS = [
   { key: 'supports_system_prompt', label: 'System Prompt', tooltip: 'Supports system prompts' },
 ] as const
 
+const COLUMN_TOOLTIPS = {
+  type: 'Target class implementation',
+  model: 'Configured model name. A dotted underline indicates the deployment alias differs from the underlying model — hover the value to see it.',
+  endpoint: 'API endpoint URL the target sends requests to',
+  parameters: 'Target-specific configuration parameters (e.g., reasoning_effort, max_output_tokens)',
+} as const
+
 /** Render a capability indicator: ✓ (green) / ✗ (red) / — (unknown). */
 function CapabilityCell({ value }: { value: boolean | undefined }) {
+  const styles = useTargetTableStyles()
   if (value === undefined) {
     return <Text size={200}>—</Text>
   }
   if (value) {
-    return <CheckmarkCircleFilled style={{ color: 'green', fontSize: '18px' }} />
+    return <CheckmarkCircleFilled className={styles.capabilityIconSupported} />
   }
-  return <DismissCircleFilled style={{ color: 'red', fontSize: '18px' }} />
+  return <DismissCircleFilled className={styles.capabilityIconUnsupported} />
 }
 
 /** Render the model cell with a tooltip when underlying model differs. */
@@ -85,10 +93,11 @@ function ModelCell({ target }: { target: TargetInstance }) {
 
 /** Render capability cells for a target. */
 function CapabilityCells({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
   return (
     <>
       {CAPABILITY_COLUMNS.map(({ key }) => (
-        <TableCell key={key} style={{ width: '80px', textAlign: 'center' }}>
+        <TableCell key={key} className={styles.capabilityCell}>
           <CapabilityCell
             value={target.capabilities?.[key]}
           />
@@ -166,17 +175,33 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
             <TableHeaderCell style={{ width: '120px' }} />
-            <TableHeaderCell style={{ width: '200px' }}>Type</TableHeaderCell>
-            <TableHeaderCell style={{ width: '180px' }}>Model</TableHeaderCell>
-            <TableHeaderCell style={{ minWidth: '300px' }}>Endpoint</TableHeaderCell>
+            <TableHeaderCell style={{ width: '200px' }}>
+              <Tooltip content={COLUMN_TOOLTIPS.type} relationship="description">
+                <span className={styles.helpHeader}>Type</span>
+              </Tooltip>
+            </TableHeaderCell>
+            <TableHeaderCell style={{ width: '180px' }}>
+              <Tooltip content={COLUMN_TOOLTIPS.model} relationship="description">
+                <span className={styles.helpHeader}>Model</span>
+              </Tooltip>
+            </TableHeaderCell>
+            <TableHeaderCell style={{ minWidth: '300px' }}>
+              <Tooltip content={COLUMN_TOOLTIPS.endpoint} relationship="description">
+                <span className={styles.helpHeader}>Endpoint</span>
+              </Tooltip>
+            </TableHeaderCell>
             {CAPABILITY_COLUMNS.map(({ key, label, tooltip }) => (
-              <TableHeaderCell key={key} style={{ width: '80px', textAlign: 'center' }}>
+              <TableHeaderCell key={key} className={styles.capabilityCell}>
                 <Tooltip content={tooltip} relationship="description">
-                  <Text size={200} style={{ cursor: 'help' }}>{label}</Text>
+                  <span className={styles.helpHeader}>{label}</span>
                 </Tooltip>
               </TableHeaderCell>
             ))}
-            <TableHeaderCell style={{ width: '200px' }}>Parameters</TableHeaderCell>
+            <TableHeaderCell style={{ width: '200px' }}>
+              <Tooltip content={COLUMN_TOOLTIPS.parameters} relationship="description">
+                <span className={styles.helpHeader}>Parameters</span>
+              </Tooltip>
+            </TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>

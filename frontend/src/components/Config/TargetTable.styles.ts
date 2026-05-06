@@ -26,4 +26,17 @@ export const useTargetTableStyles = makeStyles({
     whiteSpace: 'pre-line',
     wordBreak: 'break-word',
   },
+  capabilityCell: {
+    width: '80px',
+    textAlign: 'center',
+  },
+  capabilityIconSupported: {
+    color: tokens.colorPaletteGreenForeground1,
+  },
+  capabilityIconUnsupported: {
+    color: tokens.colorPaletteRedForeground1,
+  },
+  helpHeader: {
+    cursor: 'help',
+  },
 })
