@@ -7,13 +7,10 @@ across attack techniques.
 
 Strategies are built dynamically by filtering ``SCENARIO_TECHNIQUES`` to those
 that accept an adversarial chat model but don't have one baked in.  The
-constructor takes either a ``dict`` mapping user-chosen labels to adversarial
-targets/configs, or a plain ``list`` (labels inferred from each target's
-identifier).  Internally everything is normalized to
-``dict[str, AttackAdversarialConfig]`` so per-model system prompts and seed
-prompts are preserved.
-
-At attack-creation time each config is injected via
+constructor takes either a ``dict`` mapping user-chosen labels to
+``PromptChatTarget`` instances, or a plain ``list`` of targets (labels inferred
+from each target's identifier).  Each target is wrapped in a default
+``AttackAdversarialConfig`` and injected at attack-creation time via
 ``attack_adversarial_config_override``, producing a technique × model × dataset
 cross-product for side-by-side comparison.
 
@@ -27,6 +24,7 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.parameter import Parameter
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
@@ -89,13 +87,31 @@ class Benchmark(Scenario):
             max_dataset_size=8,
         )
 
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare custom parameters this scenario accepts from the CLI / config file.
+
+        Returns:
+            list[Parameter]: Parameters configurable per-run.
+        """
+        return [
+            Parameter(
+                name="include_default_baseline",
+                description=(
+                    "Whether to include a baseline atomic attack that sends each objective "
+                    "unmodified through every selected adversarial model."
+                ),
+                param_type=bool,
+                default=False,
+            ),
+        ]
+
     @apply_defaults
     def __init__(
         self,
         *,
-        adversarial_models: (
-            dict[str, PromptChatTarget | AttackAdversarialConfig] | list[PromptChatTarget | AttackAdversarialConfig]
-        ),
+        adversarial_models: dict[str, PromptChatTarget] | list[PromptChatTarget],
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -104,14 +120,13 @@ class Benchmark(Scenario):
 
         Args:
             adversarial_models: Either a ``dict`` mapping user-chosen labels to
-                a ``PromptChatTarget`` or an ``AttackAdversarialConfig``, or a
-                ``list`` of the same element types.  When a list is given,
-                labels are inferred from each target's identifier; identical
-                setups are silently deduped and merely-name-colliding distinct
-                setups are suffixed (``_2``, ``_3``, …) with a warning.  Bare
-                targets are wrapped in a default ``AttackAdversarialConfig`` so
-                a per-model ``system_prompt_path`` / ``seed_prompt`` can be
-                supplied via the config form.
+                ``PromptChatTarget`` instances, or a ``list`` of targets (labels
+                inferred from each target's identifier).  When a list is given,
+                identical targets are silently deduped and distinct targets
+                whose inferred names collide are suffixed (``_2``, ``_3``, …)
+                with a warning.  Each target is wrapped in a default
+                ``AttackAdversarialConfig`` before being injected into each
+                technique.
             objective_scorer: Scorer for evaluating attack success.
                 Defaults to the registered default objective scorer.
             scenario_result_id: Optional ID of an existing scenario
@@ -124,8 +139,8 @@ class Benchmark(Scenario):
         if not adversarial_models:
             raise ValueError(
                 "adversarial_models must be a non-empty dict mapping labels to "
-                "PromptChatTarget/AttackAdversarialConfig instances, or a non-empty list "
-                "from which labels will be inferred."
+                "PromptChatTarget instances, or a non-empty list from which labels "
+                "will be inferred."
             )
 
         # Stage A: list → dict (with inferred, deduped labels).
@@ -133,19 +148,14 @@ class Benchmark(Scenario):
             adversarial_models = self._infer_labels(items=adversarial_models)
 
         if not isinstance(adversarial_models, dict):
-            raise ValueError(
-                "adversarial_models must be a dict or a list of PromptChatTarget/AttackAdversarialConfig instances."
-            )
+            raise ValueError("adversarial_models must be a dict or a list of PromptChatTarget instances.")
 
         if "" in adversarial_models:
             raise ValueError(f"Empty user-chosen label passed to adversarial_models! Got `{adversarial_models}`.")
 
-        # Stage B: dict[str, target | config] → dict[str, AttackAdversarialConfig].
-        # Bare targets are wrapped; existing configs (with their system_prompt_path /
-        # seed_prompt) pass through unchanged.
+        # Stage B: wrap each bare target in a default AttackAdversarialConfig.
         self._adversarial_configs: dict[str, AttackAdversarialConfig] = {
-            label: (value if isinstance(value, AttackAdversarialConfig) else AttackAdversarialConfig(target=value))
-            for label, value in adversarial_models.items()
+            label: AttackAdversarialConfig(target=target) for label, target in adversarial_models.items()
         }
 
         self._objective_scorer: TrueFalseScorer = (
@@ -178,6 +188,12 @@ class Benchmark(Scenario):
             raise ValueError(
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
+
+        # Sync the include_default_baseline param into the base-class flag.  The
+        # base class reads ``self._include_baseline`` immediately after this method
+        # returns, and ``set_params_from_args`` has already run by this point so
+        # ``self.params["include_default_baseline"]`` is guaranteed to be set.
+        self._include_baseline = self.params.get("include_default_baseline", False)
 
         benchmarkable_specs = Benchmark._get_benchmarkable_specs()
         local_factories = {
@@ -222,53 +238,44 @@ class Benchmark(Scenario):
     @staticmethod
     def _infer_labels(
         *,
-        items: list[PromptChatTarget | AttackAdversarialConfig],
-    ) -> dict[str, PromptChatTarget | AttackAdversarialConfig]:
+        items: list[PromptChatTarget],
+    ) -> dict[str, PromptChatTarget]:
         """
-        Infer user-facing labels for a list of targets/configs.
+        Infer user-facing labels for a list of adversarial targets.
 
-        The dedupe key is ``(target.get_identifier().hash, system_prompt_path,
-        seed_prompt)`` so identical experiments collapse to a single entry
-        silently, while two distinct setups whose inferred names happen to
-        match get a numeric suffix and a ``logger.warning`` so the situation
-        isn't silent.
+        The dedupe key is ``target.get_identifier().hash`` so identical
+        targets collapse to a single entry silently, while two distinct
+        targets whose inferred names happen to match get a numeric suffix
+        and a ``logger.warning`` so the situation isn't silent.
 
         Args:
-            items: List of bare ``PromptChatTarget`` or ``AttackAdversarialConfig``.
+            items: List of ``PromptChatTarget`` instances.
 
         Returns:
-            dict[str, PromptChatTarget | AttackAdversarialConfig]: Mapping from
-                inferred label to the original item (configs pass through; bare
-                targets are wrapped later by Stage B in ``__init__``).
+            dict[str, PromptChatTarget]: Mapping from inferred label to the
+                original target.  Targets are wrapped in an
+                ``AttackAdversarialConfig`` later by Stage B in ``__init__``.
         """
-        result: dict[str, PromptChatTarget | AttackAdversarialConfig] = {}
-        seen_keys: dict[str, tuple[str | None, str, str]] = {}
+        result: dict[str, PromptChatTarget] = {}
+        seen_keys: dict[str, str | None] = {}
 
-        for item in items:
-            # Wrap purely to read defaults (system_prompt_path, seed_prompt).
-            cfg_for_key = item if isinstance(item, AttackAdversarialConfig) else AttackAdversarialConfig(target=item)
-
-            target = cfg_for_key.target
+        for target in items:
             identifier = target.get_identifier()
             params = identifier.params or {}
             base_name = params.get("underlying_model_name") or params.get("model_name") or type(target).__name__
 
-            dedupe_key: tuple[str | None, str, str] = (
-                identifier.hash,
-                str(cfg_for_key.system_prompt_path) if cfg_for_key.system_prompt_path is not None else "",
-                repr(cfg_for_key.seed_prompt),
-            )
+            dedupe_key = identifier.hash
 
-            # Identical setup already stored under some label — silently drop.
+            # Identical target already stored under some label — silently drop.
             if dedupe_key in seen_keys.values():
                 continue
 
             if base_name not in seen_keys:
-                result[base_name] = item
+                result[base_name] = target
                 seen_keys[base_name] = dedupe_key
                 continue
 
-            # Distinct setup colliding on inferred name — find next free suffix and warn.
+            # Distinct target colliding on inferred name — find next free suffix and warn.
             counter = 2
             while f"{base_name}_{counter}" in seen_keys:
                 counter += 1
@@ -278,7 +285,7 @@ class Benchmark(Scenario):
                 base_name,
                 suffixed,
             )
-            result[suffixed] = item
+            result[suffixed] = target
             seen_keys[suffixed] = dedupe_key
 
         return result

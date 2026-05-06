@@ -75,65 +75,55 @@ printer = ConsoleScenarioResultPrinter()
 await printer.print_summary_async(baseline_result)  # type: ignore
 
 # %% [markdown]
-# ## Comparing Adversarial System Prompts
+# ## Comparing Attack Techniques
 #
-# `AttackAdversarialConfig` accepts a `system_prompt_path` that controls how the
-# adversarial chat target frames its prompts.  By passing the *same* underlying
-# target with *different* `system_prompt_path` values we can use `Benchmark` to
-# compare the relative effectiveness of those prompts head-to-head.
+# The first run used the default `light` strategy, which exercises a small subset
+# of techniques.  To compare techniques head-to-head, we restrict the scenario to
+# a hand-picked list and reuse the same two adversarial models (`gemma_adv` and
+# `gpt4o_adv`) from the cell above.
 #
-# To isolate the system-prompt variable we restrict the run to `red_teaming`
-# (the technique that directly consumes the adversarial config's
-# `system_prompt_path`).  The three prompts below are bundled in PyRIT under
-# `pyrit/datasets/executors/red_teaming/` — each frames the adversarial chat
-# differently, so we expect the per-prompt ASR to vary.
+# The per-technique × per-model breakdown lets us see which combinations are
+# most effective against the objective target.
 
 # %%
-from pathlib import Path
+# Compare a hand-picked set of techniques against both adversarial models.
+# Reuses gemma_adv and gpt4o_adv from the cell above so the comparison is
+# isolated to the technique axis.
+techniques_benchmark = Benchmark(
+    adversarial_models={
+        "gemma_adv": gemma_adv,
+        "gpt4o_adv": gpt4o_adv,
+    }
+)
 
-from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import AttackAdversarialConfig
+strategy_class = Benchmark.get_strategy_class()
+selected_strategies = [
+    strategy_class("role_play"),
+    strategy_class("red_teaming"),
+    strategy_class("context_compliance"),
+]
 
-# Three adversarial system prompts shipped with PyRIT.  Same target (gpt4o_adv),
-# only the system_prompt_path differs — so per-prompt ASR isolates the prompt's
-# effect.
-_RT_PROMPTS = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming"
-prompt_paths = {
-    "text_generation": _RT_PROMPTS / "text_generation.yaml",
-    "violent_durian": _RT_PROMPTS / "violent_durian.yaml",
-    "unethical_task": _RT_PROMPTS / "unethical_task_generation_prompt.yaml",
-}
-
-prompt_configs = {
-    label: AttackAdversarialConfig(target=gpt4o_adv, system_prompt_path=path) for label, path in prompt_paths.items()
-}
-
-prompts_benchmark = Benchmark(adversarial_models=prompt_configs)
-
-# Restrict to red_teaming so the comparison reflects the system prompt only.
-red_teaming_strategy = Benchmark.get_strategy_class()("red_teaming")
-await prompts_benchmark.initialize_async(  # type: ignore
+await techniques_benchmark.initialize_async(  # type: ignore
     objective_target=OpenAIChatTarget(),
-    scenario_strategies=[red_teaming_strategy],
+    scenario_strategies=selected_strategies,
     max_concurrency=2,
 )
 
-prompts_result = await prompts_benchmark.run_async()  # type: ignore
+techniques_result = await techniques_benchmark.run_async()  # type: ignore
 
-print(f"Scenario result id: {prompts_result.id}")
+print(f"Scenario result id: {techniques_result.id}")
 
-# ASR sensibility check + variance check (the whole point of a comparison).
-_groups = prompts_result.get_display_groups()
-_per_prompt = {
+# ASR sensibility check: per-group rates should be in [0, 100] and we should
+# have recorded at least one result.  Display groups are keyed by adversarial
+# model label, so per-group ASR aggregates across the selected techniques.
+_groups = techniques_result.get_display_groups()
+_per_group = {
     label: int(sum(1 for r in rs if r.outcome == AttackOutcome.SUCCESS) / max(len(rs), 1) * 100)
     for label, rs in _groups.items()
 }
-_overall = prompts_result.objective_achieved_rate()
+_overall = techniques_result.objective_achieved_rate()
 assert sum(len(rs) for rs in _groups.values()) > 0, "No attack results recorded"
-assert all(0 <= rate <= 100 for rate in _per_prompt.values()), f"ASR out of bounds: {_per_prompt}"
-assert len(set(_per_prompt.values())) > 1, (
-    f"All prompts produced identical ASR ({_per_prompt}); comparison is not informative."
-)
-print(f"ASR sanity: overall={_overall}%, per-prompt={_per_prompt}")
+assert all(0 <= rate <= 100 for rate in _per_group.values()), f"ASR out of bounds: {_per_group}"
+print(f"ASR sanity: overall={_overall}%, per-model={_per_group}")
 
-await printer.print_summary_async(prompts_result)  # type: ignore
+await printer.print_summary_async(techniques_result)  # type: ignore

@@ -450,13 +450,19 @@ class TestBenchmarkRuntime:
 
 
 # ===========================================================================
-# Constructor cascade tests (list / mixed / dedupe / system-prompt flow)
+# adversarial_models normalization tests (list / dict / dedupe / collision)
 # ===========================================================================
 
 
 @pytest.mark.usefixtures(*FIXTURES)
-class TestBenchmarkConstructorCascade:
-    """Tests for the list/dict + target/config normalization pipeline in __init__."""
+class TestBenchmarkAdversarialModelsNormalization:
+    """Tests for the list/dict normalization pipeline in __init__.
+
+    Each input shape ends as a ``dict[str, AttackAdversarialConfig]`` where every
+    value wraps a user-supplied ``PromptChatTarget``.  Lists infer labels from
+    each target's identifier; identical targets dedupe silently, distinct
+    targets whose inferred names collide get suffixed with a warning.
+    """
 
     def test_list_of_targets_infers_labels_from_model_name(self):
         """A list of bare targets is normalized to {model_name: AttackAdversarialConfig}."""
@@ -474,45 +480,15 @@ class TestBenchmarkConstructorCascade:
         scenario = _make_benchmark([t])
         assert "gpt-4o" in scenario._adversarial_configs
 
-    def test_list_of_configs_preserves_system_prompt_path(self):
-        """A list of AttackAdversarialConfig instances keeps each config's fields intact.
-
-        The dict value must be the exact same config object the user passed in
-        so ``system_prompt_path`` and ``seed_prompt`` are preserved end-to-end.
-        """
-        t = _make_adversarial_target("t", params={"model_name": "alpha"})
-        cfg = AttackAdversarialConfig(target=t, system_prompt_path="some/prompt.yaml")
-        scenario = _make_benchmark([cfg])
-        stored = scenario._adversarial_configs["alpha"]
-        assert stored is cfg
-        assert stored.system_prompt_path == "some/prompt.yaml"
-
     def test_dict_with_bare_target_is_wrapped(self):
-        """Bare targets in a dict are wrapped into AttackAdversarialConfig."""
+        """Bare targets in a dict are wrapped into AttackAdversarialConfig by Stage B."""
         t = _make_adversarial_target("t")
         scenario = _make_benchmark({"label": t})
         cfg = scenario._adversarial_configs["label"]
         assert isinstance(cfg, AttackAdversarialConfig)
         assert cfg.target is t
 
-    def test_dict_with_config_passes_through_unchanged(self):
-        """Existing configs in a dict pass through Stage B without re-wrapping."""
-        t = _make_adversarial_target("t")
-        cfg = AttackAdversarialConfig(target=t, system_prompt_path="x.yaml")
-        scenario = _make_benchmark({"label": cfg})
-        assert scenario._adversarial_configs["label"] is cfg
-
-    def test_dict_with_mixed_target_and_config(self):
-        """A dict mixing bare targets and configs normalizes all values to configs."""
-        t1 = _make_adversarial_target("t1")
-        t2 = _make_adversarial_target("t2")
-        cfg2 = AttackAdversarialConfig(target=t2, system_prompt_path="x.yaml")
-        scenario = _make_benchmark({"a": t1, "b": cfg2})
-        assert isinstance(scenario._adversarial_configs["a"], AttackAdversarialConfig)
-        assert scenario._adversarial_configs["a"].target is t1
-        assert scenario._adversarial_configs["b"] is cfg2
-
-    def test_list_dedupe_silent_for_identical_setup(self, caplog):
+    def test_list_dedupe_silent_for_identical_target(self, caplog):
         """The same target instance passed twice in a list collapses to one entry, silently."""
         t = _make_adversarial_target("t", params={"model_name": "alpha"})
         with caplog.at_level("WARNING"):
@@ -520,7 +496,7 @@ class TestBenchmarkConstructorCascade:
         assert list(scenario._adversarial_configs.keys()) == ["alpha"]
         assert "collided" not in caplog.text
 
-    def test_list_collision_suffixes_distinct_setups_and_warns(self, caplog):
+    def test_list_collision_suffixes_distinct_targets_and_warns(self, caplog):
         """Two distinct targets that infer the same name get suffixed and a warning is logged."""
         t1 = _make_adversarial_target("t1", params={"model_name": "alpha", "endpoint": "ep1"})
         t2 = _make_adversarial_target("t2", params={"model_name": "alpha", "endpoint": "ep2"})
@@ -529,34 +505,25 @@ class TestBenchmarkConstructorCascade:
         assert set(scenario._adversarial_configs.keys()) == {"alpha", "alpha_2"}
         assert "collided" in caplog.text
 
-    def test_list_of_configs_same_target_different_system_prompt_kept_distinct(self, caplog):
-        """Same target hash but different system_prompt_path → two distinct entries."""
-        t = _make_adversarial_target("t", params={"model_name": "alpha"})
-        cfg_a = AttackAdversarialConfig(target=t, system_prompt_path="prompt_a.yaml")
-        cfg_b = AttackAdversarialConfig(target=t, system_prompt_path="prompt_b.yaml")
-        with caplog.at_level("WARNING"):
-            scenario = _make_benchmark([cfg_a, cfg_b])
-        assert set(scenario._adversarial_configs.keys()) == {"alpha", "alpha_2"}
-        # Both configs preserved (object identity check).
-        stored = list(scenario._adversarial_configs.values())
-        assert cfg_a in stored
-        assert cfg_b in stored
+
+# ===========================================================================
+# Declared-parameter tests (Stage 6 POC: include_default_baseline)
+# ===========================================================================
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestBenchmarkSupportedParameters:
+    """Tests for the declared ``include_default_baseline`` parameter."""
+
+    def test_supported_parameters_declares_include_default_baseline(self):
+        """Benchmark exposes include_default_baseline via supported_parameters."""
+        params = Benchmark.supported_parameters()
+        names = [p.name for p in params]
+        assert "include_default_baseline" in names
 
     @pytest.mark.asyncio
-    async def test_system_prompt_flows_to_factory_create(self, mock_objective_target):
-        """An AttackAdversarialConfig.system_prompt_path reaches factory.create unchanged."""
-        t = _make_adversarial_target("t", params={"model_name": "alpha"})
-        cfg = AttackAdversarialConfig(target=t, system_prompt_path="my/prompt.yaml")
-
-        seen_overrides: list[AttackAdversarialConfig] = []
-
-        class _StubFactory:
-            def create(self, **kwargs):
-                seen_overrides.append(kwargs["attack_adversarial_config_override"])
-                stub = MagicMock()
-                stub.attack = MagicMock()
-                return stub
-
+    async def test_default_excludes_baseline(self, mock_objective_target, single_adversarial_model):
+        """When the param is left unset, the declared default (False) wins and no baseline is added."""
         with (
             patch.object(
                 DatasetConfiguration,
@@ -564,21 +531,33 @@ class TestBenchmarkConstructorCascade:
                 return_value={"harmbench": _make_seed_groups("harmbench")},
             ),
             patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
-            patch.object(
-                AttackTechniqueRegistry,
-                "build_factory_from_spec",
-                return_value=_StubFactory(),
-            ),
         ):
             mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
-            scenario = Benchmark(adversarial_models={"alpha": cfg})
+            scenario = Benchmark(adversarial_models=single_adversarial_model)
+            scenario.set_params_from_args(args={})
             await scenario.initialize_async(objective_target=mock_objective_target)
-            await scenario._get_atomic_attacks_async()
 
-        # At least one factory.create call must have received our exact config.
-        assert seen_overrides, "factory.create was never invoked"
-        assert all(o is cfg for o in seen_overrides)
-        assert all(o.system_prompt_path == "my/prompt.yaml" for o in seen_overrides)
+        assert scenario._include_baseline is False
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
+
+    @pytest.mark.asyncio
+    async def test_param_true_includes_baseline(self, mock_objective_target, single_adversarial_model):
+        """``include_default_baseline=True`` flows through and prepends a baseline atomic attack."""
+        with (
+            patch.object(
+                DatasetConfiguration,
+                "get_seed_attack_groups",
+                return_value={"harmbench": _make_seed_groups("harmbench")},
+            ),
+            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
+        ):
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = Benchmark(adversarial_models=single_adversarial_model)
+            scenario.set_params_from_args(args={"include_default_baseline": True})
+            await scenario.initialize_async(objective_target=mock_objective_target)
+
+        assert scenario._include_baseline is True
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
 
 
 # ===========================================================================
