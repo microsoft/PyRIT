@@ -331,20 +331,26 @@ class Scenario(ABC):
                 true_false_question_path=composite_scorer_questions_path,
             )
             backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
-            return TrueFalseCompositeScorer(
+            scorer = TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
                 scorers=[objective_scorer, backstop_scorer],
             )
+            logger.info(f"Using composite default objective scorer: {type(scorer).__name__}")
+            return scorer
 
         # Deferred import to avoid circular dependency.
         from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
 
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
-            return entries[0].instance
+            scorer = entries[0].instance
+            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
+            return scorer
 
         chat_target = get_default_scorer_target()
-        return TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+        logger.info(f"Using fallback default objective scorer: {type(scorer).__name__}")
+        return scorer
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
         """
