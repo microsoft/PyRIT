@@ -4,7 +4,8 @@
 """
 Scenario API routes.
 
-Provides endpoints for listing available scenarios and their metadata.
+Provides endpoints for listing available scenarios, their metadata,
+and managing scenario runs.
 """
 
 from typing import Optional
@@ -12,7 +13,15 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
-from pyrit.backend.models.scenarios import ScenarioListResponse, ScenarioSummary
+from pyrit.backend.models.scenarios import (
+    RunScenarioRequest,
+    ScenarioListResponse,
+    ScenarioResultDetailResponse,
+    ScenarioRunListResponse,
+    ScenarioRunResponse,
+    ScenarioSummary,
+)
+from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
@@ -37,6 +46,152 @@ async def list_scenarios(
     """
     service = get_scenario_service()
     return await service.list_scenarios_async(limit=limit, cursor=cursor)
+
+
+# ============================================================================
+# Scenario Runs
+# ============================================================================
+
+
+@router.post(
+    "/runs",
+    response_model=ScenarioRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/strategy)"},
+    },
+)
+async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunResponse:
+    """
+    Start a new scenario run as a background task.
+
+    Returns immediately with a run_id that can be polled for status.
+
+    Args:
+        request: Scenario run configuration.
+
+    Returns:
+        ScenarioRunResponse: Run metadata with PENDING status.
+    """
+    service = get_scenario_run_service()
+    try:
+        return await service.start_run_async(request=request)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+
+@router.get(
+    "/runs",
+    response_model=ScenarioRunListResponse,
+)
+async def list_scenario_runs() -> ScenarioRunListResponse:
+    """
+    List all tracked scenario runs.
+
+    Returns:
+        ScenarioRunListResponse: All runs, most recent first.
+    """
+    service = get_scenario_run_service()
+    return service.list_runs()
+
+
+@router.get(
+    "/runs/{run_id}",
+    response_model=ScenarioRunResponse,
+    responses={
+        404: {"model": ProblemDetail, "description": "Run not found"},
+    },
+)
+async def get_scenario_run(run_id: str) -> ScenarioRunResponse:
+    """
+    Get the current status and result of a scenario run.
+
+    Args:
+        run_id: The unique run identifier returned by POST /runs.
+
+    Returns:
+        ScenarioRunResponse: Current run status (and result if completed).
+    """
+    service = get_scenario_run_service()
+    run = service.get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario run '{run_id}' not found",
+        )
+    return run
+
+
+@router.delete(
+    "/runs/{run_id}",
+    response_model=ScenarioRunResponse,
+    responses={
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run already in terminal state"},
+    },
+)
+async def cancel_scenario_run(run_id: str) -> ScenarioRunResponse:
+    """
+    Cancel a running scenario.
+
+    Args:
+        run_id: The unique run identifier to cancel.
+
+    Returns:
+        ScenarioRunResponse: Updated run with CANCELLED status.
+    """
+    service = get_scenario_run_service()
+    try:
+        result = await service.cancel_run_async(run_id=run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario run '{run_id}' not found",
+        )
+    return result
+
+
+@router.get(
+    "/runs/{run_id}/results",
+    response_model=ScenarioResultDetailResponse,
+    responses={
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run not yet completed"},
+    },
+)
+async def get_scenario_run_results(run_id: str) -> ScenarioResultDetailResponse:
+    """
+    Get detailed results for a completed scenario run.
+
+    Returns per-attack outcomes including objectives, responses, scores,
+    and success/failure counts.
+
+    Args:
+        run_id: The unique run identifier.
+
+    Returns:
+        ScenarioResultDetailResponse: Full attack-level results.
+    """
+    service = get_scenario_run_service()
+    try:
+        result = service.get_run_results(run_id=run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario run '{run_id}' not found",
+        )
+    return result
+
+
+# ============================================================================
+# Scenario Detail (catch-all path — must be last)
+# ============================================================================
 
 
 @router.get(
