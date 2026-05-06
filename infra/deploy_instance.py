@@ -9,11 +9,12 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   2. Entra app registration + API scope + group claims
   3. Entra security group (optional — can use existing)
   4. Azure SQL server + database
-  5. Key Vault + populate .env secret (auto-injects SQL connection string)
-  6. Managed identity + RBAC role assignments (AcrPull, KV Secrets User)
-  6b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
-  7. Bicep deployment (Container App, networking, logging)
-  8. Post-deploy: SPA redirect URI
+  5. Storage account + blob container (auto-injects container URL into .env)
+  6. Key Vault + populate .env secret (auto-injects SQL connection string)
+  7. Managed identity + RBAC role assignments (AcrPull, KV Secrets User, Storage Blob Data Contributor)
+  7b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
+  8. Bicep deployment (Container App, networking, logging)
+  9. Post-deploy: SPA redirect URI
 
 Usage:
     python infra/deploy_instance.py \\
@@ -410,40 +411,73 @@ _SQL_CONN_RE = re.compile(r"^AZURE_SQL_DB_CONNECTION_STRING\s*=\s*.*$", re.MULTI
 # Connection string format expected by AzureSQLMemory (pyodbc + Entra MI auth)
 _SQL_CONN_TEMPLATE = "mssql+pyodbc://@{server_fqdn}/{database_name}?driver=ODBC+Driver+18+for+SQL+Server"
 
+# Matches AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL=... (with or without quotes, whole line)
+_STORAGE_URL_RE = re.compile(r"^AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL\s*=\s*.*$", re.MULTILINE)
+
+# Blob container URL format expected by AzureSQLMemory
+_STORAGE_URL_TEMPLATE = "https://{account_name}.blob.core.windows.net/{container_name}"
+
+# Container name follows the AIRT convention used by AzureSQLMemory
+_STORAGE_CONTAINER_NAME = "dbdata"
+
+
+def _storage_account_name(instance: str) -> str:
+    """
+    Derive a valid Azure storage account name from the instance name.
+
+    Storage account names must be 3-24 lowercase alphanumeric characters
+    (no hyphens, no uppercase). We strip non-alphanumerics from the instance
+    name, then prepend ``copyrit`` and append ``sa`` to keep the naming
+    pattern consistent with the rest of the per-instance resources.
+
+    Args:
+        instance (str): The instance name (e.g., ``partners-demo``).
+
+    Returns:
+        str: The derived storage account name (e.g., ``copyritpartnersdemosa``).
+    """
+    normalized = re.sub(r"[^a-z0-9]", "", instance.lower())
+    return f"copyrit{normalized}sa"
+
 
 def _prepare_env_content(
     *,
     env_file: Path,
     sql_server_fqdn: str,
     sql_database_name: str,
+    storage_container_url: str,
 ) -> str:
     """
-    Read the user-provided .env file and inject the correct SQL connection string.
+    Read the user-provided .env file and inject auto-generated values.
 
-    The deploy script creates the SQL server and database, so the connection string
-    must match. If the .env already contains an AZURE_SQL_DB_CONNECTION_STRING that
-    differs, it is overwritten with a warning.
+    The deploy script creates the SQL server/database and storage account, so
+    those env values must point at the resources it provisioned. If the .env
+    already contains either variable with a different value, it is overwritten
+    with a warning.
 
     Args:
         env_file (Path): Path to the user-provided .env file.
         sql_server_fqdn (str): The SQL server FQDN (e.g., myserver.database.windows.net).
         sql_database_name (str): The SQL database name.
+        storage_container_url (str): The blob container URL
+            (e.g., https://myaccount.blob.core.windows.net/dbdata).
 
     Returns:
-        str: The .env content with the correct SQL connection string injected.
+        str: The .env content with the correct SQL connection string and
+        storage container URL injected.
     """
     content = env_file.read_text(encoding="utf-8")
-    correct_value = _SQL_CONN_TEMPLATE.format(
+
+    # SQL connection string
+    sql_value = _SQL_CONN_TEMPLATE.format(
         server_fqdn=sql_server_fqdn,
         database_name=sql_database_name,
     )
-    new_line = f"AZURE_SQL_DB_CONNECTION_STRING={correct_value}"
-
-    match = _SQL_CONN_RE.search(content)
-    if match:
-        existing_line = match.group(0).strip()
-        existing_value = existing_line.split("=", 1)[1].strip().strip("\"'")
-        if existing_value == correct_value:
+    sql_line = f"AZURE_SQL_DB_CONNECTION_STRING={sql_value}"
+    sql_match = _SQL_CONN_RE.search(content)
+    if sql_match:
+        existing_value = sql_match.group(0).split("=", 1)[1].strip().strip("\"'")
+        if existing_value == sql_value:
             logger.info("AZURE_SQL_DB_CONNECTION_STRING already correct in .env")
         else:
             # Log only server/database, not the full connection string (may contain credentials).
@@ -452,14 +486,129 @@ def _prepare_env_content(
                 sql_server_fqdn,
                 sql_database_name,
             )
-        content = _SQL_CONN_RE.sub(new_line, content)
+        content = _SQL_CONN_RE.sub(sql_line, content)
     else:
         logger.info("Appending AZURE_SQL_DB_CONNECTION_STRING to .env")
         if not content.endswith("\n"):
             content += "\n"
-        content += f"\n# ─── Database (auto-injected by deploy script) ───\n{new_line}\n"
+        content += f"\n# ─── Database (auto-injected by deploy script) ───\n{sql_line}\n"
+
+    # Storage container URL
+    storage_line = f"AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL={storage_container_url}"
+    storage_match = _STORAGE_URL_RE.search(content)
+    if storage_match:
+        existing_value = storage_match.group(0).split("=", 1)[1].strip().strip("\"'")
+        if existing_value == storage_container_url:
+            logger.info("AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL already correct in .env")
+        else:
+            logger.warning(
+                "Overwriting AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL in .env to point at %s",
+                storage_container_url,
+            )
+        content = _STORAGE_URL_RE.sub(storage_line, content)
+    else:
+        logger.info("Appending AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL to .env")
+        if not content.endswith("\n"):
+            content += "\n"
+        content += f"\n# ─── Storage (auto-injected by deploy script) ───\n{storage_line}\n"
 
     return content
+
+
+def create_storage_account(
+    *,
+    resource_group: str,
+    location: str,
+    account_name: str,
+    container_name: str = _STORAGE_CONTAINER_NAME,
+    tags: list[str] | None = None,
+) -> dict:
+    """
+    Create a per-instance storage account and a private blob container.
+
+    Used by ``AzureSQLMemory`` for blob-backed result data
+    (the ``AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`` env var). Container
+    access is set to ``off`` (private) — the managed identity authenticates
+    via ``Storage Blob Data Contributor``, granted in
+    :func:`create_managed_identity_and_grant_roles`.
+
+    Args:
+        resource_group (str): The resource group name.
+        location (str): The Azure region.
+        account_name (str): The storage account name (3-24 lowercase alphanumeric).
+        container_name (str): The blob container name. Defaults to ``dbdata``.
+        tags (list[str] | None): Tags in 'Key=Value' format.
+
+    Returns:
+        dict: A dict with keys 'account_id' (resource ID) and 'container_url'
+        (the full HTTPS URL the AIRT initializer expects).
+    """
+    logger.info("Creating storage account: %s", account_name)
+    sa_cmd = [
+        "storage",
+        "account",
+        "create",
+        "--name",
+        account_name,
+        "--resource-group",
+        resource_group,
+        "--location",
+        location,
+        "--sku",
+        "Standard_LRS",
+        "--kind",
+        "StorageV2",
+        "--allow-blob-public-access",
+        "false",
+        "--min-tls-version",
+        "TLS1_2",
+    ]
+    if tags:
+        sa_cmd += ["--tags"] + tags
+    run_az(args=sa_cmd)
+
+    account_id = run_az_json(
+        args=[
+            "storage",
+            "account",
+            "show",
+            "--name",
+            account_name,
+            "--resource-group",
+            resource_group,
+            "--query",
+            "id",
+        ]
+    )
+
+    logger.info("Creating blob container: %s/%s", account_name, container_name)
+    # Use container-rm (ARM/control plane) instead of `container create` so we
+    # don't need to grant the deployer a data plane role like Storage Blob Data
+    # Contributor — Owner (control plane) is sufficient here.
+    # Note: --public-access "off" is the correct enum for "no public access"
+    # (the data-plane `container create` command uses "off" too; "None"/"none"
+    # are rejected by the CLI).
+    run_az(
+        args=[
+            "storage",
+            "container-rm",
+            "create",
+            "--name",
+            container_name,
+            "--storage-account",
+            account_name,
+            "--resource-group",
+            resource_group,
+            "--public-access",
+            "off",
+        ]
+    )
+
+    container_url = _STORAGE_URL_TEMPLATE.format(
+        account_name=account_name,
+        container_name=container_name,
+    )
+    return {"account_id": account_id, "container_url": container_url}
 
 
 def create_key_vault(
@@ -687,15 +836,18 @@ def create_managed_identity_and_grant_roles(
     identity_name: str,
     kv_resource_id: str,
     acr_name: str,
+    storage_account_id: str,
     tags: list[str] | None = None,
 ) -> str:
     """
     Create a user-assigned managed identity and grant it pre-deploy RBAC roles.
 
-    The MI must have KV Secrets User and AcrPull before the Bicep deployment
-    can provision the container (it needs to pull the image and read the KV secret).
-    Creating the MI here and granting roles before Bicep avoids the race condition
-    of Bicep creating the MI but the container needing roles that don't exist yet.
+    The MI must have KV Secrets User, AcrPull, and Storage Blob Data Contributor
+    before the Bicep deployment can provision the container (it needs to pull
+    the image, read the KV secret, and access blob storage at startup).
+    Creating the MI here and granting roles before Bicep avoids the race
+    condition of Bicep creating the MI but the container needing roles that
+    don't exist yet.
 
     Bicep's MI resource declaration is idempotent — it will adopt the existing MI.
 
@@ -705,6 +857,8 @@ def create_managed_identity_and_grant_roles(
         identity_name (str): The managed identity name.
         kv_resource_id (str): The Key Vault resource ID for Secrets User role.
         acr_name (str): The ACR name for AcrPull role.
+        storage_account_id (str): The storage account resource ID for Storage
+            Blob Data Contributor role.
         tags (list[str] | None): Tags in 'Key=Value' format.
 
     Returns:
@@ -781,6 +935,24 @@ def create_managed_identity_and_grant_roles(
             "AcrPull",
             "--scope",
             acr_id,
+        ]
+    )
+
+    # Grant Storage Blob Data Contributor on the per-instance storage account
+    logger.info("Granting Storage Blob Data Contributor to managed identity on storage account")
+    run_az(
+        args=[
+            "role",
+            "assignment",
+            "create",
+            "--assignee-object-id",
+            mi_principal_id,
+            "--assignee-principal-type",
+            "ServicePrincipal",
+            "--role",
+            "Storage Blob Data Contributor",
+            "--scope",
+            storage_account_id,
         ]
     )
 
@@ -898,7 +1070,12 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--owner-tag",
         default="",
-        help="Value for the Owner tag on Azure resources (required by some subscriptions)",
+        help=(
+            "Value for the Owner tag applied to all per-instance Azure resources. "
+            "Required when the target subscription enforces a 'Require a tag on "
+            "resources' Azure Policy (e.g., the AI Red Team Tooling subscription). "
+            "Optional only on subscriptions without such a policy."
+        ),
     )
     parser.add_argument(
         "--service-management-reference",
@@ -951,6 +1128,7 @@ def main(args: list[str] | None = None) -> int:
     sql_server_name = f"copyrit-{instance}-sql"
     sql_db_name = f"pyrit-{instance}"
     kv_name = f"copyrit-{instance}-kv"
+    storage_account_name = _storage_account_name(instance)
     entra_app_name = f"CoPyRIT GUI ({instance})"
     group_ids = [g.strip() for g in parsed.allowed_groups.split(",") if g.strip()]
 
@@ -970,6 +1148,16 @@ def main(args: list[str] | None = None) -> int:
             len(app_name),
         )
         return 1
+    if len(storage_account_name) > 24 or len(storage_account_name) < 3:
+        logger.error(
+            "Storage account name '%s' is %d chars (must be 3-24). "
+            "After stripping non-alphanumerics from --instance-name, the name "
+            "is 'copyrit{normalized}sa'. Use an --instance-name whose alphanumeric "
+            "length keeps the total under 24.",
+            storage_account_name,
+            len(storage_account_name),
+        )
+        return 1
 
     if parsed.dry_run:
         logger.info("=== DRY RUN ===")
@@ -979,6 +1167,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("SQL server: %s", sql_server_name)
         logger.info("SQL database: %s", sql_db_name)
         logger.info("Key Vault: %s", kv_name)
+        logger.info("Storage account: %s (container: %s)", storage_account_name, _STORAGE_CONTAINER_NAME)
         logger.info("Entra app: %s", entra_app_name)
         logger.info("Allowed groups: %s", group_ids)
         logger.info("Env file: %s", env_file)
@@ -1020,14 +1209,23 @@ def main(args: list[str] | None = None) -> int:
             tags=resource_tags,
         )
 
-        # Step 5b: Prepare .env content with correct SQL connection string
+        # Step 6: Create storage account + blob container
+        storage = create_storage_account(
+            resource_group=rg_name,
+            location=parsed.location,
+            account_name=storage_account_name,
+            tags=resource_tags,
+        )
+
+        # Step 6b: Prepare .env content with auto-injected SQL connection string + storage URL
         env_content = _prepare_env_content(
             env_file=env_file,
             sql_server_fqdn=sql["server_fqdn"],
             sql_database_name=sql["database_name"],
+            storage_container_url=storage["container_url"],
         )
 
-        # Step 6: Create Key Vault + upload .env
+        # Step 7: Create Key Vault + upload .env
         kv_id = create_key_vault(
             resource_group=rg_name,
             location=parsed.location,
@@ -1036,7 +1234,7 @@ def main(args: list[str] | None = None) -> int:
             tags=resource_tags,
         )
 
-        # Step 7: Create managed identity + grant pre-deploy RBAC
+        # Step 8: Create managed identity + grant pre-deploy RBAC
         mi_name = f"{app_name}-identity"
         mi_principal_id = create_managed_identity_and_grant_roles(
             resource_group=rg_name,
@@ -1044,10 +1242,11 @@ def main(args: list[str] | None = None) -> int:
             identity_name=mi_name,
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
+            storage_account_id=storage["account_id"],
             tags=resource_tags,
         )
 
-        # Step 7b: Grant AOAI roles (optional — only if --aoai-resource-names provided)
+        # Step 8b: Grant AOAI roles (optional — only if --aoai-resource-names provided)
         aoai_names = [n.strip() for n in parsed.aoai_resource_names.split(",") if n.strip()]
         aoai_granted = 0
         if aoai_names:
@@ -1058,7 +1257,7 @@ def main(args: list[str] | None = None) -> int:
             )
             logger.info("Granted Cognitive Services OpenAI User on %d/%d AOAI resources", aoai_granted, len(aoai_names))
 
-        # Step 8: Deploy Bicep
+        # Step 9: Deploy Bicep
         outputs = deploy_bicep(
             resource_group=rg_name,
             app_name=app_name,
@@ -1075,7 +1274,7 @@ def main(args: list[str] | None = None) -> int:
 
         fqdn = outputs["appFqdn"]["value"]
 
-        # Step 9: Post-deploy (SPA redirect)
+        # Step 10: Post-deploy (SPA redirect)
         post_deploy(
             app_object_id=entra["app_object_id"],
             fqdn=fqdn,
@@ -1093,6 +1292,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("SQL server:   %s", sql["server_fqdn"])
         logger.info("SQL database: %s", sql["database_name"])
         logger.info("Key Vault:    %s", kv_name)
+        logger.info("Storage:      %s (container: %s)", storage_account_name, _STORAGE_CONTAINER_NAME)
         logger.info("")
         logger.info("MANUAL STEPS REQUIRED:")
         logger.info("  1. Create SQL contained user:")
