@@ -23,6 +23,7 @@ from pyrit.common.apply_defaults import (
 from pyrit.common.default_values import get_non_required_value, get_required_value
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.notebook_utils import is_in_ipython_session
+from pyrit.common.parameter import Parameter
 from pyrit.common.singleton import Singleton
 from pyrit.common.utils import (
     combine_dict,
@@ -46,6 +47,7 @@ __all__ = [
     "get_random_indices",
     "get_required_value",
     "is_in_ipython_session",
+    "Parameter",
     "print_deprecation_message",
     "REQUIRED_VALUE",
     "reset_default_values",

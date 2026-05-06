@@ -26,6 +26,7 @@ from pyrit.cli._cli_args import SQLITE as SQLITE
 from pyrit.cli._cli_args import _argparse_validator as _argparse_validator
 from pyrit.cli._cli_args import _parse_initializer_arg as _parse_initializer_arg
 from pyrit.cli._cli_args import add_common_arguments as add_common_arguments
+from pyrit.cli._cli_args import extract_scenario_args as extract_scenario_args
 from pyrit.cli._cli_args import non_negative_int as non_negative_int
 from pyrit.cli._cli_args import parse_list_targets_arguments as parse_list_targets_arguments
 from pyrit.cli._cli_args import parse_memory_labels as parse_memory_labels
@@ -141,6 +142,7 @@ class FrontendCore:
         self._database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
         self._initialization_scripts = config._resolve_initialization_scripts()
         self._initializer_configs = config._initializer_configs if config._initializer_configs else None
+        self._scenario_config = config._scenario_config
         self._env_files = config._resolve_env_files()
         self._operator = config.operator
         self._operation = config.operation
@@ -219,6 +221,7 @@ class FrontendCore:
         derived._env_files = self._env_files
         derived._operator = self._operator
         derived._operation = self._operation
+        derived._scenario_config = self._scenario_config
 
         # Apply overrides or inherit
         derived._log_level = log_level if log_level is not None else self._log_level
@@ -364,6 +367,7 @@ async def run_scenario_async(
     memory_labels: Optional[dict[str, str]] = None,
     dataset_names: Optional[list[str]] = None,
     max_dataset_size: Optional[int] = None,
+    scenario_args: Optional[dict[str, Any]] = None,
     print_summary: bool = True,
 ) -> ScenarioResult:
     """
@@ -385,6 +389,9 @@ async def run_scenario_async(
         max_dataset_size: Optional maximum number of items to use from the dataset.
             If dataset_names is provided, limits items from the new datasets.
             If only max_dataset_size is provided, overrides the scenario's default limit.
+        scenario_args: Optional map of scenario-declared parameter values
+            (CLI/config merge from the caller), passed to
+            ``Scenario.set_params_from_args`` before ``initialize_async``.
         print_summary: Whether to print the summary after execution. Defaults to True.
 
     Returns:
@@ -502,6 +509,8 @@ async def run_scenario_async(
     # Scenarios here are a concrete subclass
     # Runtime parameters are passed to initialize_async()
     scenario = scenario_class()  # type: ignore[ty:missing-argument]
+    # Empty args still triggers missing-required validation + default materialization.
+    scenario.set_params_from_args(args=scenario_args or {})
     await scenario.initialize_async(**init_kwargs)
     result = await scenario.run_async()
 
@@ -598,6 +607,14 @@ def format_scenario_metadata(*, scenario_metadata: ScenarioMetadata) -> None:
         else:
             print("    Default Datasets: None")
 
+    if scenario_metadata.supported_parameters:
+        print("    Supported Parameters:")
+        for param in scenario_metadata.supported_parameters:
+            default_str = f" [default: {param.default!r}]" if param.default is not None else ""
+            type_display = f" ({param.param_type})" if param.param_type else ""
+            choices_display = f" [choices: {param.choices}]" if param.choices else ""
+            print(f"      - {param.name}{type_display}{default_str}{choices_display}: {param.description}")
+
 
 def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) -> None:
     """
@@ -618,10 +635,9 @@ def format_initializer_metadata(*, initializer_metadata: InitializerMetadata) ->
 
     if initializer_metadata.supported_parameters:
         print("    Supported Parameters:")
-        for param_name, param_desc, param_required, param_default in initializer_metadata.supported_parameters:
-            req_str = " (required)" if param_required else ""
+        for param_name, param_desc, param_default in initializer_metadata.supported_parameters:
             default_str = f" [default: {param_default}]" if param_default else ""
-            print(f"      - {param_name}{req_str}{default_str}: {param_desc}")
+            print(f"      - {param_name}{default_str}: {param_desc}")
 
     if initializer_metadata.class_description:
         print("    Description:")

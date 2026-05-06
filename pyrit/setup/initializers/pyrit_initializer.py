@@ -12,31 +12,22 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import get_global_default_values
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.parameter import Parameter
 
 
-@dataclass(frozen=True)
-class InitializerParameter:
-    """
-    Describes a parameter that an initializer accepts.
-
-    Each parameter value is a list of strings, which works naturally with
-    CLI (comma-separated), YAML (lists), and programmatic APIs.
-
-    Args:
-        name: The parameter name (used as key in the params dict).
-        description: Human-readable description of the parameter.
-        required: Whether the parameter must be provided. Defaults to False.
-        default: Default value if not provided. Defaults to None.
-    """
-
-    name: str
-    description: str
-    required: bool = False
-    default: Optional[list[str]] = None
+def __getattr__(name: str) -> type:
+    if name == "InitializerParameter":
+        print_deprecation_message(
+            old_item="pyrit.setup.initializers.pyrit_initializer.InitializerParameter",
+            new_item=Parameter,
+            removed_in="v0.16.0",
+        )
+        return Parameter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class PyRITInitializer(ABC):
@@ -131,15 +122,18 @@ class PyRITInitializer(ABC):
         return 1
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """
         Get the list of parameters this initializer accepts.
 
         Override this property to declare what parameters the initializer
         supports. Parameters are set on self.params before initialize_async() is called.
 
+        Note: ``Scenario.supported_parameters`` is a classmethod (so ``--list-scenarios``
+        can introspect without instantiating). Aligning these is a future improvement.
+
         Returns:
-            list[InitializerParameter]: List of supported parameters. Defaults to empty list.
+            list[Parameter]: List of supported parameters. Defaults to empty list.
         """
         return []
 
@@ -204,14 +198,6 @@ class PyRITInitializer(ABC):
                 f"Initializer '{type(self).__name__}' received unknown parameter(s): {', '.join(sorted(unknown))}. "
                 f"Supported parameters: {', '.join(sorted(supported_names)) if supported_names else 'none'}"
             )
-
-        # Check for missing required params
-        for param_def in self.supported_parameters:
-            if param_def.required and param_def.name not in params:
-                raise ValueError(
-                    f"Initializer '{type(self).__name__}' requires parameter "
-                    f"'{param_def.name}': {param_def.description}"
-                )
 
     async def initialize_with_tracking_async(self) -> None:
         """
@@ -364,7 +350,6 @@ class PyRITInitializer(ABC):
                 {
                     "name": p.name,
                     "description": p.description,
-                    "required": p.required,
                     "default": p.default,
                 }
                 for p in instance.supported_parameters

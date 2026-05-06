@@ -25,7 +25,9 @@ if TYPE_CHECKING:
     from pyrit.models.scenario_result import ScenarioResult
 
 from pyrit.cli import _banner as banner
+from pyrit.cli._cli_args import merge_config_scenario_args
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.registry import ScenarioRegistry
 
 
 class PyRITShell(cmd.Cmd):
@@ -349,11 +351,30 @@ class PyRITShell(cmd.Cmd):
             print("\nType 'help run' for more details and examples")
             return
 
+        # Look up declared params for the scenario so the parser can recognize
+        # scenario-specific flags. Built-in scenarios only in v1.
+        declared_params = None
+        scenario_name_token = line.split(maxsplit=1)[0] if line.strip() else ""
+        if scenario_name_token:
+            try:
+                scenario_class = ScenarioRegistry.get_registry_singleton().get_class(scenario_name_token)
+            except KeyError:
+                scenario_class = None
+            if scenario_class is not None:
+                declared_params = scenario_class.supported_parameters()
+
         # Parse arguments using shared parser
         try:
-            args = self._fc.parse_run_arguments(args_string=line)
+            args = self._fc.parse_run_arguments(args_string=line, declared_params=declared_params)
         except ValueError as e:
             print(f"Error: {e}")
+            # Hint when an unknown-flag error likely stems from a user-defined scenario
+            # introduced via --initialization-scripts (not yet supported for shell augmentation).
+            if declared_params is None and "--initialization-scripts" in line:
+                print(
+                    "Note: scenario-specific flags from --initialization-scripts scenarios "
+                    "are not yet supported in pyrit_shell. Built-in scenarios only in this release."
+                )
             return
 
         # Resolve initialization scripts if provided
@@ -374,6 +395,15 @@ class PyRITShell(cmd.Cmd):
         )
 
         try:
+            # Merge config-file scenario args (CLI wins). Shell v1 requires the
+            # scenario name to be provided positionally; config-only scenarios
+            # are not supported in the shell.
+            merged_scenario_args = merge_config_scenario_args(
+                config_scenario=self.context._scenario_config,
+                effective_scenario_name=args["scenario_name"],
+                cli_args=self._fc.extract_scenario_args(parsed=args),
+            )
+
             result = asyncio.run(
                 self._fc.run_scenario_async(
                     scenario_name=args["scenario_name"],
@@ -385,6 +415,7 @@ class PyRITShell(cmd.Cmd):
                     memory_labels=args["memory_labels"],
                     dataset_names=args["dataset_names"],
                     max_dataset_size=args["max_dataset_size"],
+                    scenario_args=merged_scenario_args,
                 )
             )
             # Store the command and result in history

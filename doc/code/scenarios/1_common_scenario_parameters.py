@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # Scenario Parameters
+# # Common Scenario Parameters
 #
 # This guide covers the key parameters for configuring scenarios programmatically: datasets,
 # strategies, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
