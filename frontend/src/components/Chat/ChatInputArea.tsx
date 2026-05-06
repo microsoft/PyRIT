@@ -175,8 +175,8 @@ function getUnsupportedDataTypes(
   converterOutputDataTypes: string[],
   activeTarget: TargetInstance | null | undefined,
 ): string[] {
-  if (!activeTarget?.supported_input_data_types) return []
-  const supported = new Set(activeTarget.supported_input_data_types)
+  if (!activeTarget?.capabilities?.supported_input_data_types) return []
+  const supported = new Set(activeTarget.capabilities.supported_input_data_types)
   const unsupported: string[] = []
   const seen = new Set<string>()
 
@@ -496,7 +496,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               />
             </div>
             <div className={styles.columnRight}>
-              {activeTarget && activeTarget.supports_multi_turn === false && (
+              {activeTarget && activeTarget.capabilities?.supports_multi_turn === false && (
                 <Tooltip
                   content="This target does not track conversation history — each turn is sent independently."
                   relationship="description"

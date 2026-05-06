@@ -5,8 +5,39 @@
 Target mappers – domain → DTO translation for target-related models.
 """
 
-from pyrit.backend.models.targets import TargetInstance
+from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+
+# Capability flag names that should never be surfaced as identifier-level params:
+# they are sourced from `target_obj.capabilities` instead.
+_CAPABILITY_PARAM_NAMES = frozenset(cap.value for cap in CapabilityName)
+
+
+def target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapabilitiesInfo:
+    """
+    Build a TargetCapabilitiesInfo DTO from a domain TargetCapabilities object.
+
+    Modality combinations are flattened into sorted unique data-type lists since
+    the frontend uses them only for per-piece modality checks.
+
+    Args:
+        capabilities: The domain TargetCapabilities object.
+
+    Returns:
+        TargetCapabilitiesInfo DTO mirroring the capability flags and flattened
+        input/output data types.
+    """
+    return TargetCapabilitiesInfo(
+        supports_multi_turn=capabilities.supports_multi_turn,
+        supports_multi_message_pieces=capabilities.supports_multi_message_pieces,
+        supports_json_schema=capabilities.supports_json_schema,
+        supports_json_output=capabilities.supports_json_output,
+        supports_editable_history=capabilities.supports_editable_history,
+        supports_system_prompt=capabilities.supports_system_prompt,
+        supported_input_data_types=sorted({str(t) for combo in capabilities.input_modalities for t in combo}),
+        supported_output_data_types=sorted({str(t) for combo in capabilities.output_modalities for t in combo}),
+    )
 
 
 def target_object_to_instance(target_registry_name: str, target_obj: PromptTarget) -> TargetInstance:
@@ -26,7 +57,10 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     identifier = target_obj.get_identifier()
     params = identifier.params
 
-    # Keys that are extracted as top-level TargetInstance fields
+    # Keys that are extracted as top-level TargetInstance fields. Capability
+    # flag names are also filtered out (via _CAPABILITY_PARAM_NAMES below) so
+    # they cannot leak into target_specific_params; they are sourced solely
+    # from target_obj.capabilities.
     extracted_keys = {
         "endpoint",
         "model_name",
@@ -34,9 +68,8 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         "temperature",
         "top_p",
         "max_requests_per_minute",
-        "supports_multi_turn",
         "target_specific_params",
-    }
+    } | _CAPABILITY_PARAM_NAMES
 
     # Collect remaining params as target_specific_params so the frontend can display them
     explicit_specific = params.get("target_specific_params") or {}
@@ -52,9 +85,6 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         temperature=params.get("temperature"),
         top_p=params.get("top_p"),
         max_requests_per_minute=params.get("max_requests_per_minute"),
-        supports_multi_turn=target_obj.capabilities.supports_multi_turn,
-        supported_input_data_types=sorted(
-            {str(t) for combo in target_obj.capabilities.input_modalities for t in combo}
-        ),
+        capabilities=target_capabilities_to_info(target_obj.capabilities),
         target_specific_params=combined_specific,
     )
