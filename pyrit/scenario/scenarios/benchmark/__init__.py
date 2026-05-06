@@ -5,7 +5,7 @@
 
 from typing import Any
 
-from pyrit.scenario.scenarios.benchmark.benchmark import AdversarialBenchmark
+from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
 
 
 def __getattr__(name: str) -> Any:

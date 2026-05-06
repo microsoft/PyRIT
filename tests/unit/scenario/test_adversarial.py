@@ -26,7 +26,7 @@ from pyrit.registry.object_registries.attack_technique_registry import AttackTec
 from pyrit.scenario.core import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
-from pyrit.scenario.scenarios.benchmark.benchmark import AdversarialBenchmark
+from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
 from pyrit.score import TrueFalseScorer
 
 # Self-pinned: any change to ``_get_benchmarkable_specs`` (or to the ``light`` tag
