@@ -24,6 +24,8 @@ const sampleTargets: TargetInstance[] = [
       supports_json_output: true,
       supports_editable_history: true,
       supports_system_prompt: true,
+      supported_input_modalities: ['text', 'image_path'],
+      supported_output_modalities: ['text'],
     },
   },
   {
@@ -38,6 +40,8 @@ const sampleTargets: TargetInstance[] = [
       supports_json_output: false,
       supports_editable_history: false,
       supports_system_prompt: false,
+      supported_input_modalities: ['text'],
+      supported_output_modalities: ['image_path'],
     },
   },
   {
@@ -74,7 +78,7 @@ describe('TargetTable', () => {
     expect(screen.getAllByText('TextTarget').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('should display Type, Model, Endpoint, capability columns and Parameters columns', () => {
+  it('should display Type, Model, Endpoint, Inputs, Outputs, capability columns and Parameters columns', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
@@ -84,6 +88,8 @@ describe('TargetTable', () => {
     expect(screen.getByText('Type')).toBeInTheDocument()
     expect(screen.getByText('Model')).toBeInTheDocument()
     expect(screen.getByText('Endpoint')).toBeInTheDocument()
+    expect(screen.getByText('Inputs')).toBeInTheDocument()
+    expect(screen.getByText('Outputs')).toBeInTheDocument()
     expect(screen.getByText('Multi-turn')).toBeInTheDocument()
     expect(screen.getByText('Multi-piece')).toBeInTheDocument()
     expect(screen.getByText('JSON Schema')).toBeInTheDocument()
@@ -173,9 +179,9 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    // Dashes for model, endpoint, 6 capability columns (all unknown), and params
+    // Dashes for model, endpoint, inputs, outputs, 6 capability columns (all unknown), and params
     const dashes = screen.getAllByText('—')
-    expect(dashes).toHaveLength(9)
+    expect(dashes).toHaveLength(11)
   })
 
   it('should show dash for capability columns when capabilities is absent', () => {
@@ -187,8 +193,65 @@ describe('TargetTable', () => {
 
     // TextTarget has no capabilities — all 6 should be dashes
     const dashes = screen.getAllByText('—')
-    // model (—) + endpoint (—) + 6 capabilities (—) + params (—) = 9
-    expect(dashes).toHaveLength(9)
+    // model (—) + endpoint (—) + inputs (—) + outputs (—) + 6 capabilities (—) + params (—) = 11
+    expect(dashes).toHaveLength(11)
+  })
+
+  it('should render modality icons with tooltips for inputs and outputs', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[sampleTargets[0]]} />
+      </TestWrapper>
+    )
+
+    // Modality tooltips are accessible labels; multiple identical labels can appear
+    // (e.g. one "Text" for input and one for output).
+    expect(screen.getAllByLabelText('Text').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByLabelText('Image').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('should render modality icons in canonical order: text, image, audio, video, reasoning, function_call, tool_call', () => {
+    const target: TargetInstance = {
+      target_registry_name: 'multi_modal',
+      target_type: 'CustomTarget',
+      endpoint: null,
+      model_name: null,
+      capabilities: {
+        supports_multi_turn: true,
+        supports_multi_message_pieces: true,
+        supports_json_schema: false,
+        supports_json_output: false,
+        supports_editable_history: false,
+        supports_system_prompt: false,
+        // Backend returns alphabetically sorted; UI must reorder.
+        supported_input_modalities: [
+          'audio_path',
+          'function_call',
+          'image_path',
+          'reasoning',
+          'text',
+          'tool_call',
+          'video_path',
+        ],
+        supported_output_modalities: ['text'],
+      },
+    }
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[target]} />
+      </TestWrapper>
+    )
+
+    const expectedOrder = ['Text', 'Image', 'Audio', 'Video', 'Reasoning', 'Function call', 'Tool call']
+    // The first set of modality icons belongs to the Inputs column.
+    const labels = expectedOrder.map((label) => screen.getAllByLabelText(label)[0])
+    const positions = labels.map((el) => el.compareDocumentPosition(labels[0]))
+    // Each subsequent label should follow (or be) the first; verify monotonic ordering pairwise.
+    for (let i = 0; i < labels.length - 1; i += 1) {
+      const relation = labels[i].compareDocumentPosition(labels[i + 1])
+      expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    }
+    expect(positions).toBeDefined()
   })
 
   it('should display target_specific_params when present', () => {

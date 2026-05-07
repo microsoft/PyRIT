@@ -1285,6 +1285,47 @@ class TestTargetObjectToInstance:
         assert result.capabilities.supports_editable_history is False
         assert result.capabilities.supports_system_prompt is True
 
+    def test_capabilities_modalities_flattened_and_sorted(self) -> None:
+        """Test that input/output modality combinations are flattened to a sorted list of types."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset({"text"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "image_path"}),
+                }
+            ),
+            output_modalities=frozenset({frozenset({"audio_path", "video_path"})}),
+        )
+        mock_identifier = ComponentIdentifier(
+            class_name="CustomTarget",
+            class_module="pyrit.prompt_target",
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities is not None
+        assert result.capabilities.supported_input_modalities == ["image_path", "text"]
+        assert result.capabilities.supported_output_modalities == ["audio_path", "video_path"]
+
+    def test_capabilities_default_modalities_are_text(self) -> None:
+        """Targets that don't override modalities should default to ['text']."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        mock_identifier = ComponentIdentifier(
+            class_name="TextTarget",
+            class_module="pyrit.prompt_target",
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities is not None
+        assert result.capabilities.supported_input_modalities == ["text"]
+        assert result.capabilities.supported_output_modalities == ["text"]
+
     def test_capabilities_matches_legacy_supports_multi_turn(self) -> None:
         """Test that legacy supports_multi_turn field matches capabilities.supports_multi_turn."""
         target_obj = MagicMock(spec=PromptTarget)

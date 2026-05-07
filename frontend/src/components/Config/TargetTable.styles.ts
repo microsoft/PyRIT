@@ -27,14 +27,47 @@ export const useTargetTableStyles = makeStyles({
     wordBreak: 'break-word',
   },
   capabilityCell: {
-    width: '80px',
+    width: '75px',
     textAlign: 'center',
+  },
+  modalityCell: {
+    width: '110px',
+    textAlign: 'center',
+  },
+  inputsModalityCell: {
+    width: '160px',
+    textAlign: 'center',
+  },
+  modalityRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: tokens.spacingHorizontalXS,
+    flexWrap: 'wrap',
+  },
+  modalityIcon: {
+    fontSize: tokens.fontSizeBase500,
+    color: tokens.colorNeutralForeground2,
+  },
+  compositeIcon: {
+    position: 'relative',
+    display: 'inline-flex',
+    lineHeight: 0,
+  },
+  compositeBadge: {
+    position: 'absolute',
+    top: '-4px',
+    right: '-6px',
+    fontSize: tokens.fontSizeBase300,
+    color: tokens.colorNeutralForeground2,
   },
   capabilityIconSupported: {
     color: tokens.colorPaletteGreenForeground1,
+    fontSize: tokens.fontSizeBase500,
   },
   capabilityIconUnsupported: {
     color: tokens.colorPaletteRedForeground1,
+    fontSize: tokens.fontSizeBase500,
   },
   helpHeader: {
     cursor: 'help',

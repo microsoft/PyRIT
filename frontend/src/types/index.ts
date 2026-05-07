@@ -60,6 +60,8 @@ export interface TargetCapabilitiesInfo {
   supports_json_output: boolean
   supports_editable_history: boolean
   supports_system_prompt: boolean
+  supported_input_modalities: string[]
+  supported_output_modalities: string[]
 }
 
 export interface TargetInstance {

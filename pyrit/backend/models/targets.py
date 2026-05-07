@@ -33,6 +33,14 @@ class TargetCapabilitiesInfo(BaseModel):
         ..., description="Whether the target allows the attack history to be modified"
     )
     supports_system_prompt: bool = Field(..., description="Whether the target supports system prompts")
+    supported_input_modalities: list[str] = Field(
+        default_factory=list,
+        description="Flattened, sorted list of supported input modality data types (e.g., 'text', 'image_path')",
+    )
+    supported_output_modalities: list[str] = Field(
+        default_factory=list,
+        description="Flattened, sorted list of supported output modality data types (e.g., 'text', 'audio_path')",
+    )
 
 
 class TargetInstance(BaseModel):

@@ -46,6 +46,8 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     combined_specific = {**extra, **explicit_specific} or None
 
     caps = target_obj.capabilities
+    input_modalities = sorted({modality for combo in caps.input_modalities for modality in combo})
+    output_modalities = sorted({modality for combo in caps.output_modalities for modality in combo})
     capabilities = TargetCapabilitiesInfo(
         supports_multi_turn=caps.supports_multi_turn,
         supports_multi_message_pieces=caps.supports_multi_message_pieces,
@@ -53,6 +55,8 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         supports_json_output=caps.supports_json_output,
         supports_editable_history=caps.supports_editable_history,
         supports_system_prompt=caps.supports_system_prompt,
+        supported_input_modalities=input_modalities,
+        supported_output_modalities=output_modalities,
     )
 
     return TargetInstance(
