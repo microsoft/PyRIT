@@ -197,7 +197,7 @@ class AdversarialBenchmark(Scenario):
         Returns:
             dict[str, PromptChatTarget]: Mapping from inferred label to the
                 original target.  Targets are wrapped in an
-                ``AttackAdversarialConfig`` later by Stage B in ``__init__``.
+                ``AttackAdversarialConfig`` by ``__init__`` after this call.
         """
         result: dict[str, PromptChatTarget] = {}
         seen_keys: dict[str, str | None] = {}
