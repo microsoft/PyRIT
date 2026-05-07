@@ -358,7 +358,7 @@ class Scenario(ABC):
 
         chat_target = get_default_scorer_target()
         scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
-        logger.info(f"Using fallback default objective scorer: {type(scorer).__name__}")
+        logger.warning(f"Using fallback default objective scorer: {type(scorer).__name__}")
         return scorer
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
