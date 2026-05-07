@@ -1095,6 +1095,20 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
+                        # Collect error attack result IDs from the exceptions
+                        error_ids = []
+                        for _, exc in atomic_results.incomplete_objectives:
+                            error_id = getattr(exc, "error_attack_result_id", None)
+                            if error_id:
+                                error_ids.append(error_id)
+
+                        # Link error attack results to the scenario result
+                        if error_ids:
+                            self._memory.update_scenario_error_attacks(
+                                scenario_result_id=scenario_result_id,
+                                error_attack_result_ids=error_ids,
+                            )
+
                         # Mark scenario as failed
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,

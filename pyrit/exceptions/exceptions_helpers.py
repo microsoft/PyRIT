@@ -68,6 +68,13 @@ def log_exception(retry_state: RetryCallState) -> None:
         f"Elapsed time: {elapsed_time} seconds. Total calls: {call_count}"
     )
 
+    # Record to RetryCollector if one is active
+    from pyrit.exceptions.retry_collector import get_retry_collector
+
+    collector = get_retry_collector()
+    if collector:
+        collector.record(retry_state=retry_state)
+
 
 def remove_start_md_json(response_msg: str) -> str:
     """

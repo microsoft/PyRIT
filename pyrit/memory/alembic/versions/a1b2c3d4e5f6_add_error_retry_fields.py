@@ -1,0 +1,46 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""
+add error and retry fields to attack and scenario results.
+
+Revision ID: a1b2c3d4e5f6
+Revises: 108a72344872
+Create Date: 2026-05-08 00:00:00.000000
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "a1b2c3d4e5f6"
+down_revision: str | None = "108a72344872"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    """Apply this schema upgrade."""
+    # Error fields on AttackResultEntries
+    op.add_column("AttackResultEntries", sa.Column("error_message", sa.Unicode(), nullable=True))
+    op.add_column("AttackResultEntries", sa.Column("error_type", sa.String(), nullable=True))
+    op.add_column("AttackResultEntries", sa.Column("error_traceback", sa.Unicode(), nullable=True))
+
+    # Retry fields on AttackResultEntries
+    op.add_column("AttackResultEntries", sa.Column("retry_events_json", sa.Unicode(), nullable=True))
+    op.add_column("AttackResultEntries", sa.Column("total_retries", sa.INTEGER(), nullable=True))
+
+    # Error pointer on ScenarioResultEntries
+    op.add_column("ScenarioResultEntries", sa.Column("error_attack_result_ids_json", sa.Unicode(), nullable=True))
+
+
+def downgrade() -> None:
+    """Revert this schema upgrade."""
+    op.drop_column("AttackResultEntries", "error_message")
+    op.drop_column("AttackResultEntries", "error_type")
+    op.drop_column("AttackResultEntries", "error_traceback")
+    op.drop_column("AttackResultEntries", "retry_events_json")
+    op.drop_column("AttackResultEntries", "total_retries")
+    op.drop_column("ScenarioResultEntries", "error_attack_result_ids_json")

@@ -98,6 +98,7 @@ class ScenarioRunSummary(BaseModel):
     created_at: datetime = Field(..., description="When the run was created")
     updated_at: datetime = Field(..., description="When the run status last changed")
     error: str | None = Field(None, description="Error message if status is FAILED")
+    error_type: str | None = Field(None, description="Exception class name if status is FAILED")
     strategies_used: list[str] = Field(default_factory=list, description="Strategy names that were executed")
     total_attacks: int = Field(0, ge=0, description="Total number of atomic attacks")
     completed_attacks: int = Field(0, ge=0, description="Number of attacks that completed")
@@ -126,6 +127,8 @@ class AtomicAttackResults(BaseModel):
     success_count: int = Field(0, ge=0, description="Number of successful attacks")
     failure_count: int = Field(0, ge=0, description="Number of failed attacks")
     total_count: int = Field(0, ge=0, description="Total number of attack results")
+    total_retries: int = Field(0, ge=0, description="Sum of retries across all attacks in this group")
+    error_count: int = Field(0, ge=0, description="Number of attacks with errors")
 
 
 class ScenarioRunDetail(BaseModel):

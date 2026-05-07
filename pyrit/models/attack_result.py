@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
+from pyrit.models.retry_event import RetryEvent
 from pyrit.models.strategy_result import StrategyResult
 
 if TYPE_CHECKING:
@@ -93,6 +94,15 @@ class AttackResult(StrategyResult):
 
     # labels associated with this attack result
     labels: dict[str, str] = field(default_factory=dict)
+
+    # Error information (populated when attack fails with exception)
+    error_message: str | None = None
+    error_type: str | None = None
+    error_traceback: str | None = None
+
+    # Retry tracking
+    retry_events: list[RetryEvent] = field(default_factory=list)
+    total_retries: int = 0
 
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:

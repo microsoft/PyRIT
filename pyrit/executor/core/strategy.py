@@ -361,7 +361,12 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             else:
                 error_message = f"Strategy execution failed for {self.__class__.__name__}: {str(e)}"
 
-            raise RuntimeError(error_message) from e
+            runtime_error = RuntimeError(error_message)
+            # Attach the error attack result ID if the ON_ERROR handler created one
+            error_attack_result_id = getattr(context, "_error_attack_result_id", None)
+            if error_attack_result_id:
+                runtime_error.error_attack_result_id = error_attack_result_id  # type: ignore[attr-defined]
+            raise runtime_error from e
 
     async def execute_async(self, **kwargs: Any) -> StrategyResultT:
         """

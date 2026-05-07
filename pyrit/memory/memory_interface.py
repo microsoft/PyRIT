@@ -2060,6 +2060,46 @@ class MemoryInterface(abc.ABC):
             )
             raise
 
+    def update_scenario_error_attacks(
+        self, *, scenario_result_id: str, error_attack_result_ids: list[str]
+    ) -> bool:
+        """
+        Update the error attack result IDs on an existing scenario result.
+
+        This links failed AttackResults to the ScenarioResult so the REST API
+        can quickly find error details without scanning all attacks.
+
+        Args:
+            scenario_result_id: The ID of the scenario result to update.
+            error_attack_result_ids: IDs of AttackResults that contain error information.
+
+        Returns:
+            True if the update was successful, False otherwise.
+        """
+        try:
+            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
+
+            if not scenario_results:
+                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
+                return False
+
+            scenario_result = scenario_results[0]
+            scenario_result.error_attack_result_ids = error_attack_result_ids
+
+            entry = ScenarioResultEntry(entry=scenario_result)
+            self._update_entry(entry)
+
+            logger.info(
+                f"Updated scenario {scenario_result_id} with {len(error_attack_result_ids)} error attack result(s)"
+            )
+            return True
+
+        except Exception as e:
+            logger.exception(
+                f"Failed to update scenario {scenario_result_id} error attacks: {str(e)}"
+            )
+            raise
+
     def get_scenario_results(
         self,
         *,
