@@ -18,7 +18,7 @@ from pyrit.backend.models.scenarios import (
     ScenarioRunResponse,
     ScenarioRunStatus,
 )
-from pyrit.backend.services.scenario_run_service import get_scenario_run_service
+import pyrit.backend.services.scenario_run_service as _svc_mod
 
 
 @pytest.fixture
@@ -29,10 +29,10 @@ def client() -> TestClient:
 
 @pytest.fixture(autouse=True)
 def clear_service_cache():
-    """Clear the service singleton cache between tests."""
-    get_scenario_run_service.cache_clear()
+    """Clear the service singleton between tests."""
+    _svc_mod._service_instance = None
     yield
-    get_scenario_run_service.cache_clear()
+    _svc_mod._service_instance = None
 
 
 def _mock_run_response(

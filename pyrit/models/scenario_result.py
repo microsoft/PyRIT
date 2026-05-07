@@ -64,6 +64,7 @@ class ScenarioResult:
         objective_scorer_identifier: "ComponentIdentifier",
         scenario_run_state: ScenarioRunState = "CREATED",
         labels: Optional[dict[str, str]] = None,
+        created_at: Optional[datetime] = None,
         completion_time: Optional[datetime] = None,
         number_tries: int = 0,
         id: Optional[uuid.UUID] = None,  # noqa: A002
@@ -79,6 +80,7 @@ class ScenarioResult:
             objective_scorer_identifier (ComponentIdentifier): Objective scorer identifier.
             scenario_run_state (ScenarioRunState): Current scenario run state.
             labels (Optional[dict[str, str]]): Optional labels.
+            created_at (Optional[datetime]): When the scenario result was created.
             completion_time (Optional[datetime]): Optional completion timestamp.
             number_tries (int): Number of run attempts.
             id (Optional[uuid.UUID]): Optional scenario result ID.
@@ -97,6 +99,7 @@ class ScenarioResult:
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results
         self.labels = labels if labels is not None else {}
+        self.created_at = created_at if created_at is not None else datetime.now(timezone.utc)
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}

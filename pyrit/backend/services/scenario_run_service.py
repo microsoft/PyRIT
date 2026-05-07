@@ -85,7 +85,7 @@ class ScenarioRunService:
             ValueError: If scenario, target, initializer, or strategy cannot be found,
                 or concurrent limit exceeded.
         """
-        if len(self._active_tasks) >= self._max_concurrent_runs:
+        if sum(1 for a in self._active_tasks.values() if a.task is not None and not a.task.done()) >= self._max_concurrent_runs:
             raise ValueError(
                 f"Maximum concurrent runs ({self._max_concurrent_runs}) reached. "
                 "Wait for an existing run to complete or cancel one."
@@ -138,10 +138,7 @@ class ScenarioRunService:
         # This is expensive, and we don't need all the data. At some point
         # we may want to add a lightweight "list" query to the DB layer that only
         results = memory.get_scenario_results(limit=limit)
-        items = [
-            self._build_response_from_db(scenario_result=sr)
-            for sr in results
-        ]
+        items = [self._build_response_from_db(scenario_result=sr) for sr in results]
         return ScenarioRunListResponse(items=items)
 
     async def cancel_run_async(self, *, run_id: str) -> ScenarioRunResponse | None:
@@ -302,9 +299,6 @@ class ScenarioRunService:
             active.error = str(e)
             logger.exception(f"Scenario run {scenario_result_id} failed: {e}")
 
-        finally:
-            del self._active_tasks[scenario_result_id]
-
     def _build_response(self, *, scenario_result_id: str) -> ScenarioRunResponse | None:
         """
         Build a ScenarioRunResponse by querying the database and merging active task state.
@@ -334,6 +328,13 @@ class ScenarioRunService:
         scenario_result_id = str(scenario_result.id)
         active = self._active_tasks.get(scenario_result_id)
 
+        # Clean up finished active tasks after reading the error
+        error = None
+        if active is not None:
+            error = active.error
+            if active.task is not None and active.task.done():
+                del self._active_tasks[scenario_result_id]
+
         status = _STATE_TO_STATUS.get(scenario_result.scenario_run_state, ScenarioRunStatus.FAILED)
 
         # Build result summary for completed runs
@@ -345,23 +346,22 @@ class ScenarioRunService:
                 for ar in results
                 if ar.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE)
             )
+            total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
             result = ScenarioRunResult(
                 scenario_result_id=scenario_result_id,
                 run_state=scenario_result.scenario_run_state,
                 strategies_used=scenario_result.get_strategies_used(),
-                total_attacks=len(scenario_result.attack_results),
+                total_attacks=total_attacks,
                 completed_attacks=completed_attacks,
                 number_tries=scenario_result.number_tries,
                 completion_time=scenario_result.completion_time,
             )
 
-        error = active.error if active else None
-
         return ScenarioRunResponse(
             run_id=scenario_result_id,
             scenario_name=scenario_result.scenario_identifier.name,
             status=status,
-            created_at=scenario_result.completion_time,
+            created_at=scenario_result.created_at,
             updated_at=scenario_result.completion_time,
             error=error,
             result=result,

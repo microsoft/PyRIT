@@ -17,8 +17,8 @@ from pyrit.backend.models.scenarios import (
 from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
-    get_scenario_run_service,
 )
+import pyrit.backend.services.scenario_run_service as _svc_mod
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -27,11 +27,9 @@ _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
 @pytest.fixture(autouse=True)
 def clear_service_cache():
     """Clear the singleton instance between tests."""
-    import pyrit.backend.services.scenario_run_service as svc_mod
-
-    svc_mod._service_instance = None
+    _svc_mod._service_instance = None
     yield
-    svc_mod._service_instance = None
+    _svc_mod._service_instance = None
 
 
 def _make_request(
@@ -68,11 +66,12 @@ def _make_db_scenario_result(
     sr.get_strategies_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
-    sr.completion_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    sr.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
     sr.labels = {}
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
-    sr._display_group_map = {}
+    sr.display_group_map = {}
     return sr
 
 
@@ -391,7 +390,8 @@ class TestScenarioRunServiceExecution:
         mock_scenario_result.get_strategies_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
-        mock_scenario_result.completion_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_scenario_result.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_scenario_result.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
 
         mock_instance.run_async = AsyncMock(return_value=mock_scenario_result)
 
@@ -403,11 +403,14 @@ class TestScenarioRunServiceExecution:
         assert active.task is not None
         await active.task
 
-        # Active task should be cleaned up after completion
+        # Active task is cleaned up on next get_run (deferred cleanup)
+        assert response.run_id in service._active_tasks
+        fetched = service.get_run(run_id=response.run_id)
+        assert fetched is not None
         assert response.run_id not in service._active_tasks
 
     async def test_execute_run_fails_with_error(self, mock_all_registries) -> None:
-        """Test that a run_async failure stores error and removes active task."""
+        """Test that a run_async failure stores error and surfaces it via get_run."""
         service = ScenarioRunService()
         mock_instance = mock_all_registries["scenario_instance"]
 
@@ -421,7 +424,14 @@ class TestScenarioRunServiceExecution:
         assert active.task is not None
         await active.task
 
-        # Active task should be cleaned up
+        # Error is stored on the active task until get_run reads it
+        assert active.error == "scenario exploded"
+        assert response.run_id in service._active_tasks
+
+        # get_run should surface the error and clean up
+        fetched = service.get_run(run_id=response.run_id)
+        assert fetched is not None
+        assert fetched.error == "scenario exploded"
         assert response.run_id not in service._active_tasks
 
 

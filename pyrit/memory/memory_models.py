@@ -1053,6 +1053,7 @@ class ScenarioResultEntry(Base):
             objective_scorer_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
             scenario_run_state=self.scenario_run_state,
             labels=self.labels,
+            created_at=self.timestamp,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
             display_group_map=display_group_map,
