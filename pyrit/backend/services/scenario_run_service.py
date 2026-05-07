@@ -9,13 +9,15 @@ retrieving results, and cancellation.
 """
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
-    AttackResultDetail,
+    AttackSummary,
     RunScenarioRequest,
     ScenarioRunDetail,
     ScenarioRunListResponse,
@@ -64,6 +66,7 @@ class ScenarioRunService:
         """Initialize the scenario run service."""
         self._max_concurrent_runs = max_concurrent_runs
         self._active_tasks: dict[str, _ActiveTask] = {}
+        self._run_semaphore = asyncio.Semaphore(max_concurrent_runs)
 
     async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
@@ -84,17 +87,20 @@ class ScenarioRunService:
             ValueError: If scenario, target, initializer, or strategy cannot be found,
                 or concurrent limit exceeded.
         """
-        if (
-            sum(1 for a in self._active_tasks.values() if a.task is not None and not a.task.done())
-            >= self._max_concurrent_runs
-        ):
+        if self._run_semaphore.locked():
             raise ValueError(
                 f"Maximum concurrent runs ({self._max_concurrent_runs}) reached. "
                 "Wait for an existing run to complete or cancel one."
             )
 
+        await self._run_semaphore.acquire()
+
         # Perform all initialization eagerly — errors propagate to caller
-        scenario = await self._initialize_run_async(request=request)
+        try:
+            scenario = await self._initialize_run_async(request=request)
+        except Exception:
+            self._run_semaphore.release()
+            raise
 
         # scenario_result_id is set during initialize_async
         scenario_result_id = scenario._scenario_result_id
@@ -113,17 +119,17 @@ class ScenarioRunService:
         assert response is not None  # guaranteed: we just inserted into DB via initialize_async
         return response
 
-    def get_run(self, *, run_id: str) -> ScenarioRunSummary | None:
+    def get_run(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
         Get the current status of a scenario run by querying the database.
 
         Args:
-            run_id: The scenario result ID (run identifier).
+            scenario_result_id: The scenario result ID.
 
         Returns:
-            ScenarioRunResponse if found, None otherwise.
+            ScenarioRunSummary if found, None otherwise.
         """
-        return self._build_response(scenario_result_id=run_id)
+        return self._build_response(scenario_result_id=scenario_result_id)
 
     def list_runs(self, *, limit: int = 100) -> ScenarioRunListResponse:
         """
@@ -143,22 +149,22 @@ class ScenarioRunService:
         items = [self._build_response_from_db(scenario_result=sr) for sr in results]
         return ScenarioRunListResponse(items=items)
 
-    async def cancel_run_async(self, *, run_id: str) -> ScenarioRunSummary | None:
+    async def cancel_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
         Cancel a running scenario.
 
         Args:
-            run_id: The scenario result ID (run identifier).
+            scenario_result_id: The scenario result ID.
 
         Returns:
-            Updated ScenarioRunResponse if found, None if run_id not found.
+            Updated ScenarioRunSummary if found, None if not found.
 
         Raises:
             ValueError: If the run is already in a terminal state or not active.
         """
         # Verify run exists in DB
         memory = CentralMemory.get_memory_instance()
-        results = memory.get_scenario_results(scenario_result_ids=[run_id])
+        results = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
 
@@ -168,15 +174,17 @@ class ScenarioRunService:
         if db_status in (ScenarioRunStatus.COMPLETED, ScenarioRunStatus.FAILED, ScenarioRunStatus.CANCELLED):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
 
-        # Cancel the asyncio task if active
-        active = self._active_tasks.get(run_id)
+        # Cancel the asyncio task if active and wait for it to finish
+        active = self._active_tasks.get(scenario_result_id)
         if active is not None and active.task is not None and not active.task.done():
             active.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(active.task, timeout=5.0)
 
         # Persist cancelled state to DB
-        memory.update_scenario_run_state(scenario_result_id=run_id, scenario_run_state="CANCELLED")
+        memory.update_scenario_run_state(scenario_result_id=scenario_result_id, scenario_run_state="CANCELLED")
 
-        return self._build_response(scenario_result_id=run_id)
+        return self._build_response(scenario_result_id=scenario_result_id)
 
     async def _initialize_run_async(self, *, request: RunScenarioRequest) -> Scenario:
         """
@@ -305,6 +313,9 @@ class ScenarioRunService:
             active.error = str(e)
             logger.exception(f"Scenario run {scenario_result_id} failed: {e}")
 
+        finally:
+            self._run_semaphore.release()
+
     def _build_response(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
         Build a ScenarioRunResponse by querying the database and merging active task state.
@@ -373,7 +384,7 @@ class ScenarioRunService:
             completed_at=scenario_result.completion_time,
         )
 
-    def get_run_results(self, *, run_id: str) -> ScenarioRunDetail | None:
+    def get_run_results(self, *, scenario_result_id: str) -> ScenarioRunDetail | None:
         """
         Get detailed results for a completed scenario run.
 
@@ -381,16 +392,16 @@ class ScenarioRunService:
         to a detailed response model with per-attack outcomes.
 
         Args:
-            run_id: The scenario result ID (run identifier).
+            scenario_result_id: The scenario result ID.
 
         Returns:
-            ScenarioResultDetailResponse if the run is completed and results exist, None if run not found.
+            ScenarioRunDetail if the run is completed and results exist, None if not found.
 
         Raises:
             ValueError: If the run is not in a completed state.
         """
         memory = CentralMemory.get_memory_instance()
-        results = memory.get_scenario_results(scenario_result_ids=[run_id])
+        results = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
 
@@ -404,7 +415,7 @@ class ScenarioRunService:
         attacks: list[AtomicAttackResults] = []
         display_group_map = scenario_result.display_group_map
         for attack_name, attack_results in scenario_result.attack_results.items():
-            details: list[AttackResultDetail] = []
+            details: list[AttackSummary] = []
             success_count = 0
             failure_count = 0
 
@@ -417,8 +428,9 @@ class ScenarioRunService:
                 if ar.last_response is not None:
                     last_response_text = str(ar.last_response)
 
+                timestamp = ar.timestamp or datetime.now(timezone.utc)
                 details.append(
-                    AttackResultDetail(
+                    AttackSummary(
                         attack_result_id=ar.attack_result_id,
                         conversation_id=ar.conversation_id,
                         objective=ar.objective,
@@ -428,7 +440,8 @@ class ScenarioRunService:
                         score_value=score_value,
                         executed_turns=ar.executed_turns,
                         execution_time_ms=ar.execution_time_ms,
-                        timestamp=ar.timestamp,
+                        created_at=timestamp,
+                        updated_at=timestamp,
                     )
                 )
 

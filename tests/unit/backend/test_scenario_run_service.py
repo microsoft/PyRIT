@@ -275,10 +275,10 @@ class TestScenarioRunServiceGetRun:
     """Tests for ScenarioRunService.get_run."""
 
     def test_get_run_returns_none_for_unknown_id(self, mock_memory) -> None:
-        """Test that get_run returns None for non-existent run_id."""
+        """Test that get_run returns None for non-existent run."""
         mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
-        result = service.get_run(run_id="nonexistent-id")
+        result = service.get_run(scenario_result_id="nonexistent-id")
         assert result is None
 
     def test_get_run_returns_existing_run(self, mock_memory) -> None:
@@ -287,7 +287,7 @@ class TestScenarioRunServiceGetRun:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(run_id="sr-123")
+        fetched = service.get_run(scenario_result_id="sr-123")
 
         assert fetched is not None
         assert fetched.scenario_result_id == "sr-123"
@@ -331,10 +331,10 @@ class TestScenarioRunServiceCancelRun:
     """Tests for ScenarioRunService.cancel_run_async."""
 
     async def test_cancel_run_returns_none_for_unknown_id(self, mock_memory) -> None:
-        """Test that cancel returns None for non-existent run_id."""
+        """Test that cancel returns None for non-existent run."""
         mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
-        result = await service.cancel_run_async(run_id="nonexistent-id")
+        result = await service.cancel_run_async(scenario_result_id="nonexistent-id")
         assert result is None
 
     async def test_cancel_run_sets_cancelled_status(self, mock_all_registries) -> None:
@@ -348,7 +348,7 @@ class TestScenarioRunServiceCancelRun:
         cancelled_result = _make_db_scenario_result(result_id=response.scenario_result_id, run_state="CANCELLED")
         mock_memory.get_scenario_results.side_effect = [[running_result], [cancelled_result]]
 
-        result = await service.cancel_run_async(run_id=response.scenario_result_id)
+        result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
             scenario_result_id=response.scenario_result_id, scenario_run_state="CANCELLED"
@@ -363,7 +363,7 @@ class TestScenarioRunServiceCancelRun:
 
         service = ScenarioRunService()
         with pytest.raises(ValueError, match="Cannot cancel run"):
-            await service.cancel_run_async(run_id="sr-done")
+            await service.cancel_run_async(scenario_result_id="sr-done")
 
     async def test_cancel_already_cancelled_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling an already-cancelled run raises ValueError."""
@@ -372,7 +372,7 @@ class TestScenarioRunServiceCancelRun:
 
         service = ScenarioRunService()
         with pytest.raises(ValueError, match="Cannot cancel run"):
-            await service.cancel_run_async(run_id="sr-cancelled")
+            await service.cancel_run_async(scenario_result_id="sr-cancelled")
 
 
 class TestScenarioRunServiceExecution:
@@ -405,7 +405,7 @@ class TestScenarioRunServiceExecution:
 
         # Active task is cleaned up on next get_run (deferred cleanup)
         assert response.scenario_result_id in service._active_tasks
-        fetched = service.get_run(run_id=response.scenario_result_id)
+        fetched = service.get_run(scenario_result_id=response.scenario_result_id)
         assert fetched is not None
         assert response.scenario_result_id not in service._active_tasks
 
@@ -429,7 +429,7 @@ class TestScenarioRunServiceExecution:
         assert response.scenario_result_id in service._active_tasks
 
         # get_run should surface the error and clean up
-        fetched = service.get_run(run_id=response.scenario_result_id)
+        fetched = service.get_run(scenario_result_id=response.scenario_result_id)
         assert fetched is not None
         assert fetched.error == "scenario exploded"
         assert response.scenario_result_id not in service._active_tasks
@@ -439,10 +439,10 @@ class TestScenarioRunServiceGetResults:
     """Tests for ScenarioRunService.get_run_results."""
 
     def test_get_results_returns_none_for_unknown_id(self, mock_memory) -> None:
-        """Test that get_run_results returns None for non-existent run_id."""
+        """Test that get_run_results returns None for non-existent run."""
         mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
-        result = service.get_run_results(run_id="nonexistent-id")
+        result = service.get_run_results(scenario_result_id="nonexistent-id")
         assert result is None
 
     def test_get_results_raises_if_not_completed(self, mock_memory) -> None:
@@ -452,7 +452,7 @@ class TestScenarioRunServiceGetResults:
 
         service = ScenarioRunService()
         with pytest.raises(ValueError, match="only available for completed runs"):
-            service.get_run_results(run_id="sr-running")
+            service.get_run_results(scenario_result_id="sr-running")
 
     def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
         """Test that get_run_results returns full details for a completed run."""
@@ -480,7 +480,7 @@ class TestScenarioRunServiceGetResults:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        detail = service.get_run_results(run_id="sr-123")
+        detail = service.get_run_results(scenario_result_id="sr-123")
 
         assert detail is not None
         assert detail.run.scenario_result_id == "sr-123"

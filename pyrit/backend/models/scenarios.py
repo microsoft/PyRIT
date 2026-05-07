@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.attacks import AttackResultDetail
+from pyrit.backend.models.attacks import AttackSummary
 from pyrit.backend.models.common import PaginationInfo
 
 
@@ -122,7 +122,7 @@ class AtomicAttackResults(BaseModel):
 
     atomic_attack_name: str = Field(..., description="Name of the atomic attack (strategy)")
     display_group: str | None = Field(None, description="Display group label for UI grouping")
-    results: list[AttackResultDetail] = Field(..., description="Individual attack results")
+    results: list[AttackSummary] = Field(..., description="Individual attack results")
     success_count: int = Field(0, ge=0, description="Number of successful attacks")
     failure_count: int = Field(0, ge=0, description="Number of failed attacks")
     total_count: int = Field(0, ge=0, description="Total number of attack results")

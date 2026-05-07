@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import AttackResultDetail
+from pyrit.backend.models.attacks import AttackSummary
 from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
     ScenarioRunDetail,
@@ -160,7 +160,7 @@ class TestListScenarioRunsRoute:
 
 
 class TestGetScenarioRunRoute:
-    """Tests for GET /api/scenarios/runs/{run_id}."""
+    """Tests for GET /api/scenarios/runs/{id}."""
 
     def test_get_run_returns_200(self, client: TestClient) -> None:
         """Test that getting an existing run returns 200."""
@@ -189,7 +189,7 @@ class TestGetScenarioRunRoute:
 
 
 class TestCancelScenarioRunRoute:
-    """Tests for POST /api/scenarios/runs/{run_id}/cancel."""
+    """Tests for POST /api/scenarios/runs/{id}/cancel."""
 
     def test_cancel_run_returns_200(self, client: TestClient) -> None:
         """Test that cancelling a running scenario returns 200."""
@@ -230,7 +230,7 @@ class TestCancelScenarioRunRoute:
 
 
 class TestGetScenarioRunResultsRoute:
-    """Tests for GET /api/scenarios/runs/{run_id}/results."""
+    """Tests for GET /api/scenarios/runs/{id}/results."""
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
@@ -251,7 +251,7 @@ class TestGetScenarioRunResultsRoute:
                     atomic_attack_name="base64_attack",
                     display_group="encoding",
                     results=[
-                        AttackResultDetail(
+                        AttackSummary(
                             attack_result_id="ar-1",
                             conversation_id="conv-1",
                             objective="Extract sensitive info",
@@ -261,7 +261,8 @@ class TestGetScenarioRunResultsRoute:
                             score_value="1.0",
                             executed_turns=3,
                             execution_time_ms=1500,
-                            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                            created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                            updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
                         ),
                     ],
                     success_count=1,

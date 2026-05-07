@@ -16,7 +16,7 @@ from pyrit.backend.models.scenarios import ListRegisteredScenarioResponse, Regis
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
 
-def _metadata_to_summary(metadata: ScenarioMetadata) -> RegisteredScenario:
+def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredScenario:
     """
     Convert a ScenarioMetadata dataclass to a ScenarioSummary Pydantic model.
 
@@ -66,7 +66,7 @@ class ScenarioService:
             ScenarioListResponse with paginated scenario summaries.
         """
         all_metadata = self._registry.list_metadata()
-        all_summaries = [_metadata_to_summary(m) for m in all_metadata]
+        all_summaries = [_metadata_to_registered_scenario(m) for m in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
         next_cursor = page[-1].scenario_name if has_more and page else None
@@ -89,7 +89,7 @@ class ScenarioService:
         all_metadata = self._registry.list_metadata()
         for metadata in all_metadata:
             if metadata.registry_name == scenario_name:
-                return _metadata_to_summary(metadata)
+                return _metadata_to_registered_scenario(metadata)
         return None
 
     @staticmethod

@@ -103,13 +103,13 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     """
     Start a new scenario run as a background task.
 
-    Returns immediately with a run_id that can be polled for status.
+    Returns immediately with a scenario_result_id that can be polled for status.
 
     Args:
         request: Scenario run configuration.
 
     Returns:
-        ScenarioRunResponse: Run metadata with PENDING status.
+        ScenarioRunSummary: Run metadata with PENDING status.
     """
     service = get_scenario_run_service()
     try:
@@ -137,73 +137,73 @@ async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListRe
 
 
 @router.get(
-    "/runs/{run_id}",
+    "/runs/{scenario_result_id}",
     response_model=ScenarioRunSummary,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
     },
 )
-async def get_scenario_run(run_id: str) -> ScenarioRunSummary:
+async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
     """
     Get the current status and result of a scenario run.
 
     Args:
-        run_id: The unique run identifier returned by POST /runs.
+        scenario_result_id: The scenario_result_id returned by POST /runs.
 
     Returns:
-        ScenarioRunResponse: Current run status (and result if completed).
+        ScenarioRunSummary: Current run status (and result if completed).
     """
     service = get_scenario_run_service()
-    run = service.get_run(run_id=run_id)
+    run = service.get_run(scenario_result_id=scenario_result_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scenario run '{run_id}' not found",
+            detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return run
 
 
 @router.post(
-    "/runs/{run_id}/cancel",
+    "/runs/{scenario_result_id}/cancel",
     response_model=ScenarioRunSummary,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run already in terminal state"},
     },
 )
-async def cancel_scenario_run(run_id: str) -> ScenarioRunSummary:
+async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
     """
     Cancel a running scenario.
 
     Args:
-        run_id: The unique run identifier to cancel.
+        scenario_result_id: The scenario_result_id to cancel.
 
     Returns:
-        ScenarioRunResponse: Updated run with CANCELLED status.
+        ScenarioRunSummary: Updated run with CANCELLED status.
     """
     service = get_scenario_run_service()
     try:
-        result = await service.cancel_run_async(run_id=run_id)
+        result = await service.cancel_run_async(scenario_result_id=scenario_result_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scenario run '{run_id}' not found",
+            detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return result
 
 
 @router.get(
-    "/runs/{run_id}/results",
+    "/runs/{scenario_result_id}/results",
     response_model=ScenarioRunDetail,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(run_id: str) -> ScenarioRunDetail:
+async def get_scenario_run_results(scenario_result_id: str) -> ScenarioRunDetail:
     """
     Get detailed results for a completed scenario run.
 
@@ -211,20 +211,20 @@ async def get_scenario_run_results(run_id: str) -> ScenarioRunDetail:
     and success/failure counts.
 
     Args:
-        run_id: The unique run identifier.
+        scenario_result_id: The scenario_result_id.
 
     Returns:
-        ScenarioResultDetailResponse: Full attack-level results.
+        ScenarioRunDetail: Full attack-level results.
     """
     service = get_scenario_run_service()
     try:
-        result = service.get_run_results(run_id=run_id)
+        result = service.get_run_results(scenario_result_id=scenario_result_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scenario run '{run_id}' not found",
+            detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return result
