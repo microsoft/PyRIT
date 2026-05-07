@@ -14,13 +14,20 @@ from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
-from pyrit.backend.services.converter_service import ConverterService, get_converter_service
+from pyrit.backend.services.converter_service import ConverterService, _is_llm_based, get_converter_service
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter import (
     Base64Converter,
     CaesarConverter,
+    LLMGenericTextConverter,
+    NoiseConverter,
+    PersuasionConverter,
     RepeatTokenConverter,
     SuffixAppendConverter,
+    TenseConverter,
+    ToneConverter,
+    TranslationConverter,
+    VariationConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
 from pyrit.registry.object_registries import ConverterRegistry
@@ -607,3 +614,25 @@ class TestConverterParamsExtraction:
         # Verify type info is populated from identifier
         assert isinstance(result.supported_input_types, list)
         assert isinstance(result.supported_output_types, list)
+
+
+class TestIsLlmBased:
+    """Tests for the _is_llm_based introspection helper"""
+
+    def test_detects_llm_text_converter(self) -> None:
+        # Test that _is_llm_based correctly identifies converters that use LLMS as LLM-based.
+        for cls in (
+            LLMGenericTextConverter,
+            NoiseConverter,
+            PersuasionConverter,
+            ToneConverter,
+            TenseConverter,
+            TranslationConverter,
+            VariationConverter,
+        ):
+            assert _is_llm_based(cls) is True, f"{cls.__name__} should be detected as LLM-based"
+
+    def test_does_not_flag_non_target_converters(self) -> None:
+        # Test that _is_llm_based does not incorrectly flag non-LLM converters.
+        assert _is_llm_based(Base64Converter) is False
+        assert _is_llm_based(CaesarConverter) is False
