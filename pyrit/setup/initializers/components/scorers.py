@@ -76,6 +76,8 @@ class ScorerInitializerTags(str, Enum):
 
 
 # Target registry names used by scorer configurations.
+MAIN_SCORER_TARGET: str = "objective_scorer_chat"
+FALLBACK_SCORER_TARGET: str = "openai_chat"
 GPT4O_TARGET: str = "azure_openai_gpt4o"
 GPT4O_TEMP0_TARGET: str = "azure_openai_gpt4o_temp0"
 GPT4O_TEMP9_TARGET: str = "azure_openai_gpt4o_temp9"
@@ -86,6 +88,8 @@ GPT5_4_TARGET: str = "azure_openai_gpt5_4"
 GPT5_1_TARGET: str = "azure_openai_gpt5_1"
 
 # Scorer registry names.
+MAIN: str = "main"
+FALLBACK: str = "fallback"
 REFUSAL_GPT4O_OBJECTIVE_STRICT: str = "refusal_gpt4o_objective_strict"
 REFUSAL_GPT4O_OBJECTIVE_LENIENT: str = "refusal_gpt4o_objective_lenient"
 REFUSAL_GPT4O_NO_OBJECTIVE_STRICT: str = "refusal_gpt4o_no_objective_strict"
@@ -173,6 +177,7 @@ class ScorerInitializer(PyRITInitializer):
                 "Ensure TargetInitializer is included in the initializers list."
             )
 
+        self._register_fallback_scorers()
         self._register_refusal_scorers()
         self._register_scale_scorers()
         self._register_acs_threshold_scorers()
@@ -186,6 +191,27 @@ class ScorerInitializer(PyRITInitializer):
     # ---------------------------------------------------------------------------
     # Core scorer registration
     # ---------------------------------------------------------------------------
+
+    def _register_fallback_scorers(self) -> None:
+        """
+        Register scorers used as fallback in scenarios.
+        """
+        main = self._get_chat_target(MAIN_SCORER_TARGET)
+        fallback = self._get_chat_target(FALLBACK_SCORER_TARGET)
+        self._try_register(
+            name=MAIN,
+            factory=lambda: TrueFalseInverterScorer(
+                scorer=SelfAskRefusalScorer(chat_target=self._require_dependency(main, name=MAIN_SCORER_TARGET))
+            ),
+            required_targets=[main],
+        )
+        self._try_register(
+            name=FALLBACK,
+            factory=lambda: TrueFalseInverterScorer(
+                scorer=SelfAskRefusalScorer(chat_target=self._require_dependency(fallback, name=FALLBACK_SCORER_TARGET))
+            ),
+            required_targets=[fallback],
+        )
 
     def _register_refusal_scorers(self) -> None:
         """
