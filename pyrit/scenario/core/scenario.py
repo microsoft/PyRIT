@@ -331,10 +331,24 @@ class Scenario(ABC):
         return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        composite_scorer_questions_paths = type(self).get_override_composite_scorer_questions_path()
+        # Deferred import to avoid circular dependency.
+        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
 
+        # first check if the registry has a default objective scorer
+        # if available either itself, or its chat target will be used
+        chat_target: PromptTarget | None = None
+        registry_default_scorer: TrueFalseScorer | None = None
+        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
+        if entries and isinstance(entries[0].instance, TrueFalseScorer):
+            registry_default_scorer = entries[0].instance
+            chat_target = registry_default_scorer.get_chat_target()
+            logger.info(f"The registry contains default objective scorer: {type(registry_default_scorer).__name__}")
+
+        chat_target = chat_target or get_default_scorer_target()
+
+        # if the scenario has override composite scorer questions, use them to build a composite scorer
+        composite_scorer_questions_paths = type(self).get_override_composite_scorer_questions_path()
         if composite_scorer_questions_paths:
-            chat_target = get_default_scorer_target()
             path_scorers: list[TrueFalseScorer] = [
                 SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question_path=path)
                 for path in composite_scorer_questions_paths
@@ -347,16 +361,10 @@ class Scenario(ABC):
             logger.info(f"Using composite default objective scorer: {type(scorer).__name__}")
             return scorer
 
-        # Deferred import to avoid circular dependency.
-        from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
+        if registry_default_scorer:
+            logger.info(f"Using registry default objective scorer: {type(registry_default_scorer).__name__}")
+            return registry_default_scorer
 
-        entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
-        if entries and isinstance(entries[0].instance, TrueFalseScorer):
-            scorer = entries[0].instance
-            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
-            return scorer
-
-        chat_target = get_default_scorer_target()
         scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
         logger.warning(f"Using fallback default objective scorer: {type(scorer).__name__}")
         return scorer
