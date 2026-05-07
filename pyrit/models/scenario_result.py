@@ -47,7 +47,7 @@ class ScenarioIdentifier:
         self.init_data = init_data
 
 
-ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]
+ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]
 
 
 class ScenarioResult:
@@ -100,6 +100,11 @@ class ScenarioResult:
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}
+
+    @property
+    def display_group_map(self) -> dict[str, str]:
+        """Mapping of atomic_attack_name → display group label."""
+        return self._display_group_map
 
     def get_strategies_used(self) -> list[str]:
         """

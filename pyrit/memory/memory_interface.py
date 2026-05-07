@@ -354,6 +354,8 @@ class MemoryInterface(abc.ABC):
         conditions: Optional[Any] = None,
         distinct: bool = False,
         join_scores: bool = False,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Fetch data from the specified table model with optional conditions.
@@ -363,6 +365,8 @@ class MemoryInterface(abc.ABC):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Whether to return distinct rows only. Defaults to False.
             join_scores: Whether to join the scores table. Defaults to False.
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             List of model instances representing the rows fetched from the table.
@@ -378,6 +382,8 @@ class MemoryInterface(abc.ABC):
         distinct: bool = False,
         join_scores: bool = False,
         batch_size: int | None = None,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Execute queries in batches to avoid exceeding database bind variable limits.
@@ -394,6 +400,8 @@ class MemoryInterface(abc.ABC):
             join_scores: Whether to join the scores table.
             batch_size: Override for the number of values per batch.
                 Defaults to ``_MAX_BIND_VARS`` when not specified.
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             MutableSequence[Model]: Merged and deduplicated results from all batched queries.
@@ -411,6 +419,8 @@ class MemoryInterface(abc.ABC):
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
+                order_by=order_by,
+                limit=limit,
             )
 
         # Execute multiple separate queries and merge results
@@ -426,6 +436,7 @@ class MemoryInterface(abc.ABC):
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
+                order_by=order_by,
             )
 
             # Deduplicate by primary key (id)
@@ -2062,9 +2073,12 @@ class MemoryInterface(abc.ABC):
         objective_target_endpoint: Optional[str] = None,
         objective_target_model_name: Optional[str] = None,
         identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
         """
         Retrieve a list of ScenarioResult objects based on the specified filters.
+
+        Results are always ordered by completion_time descending (most recent first).
 
         Args:
             scenario_result_ids (Optional[Sequence[str]], optional): A list of scenario result IDs.
@@ -2088,9 +2102,11 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
                 A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
+            limit (int | None): Maximum number of results to return. Defaults to None (no limit).
 
         Returns:
-            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters.
+            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters,
+                ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
             return []
@@ -2149,6 +2165,8 @@ class MemoryInterface(abc.ABC):
             )
 
         try:
+            order_by_clause = ScenarioResultEntry.completion_time.desc()
+
             # Handle scenario_result_ids with batched queries if needed
             if scenario_result_ids:
                 entries = self._execute_batched_query(
@@ -2156,9 +2174,16 @@ class MemoryInterface(abc.ABC):
                     batch_column=ScenarioResultEntry.id,
                     batch_values=list(scenario_result_ids),
                     other_conditions=conditions,
+                    order_by=order_by_clause,
+                    limit=limit,
                 )
             else:
-                entries = self._query_entries(ScenarioResultEntry, conditions=and_(*conditions) if conditions else None)
+                entries = self._query_entries(
+                    ScenarioResultEntry,
+                    conditions=and_(*conditions) if conditions else None,
+                    order_by=order_by_clause,
+                    limit=limit,
+                )
 
             # Convert entries to ScenarioResults and populate attack_results efficiently
             scenario_results = []

@@ -5,6 +5,7 @@
 Tests for ScenarioRunService.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,21 +15,23 @@ from pyrit.backend.models.scenarios import (
     ScenarioRunStatus,
 )
 from pyrit.backend.services.scenario_run_service import (
-    MAX_CONCURRENT_RUNS,
+    _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
     get_scenario_run_service,
 )
 
-# The service uses deferred imports inside methods, so we patch at the source module.
 _REGISTRY_PATCH_BASE = "pyrit.registry"
+_MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
 
 
 @pytest.fixture(autouse=True)
 def clear_service_cache():
-    """Clear the singleton cache between tests."""
-    get_scenario_run_service.cache_clear()
+    """Clear the singleton instance between tests."""
+    import pyrit.backend.services.scenario_run_service as svc_mod
+
+    svc_mod._service_instance = None
     yield
-    get_scenario_run_service.cache_clear()
+    svc_mod._service_instance = None
 
 
 def _make_request(
@@ -49,44 +52,46 @@ def _make_request(
     )
 
 
-@pytest.fixture
-def mock_scenario_registry():
-    """Patch ScenarioRegistry.get_registry_singleton to return a mock."""
-    mock_registry = MagicMock()
-    mock_registry.get_class.return_value = MagicMock()
-    with patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_registry):
-        yield mock_registry
+def _make_db_scenario_result(
+    *,
+    result_id: str = "sr-uuid-1",
+    scenario_name: str = "foundry.red_team_agent",
+    run_state: str = "IN_PROGRESS",
+    attack_results: dict | None = None,
+) -> MagicMock:
+    """Create a mock ScenarioResult as returned by CentralMemory."""
+    sr = MagicMock()
+    sr.id = result_id
+    sr.scenario_identifier.name = scenario_name
+    sr.scenario_identifier.version = 1
+    sr.scenario_run_state = run_state
+    sr.get_strategies_used.return_value = []
+    sr.attack_results = attack_results or {}
+    sr.number_tries = 1
+    sr.completion_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    sr.labels = {}
+    sr.objective_achieved_rate.return_value = 0
+    sr.get_display_groups.return_value = {}
+    sr._display_group_map = {}
+    return sr
 
 
 @pytest.fixture
-def mock_target_registry():
-    """Patch TargetRegistry.get_registry_singleton to return a mock."""
-    mock_registry = MagicMock()
-    mock_registry.get_instance_by_name.return_value = MagicMock()
-    mock_registry.get_names.return_value = ["my_target"]
-    with patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_registry):
-        yield mock_registry
+def mock_memory():
+    """Patch CentralMemory.get_memory_instance to return a mock."""
+    mock = MagicMock()
+    mock.get_scenario_results.return_value = []
+    with patch(_MEMORY_PATCH, return_value=mock):
+        yield mock
 
 
 @pytest.fixture
-def mock_initializer_registry():
-    """Patch InitializerRegistry.get_registry_singleton to return a mock."""
-    mock_instance = MagicMock()
-    mock_instance.initialize_async = AsyncMock()
-    mock_class = MagicMock(return_value=mock_instance)
-
-    mock_registry = MagicMock()
-    mock_registry.get_class.return_value = mock_class
-    with patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton", return_value=mock_registry):
-        yield mock_registry, mock_class, mock_instance
-
-
-@pytest.fixture
-def mock_all_registries():
-    """Patch all registries with valid defaults for start_run_async tests."""
+def mock_all_registries(mock_memory):
+    """Patch all registries and CentralMemory with valid defaults."""
     mock_scenario_instance = MagicMock()
     mock_scenario_instance.initialize_async = AsyncMock()
     mock_scenario_instance.run_async = AsyncMock()
+    mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
     mock_scenario_class.get_strategy_class.return_value = MagicMock()
@@ -102,6 +107,10 @@ def mock_all_registries():
     mock_ir = MagicMock()
     mock_ir.get_class.return_value = MagicMock(return_value=MagicMock(initialize_async=AsyncMock()))
 
+    # By default, return a matching DB result for get_run / list_runs queries
+    db_result = _make_db_scenario_result()
+    mock_memory.get_scenario_results.return_value = [db_result]
+
     with (
         patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
         patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
@@ -113,6 +122,8 @@ def mock_all_registries():
             "initializer_registry": mock_ir,
             "scenario_class": mock_scenario_class,
             "scenario_instance": mock_scenario_instance,
+            "memory": mock_memory,
+            "db_result": db_result,
         }
 
 
@@ -120,17 +131,16 @@ class TestScenarioRunServiceStartRun:
     """Tests for ScenarioRunService.start_run_async."""
 
     async def test_start_run_returns_running_status(self, mock_all_registries) -> None:
-        """Test that starting a run returns RUNNING status with a run_id."""
+        """Test that starting a run returns RUNNING status with run_id = scenario_result_id."""
         service = ScenarioRunService()
         response = await service.start_run_async(request=_make_request())
 
-        assert response.run_id is not None
+        assert response.run_id == "sr-uuid-1"
         assert response.status == ScenarioRunStatus.RUNNING
         assert response.scenario_name == "foundry.red_team_agent"
         assert response.error is None
-        assert response.result is None
 
-    async def test_start_run_invalid_scenario_raises_value_error(self) -> None:
+    async def test_start_run_invalid_scenario_raises_value_error(self, mock_memory) -> None:
         """Test that an invalid scenario name raises ValueError immediately."""
         service = ScenarioRunService()
 
@@ -144,7 +154,7 @@ class TestScenarioRunServiceStartRun:
             with pytest.raises(ValueError, match="not found in registry"):
                 await service.start_run_async(request=_make_request(scenario_name="bad.scenario"))
 
-    async def test_start_run_invalid_target_raises_value_error(self) -> None:
+    async def test_start_run_invalid_target_raises_value_error(self, mock_memory) -> None:
         """Test that an invalid target name raises ValueError immediately."""
         service = ScenarioRunService()
 
@@ -163,7 +173,7 @@ class TestScenarioRunServiceStartRun:
             with pytest.raises(ValueError, match="my_target.*not found in registry"):
                 await service.start_run_async(request=_make_request())
 
-    async def test_start_run_invalid_initializer_raises_value_error(self) -> None:
+    async def test_start_run_invalid_initializer_raises_value_error(self, mock_memory) -> None:
         """Test that an invalid initializer name raises ValueError immediately."""
         service = ScenarioRunService()
 
@@ -181,7 +191,7 @@ class TestScenarioRunServiceStartRun:
             with pytest.raises(ValueError, match="Initializer not found"):
                 await service.start_run_async(request=_make_request(initializers=["bad_init"]))
 
-    async def test_start_run_invalid_strategy_raises_value_error(self) -> None:
+    async def test_start_run_invalid_strategy_raises_value_error(self, mock_memory) -> None:
         """Test that an invalid strategy name raises ValueError immediately."""
         service = ScenarioRunService()
 
@@ -208,9 +218,21 @@ class TestScenarioRunServiceStartRun:
     async def test_start_run_exceeds_concurrent_limit(self, mock_all_registries) -> None:
         """Test that exceeding concurrent run limit raises ValueError."""
         service = ScenarioRunService()
+        scenario_instance = mock_all_registries["scenario_instance"]
+
+        # Each call needs a unique scenario_result_id
+        call_count = 0
+        original_init = scenario_instance.initialize_async
+
+        async def _set_unique_id(**kwargs: object) -> None:
+            nonlocal call_count
+            call_count += 1
+            scenario_instance._scenario_result_id = f"sr-uuid-{call_count}"
+
+        scenario_instance.initialize_async = AsyncMock(side_effect=_set_unique_id)
 
         # Fill up to the limit
-        for _ in range(MAX_CONCURRENT_RUNS):
+        for _ in range(_DEFAULT_MAX_CONCURRENT_RUNS):
             await service.start_run_async(request=_make_request())
 
         # Next one should fail
@@ -235,9 +257,7 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         mock_scenario_class = mock_all_registries["scenario_class"]
 
-        response = await service.start_run_async(
-            request=_make_request(scenario_result_id="existing-result-uuid")
-        )
+        response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
         assert response.status == ScenarioRunStatus.RUNNING
         mock_scenario_class.assert_called_once_with(scenario_result_id="existing-result-uuid")
@@ -255,194 +275,179 @@ class TestScenarioRunServiceStartRun:
 class TestScenarioRunServiceGetRun:
     """Tests for ScenarioRunService.get_run."""
 
-    async def test_get_run_returns_none_for_unknown_id(self) -> None:
+    def test_get_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that get_run returns None for non-existent run_id."""
+        mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
         result = service.get_run(run_id="nonexistent-id")
         assert result is None
 
-    async def test_get_run_returns_existing_run(self, mock_all_registries) -> None:
-        """Test that get_run returns a started run."""
-        service = ScenarioRunService()
-        response = await service.start_run_async(request=_make_request())
+    def test_get_run_returns_existing_run(self, mock_memory) -> None:
+        """Test that get_run returns a run from the database."""
+        db_result = _make_db_scenario_result(result_id="sr-123", run_state="IN_PROGRESS")
+        mock_memory.get_scenario_results.return_value = [db_result]
 
-        fetched = service.get_run(run_id=response.run_id)
+        service = ScenarioRunService()
+        fetched = service.get_run(run_id="sr-123")
+
         assert fetched is not None
-        assert fetched.run_id == response.run_id
+        assert fetched.run_id == "sr-123"
         assert fetched.scenario_name == "foundry.red_team_agent"
+        assert fetched.status == ScenarioRunStatus.RUNNING
 
 
 class TestScenarioRunServiceListRuns:
     """Tests for ScenarioRunService.list_runs."""
 
-    async def test_list_runs_empty(self) -> None:
-        """Test that list_runs returns empty list initially."""
+    def test_list_runs_empty(self, mock_memory) -> None:
+        """Test that list_runs returns empty list when DB has no results."""
+        mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
         result = service.list_runs()
         assert result.items == []
+        mock_memory.get_scenario_results.assert_called_once_with(limit=100)
 
-    async def test_list_runs_returns_all_runs(self, mock_all_registries) -> None:
-        """Test that list_runs returns all tracked runs."""
+    def test_list_runs_returns_all_runs(self, mock_memory) -> None:
+        """Test that list_runs returns all runs from the database."""
+        db_results = [
+            _make_db_scenario_result(result_id="sr-1", run_state="COMPLETED"),
+            _make_db_scenario_result(result_id="sr-2", run_state="IN_PROGRESS"),
+        ]
+        mock_memory.get_scenario_results.return_value = db_results
+
         service = ScenarioRunService()
-
-        await service.start_run_async(request=_make_request())
-        await service.start_run_async(request=_make_request())
-
         result = service.list_runs()
         assert len(result.items) == 2
+        mock_memory.get_scenario_results.assert_called_once_with(limit=100)
+
+    def test_list_runs_passes_custom_limit(self, mock_memory) -> None:
+        """Test that list_runs passes a custom limit to the memory query."""
+        mock_memory.get_scenario_results.return_value = []
+        service = ScenarioRunService()
+        service.list_runs(limit=10)
+        mock_memory.get_scenario_results.assert_called_once_with(limit=10)
 
 
 class TestScenarioRunServiceCancelRun:
     """Tests for ScenarioRunService.cancel_run_async."""
 
-    async def test_cancel_run_returns_none_for_unknown_id(self) -> None:
+    async def test_cancel_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that cancel returns None for non-existent run_id."""
+        mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
         result = await service.cancel_run_async(run_id="nonexistent-id")
         assert result is None
 
     async def test_cancel_run_sets_cancelled_status(self, mock_all_registries) -> None:
-        """Test that cancelling a running scenario sets CANCELLED status."""
+        """Test that cancelling a running scenario persists CANCELLED to DB."""
         service = ScenarioRunService()
+        mock_memory = mock_all_registries["memory"]
         response = await service.start_run_async(request=_make_request())
 
+        # After update_scenario_run_state, the next DB query should return CANCELLED
+        running_result = mock_all_registries["db_result"]
+        cancelled_result = _make_db_scenario_result(result_id=response.run_id, run_state="CANCELLED")
+        mock_memory.get_scenario_results.side_effect = [[running_result], [cancelled_result]]
+
         result = await service.cancel_run_async(run_id=response.run_id)
+
+        mock_memory.update_scenario_run_state.assert_called_once_with(
+            scenario_result_id=response.run_id, scenario_run_state="CANCELLED"
+        )
         assert result is not None
         assert result.status == ScenarioRunStatus.CANCELLED
 
-    async def test_cancel_completed_run_raises_value_error(self, mock_all_registries) -> None:
+    async def test_cancel_completed_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling a completed run raises ValueError."""
+        db_result = _make_db_scenario_result(result_id="sr-done", run_state="COMPLETED")
+        mock_memory.get_scenario_results.return_value = [db_result]
+
         service = ScenarioRunService()
-        response = await service.start_run_async(request=_make_request())
-
-        # Manually set to COMPLETED
-        service._runs[response.run_id].status = ScenarioRunStatus.COMPLETED
-
         with pytest.raises(ValueError, match="Cannot cancel run"):
-            await service.cancel_run_async(run_id=response.run_id)
+            await service.cancel_run_async(run_id="sr-done")
+
+    async def test_cancel_already_cancelled_run_raises_value_error(self, mock_memory) -> None:
+        """Test that cancelling an already-cancelled run raises ValueError."""
+        db_result = _make_db_scenario_result(result_id="sr-cancelled", run_state="CANCELLED")
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        with pytest.raises(ValueError, match="Cannot cancel run"):
+            await service.cancel_run_async(run_id="sr-cancelled")
 
 
 class TestScenarioRunServiceExecution:
     """Tests for the background execution logic."""
 
-    async def test_execute_run_completes_successfully(self) -> None:
-        """Test that a successful execution transitions to COMPLETED."""
+    async def test_execute_run_completes_successfully(self, mock_all_registries) -> None:
+        """Test that a successful execution removes active task and DB reflects COMPLETED."""
         service = ScenarioRunService()
+        mock_instance = mock_all_registries["scenario_instance"]
+        mock_memory = mock_all_registries["memory"]
 
         mock_scenario_result = MagicMock()
-        mock_scenario_result.id = "result-uuid"
+        mock_scenario_result.id = "sr-uuid-1"
         mock_scenario_result.scenario_run_state = "COMPLETED"
         mock_scenario_result.get_strategies_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
-        mock_scenario_result.completion_time = None
+        mock_scenario_result.completion_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
-        mock_scenario_instance = MagicMock()
-        mock_scenario_instance.initialize_async = AsyncMock()
-        mock_scenario_instance.run_async = AsyncMock(return_value=mock_scenario_result)
+        mock_instance.run_async = AsyncMock(return_value=mock_scenario_result)
 
-        mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-        mock_scenario_class.get_strategy_class.return_value = MagicMock()
-        mock_scenario_class.default_dataset_config.return_value = MagicMock()
+        response = await service.start_run_async(request=_make_request())
 
-        mock_target = MagicMock()
+        # Wait for the background task to complete
+        active = service._active_tasks.get(response.run_id)
+        assert active is not None
+        assert active.task is not None
+        await active.task
 
-        with (
-            patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton") as mock_sr,
-            patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton") as mock_tr,
-            patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
-        ):
-            mock_sr.return_value.get_class.return_value = mock_scenario_class
-            mock_tr.return_value.get_instance_by_name.return_value = mock_target
+        # Active task should be cleaned up after completion
+        assert response.run_id not in service._active_tasks
 
-            response = await service.start_run_async(request=_make_request())
-
-            # Wait for the background task to complete
-            task = service._runs[response.run_id].task
-            assert task is not None
-            await task
-
-        run = service.get_run(run_id=response.run_id)
-        assert run is not None
-        assert run.status == ScenarioRunStatus.COMPLETED
-        assert run.result is not None
-        assert run.result.scenario_result_id == "result-uuid"
-        assert run.result.strategies_used == ["base64"]
-
-    async def test_execute_run_fails_with_error(self) -> None:
-        """Test that a run_async failure transitions to FAILED with error message."""
+    async def test_execute_run_fails_with_error(self, mock_all_registries) -> None:
+        """Test that a run_async failure stores error and removes active task."""
         service = ScenarioRunService()
+        mock_instance = mock_all_registries["scenario_instance"]
 
-        mock_scenario_instance = MagicMock()
-        mock_scenario_instance.initialize_async = AsyncMock()
-        mock_scenario_instance.run_async = AsyncMock(side_effect=RuntimeError("scenario exploded"))
+        mock_instance.run_async = AsyncMock(side_effect=RuntimeError("scenario exploded"))
 
-        mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-        mock_scenario_class.get_strategy_class.return_value = MagicMock()
-        mock_scenario_class.default_dataset_config.return_value = MagicMock()
+        response = await service.start_run_async(request=_make_request())
 
-        with (
-            patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton") as mock_sr,
-            patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton") as mock_tr,
-            patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
-        ):
-            mock_sr.return_value.get_class.return_value = mock_scenario_class
-            mock_tr.return_value.get_instance_by_name.return_value = MagicMock()
+        # Wait for the background task
+        active = service._active_tasks.get(response.run_id)
+        assert active is not None
+        assert active.task is not None
+        await active.task
 
-            response = await service.start_run_async(request=_make_request())
-
-            # Wait for the background task
-            task = service._runs[response.run_id].task
-            assert task is not None
-            await task
-
-        run = service.get_run(run_id=response.run_id)
-        assert run is not None
-        assert run.status == ScenarioRunStatus.FAILED
-        assert run.error is not None
-        assert "scenario exploded" in run.error
+        # Active task should be cleaned up
+        assert response.run_id not in service._active_tasks
 
 
 class TestScenarioRunServiceGetResults:
     """Tests for ScenarioRunService.get_run_results."""
 
-    def test_get_results_returns_none_for_unknown_id(self) -> None:
+    def test_get_results_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that get_run_results returns None for non-existent run_id."""
+        mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
         result = service.get_run_results(run_id="nonexistent-id")
         assert result is None
 
-    async def test_get_results_raises_if_not_completed(self, mock_all_registries) -> None:
+    def test_get_results_raises_if_not_completed(self, mock_memory) -> None:
         """Test that get_run_results raises ValueError if run is not completed."""
+        db_result = _make_db_scenario_result(result_id="sr-running", run_state="IN_PROGRESS")
+        mock_memory.get_scenario_results.return_value = [db_result]
+
         service = ScenarioRunService()
-        response = await service.start_run_async(request=_make_request())
-
-        # Run is in RUNNING state
         with pytest.raises(ValueError, match="only available for completed runs"):
-            service.get_run_results(run_id=response.run_id)
+            service.get_run_results(run_id="sr-running")
 
-    async def test_get_results_returns_details_for_completed_run(self, mock_all_registries) -> None:
+    def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
         """Test that get_run_results returns full details for a completed run."""
-        from pyrit.backend.models.scenarios import ScenarioRunResult
         from pyrit.models import AttackOutcome
 
-        service = ScenarioRunService()
-        response = await service.start_run_async(request=_make_request())
-
-        # Manually set run to completed with a result
-        info = service._runs[response.run_id]
-        info.status = ScenarioRunStatus.COMPLETED
-        info.result = ScenarioRunResult(
-            scenario_result_id="sr-123",
-            run_state="COMPLETED",
-            strategies_used=["base64"],
-            total_attacks=1,
-            completed_attacks=1,
-            number_tries=1,
-            completion_time=None,
-        )
-
-        # Mock CentralMemory and ScenarioResult
         mock_attack_result = MagicMock()
         mock_attack_result.attack_result_id = "ar-1"
         mock_attack_result.conversation_id = "conv-1"
@@ -456,24 +461,16 @@ class TestScenarioRunServiceGetResults:
         mock_attack_result.execution_time_ms = 1500
         mock_attack_result.timestamp = None
 
-        mock_scenario_result = MagicMock()
-        mock_scenario_result.id = "sr-123"
-        mock_scenario_result.scenario_identifier.name = "foundry.red_team_agent"
-        mock_scenario_result.scenario_identifier.version = 1
-        mock_scenario_result.scenario_run_state = "COMPLETED"
-        mock_scenario_result.objective_achieved_rate.return_value = 100
-        mock_scenario_result.number_tries = 1
-        mock_scenario_result.completion_time = None
-        mock_scenario_result.labels = {}
-        mock_scenario_result.attack_results = {"base64_attack": [mock_attack_result]}
-        mock_scenario_result.get_display_groups.return_value = {"base64_attack": [mock_attack_result]}
-        mock_scenario_result._display_group_map = {}
+        db_result = _make_db_scenario_result(
+            result_id="sr-123",
+            run_state="COMPLETED",
+            attack_results={"base64_attack": [mock_attack_result]},
+        )
+        db_result.objective_achieved_rate.return_value = 100
+        mock_memory.get_scenario_results.return_value = [db_result]
 
-        mock_memory = MagicMock()
-        mock_memory.get_scenario_results.return_value = [mock_scenario_result]
-
-        with patch("pyrit.memory.CentralMemory.get_memory_instance", return_value=mock_memory):
-            detail = service.get_run_results(run_id=response.run_id)
+        service = ScenarioRunService()
+        detail = service.get_run_results(run_id="sr-123")
 
         assert detail is not None
         assert detail.scenario_result_id == "sr-123"

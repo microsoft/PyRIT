@@ -949,7 +949,7 @@ class ScenarioResultEntry(Base):
     scenario_init_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     objective_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[Optional[dict[str, str]]] = mapped_column(JSON, nullable=True)
-    scenario_run_state: Mapped[Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]] = mapped_column(
+    scenario_run_state: Mapped[Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]] = mapped_column(
         String, nullable=False, default="CREATED"
     )
     attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)

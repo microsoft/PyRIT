@@ -122,15 +122,18 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunResponse
     "/runs",
     response_model=ScenarioRunListResponse,
 )
-async def list_scenario_runs() -> ScenarioRunListResponse:
+async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListResponse:
     """
-    List all tracked scenario runs.
+    List tracked scenario runs (most recent first).
+
+    Args:
+        limit (int): Maximum number of runs to return. Defaults to 100.
 
     Returns:
-        ScenarioRunListResponse: All runs, most recent first.
+        ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    return service.list_runs()
+    return service.list_runs(limit=limit)
 
 
 @router.get(
