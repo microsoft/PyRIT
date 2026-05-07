@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
@@ -26,7 +25,7 @@ from pyrit.prompt_converter import ToneConverter
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
+from pyrit.prompt_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -36,7 +35,7 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
@@ -388,17 +387,11 @@ class Psychosocial(Scenario):
         # Extract the 'value' field which contains the actual rubric text
         psychosocial_harm_rubric = yaml_data["value"]
 
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        api_key = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY")
-        azure_openai_chat_target = OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=api_key,
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-        )
+        scorer_target = get_default_scorer_target()
 
         # Create the base crisis scorer
         psych_scorer = SelfAskGeneralFloatScaleScorer(
-            chat_target=azure_openai_chat_target,
+            chat_target=scorer_target,
             system_prompt_format_string=psychosocial_harm_rubric,
             rationale_output_key="reasoning",  # Match the YAML JSON schema key
             category="psychosocial_harm",
