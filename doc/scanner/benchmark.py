@@ -29,7 +29,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefault
 # Pass any number of adversarial PromptChatTargets as a list; AdversarialBenchmark
 # infers a label for each from its identifier and runs every benchmark-friendly
 # attack technique against the objective target with each adversarial model.
-adversarial_model = OpenAIChatTarget(model_name="gpt-5.1")
+adversarial_model = OpenAIChatTarget()
 
 benchmark_scenario = AdversarialBenchmark(adversarial_models=[adversarial_model])
 
