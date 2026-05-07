@@ -484,7 +484,7 @@ class TestScenarioRunServiceGetResults:
 
         assert detail is not None
         assert detail.run.scenario_result_id == "sr-123"
-        assert detail.objective_achieved_rate == 100
+        assert detail.run.objective_achieved_rate == 100
         assert len(detail.attacks) == 1
         assert detail.attacks[0].atomic_attack_name == "base64_attack"
         assert detail.attacks[0].success_count == 1

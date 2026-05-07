@@ -93,6 +93,7 @@ class ScenarioRunSummary(BaseModel):
 
     scenario_result_id: str = Field(..., description="UUID of the ScenarioResult in memory")
     scenario_name: str = Field(..., description="Registry key of the scenario being run")
+    scenario_version: int = Field(0, ge=0, description="Version of the scenario")
     status: ScenarioRunStatus = Field(..., description="Current run status")
     created_at: datetime = Field(..., description="When the run was created")
     updated_at: datetime = Field(..., description="When the run status last changed")
@@ -100,6 +101,8 @@ class ScenarioRunSummary(BaseModel):
     strategies_used: list[str] = Field(default_factory=list, description="Strategy names that were executed")
     total_attacks: int = Field(0, ge=0, description="Total number of atomic attacks")
     completed_attacks: int = Field(0, ge=0, description="Number of attacks that completed")
+    objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")
+    labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")
 
 
@@ -129,7 +132,4 @@ class ScenarioRunDetail(BaseModel):
     """Full detailed results of a scenario run."""
 
     run: ScenarioRunSummary = Field(..., description="The scenario run summary")
-    scenario_version: int = Field(..., description="Version of the scenario")
-    objective_achieved_rate: int = Field(..., ge=0, le=100, description="Success rate as percentage (0-100)")
-    labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     attacks: list[AtomicAttackResults] = Field(..., description="Results grouped by atomic attack")

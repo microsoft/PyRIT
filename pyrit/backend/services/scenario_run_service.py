@@ -360,6 +360,7 @@ class ScenarioRunService:
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
             scenario_name=scenario_result.scenario_identifier.name,
+            scenario_version=scenario_result.scenario_identifier.version,
             status=status,
             created_at=scenario_result.created_at,
             updated_at=scenario_result.completion_time,
@@ -367,6 +368,8 @@ class ScenarioRunService:
             strategies_used=strategies_used,
             total_attacks=total_attacks,
             completed_attacks=completed_attacks,
+            objective_achieved_rate=scenario_result.objective_achieved_rate(),
+            labels=scenario_result.labels,
             completed_at=scenario_result.completion_time,
         )
 
@@ -447,9 +450,6 @@ class ScenarioRunService:
 
         return ScenarioRunDetail(
             run=run_response,
-            scenario_version=scenario_result.scenario_identifier.version,
-            objective_achieved_rate=scenario_result.objective_achieved_rate(),
-            labels=scenario_result.labels,
             attacks=attacks,
         )
 

@@ -238,14 +238,14 @@ class TestGetScenarioRunResultsRoute:
             run=ScenarioRunSummary(
                 scenario_result_id="result-uuid",
                 scenario_name="foundry.red_team_agent",
+                scenario_version=1,
                 status=ScenarioRunStatus.COMPLETED,
                 created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
                 updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                objective_achieved_rate=50,
+                labels={"team": "red"},
                 completed_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
             ),
-            scenario_version=1,
-            objective_achieved_rate=50,
-            labels={"team": "red"},
             attacks=[
                 AtomicAttackResults(
                     atomic_attack_name="base64_attack",
@@ -281,7 +281,7 @@ class TestGetScenarioRunResultsRoute:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["run"]["scenario_result_id"] == "result-uuid"
-        assert data["objective_achieved_rate"] == 50
+        assert data["run"]["objective_achieved_rate"] == 50
         assert len(data["attacks"]) == 1
         assert data["attacks"][0]["atomic_attack_name"] == "base64_attack"
         assert data["attacks"][0]["results"][0]["outcome"] == "success"
