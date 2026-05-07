@@ -73,7 +73,6 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
         strategy_tags=["core", "multi_turn"],
-        accepts_scorer_override=False,
     ),
     AttackTechniqueSpec(
         name="crescendo_simulated",
