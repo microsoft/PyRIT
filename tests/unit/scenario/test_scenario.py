@@ -854,9 +854,9 @@ class TestGetDefaultObjectiveScorer:
         mock_registry.get_by_tag.return_value = [mock_entry]
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
-        # Mock self with COMPOSITE_SCORER_QUESTIONS_PATH = None
+        # Mock self with get_override_composite_scorer_questions_path returning empty sequence
         mock_self = MagicMock()
-        type(mock_self).COMPOSITE_SCORER_QUESTIONS_PATH = None
+        type(mock_self).get_override_composite_scorer_questions_path = classmethod(lambda cls: [])
 
         result = Scenario._get_default_objective_scorer(mock_self)
         assert result is mock_scorer
@@ -871,9 +871,9 @@ class TestGetDefaultObjectiveScorer:
         mock_registry.get_by_tag.return_value = []
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
-        # Mock self with COMPOSITE_SCORER_QUESTIONS_PATH = None
+        # Mock self with get_override_composite_scorer_questions_path returning empty sequence
         mock_self = MagicMock()
-        type(mock_self).COMPOSITE_SCORER_QUESTIONS_PATH = None
+        type(mock_self).get_override_composite_scorer_questions_path = classmethod(lambda cls: [])
 
         result = Scenario._get_default_objective_scorer(mock_self)
         assert isinstance(result, TrueFalseInverterScorer)

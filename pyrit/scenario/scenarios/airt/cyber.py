@@ -12,6 +12,8 @@ from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -56,8 +58,17 @@ class Cyber(Scenario):
     """
 
     VERSION: int = 2
-    COMPOSITE_SCORER_QUESTIONS_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
+
+    @classmethod
+    def get_override_composite_scorer_questions_path(cls) -> list[Path]:
+        """
+        Override true/false question paths for cyber objective scoring.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question paths for cyber objective scoring.
+        """
+        return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"]
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:

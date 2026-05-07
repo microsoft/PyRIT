@@ -114,10 +114,19 @@ class Scenario(ABC):
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    #: Optional true/false question prompt path for objective scoring.
-    #: When set, the default objective scorer becomes
-    #: ``SelfAskTrueFalseScorer(path) AND NOT(SelfAskRefusalScorer)``.
-    COMPOSITE_SCORER_QUESTIONS_PATH: ClassVar[Path | None] = None
+    @classmethod
+    def get_override_composite_scorer_questions_path(cls) -> Sequence[Path]:
+        """
+        Override to provide true/false question prompt paths for objective scoring.
+
+        When overridden to return a non-empty sequence, the default objective scorer becomes
+        one ``SelfAskTrueFalseScorer`` per path AND-ed together with ``NOT(SelfAskRefusalScorer)``
+        instead of the scenario-level default.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question prompts, or an empty sequence to use the default scorer.
+        """
+        return []
 
     def __init__(
         self,
@@ -322,18 +331,18 @@ class Scenario(ABC):
         return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        composite_scorer_questions_path = type(self).COMPOSITE_SCORER_QUESTIONS_PATH
+        composite_scorer_questions_paths = type(self).get_override_composite_scorer_questions_path()
 
-        if composite_scorer_questions_path is not None:
+        if composite_scorer_questions_paths:
             chat_target = get_default_scorer_target()
-            objective_scorer = SelfAskTrueFalseScorer(
-                chat_target=chat_target,
-                true_false_question_path=composite_scorer_questions_path,
-            )
+            path_scorers: list[TrueFalseScorer] = [
+                SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question_path=path)
+                for path in composite_scorer_questions_paths
+            ]
             backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
             scorer = TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
-                scorers=[objective_scorer, backstop_scorer],
+                scorers=[*path_scorers, backstop_scorer],
             )
             logger.info(f"Using composite default objective scorer: {type(scorer).__name__}")
             return scorer

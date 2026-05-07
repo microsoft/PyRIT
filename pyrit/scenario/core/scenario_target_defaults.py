@@ -1,9 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
+
 from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.registry import TargetRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_scorer_target() -> PromptChatTarget:
@@ -88,4 +92,7 @@ def _get_default_chat_target(
 
         return target
 
+    logger.warning(
+        f"TargetRegistry entry '{preferred_target_key}' not found. Falling back to default OpenAIChatTarget."
+    )
     return OpenAIChatTarget(temperature=fallback_temperature)

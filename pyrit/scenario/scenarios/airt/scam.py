@@ -83,7 +83,16 @@ class Scam(Scenario):
     """
 
     VERSION: int = 1
-    COMPOSITE_SCORER_QUESTIONS_PATH = SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml"
+
+    @classmethod
+    def get_override_composite_scorer_questions_path(cls) -> list[Path]:
+        """
+        Override true/false question paths for scam objective scoring.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question paths for scam objective scoring.
+        """
+        return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml"]
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
