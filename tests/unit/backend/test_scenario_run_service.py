@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.models.scenarios import (
     RunScenarioRequest,
     ScenarioRunStatus,
@@ -18,7 +19,6 @@ from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
-import pyrit.backend.services.scenario_run_service as _svc_mod
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"

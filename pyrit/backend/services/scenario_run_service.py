@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
 
 # Maps DB ScenarioRunState values to API ScenarioRunStatus
-_STATE_TO_STATUS: dict[str, ScenarioRunStatus] = {
+_STATE_TO_STATUS = {
     "CREATED": ScenarioRunStatus.INITIALIZING,
     "IN_PROGRESS": ScenarioRunStatus.RUNNING,
     "COMPLETED": ScenarioRunStatus.COMPLETED,
@@ -85,7 +85,10 @@ class ScenarioRunService:
             ValueError: If scenario, target, initializer, or strategy cannot be found,
                 or concurrent limit exceeded.
         """
-        if sum(1 for a in self._active_tasks.values() if a.task is not None and not a.task.done()) >= self._max_concurrent_runs:
+        if (
+            sum(1 for a in self._active_tasks.values() if a.task is not None and not a.task.done())
+            >= self._max_concurrent_runs
+        ):
             raise ValueError(
                 f"Maximum concurrent runs ({self._max_concurrent_runs}) reached. "
                 "Wait for an existing run to complete or cancel one."
@@ -168,9 +171,8 @@ class ScenarioRunService:
 
         # Cancel the asyncio task if active
         active = self._active_tasks.get(run_id)
-        if active is not None:
-            if active.task is not None and not active.task.done():
-                active.task.cancel()
+        if active is not None and active.task is not None and not active.task.done():
+            active.task.cancel()
 
         # Persist cancelled state to DB
         memory.update_scenario_run_state(scenario_result_id=run_id, scenario_run_state="CANCELLED")
@@ -281,7 +283,12 @@ class ScenarioRunService:
         Execute a scenario run (background task entry point).
 
         Only calls scenario.run_async on the already-initialized scenario.
-        Removes the task from _active_tasks when done.
+
+        Note: this method intentionally does NOT remove the entry from
+        ``_active_tasks`` on completion. The entry must stay so that
+        ``_build_response_from_db`` can read ``active.error`` when the
+        caller next polls the run status. Cleanup happens lazily there
+        once the error has been surfaced.
 
         Args:
             scenario_result_id: The scenario result ID for this run.

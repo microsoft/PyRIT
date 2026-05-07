@@ -77,6 +77,21 @@ class Message(BaseModel):
     created_at: datetime = Field(..., description="Message creation timestamp")
 
 
+class AttackResultDetail(BaseModel):
+    """Detailed result of a single attack within a scenario."""
+
+    attack_result_id: str = Field(..., description="Unique ID of this attack result")
+    conversation_id: str = Field(..., description="Conversation ID that produced this result")
+    objective: str = Field(..., description="Natural-language description of the attacker's objective")
+    outcome: str = Field(..., description="Attack outcome: success, failure, or undetermined")
+    outcome_reason: str | None = Field(None, description="Reason for the outcome")
+    last_response: str | None = Field(None, description="Model response from the final turn")
+    score_value: str | None = Field(None, description="Score value from the objective scorer")
+    executed_turns: int = Field(0, ge=0, description="Number of turns executed")
+    execution_time_ms: int = Field(0, ge=0, description="Execution time in milliseconds")
+    timestamp: datetime | None = Field(None, description="When the result was created")
+
+
 # ============================================================================
 # Attack Summary (List View)
 # ============================================================================

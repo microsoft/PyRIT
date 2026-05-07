@@ -12,13 +12,16 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
+import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
+from pyrit.backend.models.attacks import AttackResultDetail
 from pyrit.backend.models.scenarios import (
+    AtomicAttackResults,
+    ScenarioResultDetailResponse,
     ScenarioRunListResponse,
     ScenarioRunResponse,
     ScenarioRunStatus,
 )
-import pyrit.backend.services.scenario_run_service as _svc_mod
 
 
 @pytest.fixture
@@ -232,12 +235,6 @@ class TestGetScenarioRunResultsRoute:
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
-        from pyrit.backend.models.scenarios import (
-            AtomicAttackResults,
-            AttackResultDetail,
-            ScenarioResultDetailResponse,
-        )
-
         mock_result = ScenarioResultDetailResponse(
             scenario_result_id="result-uuid",
             scenario_name="foundry.red_team_agent",

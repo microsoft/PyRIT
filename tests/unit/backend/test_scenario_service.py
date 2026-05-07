@@ -65,7 +65,6 @@ def _make_scenario_metadata(
 class TestScenarioServiceListScenarios:
     """Tests for ScenarioService.list_scenarios_async."""
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_returns_empty_when_no_scenarios(self) -> None:
         """Test that list returns empty list when no scenarios are registered."""
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -78,7 +77,6 @@ class TestScenarioServiceListScenarios:
             assert result.items == []
             assert result.pagination.has_more is False
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_returns_scenarios_from_registry(self) -> None:
         """Test that list returns scenarios from registry."""
         metadata = _make_scenario_metadata()
@@ -100,7 +98,6 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].default_datasets == ["test_dataset"]
             assert result.items[0].max_dataset_size is None
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_paginates_with_limit(self) -> None:
         """Test that list respects the limit parameter."""
         metadata_list = [
@@ -118,7 +115,6 @@ class TestScenarioServiceListScenarios:
             assert result.pagination.has_more is True
             assert result.pagination.next_cursor == "test.scenario_2"
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_paginates_with_cursor(self) -> None:
         """Test that list uses cursor for pagination."""
         metadata_list = [
@@ -137,7 +133,6 @@ class TestScenarioServiceListScenarios:
             assert result.items[1].scenario_name == "test.scenario_3"
             assert result.pagination.has_more is True
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
         metadata_list = [
@@ -155,7 +150,6 @@ class TestScenarioServiceListScenarios:
             assert result.pagination.has_more is False
             assert result.pagination.next_cursor is None
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_includes_max_dataset_size(self) -> None:
         """Test that max_dataset_size is included in response."""
         metadata = _make_scenario_metadata(max_dataset_size=10)
@@ -173,7 +167,6 @@ class TestScenarioServiceListScenarios:
 class TestScenarioServiceGetScenario:
     """Tests for ScenarioService.get_scenario_async."""
 
-    @pytest.mark.asyncio
     async def test_get_scenario_returns_matching_scenario(self) -> None:
         """Test that get returns the matching scenario."""
         metadata = _make_scenario_metadata(registry_name="foundry.red_team_agent")
@@ -188,7 +181,6 @@ class TestScenarioServiceGetScenario:
             assert result is not None
             assert result.scenario_name == "foundry.red_team_agent"
 
-    @pytest.mark.asyncio
     async def test_get_scenario_returns_none_for_missing(self) -> None:
         """Test that get returns None when scenario not found."""
         with patch.object(ScenarioService, "__init__", lambda self: None):
