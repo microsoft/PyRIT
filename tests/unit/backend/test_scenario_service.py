@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioListResponse, ScenarioSummary
+from pyrit.backend.models.scenarios import ListRegisteredScenarioResponse, RegisteredScenario
 from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
 from pyrit.registry import ScenarioMetadata
 
@@ -206,7 +206,7 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ScenarioListResponse(
+                return_value=ListRegisteredScenarioResponse(
                     items=[],
                     pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
@@ -222,7 +222,7 @@ class TestScenarioRoutes:
 
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog returns scenario data."""
-        summary = ScenarioSummary(
+        summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
@@ -236,7 +236,7 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ScenarioListResponse(
+                return_value=ListRegisteredScenarioResponse(
                     items=[summary],
                     pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
@@ -262,7 +262,7 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ScenarioListResponse(
+                return_value=ListRegisteredScenarioResponse(
                     items=[],
                     pagination=PaginationInfo(limit=10, has_more=False, next_cursor=None, prev_cursor=None),
                 )
@@ -276,7 +276,7 @@ class TestScenarioRoutes:
 
     def test_get_scenario_returns_200(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""
-        summary = ScenarioSummary(
+        summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
@@ -311,7 +311,7 @@ class TestScenarioRoutes:
 
     def test_get_scenario_with_dotted_name(self, client: TestClient) -> None:
         """Test that dotted scenario names (e.g., 'foundry.red_team_agent') work in path."""
-        summary = ScenarioSummary(
+        summary = RegisteredScenario(
             scenario_name="garak.encoding",
             scenario_type="EncodingScenario",
             description="Encoding scenario",
