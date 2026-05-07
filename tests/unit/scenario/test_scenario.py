@@ -885,6 +885,67 @@ async def test_execute_scenario_raises_when_scenario_result_id_is_none():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestScenarioBaselineUniformObjectives:
+    """ADO 9012 regression: baseline and strategy atomic attacks share objectives.
+
+    Without memoization in DatasetConfiguration, ``_get_atomic_attacks_async``
+    and ``_get_baseline_data`` each call ``get_all_seed_attack_groups()``
+    independently and ``random.sample`` produces a different subset for
+    each. With memoization, both calls converge on the same subset.
+    """
+
+    async def test_baseline_objectives_match_atomic_attacks_under_max_dataset_size(
+        self,
+        mock_objective_target,
+    ):
+        from pyrit.models import SeedGroup, SeedObjective
+        from pyrit.scenario.core.attack_technique import AttackTechnique
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+
+        class StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
+            async def _get_atomic_attacks_async(self):
+                groups = self._dataset_config.get_all_seed_attack_groups()
+                return [
+                    AtomicAttack(
+                        atomic_attack_name="strategy",
+                        attack_technique=AttackTechnique(attack=MagicMock()),
+                        seed_groups=groups,
+                    )
+                ]
+
+        scenario = StrategyScenario(
+            name="ADO 9012 regression",
+            version=1,
+            include_default_baseline=True,
+        )
+
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        # Two distinct samples: a non-memoized implementation would consume
+        # both (one for the strategy call, one for the baseline call) and
+        # the assertion below would fail. Memoization consumes only the first.
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ):
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=None,
+                dataset_config=config,
+            )
+
+        baseline = scenario._atomic_attacks[0]
+        strategy = scenario._atomic_attacks[1]
+        assert baseline.atomic_attack_name == "baseline"
+        assert strategy.atomic_attack_name == "strategy"
+        assert set(baseline.objectives) == set(strategy.objectives)
+        assert len(baseline.objectives) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestValidateStoredScenario:
     """Tests for Scenario._validate_stored_scenario."""
 

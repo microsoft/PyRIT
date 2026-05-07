@@ -399,3 +399,34 @@ class TestEncodingDatasetConfigurationGetAllSeedAttackGroups:
 
         assert config._dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
         assert config.max_dataset_size == 5
+
+    def test_get_all_seed_attack_groups_is_stable_across_calls_with_max_dataset_size(self):
+        """Regression test for ADO 9012 (Path 2).
+
+        EncodingDatasetConfiguration.get_all_seed_attack_groups overrides the
+        base method and routes through get_all_seeds, which has its own
+        random.sample. Memoizing only get_seed_groups would not catch this
+        path; this test pins that the override is stable across calls.
+        """
+        from unittest.mock import patch
+
+        seeds = [SeedPrompt(value=f"seed{i}", data_type="text") for i in range(10)]
+
+        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
+            mock_memory = MagicMock()
+            mock_memory.get_seeds.return_value = seeds
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            config = EncodingDatasetConfiguration(dataset_names=["d1"], max_dataset_size=3)
+
+            with patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample",
+                side_effect=[seeds[:3], seeds[3:6]],
+            ) as mock_sample:
+                first = config.get_all_seed_attack_groups()
+                second = config.get_all_seed_attack_groups()
+
+        first_objectives = [g.objective.value for g in first]
+        second_objectives = [g.objective.value for g in second]
+        assert first_objectives == second_objectives
+        assert mock_sample.call_count == 1

@@ -515,3 +515,197 @@ class TestDatasetConfigurationGetAllSeeds:
             result = config.get_all_seeds()
 
             assert result == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestDatasetConfigurationMemoization:
+    """Tests for memoization of resolved seed groups and seeds.
+
+    Pins the contract that the random subset selected when ``max_dataset_size``
+    is set is stable for the lifetime of the configuration object. ADO 9012
+    regression tests live here; flakiness is avoided by patching
+    ``random.sample`` rather than relying on RNG seeds.
+    """
+
+    def _make_seed_groups(self, count: int) -> list[SeedGroup]:
+        return [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(count)]
+
+    def test_get_seed_groups_is_stable_across_calls_with_max_dataset_size(self) -> None:
+        seed_groups = self._make_seed_groups(10)
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[3:6]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ) as mock_sample:
+            first = config.get_seed_groups()
+            second = config.get_seed_groups()
+
+        assert first[EXPLICIT_SEED_GROUPS_KEY] == first_sample
+        assert second[EXPLICIT_SEED_GROUPS_KEY] == first_sample
+        assert mock_sample.call_count == 1
+
+    def test_get_seed_groups_is_stable_across_multi_dataset(self) -> None:
+        ds1 = self._make_seed_groups(10)
+        ds2 = self._make_seed_groups(10)
+
+        def mock_load(*, dataset_name: str) -> list[SeedGroup]:
+            return ds1 if dataset_name == "ds1" else ds2
+
+        config = DatasetConfiguration(dataset_names=["ds1", "ds2"], max_dataset_size=3)
+
+        ds1_sample = ds1[:3]
+        ds2_sample = ds2[:3]
+        with (
+            patch.object(config, "_load_seed_groups_for_dataset", side_effect=mock_load),
+            patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample",
+                side_effect=[ds1_sample, ds2_sample, ds1[3:6], ds2[3:6]],
+            ) as mock_sample,
+        ):
+            first = config.get_seed_groups()
+            second = config.get_seed_groups()
+
+        assert first["ds1"] == ds1_sample
+        assert first["ds2"] == ds2_sample
+        assert second["ds1"] == ds1_sample
+        assert second["ds2"] == ds2_sample
+        assert mock_sample.call_count == 2  # one per dataset, on the first call only
+
+    def test_get_all_seed_attack_groups_is_stable_across_calls(self) -> None:
+        seed_groups = self._make_seed_groups(10)
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[seed_groups[:3], seed_groups[3:6]],
+        ):
+            first = config.get_all_seed_attack_groups()
+            second = config.get_all_seed_attack_groups()
+
+        first_objectives = [g.objective.value for g in first]
+        second_objectives = [g.objective.value for g in second]
+        assert first_objectives == second_objectives
+
+    def test_get_all_seeds_is_stable_across_calls(self) -> None:
+        seeds = [SeedPrompt(value=f"seed{i}", data_type="text") for i in range(10)]
+
+        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
+            mock_memory = MagicMock()
+            mock_memory.get_seeds.return_value = seeds
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            config = DatasetConfiguration(dataset_names=["d1"], max_dataset_size=3)
+
+            with patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample",
+                side_effect=[seeds[:3], seeds[3:6]],
+            ) as mock_sample:
+                first = config.get_all_seeds()
+                second = config.get_all_seeds()
+
+        assert first == seeds[:3]
+        assert second == seeds[:3]
+        assert mock_sample.call_count == 1
+
+    def test_returned_dict_can_be_mutated_without_poisoning_cache(self) -> None:
+        seed_groups = self._make_seed_groups(10)
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            return_value=seed_groups[:3],
+        ):
+            first = config.get_seed_groups()
+            first[EXPLICIT_SEED_GROUPS_KEY].clear()
+            first.pop(EXPLICIT_SEED_GROUPS_KEY, None)
+            second = config.get_seed_groups()
+
+        assert second[EXPLICIT_SEED_GROUPS_KEY] == seed_groups[:3]
+
+    def test_returned_seeds_list_can_be_mutated_without_poisoning_cache(self) -> None:
+        seeds = [SeedPrompt(value=f"seed{i}", data_type="text") for i in range(10)]
+
+        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
+            mock_memory = MagicMock()
+            mock_memory.get_seeds.return_value = seeds
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            config = DatasetConfiguration(dataset_names=["d1"], max_dataset_size=3)
+
+            with patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample",
+                return_value=seeds[:3],
+            ):
+                first = config.get_all_seeds()
+                first.clear()
+                second = config.get_all_seeds()
+
+        assert second == seeds[:3]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestDatasetConfigurationMaxDatasetSizeSetter:
+    """Tests for the ``max_dataset_size`` property setter."""
+
+    def test_setter_invalidates_groups_cache(self) -> None:
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ):
+            first = config.get_seed_groups()
+            config.max_dataset_size = 3  # reassign (same value triggers invalidation)
+            second = config.get_seed_groups()
+
+        assert first[EXPLICIT_SEED_GROUPS_KEY] == first_sample
+        assert second[EXPLICIT_SEED_GROUPS_KEY] == second_sample
+
+    def test_setter_invalidates_seeds_cache(self) -> None:
+        seeds = [SeedPrompt(value=f"seed{i}", data_type="text") for i in range(10)]
+
+        with patch("pyrit.scenario.core.dataset_configuration.CentralMemory") as mock_memory_class:
+            mock_memory = MagicMock()
+            mock_memory.get_seeds.return_value = seeds
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            config = DatasetConfiguration(dataset_names=["d1"], max_dataset_size=3)
+
+            with patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample",
+                side_effect=[seeds[:3], seeds[5:8]],
+            ):
+                first = config.get_all_seeds()
+                config.max_dataset_size = 3
+                second = config.get_all_seeds()
+
+        assert first == seeds[:3]
+        assert second == seeds[5:8]
+
+    def test_setter_rejects_zero(self) -> None:
+        config = DatasetConfiguration(seed_groups=[SeedGroup(seeds=[SeedObjective(value="obj")])])
+
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            config.max_dataset_size = 0
+
+    def test_setter_rejects_negative(self) -> None:
+        config = DatasetConfiguration(seed_groups=[SeedGroup(seeds=[SeedObjective(value="obj")])])
+
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            config.max_dataset_size = -1
+
+    def test_setter_accepts_none(self) -> None:
+        config = DatasetConfiguration(
+            seed_groups=[SeedGroup(seeds=[SeedObjective(value="obj")])],
+            max_dataset_size=5,
+        )
+
+        config.max_dataset_size = None
+
+        assert config.max_dataset_size is None

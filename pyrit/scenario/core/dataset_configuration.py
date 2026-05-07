@@ -41,6 +41,12 @@ class DatasetConfiguration:
         scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The scenario
             strategies being executed. Subclasses can use this to filter or customize
             which seed groups are loaded based on the selected strategies.
+
+    Subclassing notes:
+        Memoization lives in ``get_seed_groups()`` and ``get_all_seeds()`` —
+        the two methods that call ``random.sample``. Overrides of those, or
+        new resolution methods that introduce their own randomness, must
+        memoize explicitly to preserve lifetime-stable sampling.
     """
 
     def __init__(
@@ -75,14 +81,37 @@ class DatasetConfiguration:
                 "or 'dataset_names' to load from memory."
             )
 
-        if max_dataset_size is not None and max_dataset_size < 1:
-            raise ValueError("'max_dataset_size' must be a positive integer (>= 1).")
-
-        # Store private attributes
+        # Caches must exist before the max_dataset_size setter runs.
         self._seed_groups = list(seed_groups) if seed_groups is not None else None
-        self.max_dataset_size = max_dataset_size
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
         self._scenario_strategies = scenario_strategies
+        self._resolved_groups_cache: Optional[dict[str, list[SeedGroup]]] = None
+        self._resolved_seeds_cache: Optional[list[Seed]] = None
+        self._max_dataset_size: Optional[int] = None
+        self.max_dataset_size = max_dataset_size  # validates via setter
+
+    @property
+    def max_dataset_size(self) -> Optional[int]:
+        """
+        Maximum number of SeedGroups to sample per dataset.
+
+        When set, the configuration samples a stable random subset on first
+        resolution and reuses that subset for the lifetime of the
+        configuration object (or until this attribute is reassigned).
+        Reassigning invalidates the cached sample so the next resolution
+        produces a fresh subset.
+        """
+        return self._max_dataset_size
+
+    @max_dataset_size.setter
+    def max_dataset_size(self, value: Optional[int]) -> None:
+        if value is not None and value < 1:
+            raise ValueError("'max_dataset_size' must be a positive integer (>= 1).")
+        self._max_dataset_size = value
+        # Invalidate any previously resolved sample so the next call
+        # re-samples against the new cap.
+        self._resolved_groups_cache = None
+        self._resolved_seeds_cache = None
 
     def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
         """
@@ -93,6 +122,11 @@ class DatasetConfiguration:
         2. If dataset_names is set, load from memory using those names
 
         In all cases, max_dataset_size is applied **per dataset** if set.
+
+        The resolved sample is cached for the lifetime of the configuration
+        (until ``max_dataset_size`` is reassigned). A defensive container
+        copy is returned on each call so the cache survives caller-side
+        mutation of the dict or per-dataset lists.
 
         Subclasses can override this to filter or customize which seed groups
         are loaded based on the stored scenario_composites.
@@ -106,6 +140,9 @@ class DatasetConfiguration:
         Raises:
             ValueError: If no seed groups could be resolved from the configuration.
         """
+        if self._resolved_groups_cache is not None:
+            return {name: list(groups) for name, groups in self._resolved_groups_cache.items()}
+
         result: dict[str, list[SeedGroup]] = {}
 
         if self._seed_groups is not None:
@@ -129,7 +166,9 @@ class DatasetConfiguration:
         if not result:
             raise ValueError("DatasetConfiguration has no seed_groups. Set seed_groups or dataset_names.")
 
-        return result
+        self._resolved_groups_cache = result
+        # Defensive copy: caller must not be able to mutate the cache.
+        return {name: list(groups) for name, groups in result.items()}
 
     def _load_seed_groups_for_dataset(self, *, dataset_name: str) -> list[SeedGroup]:
         """
@@ -256,6 +295,11 @@ class DatasetConfiguration:
         from memory for all configured datasets. If max_dataset_size is set, randomly
         samples up to that many prompts per dataset (without replacement).
 
+        The resolved sample is cached for the lifetime of the configuration
+        (until ``max_dataset_size`` is reassigned). A defensive list copy
+        is returned on each call so the cache survives caller-side
+        mutation.
+
         Returns:
             List[SeedPrompt]: List of SeedPrompt objects from all configured datasets.
                 Returns an empty list if no prompts are found.
@@ -265,6 +309,9 @@ class DatasetConfiguration:
         """
         if self._dataset_names is None:
             raise ValueError("No dataset names configured. Set dataset_names to use get_all_seed_prompts.")
+
+        if self._resolved_seeds_cache is not None:
+            return list(self._resolved_seeds_cache)
 
         memory = CentralMemory.get_memory_instance()
         all_seeds: list[Seed] = []
@@ -277,4 +324,5 @@ class DatasetConfiguration:
                 seeds = random.sample(seeds, self.max_dataset_size)
             all_seeds.extend(seeds)
 
-        return all_seeds
+        self._resolved_seeds_cache = all_seeds
+        return list(all_seeds)
