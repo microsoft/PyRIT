@@ -9,7 +9,7 @@ the metadata about available scenarios (listing) and scenario execution (runs).
 """
 
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -45,7 +45,7 @@ class ScenarioListResponse(BaseModel):
 # ============================================================================
 
 
-class ScenarioRunStatus(StrEnum):
+class ScenarioRunStatus(str, Enum):
     """Status of a scenario run."""
 
     PENDING = "pending"
