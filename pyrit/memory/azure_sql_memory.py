@@ -846,7 +846,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    entry_in_session = session.get(type(entry), entry.id)
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():

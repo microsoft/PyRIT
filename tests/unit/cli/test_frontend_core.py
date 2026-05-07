@@ -567,6 +567,28 @@ class TestFormatFunctions:
         assert "VAR1" in captured.out
         assert "VAR2" in captured.out
 
+    def test_format_initializer_metadata_with_supported_parameters(self, capsys) -> None:
+        """Test format_initializer_metadata prints supported parameters."""
+        initializer_metadata = InitializerMetadata(
+            class_name="TestInit",
+            class_module="test.initializers",
+            class_description="",
+            registry_name="test",
+            required_env_vars=(),
+            supported_parameters=(
+                ("model_name", "The model to use", None),
+                ("temperature", "Sampling temperature", ["0.7"]),
+            ),
+        )
+
+        frontend_core.format_initializer_metadata(initializer_metadata=initializer_metadata)
+
+        captured = capsys.readouterr()
+        assert "Supported Parameters:" in captured.out
+        assert "model_name" in captured.out
+        assert "temperature" in captured.out
+        assert "[default: ['0.7']]" in captured.out
+
     def test_format_initializer_metadata_with_description(self, capsys) -> None:
         """Test format_initializer_metadata with description."""
         initializer_metadata = InitializerMetadata(
