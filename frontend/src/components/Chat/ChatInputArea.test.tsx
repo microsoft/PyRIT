@@ -4,11 +4,26 @@ import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
 import type { ChatInputAreaHandle } from "./ChatInputArea";
+import type { TargetCapabilitiesInfo } from "../../types";
 
 // Wrapper component for Fluent UI context
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 );
+
+const buildCapabilities = (
+  overrides: Partial<TargetCapabilitiesInfo> = {}
+): TargetCapabilitiesInfo => ({
+  supports_multi_turn: true,
+  supports_multi_message_pieces: false,
+  supports_json_schema: false,
+  supports_json_output: false,
+  supports_editable_history: false,
+  supports_system_prompt: false,
+  supported_input_modalities: [],
+  supported_output_modalities: [],
+  ...overrides,
+});
 
 // Helper to get the send button specifically
 const getSendButton = () => screen.getByRole("button", { name: /send/i });
@@ -367,7 +382,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "test",
             target_type: "TextTarget",
-            supports_multi_turn: false,
+            capabilities: buildCapabilities({ supports_multi_turn: false }),
           }}
         />
       </TestWrapper>
@@ -388,7 +403,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "test",
             target_type: "OpenAIChatTarget",
-            supports_multi_turn: true,
+            capabilities: buildCapabilities({ supports_multi_turn: true }),
           }}
         />
       </TestWrapper>
