@@ -17,11 +17,10 @@ from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
     AttackResultDetail,
     RunScenarioRequest,
-    ScenarioResultDetailResponse,
+    ScenarioRunDetail,
     ScenarioRunListResponse,
-    ScenarioRunResponse,
-    ScenarioRunResult,
     ScenarioRunStatus,
+    ScenarioRunSummary,
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ScenarioResult
@@ -66,7 +65,7 @@ class ScenarioRunService:
         self._max_concurrent_runs = max_concurrent_runs
         self._active_tasks: dict[str, _ActiveTask] = {}
 
-    async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunResponse:
+    async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
         Start a new scenario run as a background task.
 
@@ -114,7 +113,7 @@ class ScenarioRunService:
         assert response is not None  # guaranteed: we just inserted into DB via initialize_async
         return response
 
-    def get_run(self, *, run_id: str) -> ScenarioRunResponse | None:
+    def get_run(self, *, run_id: str) -> ScenarioRunSummary | None:
         """
         Get the current status of a scenario run by querying the database.
 
@@ -144,7 +143,7 @@ class ScenarioRunService:
         items = [self._build_response_from_db(scenario_result=sr) for sr in results]
         return ScenarioRunListResponse(items=items)
 
-    async def cancel_run_async(self, *, run_id: str) -> ScenarioRunResponse | None:
+    async def cancel_run_async(self, *, run_id: str) -> ScenarioRunSummary | None:
         """
         Cancel a running scenario.
 
@@ -240,8 +239,8 @@ class ScenarioRunService:
             "max_retries": request.max_retries,
         }
 
-        if request.memory_labels:
-            init_kwargs["memory_labels"] = request.memory_labels
+        if request.labels:
+            init_kwargs["memory_labels"] = request.labels
 
         # Validate and resolve strategies
         if request.strategies:
@@ -306,7 +305,7 @@ class ScenarioRunService:
             active.error = str(e)
             logger.exception(f"Scenario run {scenario_result_id} failed: {e}")
 
-    def _build_response(self, *, scenario_result_id: str) -> ScenarioRunResponse | None:
+    def _build_response(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
         Build a ScenarioRunResponse by querying the database and merging active task state.
 
@@ -322,7 +321,7 @@ class ScenarioRunService:
             return None
         return self._build_response_from_db(scenario_result=results[0])
 
-    def _build_response_from_db(self, *, scenario_result: ScenarioResult) -> ScenarioRunResponse:
+    def _build_response_from_db(self, *, scenario_result: ScenarioResult) -> ScenarioRunSummary:
         """
         Build a ScenarioRunResponse from a database ScenarioResult, merged with active task info.
 
@@ -344,8 +343,10 @@ class ScenarioRunService:
 
         status = _STATE_TO_STATUS.get(scenario_result.scenario_run_state, ScenarioRunStatus.FAILED)
 
-        # Build result summary for completed runs
-        result = None
+        # Build result fields for completed runs
+        strategies_used: list[str] = []
+        total_attacks = 0
+        completed_attacks = 0
         if status == ScenarioRunStatus.COMPLETED:
             completed_attacks = sum(
                 1
@@ -354,27 +355,22 @@ class ScenarioRunService:
                 if ar.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE)
             )
             total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
-            result = ScenarioRunResult(
-                scenario_result_id=scenario_result_id,
-                run_state=scenario_result.scenario_run_state,
-                strategies_used=scenario_result.get_strategies_used(),
-                total_attacks=total_attacks,
-                completed_attacks=completed_attacks,
-                number_tries=scenario_result.number_tries,
-                completion_time=scenario_result.completion_time,
-            )
+            strategies_used = scenario_result.get_strategies_used()
 
-        return ScenarioRunResponse(
-            run_id=scenario_result_id,
+        return ScenarioRunSummary(
+            scenario_result_id=scenario_result_id,
             scenario_name=scenario_result.scenario_identifier.name,
             status=status,
             created_at=scenario_result.created_at,
             updated_at=scenario_result.completion_time,
             error=error,
-            result=result,
+            strategies_used=strategies_used,
+            total_attacks=total_attacks,
+            completed_attacks=completed_attacks,
+            completed_at=scenario_result.completion_time,
         )
 
-    def get_run_results(self, *, run_id: str) -> ScenarioResultDetailResponse | None:
+    def get_run_results(self, *, run_id: str) -> ScenarioRunDetail | None:
         """
         Get detailed results for a completed scenario run.
 
@@ -396,10 +392,10 @@ class ScenarioRunService:
             return None
 
         scenario_result = results[0]
+        run_response = self._build_response_from_db(scenario_result=scenario_result)
 
-        if scenario_result.scenario_run_state != "COMPLETED":
-            status = _STATE_TO_STATUS.get(scenario_result.scenario_run_state, ScenarioRunStatus.FAILED)
-            raise ValueError(f"Results are only available for completed runs. Current status: '{status}'.")
+        if run_response.status != ScenarioRunStatus.COMPLETED:
+            raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
 
         # Build per-attack detail
         attacks: list[AtomicAttackResults] = []
@@ -449,14 +445,10 @@ class ScenarioRunService:
                 )
             )
 
-        return ScenarioResultDetailResponse(
-            scenario_result_id=str(scenario_result.id),
-            scenario_name=scenario_result.scenario_identifier.name,
+        return ScenarioRunDetail(
+            run=run_response,
             scenario_version=scenario_result.scenario_identifier.version,
-            run_state=scenario_result.scenario_run_state,
             objective_achieved_rate=scenario_result.objective_achieved_rate(),
-            number_tries=scenario_result.number_tries,
-            completion_time=scenario_result.completion_time,
             labels=scenario_result.labels,
             attacks=attacks,
         )

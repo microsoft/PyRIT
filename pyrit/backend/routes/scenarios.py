@@ -18,12 +18,12 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
+    ListRegisteredScenarioResponse,
+    RegisteredScenario,
     RunScenarioRequest,
-    ScenarioListResponse,
-    ScenarioResultDetailResponse,
+    ScenarioRunDetail,
     ScenarioRunListResponse,
-    ScenarioRunResponse,
-    ScenarioSummary,
+    ScenarioRunSummary,
 )
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
@@ -38,12 +38,12 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
 @router.get(
     "/catalog",
-    response_model=ScenarioListResponse,
+    response_model=ListRegisteredScenarioResponse,
 )
 async def list_scenarios(
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: Optional[str] = Query(None, description="Pagination cursor (scenario_name to start after)"),
-) -> ScenarioListResponse:
+) -> ListRegisteredScenarioResponse:
     """
     List all available scenarios.
 
@@ -59,12 +59,12 @@ async def list_scenarios(
 
 @router.get(
     "/catalog/{scenario_name:path}",
-    response_model=ScenarioSummary,
+    response_model=RegisteredScenario,
     responses={
         404: {"model": ProblemDetail, "description": "Scenario not found"},
     },
 )
-async def get_scenario(scenario_name: str) -> ScenarioSummary:
+async def get_scenario(scenario_name: str) -> RegisteredScenario:
     """
     Get details for a specific scenario.
 
@@ -93,13 +93,13 @@ async def get_scenario(scenario_name: str) -> ScenarioSummary:
 
 @router.post(
     "/runs",
-    response_model=ScenarioRunResponse,
+    response_model=ScenarioRunSummary,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/strategy)"},
     },
 )
-async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunResponse:
+async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     """
     Start a new scenario run as a background task.
 
@@ -138,12 +138,12 @@ async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListRe
 
 @router.get(
     "/runs/{run_id}",
-    response_model=ScenarioRunResponse,
+    response_model=ScenarioRunSummary,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
     },
 )
-async def get_scenario_run(run_id: str) -> ScenarioRunResponse:
+async def get_scenario_run(run_id: str) -> ScenarioRunSummary:
     """
     Get the current status and result of a scenario run.
 
@@ -163,15 +163,15 @@ async def get_scenario_run(run_id: str) -> ScenarioRunResponse:
     return run
 
 
-@router.delete(
-    "/runs/{run_id}",
-    response_model=ScenarioRunResponse,
+@router.post(
+    "/runs/{run_id}/cancel",
+    response_model=ScenarioRunSummary,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run already in terminal state"},
     },
 )
-async def cancel_scenario_run(run_id: str) -> ScenarioRunResponse:
+async def cancel_scenario_run(run_id: str) -> ScenarioRunSummary:
     """
     Cancel a running scenario.
 
@@ -197,13 +197,13 @@ async def cancel_scenario_run(run_id: str) -> ScenarioRunResponse:
 
 @router.get(
     "/runs/{run_id}/results",
-    response_model=ScenarioResultDetailResponse,
+    response_model=ScenarioRunDetail,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(run_id: str) -> ScenarioResultDetailResponse:
+async def get_scenario_run_results(run_id: str) -> ScenarioRunDetail:
     """
     Get detailed results for a completed scenario run.
 

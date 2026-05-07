@@ -12,11 +12,11 @@ from functools import lru_cache
 from typing import Optional
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioListResponse, ScenarioSummary
+from pyrit.backend.models.scenarios import ListRegisteredScenarioResponse, RegisteredScenario
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
 
-def _metadata_to_summary(metadata: ScenarioMetadata) -> ScenarioSummary:
+def _metadata_to_summary(metadata: ScenarioMetadata) -> RegisteredScenario:
     """
     Convert a ScenarioMetadata dataclass to a ScenarioSummary Pydantic model.
 
@@ -26,7 +26,7 @@ def _metadata_to_summary(metadata: ScenarioMetadata) -> ScenarioSummary:
     Returns:
         ScenarioSummary Pydantic model.
     """
-    return ScenarioSummary(
+    return RegisteredScenario(
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
         description=metadata.class_description,
@@ -54,7 +54,7 @@ class ScenarioService:
         *,
         limit: int = 50,
         cursor: Optional[str] = None,
-    ) -> ScenarioListResponse:
+    ) -> ListRegisteredScenarioResponse:
         """
         List all available scenarios with pagination.
 
@@ -71,12 +71,12 @@ class ScenarioService:
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
         next_cursor = page[-1].scenario_name if has_more and page else None
 
-        return ScenarioListResponse(
+        return ListRegisteredScenarioResponse(
             items=page,
             pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
         )
 
-    async def get_scenario_async(self, *, scenario_name: str) -> Optional[ScenarioSummary]:
+    async def get_scenario_async(self, *, scenario_name: str) -> Optional[RegisteredScenario]:
         """
         Get a single scenario by registry name.
 
@@ -95,10 +95,10 @@ class ScenarioService:
     @staticmethod
     def _paginate(
         *,
-        items: list[ScenarioSummary],
+        items: list[RegisteredScenario],
         cursor: Optional[str],
         limit: int,
-    ) -> tuple[list[ScenarioSummary], bool]:
+    ) -> tuple[list[RegisteredScenario], bool]:
         """
         Apply cursor-based pagination.
 

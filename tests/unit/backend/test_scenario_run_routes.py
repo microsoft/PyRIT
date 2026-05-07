@@ -17,10 +17,10 @@ from pyrit.backend.main import app
 from pyrit.backend.models.attacks import AttackResultDetail
 from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
-    ScenarioResultDetailResponse,
+    ScenarioRunDetail,
     ScenarioRunListResponse,
-    ScenarioRunResponse,
     ScenarioRunStatus,
+    ScenarioRunSummary,
 )
 
 
@@ -43,16 +43,15 @@ def _mock_run_response(
     run_id: str = "test-run-id",
     scenario_name: str = "foundry.red_team_agent",
     run_status: ScenarioRunStatus = ScenarioRunStatus.PENDING,
-) -> ScenarioRunResponse:
+) -> ScenarioRunSummary:
     """Create a mock ScenarioRunResponse."""
-    return ScenarioRunResponse(
-        run_id=run_id,
+    return ScenarioRunSummary(
+        scenario_result_id=run_id,
         scenario_name=scenario_name,
         status=run_status,
         created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
         updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
         error=None,
-        result=None,
     )
 
 
@@ -75,7 +74,7 @@ class TestStartScenarioRunRoute:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         data = response.json()
-        assert data["run_id"] == "test-run-id"
+        assert data["scenario_result_id"] == "test-run-id"
         assert data["status"] == "pending"
 
     def test_start_run_invalid_scenario_returns_400(self, client: TestClient) -> None:
@@ -190,7 +189,7 @@ class TestGetScenarioRunRoute:
 
 
 class TestCancelScenarioRunRoute:
-    """Tests for DELETE /api/scenarios/runs/{run_id}."""
+    """Tests for POST /api/scenarios/runs/{run_id}/cancel."""
 
     def test_cancel_run_returns_200(self, client: TestClient) -> None:
         """Test that cancelling a running scenario returns 200."""
@@ -201,7 +200,7 @@ class TestCancelScenarioRunRoute:
             mock_service.cancel_run_async = AsyncMock(return_value=mock_response)
             mock_get.return_value = mock_service
 
-            response = client.delete("/api/scenarios/runs/test-run-id")
+            response = client.post("/api/scenarios/runs/test-run-id/cancel")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["status"] == "cancelled"
@@ -213,7 +212,7 @@ class TestCancelScenarioRunRoute:
             mock_service.cancel_run_async = AsyncMock(return_value=None)
             mock_get.return_value = mock_service
 
-            response = client.delete("/api/scenarios/runs/nonexistent")
+            response = client.post("/api/scenarios/runs/nonexistent/cancel")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -224,7 +223,7 @@ class TestCancelScenarioRunRoute:
             mock_service.cancel_run_async = AsyncMock(side_effect=ValueError("Cannot cancel run in 'completed' state."))
             mock_get.return_value = mock_service
 
-            response = client.delete("/api/scenarios/runs/test-run-id")
+            response = client.post("/api/scenarios/runs/test-run-id/cancel")
 
         assert response.status_code == status.HTTP_409_CONFLICT
         assert "Cannot cancel" in response.json()["detail"]
@@ -235,14 +234,17 @@ class TestGetScenarioRunResultsRoute:
 
     def test_get_results_returns_200(self, client: TestClient) -> None:
         """Test that getting results of a completed run returns 200."""
-        mock_result = ScenarioResultDetailResponse(
-            scenario_result_id="result-uuid",
-            scenario_name="foundry.red_team_agent",
+        mock_result = ScenarioRunDetail(
+            run=ScenarioRunSummary(
+                scenario_result_id="result-uuid",
+                scenario_name="foundry.red_team_agent",
+                status=ScenarioRunStatus.COMPLETED,
+                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                completed_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ),
             scenario_version=1,
-            run_state="COMPLETED",
             objective_achieved_rate=50,
-            number_tries=1,
-            completion_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
             labels={"team": "red"},
             attacks=[
                 AtomicAttackResults(
@@ -278,7 +280,7 @@ class TestGetScenarioRunResultsRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["scenario_result_id"] == "result-uuid"
+        assert data["run"]["scenario_result_id"] == "result-uuid"
         assert data["objective_achieved_rate"] == 50
         assert len(data["attacks"]) == 1
         assert data["attacks"][0]["atomic_attack_name"] == "base64_attack"

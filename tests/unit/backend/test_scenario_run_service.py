@@ -134,7 +134,7 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         response = await service.start_run_async(request=_make_request())
 
-        assert response.run_id == "sr-uuid-1"
+        assert response.scenario_result_id == "sr-uuid-1"
         assert response.status == ScenarioRunStatus.RUNNING
         assert response.scenario_name == "foundry.red_team_agent"
         assert response.error is None
@@ -290,7 +290,7 @@ class TestScenarioRunServiceGetRun:
         fetched = service.get_run(run_id="sr-123")
 
         assert fetched is not None
-        assert fetched.run_id == "sr-123"
+        assert fetched.scenario_result_id == "sr-123"
         assert fetched.scenario_name == "foundry.red_team_agent"
         assert fetched.status == ScenarioRunStatus.RUNNING
 
@@ -345,13 +345,13 @@ class TestScenarioRunServiceCancelRun:
 
         # After update_scenario_run_state, the next DB query should return CANCELLED
         running_result = mock_all_registries["db_result"]
-        cancelled_result = _make_db_scenario_result(result_id=response.run_id, run_state="CANCELLED")
+        cancelled_result = _make_db_scenario_result(result_id=response.scenario_result_id, run_state="CANCELLED")
         mock_memory.get_scenario_results.side_effect = [[running_result], [cancelled_result]]
 
-        result = await service.cancel_run_async(run_id=response.run_id)
+        result = await service.cancel_run_async(run_id=response.scenario_result_id)
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
-            scenario_result_id=response.run_id, scenario_run_state="CANCELLED"
+            scenario_result_id=response.scenario_result_id, scenario_run_state="CANCELLED"
         )
         assert result is not None
         assert result.status == ScenarioRunStatus.CANCELLED
@@ -398,16 +398,16 @@ class TestScenarioRunServiceExecution:
         response = await service.start_run_async(request=_make_request())
 
         # Wait for the background task to complete
-        active = service._active_tasks.get(response.run_id)
+        active = service._active_tasks.get(response.scenario_result_id)
         assert active is not None
         assert active.task is not None
         await active.task
 
         # Active task is cleaned up on next get_run (deferred cleanup)
-        assert response.run_id in service._active_tasks
-        fetched = service.get_run(run_id=response.run_id)
+        assert response.scenario_result_id in service._active_tasks
+        fetched = service.get_run(run_id=response.scenario_result_id)
         assert fetched is not None
-        assert response.run_id not in service._active_tasks
+        assert response.scenario_result_id not in service._active_tasks
 
     async def test_execute_run_fails_with_error(self, mock_all_registries) -> None:
         """Test that a run_async failure stores error and surfaces it via get_run."""
@@ -419,20 +419,20 @@ class TestScenarioRunServiceExecution:
         response = await service.start_run_async(request=_make_request())
 
         # Wait for the background task
-        active = service._active_tasks.get(response.run_id)
+        active = service._active_tasks.get(response.scenario_result_id)
         assert active is not None
         assert active.task is not None
         await active.task
 
         # Error is stored on the active task until get_run reads it
         assert active.error == "scenario exploded"
-        assert response.run_id in service._active_tasks
+        assert response.scenario_result_id in service._active_tasks
 
         # get_run should surface the error and clean up
-        fetched = service.get_run(run_id=response.run_id)
+        fetched = service.get_run(run_id=response.scenario_result_id)
         assert fetched is not None
         assert fetched.error == "scenario exploded"
-        assert response.run_id not in service._active_tasks
+        assert response.scenario_result_id not in service._active_tasks
 
 
 class TestScenarioRunServiceGetResults:
@@ -483,7 +483,7 @@ class TestScenarioRunServiceGetResults:
         detail = service.get_run_results(run_id="sr-123")
 
         assert detail is not None
-        assert detail.scenario_result_id == "sr-123"
+        assert detail.run.scenario_result_id == "sr-123"
         assert detail.objective_achieved_rate == 100
         assert len(detail.attacks) == 1
         assert detail.attacks[0].atomic_attack_name == "base64_attack"

@@ -18,7 +18,7 @@ from pyrit.backend.models.attacks import AttackResultDetail
 from pyrit.backend.models.common import PaginationInfo
 
 
-class ScenarioSummary(BaseModel):
+class RegisteredScenario(BaseModel):
     """Summary of a registered scenario."""
 
     scenario_name: str = Field(..., description="Registry key (e.g., 'foundry.red_team_agent')")
@@ -33,10 +33,10 @@ class ScenarioSummary(BaseModel):
     max_dataset_size: Optional[int] = Field(None, description="Maximum items per dataset (None means unlimited)")
 
 
-class ScenarioListResponse(BaseModel):
+class ListRegisteredScenarioResponse(BaseModel):
     """Response for listing scenarios."""
 
-    items: list[ScenarioSummary] = Field(..., description="List of scenario summaries")
+    items: list[RegisteredScenario] = Field(..., description="List of scenario summaries")
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
@@ -69,7 +69,7 @@ class RunScenarioRequest(BaseModel):
     max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
     max_concurrency: int = Field(10, ge=1, le=100, description="Maximum concurrent operations")
     max_retries: int = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
-    memory_labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")
+    labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")
     scenario_params: dict[str, Any] | None = Field(
         None,
         description="Custom parameters for the scenario (passed to scenario.set_params_from_args). "
@@ -88,34 +88,25 @@ class RunScenarioRequest(BaseModel):
     )
 
 
-class ScenarioRunResult(BaseModel):
-    """Summary of a completed scenario run's results."""
+class ScenarioRunSummary(BaseModel):
+    """Response for a scenario run (status + result details)."""
 
     scenario_result_id: str = Field(..., description="UUID of the ScenarioResult in memory")
-    run_state: str = Field(..., description="Final scenario run state (COMPLETED, FAILED)")
-    strategies_used: list[str] = Field(..., description="Strategy names that were executed")
-    total_attacks: int = Field(..., ge=0, description="Total number of atomic attacks")
-    completed_attacks: int = Field(..., ge=0, description="Number of attacks that completed")
-    number_tries: int = Field(..., ge=0, description="Number of execution attempts")
-    completion_time: datetime | None = Field(None, description="When the scenario finished")
-
-
-class ScenarioRunResponse(BaseModel):
-    """Response for a scenario run (status + optional result)."""
-
-    run_id: str = Field(..., description="Unique identifier for this run")
     scenario_name: str = Field(..., description="Registry key of the scenario being run")
     status: ScenarioRunStatus = Field(..., description="Current run status")
     created_at: datetime = Field(..., description="When the run was created")
     updated_at: datetime = Field(..., description="When the run status last changed")
     error: str | None = Field(None, description="Error message if status is FAILED")
-    result: ScenarioRunResult | None = Field(None, description="Result details if status is COMPLETED")
+    strategies_used: list[str] = Field(default_factory=list, description="Strategy names that were executed")
+    total_attacks: int = Field(0, ge=0, description="Total number of atomic attacks")
+    completed_attacks: int = Field(0, ge=0, description="Number of attacks that completed")
+    completed_at: datetime | None = Field(None, description="When the scenario finished")
 
 
 class ScenarioRunListResponse(BaseModel):
     """Response for listing scenario runs."""
 
-    items: list[ScenarioRunResponse] = Field(..., description="List of scenario runs")
+    items: list[ScenarioRunSummary] = Field(..., description="List of scenario runs")
 
 
 # ============================================================================
@@ -134,15 +125,11 @@ class AtomicAttackResults(BaseModel):
     total_count: int = Field(0, ge=0, description="Total number of attack results")
 
 
-class ScenarioResultDetailResponse(BaseModel):
+class ScenarioRunDetail(BaseModel):
     """Full detailed results of a scenario run."""
 
-    scenario_result_id: str = Field(..., description="UUID of the ScenarioResult")
-    scenario_name: str = Field(..., description="Name of the scenario")
+    run: ScenarioRunSummary = Field(..., description="The scenario run summary")
     scenario_version: int = Field(..., description="Version of the scenario")
-    run_state: str = Field(..., description="Final run state (COMPLETED, FAILED, etc.)")
     objective_achieved_rate: int = Field(..., ge=0, le=100, description="Success rate as percentage (0-100)")
-    number_tries: int = Field(..., ge=0, description="Number of execution attempts")
-    completion_time: datetime | None = Field(None, description="When the scenario finished")
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     attacks: list[AtomicAttackResults] = Field(..., description="Results grouped by atomic attack")
