@@ -1,22 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""
-AdversarialBenchmark scenario — compare adversarial-model attack success rate (ASR)
-across attack techniques.
-
-Strategies are built dynamically by filtering ``SCENARIO_TECHNIQUES`` to those
-that accept an adversarial chat model but don't have one baked in.  The
-constructor takes either a ``dict`` mapping user-chosen labels to
-``PromptChatTarget`` instances, or a plain ``list`` of targets (labels inferred
-from each target's identifier).  Each target is wrapped in a default
-``AttackAdversarialConfig`` and injected at attack-creation time via
-``attack_adversarial_config_override``, producing a technique × model × dataset
-cross-product for side-by-side comparison.
-
-New adversarial techniques added to ``SCENARIO_TECHNIQUES`` are automatically
-discovered — no changes to this module needed.
-"""
+"""AdversarialBenchmark scenario — compare attack success rate across adversarial models."""
 
 from __future__ import annotations
 
@@ -24,7 +9,6 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.common.parameter import Parameter
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
@@ -87,31 +71,11 @@ class AdversarialBenchmark(Scenario):
             max_dataset_size=8,
         )
 
-    @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
-        """
-        Declare custom parameters this scenario accepts from the CLI / config file.
-
-        Returns:
-            list[Parameter]: Parameters configurable per-run.
-        """
-        return [
-            Parameter(
-                name="include_default_baseline",
-                description=(
-                    "Whether to include a baseline atomic attack that sends each objective "
-                    "unmodified through every selected adversarial model."
-                ),
-                param_type=bool,
-                default=False,
-            ),
-        ]
-
     @apply_defaults
     def __init__(
         self,
         *,
-        adversarial_models: dict[str, PromptChatTarget] | list[PromptChatTarget],
+        adversarial_models: list[PromptChatTarget],
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -119,43 +83,31 @@ class AdversarialBenchmark(Scenario):
         Initialize the AdversarialBenchmark scenario.
 
         Args:
-            adversarial_models: Either a ``dict`` mapping user-chosen labels to
-                ``PromptChatTarget`` instances, or a ``list`` of targets (labels
-                inferred from each target's identifier).  When a list is given,
-                identical targets are silently deduped and distinct targets
-                whose inferred names collide are suffixed (``_2``, ``_3``, …)
-                with a warning.  Each target is wrapped in a default
-                ``AttackAdversarialConfig`` before being injected into each
-                technique.
+            adversarial_models: A non-empty list of ``PromptChatTarget`` instances.
+                Labels are inferred from each target's identifier (preferring
+                ``underlying_model_name`` over ``model_name`` over the class
+                name).  Identical targets are silently deduped and distinct
+                targets whose inferred names collide are suffixed (``_2``,
+                ``_3``, …) with a warning.
             objective_scorer: Scorer for evaluating attack success.
                 Defaults to the registered default objective scorer.
             scenario_result_id: Optional ID of an existing scenario
                 result to resume.
 
         Raises:
-            ValueError: If ``adversarial_models`` is empty, an unsupported
-                type, or contains an empty-string label.
+            ValueError: If ``adversarial_models`` is empty or not a list.
         """
         if not adversarial_models:
-            raise ValueError(
-                "adversarial_models must be a non-empty dict mapping labels to "
-                "PromptChatTarget instances, or a non-empty list from which labels "
-                "will be inferred."
-            )
+            raise ValueError("adversarial_models must be a non-empty list of PromptChatTarget instances.")
 
-        # Stage A: list → dict (with inferred, deduped labels).
-        if isinstance(adversarial_models, list):
-            adversarial_models = self._infer_labels(items=adversarial_models)
+        if not isinstance(adversarial_models, list):
+            raise ValueError("adversarial_models must be a list of PromptChatTarget instances.")
 
-        if not isinstance(adversarial_models, dict):
-            raise ValueError("adversarial_models must be a dict or a list of PromptChatTarget instances.")
-
-        if "" in adversarial_models:
-            raise ValueError(f"Empty user-chosen label passed to adversarial_models! Got `{adversarial_models}`.")
-
-        # Stage B: wrap each bare target in a default AttackAdversarialConfig.
+        # Infer labels, then wrap each bare target in a default AttackAdversarialConfig
+        # so it can be passed to factory.create() as an override.
+        labeled_targets = self._infer_labels(items=adversarial_models)
         self._adversarial_configs: dict[str, AttackAdversarialConfig] = {
-            label: AttackAdversarialConfig(target=target) for label, target in adversarial_models.items()
+            label: AttackAdversarialConfig(target=target) for label, target in labeled_targets.items()
         }
 
         self._objective_scorer: TrueFalseScorer = (
@@ -189,17 +141,10 @@ class AdversarialBenchmark(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        # Sync the include_default_baseline param into the base-class flag.  The
-        # base class reads ``self._include_baseline`` immediately after this method
-        # returns, and ``set_params_from_args`` has already run by this point so
-        # ``self.params["include_default_baseline"]`` is guaranteed to be set.
-        self._include_baseline = self.params.get("include_default_baseline", False)
-
         benchmarkable_specs = AdversarialBenchmark._get_benchmarkable_specs()
         local_factories = {
             spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in benchmarkable_specs
         }
-        scorer_override_map = {spec.name: spec.accepts_scorer_override for spec in benchmarkable_specs}
 
         selected_techniques = {s.value for s in self._scenario_strategies}
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
@@ -212,14 +157,12 @@ class AdversarialBenchmark(Scenario):
                 logger.warning("No factory for technique '%s', skipping.", technique_name)
                 continue
 
-            scoring_for_technique = scoring_config if scorer_override_map.get(technique_name, True) else None
-
             for model_label, adv_config in self._adversarial_configs.items():
                 for dataset_name, seed_groups in seed_groups_by_dataset.items():
                     attack_technique = factory.create(
                         objective_target=self._objective_target,
+                        attack_scoring_config=scoring_config,
                         attack_adversarial_config_override=adv_config,
-                        attack_scoring_config_override=scoring_for_technique,
                     )
                     atomic_attacks.append(
                         AtomicAttack(
