@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
+    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RedTeamingAttack,
@@ -59,18 +60,18 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="prompt_sending",
         attack_class=PromptSendingAttack,
-        strategy_tags=["core", "single_turn", "default"],
+        strategy_tags=["core", "single_turn", "default", "light"],
     ),
     AttackTechniqueSpec(
         name="role_play",
         attack_class=RolePlayAttack,
-        strategy_tags=["core", "single_turn"],
+        strategy_tags=["core", "single_turn", "light"],
         extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
     ),
     AttackTechniqueSpec(
         name="many_shot",
         attack_class=ManyShotJailbreakAttack,
-        strategy_tags=["core", "multi_turn", "default"],
+        strategy_tags=["core", "multi_turn", "default", "light"],
     ),
     AttackTechniqueSpec(
         name="tap",
@@ -96,7 +97,12 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="red_teaming",
         attack_class=RedTeamingAttack,
-        strategy_tags=["core", "multi_turn"],
+        strategy_tags=["core", "multi_turn", "light"],
+    ),
+    AttackTechniqueSpec(
+        name="context_compliance",
+        attack_class=ContextComplianceAttack,
+        strategy_tags=["core", "single_turn", "light"],
     ),
 ]
 

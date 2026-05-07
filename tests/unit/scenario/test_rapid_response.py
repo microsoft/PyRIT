@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
+    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RolePlayAttack,
@@ -261,7 +262,7 @@ class TestRapidResponseAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, ManyShotJailbreakAttack}
 
-    async def test_single_turn_strategy_produces_prompt_sending_and_role_play(
+    async def test_single_turn_strategy_produces_single_turn_attacks(
         self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
@@ -270,7 +271,11 @@ class TestRapidResponseAttackGeneration:
             strategies=[_strategy_class().SINGLE_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {PromptSendingAttack, RolePlayAttack}
+        # Every core technique tagged ``single_turn`` in SCENARIO_TECHNIQUES must appear.
+        assert {PromptSendingAttack, RolePlayAttack, ContextComplianceAttack} <= technique_classes
+        # And no multi-turn-only attack should leak in.
+        assert ManyShotJailbreakAttack not in technique_classes
+        assert TreeOfAttacksWithPruningAttack not in technique_classes
 
     async def test_multi_turn_strategy_produces_multi_turn_attacks(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(

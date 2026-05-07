@@ -24,7 +24,7 @@ within an instance. The trust boundary is Entra group membership.
 | `az login` with Graph permissions | The script creates Entra app registrations, which requires Graph API access. Run `az login --scope https://graph.microsoft.com//.default` |
 | Azure permissions | **Owner** (or Contributor + User Access Administrator) on the subscription, and **Application Administrator** in Entra ID for app registrations and Graph API operations |
 | Container image pushed to ACR | Build and push before deploying (see [Building the Image](#building-the-image)) |
-| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints, storage URL, and content safety config. `AZURE_SQL_DB_CONNECTION_STRING` is auto-injected by the script — you can omit it. Required for the default `target airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
+| A `.env` file with runtime config | Copy and fill in `infra/env.demo.template`. Contains target endpoints and content safety config. `AZURE_SQL_DB_CONNECTION_STRING` and `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` are auto-injected by the script — you can omit them. Required for the default `target airt` initializer. Targets can also be created manually in the GUI if deploying with the `target` initializer only |
 
 ### What the script creates (per-instance)
 
@@ -35,6 +35,7 @@ within an instance. The trust boundary is Entra group membership.
 | Container App Environment | `copyrit-{instance-name}-env` |
 | User-Assigned Managed Identity | `copyrit-{instance-name}-identity` |
 | Azure SQL Server + Database | `copyrit-{instance-name}-sql` / `pyrit-{instance-name}` |
+| Storage Account + Blob Container | `copyrit{instance-name-no-hyphens}sa` / `dbdata` |
 | Key Vault | `copyrit-{instance-name}-kv` |
 | Entra App Registration | `CoPyRIT GUI ({instance-name})` |
 | Log Analytics Workspace | `copyrit-{instance-name}-logs` |
@@ -57,11 +58,10 @@ within an instance. The trust boundary is Entra group membership.
 ```bash
 cp infra/env.demo.template my-demo.env
 # Edit my-demo.env — fill in real endpoint URLs, API keys, and models.
-# Required: chat target, unsafe chat targets (for converters), content safety,
-#           storage account URL.
+# Required: chat target, unsafe chat targets (for converters), content safety.
 # Optional: image, TTS, video, realtime, responses targets.
-# Note: AZURE_SQL_DB_CONNECTION_STRING is auto-injected by the deploy script —
-#       you can omit it from the .env file.
+# Note: AZURE_SQL_DB_CONNECTION_STRING and AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL
+#       are auto-injected by the deploy script — you can omit them from the .env file.
 ```
 
 See `infra/env.demo.template` for the full list of variables with comments.
@@ -91,7 +91,7 @@ python infra/deploy_instance.py \
 | `--acr-name` | Yes | Shared ACR name |
 | `--container-image` | Yes | Full image reference (ACR + tag) |
 | `--allowed-groups` | Yes | Comma-separated Entra group OIDs |
-| `--owner-tag` | No | `Owner` tag value (required by some subscriptions) |
+| `--owner-tag` | Conditional | `Owner` tag value applied to all per-instance resources. **Required when the target subscription enforces a "Require a tag on resources" Azure Policy** (this is the case for the AI Red Team Tooling subscription — deployments without it fail with `RequestDisallowedByPolicy`). Optional only on subscriptions without such a policy |
 | `--service-management-reference` | No | Service Tree ID (required by some tenants for Entra app creation) |
 | `--aoai-resource-names` | No | Comma-separated Cognitive Services account names for automatic AOAI RBAC. Grants `Cognitive Services OpenAI User` to the MI on each resource. Does **not** cover Content Safety — see step 3 for that. If omitted, all AOAI roles must be granted manually |
 | `--dry-run` | No | Preview what will be created without executing |
@@ -210,10 +210,11 @@ Azure OpenAI or OpenAI endpoints — they don't need to match the AIRT instance.
 - `AZURE_OPENAI_GPT4O_UNSAFE_CHAT_*` — converter target
 - `AZURE_OPENAI_GPT4O_UNSAFE_CHAT_*2` — scorer target
 - `AZURE_CONTENT_SAFETY_*` — harm detection
-- `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` — blob storage
 
-> **Note:** `AZURE_SQL_DB_CONNECTION_STRING` is auto-injected by the deploy
-> script from the SQL server it creates. You do not need to set it manually.
+> **Note:** `AZURE_SQL_DB_CONNECTION_STRING` and
+> `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` are auto-injected by the deploy
+> script from the SQL server and storage account it creates. You do not need
+> to set them manually.
 
 **Full modality demo** (uncomment optional sections in the template):
 - Image (DALL-E 3)
@@ -227,12 +228,13 @@ Azure OpenAI or OpenAI endpoints — they don't need to match the AIRT instance.
 To update the `.env` contents after deployment:
 
 > **Important:** The deploy script auto-injects `AZURE_SQL_DB_CONNECTION_STRING`
-> into the `.env` during initial deployment. When updating secrets manually, your
-> `updated.env` file **must include** this variable. If omitted, the container
-> will fail to connect to SQL on restart. Check the current value with:
+> and `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` into the `.env` during
+> initial deployment. When updating secrets manually, your `updated.env` file
+> **must include** both variables. If omitted, the container will fail to
+> connect to SQL or read blob results on restart. Check the current values with:
 > ```bash
 > az keyvault secret show --vault-name copyrit-{instance-name}-kv \
->     --name env-global --query value -o tsv | grep AZURE_SQL_DB
+>     --name env-global --query value -o tsv | grep -E 'AZURE_SQL_DB|AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL'
 > ```
 
 ```bash
@@ -372,6 +374,35 @@ Common causes:
   ```
 - Verify the Azure SQL firewall allows Azure services (the script configures
   this, but verify with `az sql server firewall-rule list`).
+
+### Blob storage errors
+
+If the container logs show 403/AuthorizationPermissionMismatch when reading or
+writing to blob storage:
+
+- Verify the storage account exists in the per-instance resource group:
+  ```bash
+  az storage account list -g copyrit-{instance-name} -o table
+  ```
+- Verify the managed identity has `Storage Blob Data Contributor` on the
+  storage account scope (the script grants this automatically):
+  ```bash
+  az role assignment list \
+      --assignee <mi-principal-id> \
+      --scope $(az storage account show -n <storage-account-name> \
+          -g copyrit-{instance-name} --query id -o tsv) \
+      -o table
+  ```
+- Verify the Key Vault secret has the correct
+  `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`:
+  ```bash
+  az keyvault secret show \
+      --vault-name copyrit-{instance-name}-kv \
+      --name env-global \
+      --query value -o tsv | grep AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL
+  ```
+- RBAC propagation takes ~60 seconds after a fresh deployment; if the role was
+  granted very recently, restart the container revision.
 
 ### Graph API / Entra commands fail
 
