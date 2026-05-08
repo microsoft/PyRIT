@@ -11,21 +11,22 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 );
 
-// Helper to get the send button specifically
-const getSendButton = () => screen.getByRole("button", { name: /send/i });
-
-// Helper to build a TargetCapabilitiesInfo with sensible defaults
-const makeCaps = (overrides: Partial<TargetCapabilitiesInfo> = {}): TargetCapabilitiesInfo => ({
-  supports_multi_turn: false,
+const buildCapabilities = (
+  overrides: Partial<TargetCapabilitiesInfo> = {}
+): TargetCapabilitiesInfo => ({
+  supports_multi_turn: true,
   supports_multi_message_pieces: false,
   supports_json_schema: false,
   supports_json_output: false,
   supports_editable_history: false,
   supports_system_prompt: false,
-  supported_input_data_types: ["text"],
-  supported_output_data_types: ["text"],
+  supported_input_modalities: [],
+  supported_output_modalities: [],
   ...overrides,
 });
+
+// Helper to get the send button specifically
+const getSendButton = () => screen.getByRole("button", { name: /send/i });
 
 describe("ChatInputArea", () => {
   const defaultProps = {
@@ -381,7 +382,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "test",
             target_type: "TextTarget",
-            capabilities: makeCaps({ supports_multi_turn: false }),
+            capabilities: buildCapabilities({ supports_multi_turn: false }),
           }}
         />
       </TestWrapper>
@@ -402,7 +403,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "test",
             target_type: "OpenAIChatTarget",
-            capabilities: makeCaps({ supports_multi_turn: true }),
+            capabilities: buildCapabilities({ supports_multi_turn: true }),
           }}
         />
       </TestWrapper>
@@ -676,7 +677,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "TextTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
           }}
         />
       </TestWrapper>
@@ -702,7 +703,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text", "image_path"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
           }}
         />
       </TestWrapper>
@@ -747,7 +748,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text", "image_path"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
           }}
         />
       </TestWrapper>
@@ -773,7 +774,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "TextTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
           }}
         />
       </TestWrapper>
@@ -804,7 +805,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "TextTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
           }}
         />
       </TestWrapper>
@@ -832,7 +833,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "TextTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
           }}
         />
       </TestWrapper>
@@ -858,7 +859,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "TextTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
           }}
           converterOutputDataTypes={["image_path"]}
         />
@@ -881,7 +882,7 @@ describe("ChatInputArea", () => {
           activeTarget={{
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
-            capabilities: makeCaps({ supported_input_data_types: ["text", "image_path"] }),
+            capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
           }}
           converterOutputDataTypes={["image_path"]}
         />

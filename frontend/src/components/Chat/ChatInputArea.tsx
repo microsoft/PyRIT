@@ -175,8 +175,8 @@ function getUnsupportedDataTypes(
   converterOutputDataTypes: string[],
   activeTarget: TargetInstance | null | undefined,
 ): string[] {
-  if (!activeTarget?.capabilities?.supported_input_data_types) return []
-  const supported = new Set(activeTarget.capabilities.supported_input_data_types)
+  if (!activeTarget?.capabilities?.supported_input_modalities) return []
+  const supported = new Set(activeTarget.capabilities.supported_input_modalities)
   const unsupported: string[] = []
   const seen = new Set<string>()
 

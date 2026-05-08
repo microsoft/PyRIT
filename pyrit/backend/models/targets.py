@@ -24,7 +24,7 @@ class TargetCapabilitiesInfo(BaseModel):
 
     Mirrors the domain ``TargetCapabilities`` dataclass for API consumers
     (notably the GUI). Modality combinations (``frozenset[frozenset[...]]``)
-    are flattened into sorted unique data-type lists since the frontend uses
+    are flattened into sorted unique modality lists since the frontend uses
     them only for per-piece modality checks.
     """
 
@@ -36,13 +36,13 @@ class TargetCapabilitiesInfo(BaseModel):
     supports_json_output: bool = Field(False, description="Target supports JSON output mode")
     supports_editable_history: bool = Field(False, description="Target allows attack history to be modified")
     supports_system_prompt: bool = Field(False, description="Target natively supports system prompts")
-    supported_input_data_types: list[str] = Field(
+    supported_input_modalities: list[str] = Field(
         default_factory=lambda: ["text"],
-        description="Sorted unique input data types the target accepts (e.g., ['image_path', 'text'])",
+        description="Sorted unique input modality data types the target accepts (e.g., ['image_path', 'text'])",
     )
-    supported_output_data_types: list[str] = Field(
+    supported_output_modalities: list[str] = Field(
         default_factory=lambda: ["text"],
-        description="Sorted unique output data types the target produces (e.g., ['audio_path', 'text'])",
+        description="Sorted unique output modality data types the target produces (e.g., ['audio_path', 'text'])",
     )
 
 

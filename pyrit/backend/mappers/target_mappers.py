@@ -18,7 +18,7 @@ def target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapab
     """
     Build a TargetCapabilitiesInfo DTO from a domain TargetCapabilities object.
 
-    Modality combinations are flattened into sorted unique data-type lists since
+    Modality combinations are flattened into sorted unique modality lists since
     the frontend uses them only for per-piece modality checks.
 
     Args:
@@ -26,7 +26,7 @@ def target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapab
 
     Returns:
         TargetCapabilitiesInfo DTO mirroring the capability flags and flattened
-        input/output data types.
+        input/output modalities.
     """
     return TargetCapabilitiesInfo(
         supports_multi_turn=capabilities.supports_multi_turn,
@@ -35,8 +35,8 @@ def target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapab
         supports_json_output=capabilities.supports_json_output,
         supports_editable_history=capabilities.supports_editable_history,
         supports_system_prompt=capabilities.supports_system_prompt,
-        supported_input_data_types=sorted({str(t) for combo in capabilities.input_modalities for t in combo}),
-        supported_output_data_types=sorted({str(t) for combo in capabilities.output_modalities for t in combo}),
+        supported_input_modalities=sorted({str(t) for combo in capabilities.input_modalities for t in combo}),
+        supported_output_modalities=sorted({str(t) for combo in capabilities.output_modalities for t in combo}),
     )
 
 
@@ -57,10 +57,10 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     identifier = target_obj.get_identifier()
     params = identifier.params
 
-    # Keys that are extracted as top-level TargetInstance fields. Capability
-    # flag names are also filtered out (via _CAPABILITY_PARAM_NAMES below) so
-    # they cannot leak into target_specific_params; they are sourced solely
-    # from target_obj.capabilities.
+    # Keys that are extracted as top-level TargetInstance fields, are internal-only
+    # (e.g., target_configuration is the verbose capabilities blob), or duplicate
+    # capability flags (filtered via _CAPABILITY_PARAM_NAMES) — those are sourced
+    # solely from target_obj.capabilities and must not leak into target_specific_params.
     extracted_keys = {
         "endpoint",
         "model_name",
@@ -69,6 +69,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         "top_p",
         "max_requests_per_minute",
         "target_specific_params",
+        "target_configuration",
     } | _CAPABILITY_PARAM_NAMES
 
     # Collect remaining params as target_specific_params so the frontend can display them

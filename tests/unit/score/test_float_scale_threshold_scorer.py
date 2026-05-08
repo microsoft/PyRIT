@@ -195,3 +195,24 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
             RuntimeError, match="Error in scorer FloatScaleThresholdScorer.*No scores available for aggregation"
         ):
             await float_scale_threshold_scorer.score_text_async(text="mock example")
+
+
+def test_get_chat_target_delegates_to_wrapped_scorer():
+    """get_chat_target returns the chat target from the wrapped scorer."""
+    mock_target = MagicMock()
+    scorer = MagicMock()
+    scorer.get_chat_target.return_value = mock_target
+    scorer.get_identifier = MagicMock(return_value=ComponentIdentifier(class_name="Mock", class_module="test"))
+
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+    assert threshold_scorer.get_chat_target() is mock_target
+
+
+def test_get_chat_target_returns_none_when_wrapped_has_none():
+    """get_chat_target returns None when the wrapped scorer has no chat target."""
+    scorer = MagicMock()
+    scorer.get_chat_target.return_value = None
+    scorer.get_identifier = MagicMock(return_value=ComponentIdentifier(class_name="Mock", class_module="test"))
+
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+    assert threshold_scorer.get_chat_target() is None

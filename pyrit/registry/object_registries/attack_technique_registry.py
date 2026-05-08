@@ -5,8 +5,8 @@
 AttackTechniqueRegistry — Singleton registry of reusable attack technique factories.
 
 Scenarios and initializers register technique factories (capturing technique-specific
-config). Scenarios retrieve them via ``create_technique()``, which calls the factory
-with the scenario's objective target and scorer.
+config). Scenarios retrieve factories via ``get_factories()`` and call
+``factory.create()`` with the scenario's objective target and scorer.
 """
 
 from __future__ import annotations
@@ -21,16 +21,11 @@ from pyrit.registry.object_registries.base_instance_registry import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_config import (
-        AttackAdversarialConfig,
-        AttackConverterConfig,
-        AttackScoringConfig,
-    )
     from pyrit.models import SeedAttackTechniqueGroup
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptChatTarget
     from pyrit.registry.tag_query import TagQuery
-    from pyrit.scenario.core.attack_technique import AttackTechnique
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario import AttackTechniqueFactory
+    from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +76,6 @@ class AttackTechniqueSpec:
             ``attack_adversarial_config`` (use ``adversarial_chat``) or
             factory-injected args (``objective_target``,
             ``attack_scoring_config``).
-        accepts_scorer_override: Whether the technique accepts a scenario-level
-            scorer override. Set to ``False`` for techniques (e.g. TAP) that
-            manage their own scoring. Defaults to ``True``.
         seed_technique: Optional ``SeedAttackTechniqueGroup`` to attach to
             the created ``AttackTechnique``. Seeds are merged into each
             ``SeedAttackGroup`` at execution time via ``with_technique()``.
@@ -95,7 +87,6 @@ class AttackTechniqueSpec:
     adversarial_chat: PromptChatTarget | None = field(default=None)
     adversarial_chat_key: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
-    accepts_scorer_override: bool = True
     seed_technique: SeedAttackTechniqueGroup | None = None
 
     @property
@@ -122,9 +113,17 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
     Singleton registry of reusable attack technique factories.
 
     Scenarios and initializers register technique factories (capturing
-    technique-specific config). Scenarios retrieve them via ``create_technique()``,
-    which calls the factory with the scenario's objective target and scorer.
+    technique-specific config). Scenarios retrieve factories via
+    ``get_factories()`` and call ``factory.create()`` with the scenario's
+    objective target and scorer.
     """
+
+    def __init__(self) -> None:
+        """Initialize the registry with the default scorer override policy."""
+        from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
+
+        super().__init__()
+        self._scorer_override_policy = ScorerOverridePolicy.WARN
 
     def register_technique(
         self,
@@ -132,7 +131,6 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         name: str,
         factory: AttackTechniqueFactory,
         tags: dict[str, str] | list[str] | None = None,
-        accepts_scorer_override: bool = True,
     ) -> None:
         """
         Register an attack technique factory.
@@ -142,14 +140,11 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             factory: The factory that produces attack techniques.
             tags: Optional tags for categorisation. Accepts a ``dict[str, str]``
                 or a ``list[str]`` (each string becomes a key with value ``""``).
-            accepts_scorer_override: Whether the technique accepts a scenario-level
-                scorer override. Defaults to True.
         """
         self.register(
             factory,
             name=name,
             tags=tags,
-            metadata={"accepts_scorer_override": accepts_scorer_override},
         )
         logger.debug(f"Registered attack technique factory: {name} ({factory.attack_class.__name__})")
 
@@ -162,62 +157,10 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         """
         return {name: entry.instance for name, entry in self._registry_items.items()}
 
-    def accepts_scorer_override(self, name: str) -> bool:
-        """
-        Check whether a registered technique accepts a scenario-level scorer override.
-
-        Returns True by default if the tag is not set (for backwards compatibility
-        with externally registered techniques).
-
-        Args:
-            name: The registry name of the technique.
-
-        Returns:
-            bool: True if the technique accepts scorer overrides.
-
-        Raises:
-            KeyError: If no technique is registered with the given name.
-        """
-        entry = self._registry_items[name]
-        return bool(entry.metadata.get("accepts_scorer_override", True))
-
-    def create_technique(
-        self,
-        name: str,
-        *,
-        objective_target: PromptTarget,
-        attack_scoring_config_override: AttackScoringConfig | None = None,
-        attack_adversarial_config_override: AttackAdversarialConfig | None = None,
-        attack_converter_config_override: AttackConverterConfig | None = None,
-    ) -> AttackTechnique:
-        """
-        Retrieve a factory by name and produce a fresh attack technique.
-
-        Args:
-            name: The registry name of the technique.
-            objective_target: The target to attack.
-            attack_scoring_config_override: When non-None, replaces any scoring
-                config baked into the factory.
-            attack_adversarial_config_override: When non-None, replaces any
-                adversarial config baked into the factory.
-            attack_converter_config_override: When non-None, replaces any
-                converter config baked into the factory.
-
-        Returns:
-            A fresh AttackTechnique with a newly-constructed attack strategy.
-
-        Raises:
-            KeyError: If no technique is registered with the given name.
-        """
-        entry = self._registry_items.get(name)
-        if entry is None:
-            raise KeyError(f"No technique registered with name '{name}'")
-        return entry.instance.create(
-            objective_target=objective_target,
-            attack_scoring_config_override=attack_scoring_config_override,
-            attack_adversarial_config_override=attack_adversarial_config_override,
-            attack_converter_config_override=attack_converter_config_override,
-        )
+    @property
+    def scorer_override_policy(self) -> ScorerOverridePolicy:
+        """The policy applied when a scenario scorer is incompatible with an attack's annotation."""
+        return self._scorer_override_policy
 
     @staticmethod
     def build_strategy_class_from_specs(
@@ -250,7 +193,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Returns:
             A ``ScenarioStrategy`` subclass with the generated members.
         """
-        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+        from pyrit.scenario import ScenarioStrategy
 
         all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
 
@@ -280,7 +223,11 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         return strategy_cls  # type: ignore[ty:invalid-return-type]
 
     @staticmethod
-    def build_factory_from_spec(spec: AttackTechniqueSpec) -> AttackTechniqueFactory:
+    def build_factory_from_spec(
+        spec: AttackTechniqueSpec,
+        *,
+        scorer_override_policy: ScorerOverridePolicy | None = None,
+    ) -> AttackTechniqueFactory:
         """
         Build an ``AttackTechniqueFactory`` from an ``AttackTechniqueSpec``.
 
@@ -290,9 +237,9 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         ``attack_adversarial_config``.
 
         Args:
-            spec: The technique specification. Must not contain
-                ``attack_adversarial_config`` in ``extra_kwargs``; use
-                ``spec.adversarial_chat`` instead.
+            spec: The technique specification.
+            scorer_override_policy: Policy for incompatible scorer overrides.
+                Defaults to WARN when None.
 
         Returns:
             AttackTechniqueFactory: A factory ready for registration.
@@ -302,7 +249,10 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
                 ``attack_adversarial_config``.
         """
         from pyrit.executor.attack import AttackAdversarialConfig
-        from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+        from pyrit.scenario import AttackTechniqueFactory
+        from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
+
+        scorer_override_policy = scorer_override_policy or ScorerOverridePolicy.WARN
 
         if "attack_adversarial_config" in spec.extra_kwargs:
             raise ValueError(
@@ -321,6 +271,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
             attack_kwargs=kwargs or None,
             adversarial_config=adversarial_config,
             seed_technique=spec.seed_technique,
+            scorer_override_policy=scorer_override_policy,
         )
 
     @staticmethod
@@ -350,13 +301,12 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         """
         for spec in specs:
             if spec.name not in self:
-                factory = self.build_factory_from_spec(spec)
+                factory = self.build_factory_from_spec(spec, scorer_override_policy=self._scorer_override_policy)
                 tags: dict[str, str] = dict.fromkeys(spec.strategy_tags, "")
                 self.register_technique(
                     name=spec.name,
                     factory=factory,
                     tags=tags,
-                    accepts_scorer_override=spec.accepts_scorer_override,
                 )
 
         logger.debug("Technique registration complete (%d total in registry)", len(self))

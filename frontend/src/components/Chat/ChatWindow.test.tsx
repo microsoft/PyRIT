@@ -6,6 +6,20 @@ import { Message, TargetCapabilitiesInfo, TargetInfo, TargetInstance } from "../
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
+const buildCapabilities = (
+  overrides: Partial<TargetCapabilitiesInfo> = {}
+): TargetCapabilitiesInfo => ({
+  supports_multi_turn: true,
+  supports_multi_message_pieces: false,
+  supports_json_schema: false,
+  supports_json_output: false,
+  supports_editable_history: false,
+  supports_system_prompt: false,
+  supported_input_modalities: [],
+  supported_output_modalities: [],
+  ...overrides,
+});
+
 // Fluent UI Combobox portal interactions are slow in JSDOM under full test load
 jest.setTimeout(60000);
 
@@ -43,18 +57,6 @@ const mockedMapper = messageMapper as jest.Mocked<typeof messageMapper>;
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
-
-const makeCaps = (overrides: Partial<TargetCapabilitiesInfo> = {}): TargetCapabilitiesInfo => ({
-  supports_multi_turn: false,
-  supports_multi_message_pieces: false,
-  supports_json_schema: false,
-  supports_json_output: false,
-  supports_editable_history: false,
-  supports_system_prompt: false,
-  supported_input_data_types: ["text"],
-  supported_output_data_types: ["text"],
-  ...overrides,
-});
 
 const mockTarget: TargetInstance = {
   target_registry_name: "openai_chat_1",
@@ -1239,7 +1241,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      capabilities: makeCaps({ supports_multi_turn: false }),
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -1273,7 +1275,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      capabilities: makeCaps({ supports_multi_turn: false }),
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     render(
@@ -1322,7 +1324,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_tts_1",
       target_type: "OpenAITTSTarget",
-      capabilities: makeCaps({ supports_multi_turn: false }),
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -1535,7 +1537,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      capabilities: makeCaps({ supports_multi_turn: false }),
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [

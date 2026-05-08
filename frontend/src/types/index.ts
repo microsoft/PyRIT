@@ -60,8 +60,8 @@ export interface TargetCapabilitiesInfo {
   supports_json_output: boolean
   supports_editable_history: boolean
   supports_system_prompt: boolean
-  supported_input_data_types: string[]
-  supported_output_data_types: string[]
+  supported_input_modalities: string[]
+  supported_output_modalities: string[]
 }
 
 export interface TargetInstance {
@@ -73,7 +73,7 @@ export interface TargetInstance {
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
-  capabilities?: TargetCapabilitiesInfo
+  capabilities?: TargetCapabilitiesInfo | null
   target_specific_params?: Record<string, unknown> | null
 }
 

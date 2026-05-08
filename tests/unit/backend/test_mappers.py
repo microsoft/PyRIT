@@ -1317,7 +1317,7 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params["seed"] == 42
         assert result.target_specific_params["max_completion_tokens"] == 2048
 
-    def test_supported_input_data_types_text_only_default(self) -> None:
+    def test_supported_input_modalities_text_only_default(self) -> None:
         """Test that a target with default capabilities reports only 'text'."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
@@ -1326,9 +1326,9 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.capabilities.supported_input_data_types == ["text"]
+        assert result.capabilities.supported_input_modalities == ["text"]
 
-    def test_supported_input_data_types_multimodal(self) -> None:
+    def test_supported_input_modalities_multimodal(self) -> None:
         """Test that a multimodal target reports all individual input types."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
@@ -1348,9 +1348,9 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.capabilities.supported_input_data_types == ["image_path", "text"]
+        assert result.capabilities.supported_input_modalities == ["image_path", "text"]
 
-    def test_supported_input_data_types_audio_video(self) -> None:
+    def test_supported_input_modalities_audio_video(self) -> None:
         """Test that a target supporting audio and video reports those types."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
@@ -1368,9 +1368,9 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.capabilities.supported_input_data_types == ["audio_path", "image_path", "text"]
+        assert result.capabilities.supported_input_modalities == ["audio_path", "image_path", "text"]
 
-    def test_supported_output_data_types_default_text(self) -> None:
+    def test_supported_output_modalities_default_text(self) -> None:
         """Test that a target with default capabilities reports only 'text' as output."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
@@ -1379,10 +1379,10 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.capabilities.supported_output_data_types == ["text"]
+        assert result.capabilities.supported_output_modalities == ["text"]
 
-    def test_supported_output_data_types_image_target(self) -> None:
-        """Test that an image-output target reports 'image_path' in supported_output_data_types."""
+    def test_supported_output_modalities_image_target(self) -> None:
+        """Test that an image-output target reports 'image_path' in supported_output_modalities."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             output_modalities=frozenset({frozenset({"image_path"})}),
@@ -1392,10 +1392,10 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.capabilities.supported_output_data_types == ["image_path"]
+        assert result.capabilities.supported_output_modalities == ["image_path"]
 
-    def test_supported_output_data_types_video_with_audio(self) -> None:
-        """Test that a video target reports flattened sorted unique output data types."""
+    def test_supported_output_modalities_video_with_audio(self) -> None:
+        """Test that a video target reports flattened sorted unique output modalities."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             output_modalities=frozenset(
@@ -1410,7 +1410,29 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.capabilities.supported_output_data_types == ["audio_path", "video_path"]
+        assert result.capabilities.supported_output_modalities == ["audio_path", "video_path"]
+
+    def test_target_configuration_excluded_from_target_specific_params(self) -> None:
+        """Test that the verbose target_configuration blob is filtered from target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "target_configuration": {"capabilities": {"supports_multi_turn": True}},
+                "reasoning_effort": "high",
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.target_specific_params is not None
+        assert "target_configuration" not in result.target_specific_params
+        assert result.target_specific_params["reasoning_effort"] == "high"
 
 
 # ============================================================================
