@@ -439,7 +439,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               />
             </div>
             <div className={styles.columnRight}>
-              {activeTarget && activeTarget.supports_multi_turn === false && (
+              {activeTarget && activeTarget.capabilities?.supports_multi_turn === false && (
                 <Tooltip
                   content="This target does not track conversation history — each turn is sent independently."
                   relationship="description"

@@ -11,7 +11,7 @@ from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SCALES_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -39,7 +39,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,

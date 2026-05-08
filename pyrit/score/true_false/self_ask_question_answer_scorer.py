@@ -47,7 +47,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
-                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             true_false_question_path (Optional[pathlib.Path]): The path to the true/false question file.
                 Defaults to None, which uses the default question_answering.yaml file.

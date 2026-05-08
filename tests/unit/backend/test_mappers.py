@@ -1257,6 +1257,114 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params["seed"] == 42
         assert result.target_specific_params["max_completion_tokens"] == 2048
 
+    def test_capabilities_populated_from_target_object(self) -> None:
+        """Test that all 6 capability fields are populated from target_obj.capabilities."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_json_schema=False,
+            supports_json_output=True,
+            supports_editable_history=False,
+            supports_system_prompt=True,
+        )
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities is not None
+        assert result.capabilities.supports_multi_turn is True
+        assert result.capabilities.supports_multi_message_pieces is True
+        assert result.capabilities.supports_json_schema is False
+        assert result.capabilities.supports_json_output is True
+        assert result.capabilities.supports_editable_history is False
+        assert result.capabilities.supports_system_prompt is True
+
+    def test_capabilities_modalities_flattened_and_sorted(self) -> None:
+        """Test that input/output modality combinations are flattened to a sorted list of types."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset({"text"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "image_path"}),
+                }
+            ),
+            output_modalities=frozenset({frozenset({"audio_path", "video_path"})}),
+        )
+        mock_identifier = ComponentIdentifier(
+            class_name="CustomTarget",
+            class_module="pyrit.prompt_target",
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities is not None
+        assert result.capabilities.supported_input_modalities == ["image_path", "text"]
+        assert result.capabilities.supported_output_modalities == ["audio_path", "video_path"]
+
+    def test_capabilities_default_modalities_are_text(self) -> None:
+        """Targets that don't override modalities should default to ['text']."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        mock_identifier = ComponentIdentifier(
+            class_name="TextTarget",
+            class_module="pyrit.prompt_target",
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities is not None
+        assert result.capabilities.supported_input_modalities == ["text"]
+        assert result.capabilities.supported_output_modalities == ["text"]
+
+    def test_capabilities_matches_legacy_supports_multi_turn(self) -> None:
+        """Test that legacy supports_multi_turn field matches capabilities.supports_multi_turn."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=False)
+        mock_identifier = ComponentIdentifier(
+            class_name="TextTarget",
+            class_module="pyrit.prompt_target",
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.supports_multi_turn is False
+        assert result.capabilities is not None
+        assert result.capabilities.supports_multi_turn is False
+        assert result.supports_multi_turn == result.capabilities.supports_multi_turn
+
+    def test_target_configuration_excluded_from_target_specific_params(self) -> None:
+        """Test that the verbose target_configuration blob is filtered from target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "target_configuration": {"capabilities": {"supports_multi_turn": True}},
+                "reasoning_effort": "high",
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.target_specific_params is not None
+        assert "target_configuration" not in result.target_specific_params
+        assert result.target_specific_params["reasoning_effort"] == "high"
+
 
 # ============================================================================
 # Converter Mapper Tests

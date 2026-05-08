@@ -28,12 +28,11 @@ def large_sample_image(tmp_path):
 def test_add_image_text_converter_initialization(image_text_converter_sample_image):
     converter = AddImageTextConverter(
         img_to_add=image_text_converter_sample_image,
-        font_name="helvetica.ttf",
         color=(255, 255, 255),
         font_size=20,
     )
     assert converter._img_to_add == image_text_converter_sample_image
-    assert converter._font_name == "helvetica.ttf"
+    assert converter._font_name is None
     assert converter._color == (255, 255, 255)
     assert converter._font_size_max == 20
     assert converter._font_size_min == 20
@@ -88,7 +87,7 @@ def test_add_image_text_converter_invalid_font(image_text_converter_sample_image
 
 def test_add_image_text_converter_null_img_to_add():
     with pytest.raises(ValueError):
-        AddImageTextConverter(img_to_add="", font_name="helvetica.ttf")
+        AddImageTextConverter(img_to_add="")
 
 
 def test_add_image_text_converter_fallback_to_default_font(image_text_converter_sample_image, caplog):
@@ -124,9 +123,7 @@ def test_add_image_text_converter_font_size_tuple_zero_min(image_text_converter_
 
 
 def test_image_text_converter_add_text_to_image(image_text_converter_sample_image):
-    converter = AddImageTextConverter(
-        img_to_add=image_text_converter_sample_image, font_name="helvetica.ttf", color=(255, 255, 255)
-    )
+    converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image, color=(255, 255, 255))
     with Image.open(image_text_converter_sample_image) as image:
         pixels_before = list(image.get_flattened_data())
     updated_image = converter._add_text_to_image("Sample Text!")
@@ -143,7 +140,7 @@ async def test_add_image_text_converter_invalid_input_text(image_text_converter_
 
 
 async def test_add_image_text_converter_invalid_file_path():
-    converter = AddImageTextConverter(img_to_add="nonexistent_image.png", font_name="helvetica.ttf")
+    converter = AddImageTextConverter(img_to_add="nonexistent_image.png")
     with pytest.raises(FileNotFoundError):
         assert await converter.convert_async(prompt="Sample Text!", input_type="text")  # type: ignore[arg-type]
 

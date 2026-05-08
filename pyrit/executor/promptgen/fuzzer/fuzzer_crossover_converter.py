@@ -13,7 +13,7 @@ from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
 )
 from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 
 class FuzzerCrossOverConverter(FuzzerConverter):
@@ -25,7 +25,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
     def __init__(
         self,
         *,
-        converter_target: Optional[PromptChatTarget] = None,
+        converter_target: Optional[PromptTarget] = None,
         prompt_template: Optional[SeedPrompt] = None,
         prompt_templates: Optional[list[str]] = None,
     ) -> None:
@@ -33,7 +33,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
         Initialize the converter with the specified chat target and prompt templates.
 
         Args:
-            converter_target (PromptChatTarget): Chat target used to perform fuzzing on user prompt.
+            converter_target (PromptTarget): Chat target used to perform fuzzing on user prompt.
                 Can be omitted if a default has been configured via PyRIT initialization.
             prompt_template (SeedPrompt, Optional): Template to be used instead of the default system prompt with
                 instructions for the chat target.

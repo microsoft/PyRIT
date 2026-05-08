@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -25,7 +25,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptTarget): The chat target used to score. Must satisfy
-                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.

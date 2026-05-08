@@ -17,9 +17,7 @@ import pytest
 
 from pyrit.common.path import HOME_PATH
 from pyrit.models import MessagePiece
-from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget, TargetCapabilities, TargetConfiguration
 
 # Path to sample audio file for testing
 SAMPLE_AUDIO_FILE = HOME_PATH / "assets" / "converted_audio.wav"

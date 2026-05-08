@@ -7,7 +7,7 @@ from typing import Optional, Union
 
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.models import SeedPrompt
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
 
@@ -23,7 +23,7 @@ class AttackAdversarialConfig:
     _DEFAULT_SEED_PROMPT = ""
 
     # Adversarial chat target for the attack
-    target: PromptChatTarget
+    target: PromptTarget
 
     # Path to the YAML file containing the system prompt for the adversarial chat target
     system_prompt_path: Optional[Union[str, Path]] = None
