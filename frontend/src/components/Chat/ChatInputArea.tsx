@@ -167,9 +167,29 @@ function TextInputRows({ input, convertedValue, disabled, textareaRef, converted
 }
 
 // ---------------------------------------------------------------------------
-// Unsupported modality helper
+// Target modality validation
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns the list of input modalities the active target cannot accept,
+ * combining both attached files and pending converter outputs.
+ *
+ * Each pending input is mapped to its underlying data type
+ * (e.g. attached image → `image_path`, text-to-image converter → `image_path`)
+ * and checked against the target's `supported_input_modalities`. Anything
+ * not in that set is reported once, in encounter order: attachment UI types
+ * first (e.g. `'image'`, `'audio'`, `'file'`), then converter output data
+ * types (e.g. `'image_path'`).
+ *
+ * Returns an empty list if no target is selected, if the target advertises
+ * no capabilities, or if every input is supported. A non-empty result drives
+ * the warning banner and disables the send button so the user sees the
+ * mismatch before the request reaches the backend.
+ *
+ * @param converterOutputDataTypes - Output `PromptDataType` of each
+ *   currently-selected converter, surfaced separately because converters
+ *   produce data types that don't necessarily match the original attachment.
+ */
 function getUnsupportedDataTypes(
   attachments: MessageAttachment[],
   converterOutputDataTypes: string[],
