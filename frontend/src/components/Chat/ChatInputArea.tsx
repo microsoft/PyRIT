@@ -171,27 +171,40 @@ function TextInputRows({ input, convertedValue, disabled, textareaRef, converted
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the list of input modalities the active target cannot accept,
- * combining both attached files and pending converter outputs.
+ * Returns the attachment UI types (e.g. `'image'`, `'audio'`, `'file'`) whose
+ * underlying `PromptDataType` the active target does not accept.
  *
- * Each pending input is mapped to its underlying data type
- * (e.g. attached image → `image_path`, text-to-image converter → `image_path`)
- * and checked against the target's `supported_input_modalities`. Anything
- * not in that set is reported once, in encounter order: attachment UI types
- * first (e.g. `'image'`, `'audio'`, `'file'`), then converter output data
- * types (e.g. `'image_path'`).
- *
- * Returns an empty list if no target is selected, if the target advertises
- * no capabilities, or if every input is supported. A non-empty result drives
- * the warning banner and disables the send button so the user sees the
- * mismatch before the request reaches the backend.
- *
- * @param converterOutputDataTypes - Output `PromptDataType` of each
- *   currently-selected converter, surfaced separately because converters
- *   produce data types that don't necessarily match the original attachment.
+ * Returns an empty list if no target is selected, if the target advertises no
+ * capabilities, or if every attachment is supported. Deduplicated by UI type.
  */
-function getUnsupportedDataTypes(
+function getUnsupportedAttachmentTypes(
   attachments: MessageAttachment[],
+  activeTarget: TargetInstance | null | undefined,
+): string[] {
+  if (!activeTarget?.capabilities?.supported_input_modalities) return []
+  const supported = new Set(activeTarget.capabilities.supported_input_modalities)
+  const unsupported: string[] = []
+  const seen = new Set<string>()
+  for (const att of attachments) {
+    const dataType = PIECE_TYPE_TO_DATA_TYPE[att.type]
+    if (dataType && !seen.has(att.type) && !supported.has(dataType)) {
+      seen.add(att.type)
+      unsupported.push(att.type)
+    }
+  }
+  return unsupported
+}
+
+/**
+ * Returns the converter output `PromptDataType` strings (e.g. `'image_path'`)
+ * the active target does not accept. Surfaced separately from attachment
+ * checks because converters can produce data types that don't match any
+ * existing attachment (e.g. a text-to-image converter on text input).
+ *
+ * Returns an empty list if no target is selected, if the target advertises no
+ * capabilities, or if every converter output is supported.
+ */
+function getUnsupportedConverterOutputTypes(
   converterOutputDataTypes: string[],
   activeTarget: TargetInstance | null | undefined,
 ): string[] {
@@ -199,26 +212,18 @@ function getUnsupportedDataTypes(
   const supported = new Set(activeTarget.capabilities.supported_input_modalities)
   const unsupported: string[] = []
   const seen = new Set<string>()
-
-  // Check attachment types
-  for (const att of attachments) {
-    const dataType = PIECE_TYPE_TO_DATA_TYPE[att.type]
-    if (dataType && !seen.has(dataType) && !supported.has(dataType)) {
-      seen.add(dataType)
-      unsupported.push(att.type)
-    }
-  }
-
-  // Check converter output types (e.g., text-to-image converter producing image_path)
   for (const dataType of converterOutputDataTypes) {
     if (!seen.has(dataType) && !supported.has(dataType)) {
       seen.add(dataType)
       unsupported.push(dataType)
     }
   }
-
   return unsupported
 }
+
+// Strip the `_path` suffix used internally for media `PromptDataType` strings
+// so the UI shows e.g. "image" instead of "image_path", matching ConverterPanel badges.
+const formatModalityLabel = (modality: string): string => modality.replace('_path', '')
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -263,7 +268,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const convertedRef = useRef<HTMLTextAreaElement>(null)
 
   // Derive unsupported types from attachments AND converter outputs
-  const unsupportedTypes = getUnsupportedDataTypes(attachments, converterOutputDataTypes, activeTarget)
+  const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(attachments, activeTarget)
+  const unsupportedConverterOutputTypes = getUnsupportedConverterOutputTypes(converterOutputDataTypes, activeTarget)
+  const hasUnsupportedModalities =
+    unsupportedAttachmentTypes.length > 0 || unsupportedConverterOutputTypes.length > 0
 
   const hasConversion = convertedValue != null && convertedValue !== ''
   const textInputClassName = hasConversion
@@ -318,7 +326,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   }
 
   const handleSend = () => {
-    if ((input || attachments.length > 0) && !disabled && unsupportedTypes.length === 0) {
+    if ((input || attachments.length > 0) && !disabled && !hasUnsupportedModalities) {
       onSend(input, convertedValue ?? undefined, attachments)
       setInput('')
       setAttachments([])
@@ -494,11 +502,24 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 formatFileSize={formatFileSize}
                 styles={styles}
               />
-              {unsupportedTypes.length > 0 && (
+              {hasUnsupportedModalities && (
                 <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
                   <WarningRegular fontSize={14} />
                   <Caption1>
-                    This target does not support {unsupportedTypes.join(', ')} files. Remove the attachment to send.
+                    {unsupportedAttachmentTypes.length > 0 && (
+                      <>
+                        This target does not support {unsupportedAttachmentTypes.join(', ')} attachments.
+                        Remove them to send.
+                      </>
+                    )}
+                    {unsupportedAttachmentTypes.length > 0 && unsupportedConverterOutputTypes.length > 0 && ' '}
+                    {unsupportedConverterOutputTypes.length > 0 && (
+                      <>
+                        The selected converter produces{' '}
+                        {unsupportedConverterOutputTypes.map(formatModalityLabel).join(', ')} output, which this target
+                        does not support.
+                      </>
+                    )}
                   </Caption1>
                 </div>
               )}
@@ -531,7 +552,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 appearance="primary"
                 icon={<SendRegular />}
                 onClick={handleSend}
-                disabled={disabled || (!input && attachments.length === 0) || unsupportedTypes.length > 0}
+                disabled={disabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
                 title="Send message"
                 data-testid="send-message-btn"
               />

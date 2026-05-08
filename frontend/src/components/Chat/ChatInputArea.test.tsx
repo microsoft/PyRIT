@@ -689,7 +689,7 @@ describe("ChatInputArea", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support image files/)).toBeInTheDocument();
+      expect(screen.getByText(/does not support image attachments/)).toBeInTheDocument();
     });
   });
 
@@ -760,7 +760,7 @@ describe("ChatInputArea", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support audio files/)).toBeInTheDocument();
+      expect(screen.getByText(/does not support audio attachments/)).toBeInTheDocument();
     });
   });
 
@@ -789,7 +789,7 @@ describe("ChatInputArea", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support image, audio files/)).toBeInTheDocument();
+      expect(screen.getByText(/does not support image, audio attachments/)).toBeInTheDocument();
     });
   });
 
@@ -845,7 +845,7 @@ describe("ChatInputArea", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support file files/)).toBeInTheDocument();
+      expect(screen.getByText(/does not support file attachments/)).toBeInTheDocument();
     });
   });
 
@@ -870,7 +870,7 @@ describe("ChatInputArea", () => {
     await user.type(input, "convert this to image");
 
     expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-    expect(screen.getByText(/does not support image_path/)).toBeInTheDocument();
+    expect(screen.getByText(/selected converter produces image output, which this target does not support/)).toBeInTheDocument();
     expect(getSendButton()).toBeDisabled();
   });
 
@@ -890,5 +890,38 @@ describe("ChatInputArea", () => {
     );
 
     expect(screen.queryByTestId("unsupported-modality-warning")).not.toBeInTheDocument();
+  });
+
+  it("should show both attachment and converter messages when both are unsupported", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{
+            target_registry_name: "t",
+            target_type: "TextTarget",
+            capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+          }}
+          converterOutputDataTypes={["audio_path"]}
+        />
+      </TestWrapper>
+    );
+
+    const file = new File(["img"], "photo.png", { type: "image/png" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
+    });
+    // Attachment message — uses UI piece type
+    expect(screen.getByText(/does not support image attachments\. Remove them to send\./)).toBeInTheDocument();
+    // Converter message — uses formatted modality label (audio, not audio_path)
+    expect(
+      screen.getByText(/selected converter produces audio output, which this target does not support/)
+    ).toBeInTheDocument();
+    expect(getSendButton()).toBeDisabled();
   });
 });

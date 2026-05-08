@@ -14,7 +14,7 @@ from pyrit.prompt_target.common.target_capabilities import CapabilityName, Targe
 _CAPABILITY_PARAM_NAMES = frozenset(cap.value for cap in CapabilityName)
 
 
-def target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapabilitiesInfo:
+def _target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapabilitiesInfo:
     """
     Build a TargetCapabilitiesInfo DTO from a domain TargetCapabilities object.
 
@@ -86,6 +86,6 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         temperature=params.get("temperature"),
         top_p=params.get("top_p"),
         max_requests_per_minute=params.get("max_requests_per_minute"),
-        capabilities=target_capabilities_to_info(target_obj.capabilities),
+        capabilities=_target_capabilities_to_info(target_obj.capabilities),
         target_specific_params=combined_specific,
     )
