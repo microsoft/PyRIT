@@ -76,7 +76,6 @@
 #    - `version`: Integer version number
 #    - `strategy_class`: The strategy enum class for this scenario
 #    - `objective_scorer_identifier`: Identifier dict for the scoring mechanism (optional)
-#    - `include_default_baseline`: Whether to include a baseline attack (default: True)
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
 # 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
@@ -85,6 +84,8 @@
 #    - `max_concurrency`: Number of concurrent operations (default: 1)
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
+#    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
+#      default; `True` for scenarios that support a baseline)
 #
 # ### Example Structure
 #
@@ -174,10 +175,11 @@ await print_scenarios_list_async(context=FrontendCore())  # type: ignore
 #
 # Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
 # each objective directly to the target without any converters or multi-turn techniques. This is
-# controlled by the `include_default_baseline` parameter (default: `True` for most scenarios).
+# controlled by the `include_baseline` parameter on `initialize_async` (default: `True` for
+# scenarios that support a baseline).
 #
-# To run *only* the baseline (no attack strategies), create a `RedTeamAgent` with
-# `include_baseline=True` (the default) and pass `scenario_strategies=None`. See
+# To run *only* the baseline (no attack strategies), call `initialize_async` with
+# `include_baseline=True` (the default) and `scenario_strategies=None`. See
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a working example.
 
 # %% [markdown]

@@ -3,6 +3,7 @@
 
 """Additional tests for Scenario retry with AttackExecutorResult functionality."""
 
+from typing import ClassVar
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -73,10 +74,9 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
-        # Default include_default_baseline=False for tests unless explicitly specified
-        kwargs.setdefault("include_default_baseline", False)
+    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
 
+    def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
         # Get strategy_class from kwargs or use default
         strategy_class = kwargs.pop("strategy_class", None) or self.get_strategy_class()
 

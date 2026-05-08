@@ -104,7 +104,6 @@ class Cyber(Scenario):
         self,
         *,
         objective_scorer: TrueFalseScorer | None = None,
-        include_baseline: bool = True,
         scenario_result_id: str | None = None,
     ) -> None:
         """
@@ -113,8 +112,6 @@ class Cyber(Scenario):
         Args:
             objective_scorer (TrueFalseScorer | None): Objective scorer for malware detection. If not
                 provided, defaults to a composite scorer using malware detection + refusal backstop.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         self._objective_scorer: TrueFalseScorer = (
@@ -125,7 +122,6 @@ class Cyber(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             strategy_class=self.get_strategy_class(),
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 

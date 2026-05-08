@@ -247,7 +247,6 @@ class RedTeamAgent(Scenario):
         *,
         adversarial_chat: Optional[PromptTarget] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
     ) -> None:
         """
@@ -260,10 +259,6 @@ class RedTeamAgent(Scenario):
             attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                attack-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
 
         Raises:
@@ -286,7 +281,6 @@ class RedTeamAgent(Scenario):
             version=self.VERSION,
             strategy_class=FoundryStrategy,
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
         self._scenario_composites: list[FoundryComposite] = []
@@ -303,6 +297,7 @@ class RedTeamAgent(Scenario):
         max_concurrency: int = 10,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
+        include_baseline: bool | None = None,
     ) -> None:
         """
         Initialize the scenario.
@@ -318,6 +313,7 @@ class RedTeamAgent(Scenario):
             max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 10.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
+            include_baseline (bool | None): See ``Scenario.initialize_async``.
         """
         # This override exists purely for type-widening: FoundryComposite is a dataclass,
         # not a ScenarioStrategy enum member, so the base class signature would reject it.
@@ -329,6 +325,7 @@ class RedTeamAgent(Scenario):
             max_concurrency=max_concurrency,
             max_retries=max_retries,
             memory_labels=memory_labels,
+            include_baseline=include_baseline,
         )
 
     def _prepare_strategies(  # type: ignore[ty:invalid-method-override]

@@ -102,10 +102,9 @@ class TestLeakageInitialization:
         scorer_path = DATASETS_PATH / "score" / "true_false_question" / "leakage.yaml"
         assert scorer_path.exists(), f"Expected leakage.yaml scorer at {scorer_path}"
 
-    def test_init_include_baseline_true(self, mock_objective_scorer):
-        """Test that include_baseline is always True."""
-        scenario = Leakage(objective_scorer=mock_objective_scorer)
-        assert scenario._include_baseline is True
+    def test_init_supports_default_baseline(self):
+        """Leakage opts into the parent's default baseline."""
+        assert Leakage.SUPPORTS_DEFAULT_BASELINE is True
 
 
 @pytest.mark.usefixtures(*FIXTURES)

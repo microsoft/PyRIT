@@ -107,6 +107,19 @@ class Scenario(ABC):
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
+    #: Whether this scenario type supports a default baseline atomic attack. Subclasses whose
+    #: semantics make a default baseline meaningless (e.g. benchmarks that compare against a
+    #: gold-standard answer rather than measure attack lift over an unmodified prompt) override
+    #: this to ``False``. When ``False``, ``initialize_async`` skips the baseline regardless of
+    #: the user-facing default and raises ``ValueError`` if the caller explicitly opts in.
+    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = True
+
+    #: Whether this scenario type includes the baseline atomic attack by default. Used only when
+    #: ``SUPPORTS_DEFAULT_BASELINE`` is ``True``. Subclasses can override this to ``False`` when
+    #: their default behavior should omit the baseline (e.g. when the scenario is already
+    #: dominated by a long list of templates and the baseline is rarely informative).
+    DEFAULT_INCLUDE_BASELINE: ClassVar[bool] = True
+
     def __init__(
         self,
         *,
@@ -114,7 +127,6 @@ class Scenario(ABC):
         version: int,
         strategy_class: type[ScenarioStrategy],
         objective_scorer: Scorer,
-        include_default_baseline: bool = True,
         scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
     ) -> None:
         """
@@ -125,10 +137,6 @@ class Scenario(ABC):
             version (int): Version number of the scenario.
             strategy_class (Type[ScenarioStrategy]): The strategy enum class for this scenario.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
-            include_default_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Most scenarios should have some kind of baseline so users can understand
-                the impact of strategies, but subclasses can optionally write their own custom baselines.
-                Defaults to True.
             scenario_result_id (Optional[Union[uuid.UUID, str]]): Optional ID of an existing scenario result to resume.
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
@@ -167,8 +175,6 @@ class Scenario(ABC):
         self._atomic_attacks: list[AtomicAttack] = []
         self._scenario_result_id: Optional[str] = str(scenario_result_id) if scenario_result_id else None
         self._result_lock = asyncio.Lock()
-
-        self._include_baseline = include_default_baseline
 
         # Store prepared strategies for use in _get_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
@@ -486,6 +492,7 @@ class Scenario(ABC):
         max_concurrency: int = 10,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
+        include_baseline: bool | None = None,
     ) -> None:
         """
         Initialize the scenario by populating self._atomic_attacks and creating the ScenarioResult.
@@ -513,9 +520,15 @@ class Scenario(ABC):
                 For example, max_retries=3 allows up to 4 total attempts (1 initial + 3 retries).
             memory_labels (Optional[Dict[str, str]]): Additional labels to apply to all
                 attack runs in the scenario. These help track and categorize the scenario.
+            include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
+                all objectives without modifications, allowing comparison between unmodified prompts
+                and the scenario's strategies. If None (the default), the scenario type's
+                ``SUPPORTS_DEFAULT_BASELINE`` class attribute decides. Passing ``True`` on a
+                scenario whose ``SUPPORTS_DEFAULT_BASELINE`` is False raises ``ValueError``.
 
         Raises:
-            ValueError: If no objective_target is provided.
+            ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed
+                to a scenario that does not support a default baseline.
         """
         # Validate required parameters
         if objective_target is None:
@@ -527,12 +540,26 @@ class Scenario(ABC):
         # Set instance variables from parameters
         self._objective_target = objective_target
         self._objective_target_identifier = objective_target.get_identifier()
-        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
+        self.TARGET_REQUIREMENTS.validate(target=objective_target)
         self._dataset_config_provided = dataset_config is not None
         self._dataset_config = dataset_config if dataset_config else self.default_dataset_config()
         self._max_concurrency = max_concurrency
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
+
+        # Resolve the effective include_baseline. Capability is checked first so a forbidden
+        # scenario type never silently inherits a True default; explicit-True on a forbidden
+        # type is a hard error rather than a silent ignore. When the scenario type supports
+        # the baseline, None defers to DEFAULT_INCLUDE_BASELINE on the class.
+        if not self.SUPPORTS_DEFAULT_BASELINE:
+            if include_baseline:
+                raise ValueError(
+                    f"{type(self).__name__} does not support a default baseline; pass "
+                    f"include_baseline=False or omit the argument."
+                )
+            include_baseline = False
+        elif include_baseline is None:
+            include_baseline = self.DEFAULT_INCLUDE_BASELINE
 
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
@@ -546,7 +573,7 @@ class Scenario(ABC):
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
-        if self._include_baseline:
+        if include_baseline:
             baseline_attack = self._get_baseline()
             self._atomic_attacks.insert(0, baseline_attack)
 

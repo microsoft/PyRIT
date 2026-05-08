@@ -5,7 +5,7 @@ import logging
 import os
 import pathlib
 from dataclasses import dataclass
-from typing import Any, Optional, TypeVar
+from typing import Any, ClassVar, Optional, TypeVar
 
 import yaml
 
@@ -147,6 +147,7 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
 
     #: Psychosocial runs CrescendoAttack, which requires the target to natively support
     #: editable conversation history (for backtracking). Declared here so the base scenario
@@ -265,7 +266,6 @@ class Psychosocial(Scenario):
             strategy_class=PsychosocialStrategy,
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
-            include_default_baseline=False,
         )
 
         # Store deprecated objectives for later resolution in _resolve_seed_groups

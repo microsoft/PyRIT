@@ -3,6 +3,7 @@
 
 """Tests for Scenario custom parameter declaration, coercion, and validation (Stage 1b)."""
 
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,6 +34,9 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
             return {"all"}
 
     class _ParamTestScenario(Scenario):
+        # No baseline in tests so atomic_attacks observations stay deterministic.
+        SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
+
         @classmethod
         def get_strategy_class(cls):
             return _ParamTestStrategy
@@ -60,7 +64,6 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
         version=1,
         strategy_class=_ParamTestStrategy,
         objective_scorer=mock_scorer,
-        include_default_baseline=False,
     )
 
 

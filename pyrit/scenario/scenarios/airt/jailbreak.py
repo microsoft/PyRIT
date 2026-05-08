@@ -3,7 +3,7 @@
 
 import os
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, ClassVar, Optional, Union
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
@@ -81,6 +81,11 @@ class Jailbreak(Scenario):
 
     VERSION: int = 1
 
+    #: Jailbreak runs many templates per objective, so the baseline atomic attack is rarely
+    #: informative relative to the volume of jailbreak templates. Off by default; callers that
+    #: want a comparison can pass ``include_baseline=True`` to ``initialize_async``.
+    DEFAULT_INCLUDE_BASELINE: ClassVar[bool] = False
+
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         """
@@ -121,7 +126,6 @@ class Jailbreak(Scenario):
         self,
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
-        include_baseline: bool = False,
         scenario_result_id: Optional[str] = None,
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
@@ -133,8 +137,6 @@ class Jailbreak(Scenario):
         Args:
             objective_scorer (Optional[TrueFalseScorer]): Scorer for detecting successful jailbreaks
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all
-                objectives without modifications. Defaults to True.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
             num_templates (Optional[int]): Choose num_templates random jailbreaks rather than using all of them.
             num_attempts (Optional[int]): Number of times to try each jailbreak.
@@ -184,7 +186,6 @@ class Jailbreak(Scenario):
             version=self.VERSION,
             strategy_class=JailbreakStrategy,
             objective_scorer=self._objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 

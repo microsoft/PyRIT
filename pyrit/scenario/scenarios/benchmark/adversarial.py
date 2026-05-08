@@ -33,6 +33,7 @@ class AdversarialBenchmark(Scenario):
 
     VERSION: int = 1
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
+    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -118,7 +119,6 @@ class AdversarialBenchmark(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             strategy_class=self.get_strategy_class(),
-            include_default_baseline=False,
             scenario_result_id=scenario_result_id,
         )
 

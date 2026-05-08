@@ -173,7 +173,6 @@ class Encoding(Scenario):
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
         encoding_templates: Optional[Sequence[str]] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
     ) -> None:
         """
@@ -185,10 +184,6 @@ class Encoding(Scenario):
                 category.
             encoding_templates (Optional[Sequence[str]]): Templates used to construct the decoding
                 prompts. Defaults to AskToDecodeConverter.garak_templates.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
@@ -200,7 +195,6 @@ class Encoding(Scenario):
             version=self.VERSION,
             strategy_class=EncodingStrategy,
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 

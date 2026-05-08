@@ -655,7 +655,6 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
 
             # Before initialize_async, composites should be empty
@@ -665,6 +664,7 @@ class TestFoundryProperties:
                 objective_target=mock_objective_target,
                 scenario_strategies=strategies,
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
             # After initialize_async, composites should be set
@@ -735,12 +735,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[composite],
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         assert len(scenario._scenario_composites) == 1
@@ -766,12 +766,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[composite, FoundryStrategy.ROT13],
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         assert len(scenario._scenario_composites) == 2
@@ -797,12 +797,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[legacy],  # type: ignore[arg-type]
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         assert len(scenario._scenario_composites) == 1
@@ -828,12 +828,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[legacy],  # type: ignore[arg-type]
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         result = scenario._scenario_composites[0]
@@ -858,12 +858,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[legacy],  # type: ignore[arg-type]
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         result = scenario._scenario_composites[0]

@@ -150,7 +150,6 @@ class Scam(Scenario):
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
         adversarial_chat: Optional[PromptTarget] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
     ) -> None:
         """
@@ -161,10 +160,6 @@ class Scam(Scenario):
                 evaluation.
             adversarial_chat (Optional[PromptTarget]): Chat target used to rephrase the
                 objective into the role-play context (in single-turn strategies).
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
         """
         if not objective_scorer:
@@ -179,7 +174,6 @@ class Scam(Scenario):
             version=self.VERSION,
             strategy_class=ScamStrategy,
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
 

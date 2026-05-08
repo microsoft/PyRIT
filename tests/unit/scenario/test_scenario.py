@@ -3,6 +3,7 @@
 
 """Tests for the scenarios.Scenario class."""
 
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
@@ -97,10 +98,12 @@ def sample_attack_results():
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    def __init__(self, atomic_attacks_to_return=None, **kwargs):
-        # Default include_default_baseline=False for tests unless explicitly specified
-        kwargs.setdefault("include_default_baseline", False)
+    # Tests using this fixture should default to no baseline; set the class flag to forbid
+    # the default baseline so we don't have to thread include_baseline=False through every
+    # initialize_async call.
+    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
 
+    def __init__(self, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
 
         class TestStrategy(ScenarioStrategy):
@@ -711,11 +714,10 @@ class TestScenarioBaselineOnlyExecution:
         """Test that baseline is included when include_baseline=True, regardless of strategies."""
         from pyrit.models import SeedAttackGroup, SeedObjective
 
-        # Create a scenario with include_default_baseline=True and TrueFalseScorer
+        # Create a scenario with TrueFalseScorer; baseline is included by default
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Only Test",
             version=1,
-            include_default_baseline=True,
         )
 
         # Create a mock dataset config with seed groups
@@ -740,11 +742,10 @@ class TestScenarioBaselineOnlyExecution:
         """Test that baseline-only scenario can run successfully."""
         from pyrit.models import SeedAttackGroup, SeedObjective
 
-        # Create a scenario with include_default_baseline=True and TrueFalseScorer
+        # Create a scenario with TrueFalseScorer; baseline is included by default
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Only Test",
             version=1,
-            include_default_baseline=True,
         )
 
         # Create a mock dataset config with seed groups
@@ -776,7 +777,6 @@ class TestScenarioBaselineOnlyExecution:
         scenario = ConcreteScenario(
             name="No Baseline Test",
             version=1,
-            include_default_baseline=False,  # No baseline
         )
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
@@ -799,7 +799,6 @@ class TestScenarioBaselineOnlyExecution:
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Seeds Test",
             version=1,
-            include_default_baseline=True,
         )
 
         # Create specific seed groups to verify they're used
