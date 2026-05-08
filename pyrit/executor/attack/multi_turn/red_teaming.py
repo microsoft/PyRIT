@@ -143,7 +143,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         self._objective_scorer = attack_scoring_config.objective_scorer
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
-        self._score_blocked_content = attack_scoring_config.score_blocked_content
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
@@ -606,7 +605,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 message=context.last_response,
                 role_filter="assistant",
                 objective=context.objective,
-                score_blocked_content=self._score_blocked_content,
             )
 
         objective_scores = scoring_results

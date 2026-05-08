@@ -76,20 +76,3 @@ class TestAttackScoringConfig:
         config = AttackScoringConfig(use_score_as_feedback=False)
 
         assert config.use_score_as_feedback is False
-
-    def test_score_blocked_content_default_is_false(self):
-        """Test that score_blocked_content defaults to False."""
-        config = AttackScoringConfig()
-        assert config.score_blocked_content is False
-
-    def test_score_blocked_content_can_set_to_true(self):
-        """Test that score_blocked_content can be set to True."""
-        config = AttackScoringConfig(score_blocked_content=True)
-        assert config.score_blocked_content is True
-
-    def test_score_blocked_content_with_valid_scorers(self):
-        """Test that score_blocked_content works with valid scorers."""
-        mock_scorer = MagicMock(spec=TrueFalseScorer)
-        config = AttackScoringConfig(objective_scorer=mock_scorer, score_blocked_content=True)
-        assert config.score_blocked_content is True
-        assert config.objective_scorer is mock_scorer

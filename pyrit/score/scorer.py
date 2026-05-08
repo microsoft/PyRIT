@@ -69,6 +69,15 @@ class Scorer(Identifiable, abc.ABC):
 
     _identifier: Optional[ComponentIdentifier] = None
 
+    #: When True, blocked responses that contain partial content
+    #: (in prompt_metadata["partial_content"]) will be scored using that content
+    #: instead of being filtered out or short-circuited.
+    #: Set this on scorer instances before use. Defaults to False.
+    #:
+    #: Note: This attribute will only take effect if the target supports partial content extraction when content
+    #: filters are triggered (e.g., Chat Completions model via OpenAIChatTarget).
+    score_blocked_content: bool = False
+
     def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
         """
         Initialize the Scorer.
@@ -163,7 +172,6 @@ class Scorer(Identifiable, abc.ABC):
         role_filter: Optional[ChatMessageRole] = None,
         skip_on_error_result: bool = False,
         infer_objective_from_request: bool = False,
-        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Score the message, add the results to the database, and return a list of Score objects.
@@ -175,14 +183,11 @@ class Scorer(Identifiable, abc.ABC):
             role_filter (Optional[ChatMessageRole]): Only score messages with this exact stored role.
                 Use "assistant" to score only real assistant responses, or "simulated_assistant"
                 to score only simulated responses. Defaults to None (no filtering).
-            skip_on_error_result (bool): If True, skip scoring if the message contains an error. If True
-                but score_blocked_content is also True, blocked content will be scored in the case of a
-                content filter triggered error instead of skipping. Defaults to False.
+            skip_on_error_result (bool): If True, skip scoring if the message contains an error.
+                When self.score_blocked_content is also True, blocked responses with partial content
+                will still be scored instead of skipping. Defaults to False.
             infer_objective_from_request (bool): If True, infer the objective from the message's previous request
                 when objective is not provided. Defaults to False.
-            score_blocked_content (bool): If True, blocked responses that contain partial content
-                (in prompt_metadata["partial_content"]) will be scored using that content instead
-                of being filtered out or short-circuited. Defaults to False.
 
         Returns:
             list[Score]: A list of Score objects representing the results.
@@ -203,7 +208,7 @@ class Scorer(Identifiable, abc.ABC):
             has_partial = any(
                 p.prompt_metadata.get("partial_content") for p in message.message_pieces if p.is_blocked()
             )
-            if not (score_blocked_content and has_partial):
+            if not (self.score_blocked_content and has_partial):
                 logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
                 return []
 
@@ -212,9 +217,7 @@ class Scorer(Identifiable, abc.ABC):
 
         # When score_blocked_content is enabled, create a modified message where blocked pieces
         # with partial content are replaced with text-type substitutes (response_error="none").
-        # This is done here (not in _score_async) so that _score_async's signature remains
-        # (self, message, *, objective=None) — preserving backward compatibility for subclasses.
-        scoring_message = self._apply_blocked_content_substitution(message) if score_blocked_content else message
+        scoring_message = self._apply_blocked_content_substitution(message) if self.score_blocked_content else message
 
         try:
             scores = await self._score_async(
@@ -316,9 +319,6 @@ class Scorer(Identifiable, abc.ABC):
         Each blocked piece that has prompt_metadata["partial_content"] is replaced with a
         text-typed copy (response_error="none", converted_value=partial_content). Non-blocked
         pieces and blocked pieces without partial content are kept as-is.
-
-        This is called in score_async (not _score_async) so that subclass overrides of
-        _score_async do not need to accept the score_blocked_content parameter.
 
         Args:
             message: The original message potentially containing blocked pieces.
@@ -802,7 +802,6 @@ class Scorer(Identifiable, abc.ABC):
         role_filter: ChatMessageRole = "assistant",
         objective: Optional[str] = None,
         skip_on_error_result: bool = True,
-        score_blocked_content: bool = False,
     ) -> dict[str, list[Score]]:
         """
         Score a response using an objective scorer and optional auxiliary scorers.
@@ -815,8 +814,6 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "assistant" (real responses only, not simulated).
             objective (Optional[str]): Task/objective for scoring context. Defaults to None.
             skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to True.
-            score_blocked_content (bool): If True, blocked responses with partial content will be
-                scored using that content. Defaults to False.
 
         Returns:
             Dict[str, List[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
@@ -839,7 +836,6 @@ class Scorer(Identifiable, abc.ABC):
                     role_filter=role_filter,
                     objective=objective,
                     skip_on_error_result=skip_on_error_result,
-                    score_blocked_content=score_blocked_content,
                 )
                 result["auxiliary_scores"] = aux_scores
             # objective_scores remains empty
@@ -853,14 +849,12 @@ class Scorer(Identifiable, abc.ABC):
                 role_filter=role_filter,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
-                score_blocked_content=score_blocked_content,
             )
             obj_task = objective_scorer.score_async(
                 message=response,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
                 role_filter=role_filter,
-                score_blocked_content=score_blocked_content,
             )
             aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
             result["auxiliary_scores"] = aux_scores
@@ -871,7 +865,6 @@ class Scorer(Identifiable, abc.ABC):
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
                 role_filter=role_filter,
-                score_blocked_content=score_blocked_content,
             )
             result["objective_scores"] = obj_scores
         return result
@@ -884,7 +877,6 @@ class Scorer(Identifiable, abc.ABC):
         role_filter: ChatMessageRole = "assistant",
         objective: Optional[str] = None,
         skip_on_error_result: bool = True,
-        score_blocked_content: bool = False,
     ) -> list[Score]:
         """
         Score a response using multiple scorers in parallel.
@@ -899,8 +891,6 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "assistant" (real responses only, not simulated).
             objective (Optional[str]): Optional objective description for scoring context.
             skip_on_error_result (bool): If True, skip scoring pieces that have errors (default: True).
-            score_blocked_content (bool): If True, blocked responses with partial content will be
-                scored using that content. Defaults to False.
 
         Returns:
             List[Score]: All scores from all scorers
@@ -915,7 +905,6 @@ class Scorer(Identifiable, abc.ABC):
                 objective=objective,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
-                score_blocked_content=score_blocked_content,
             )
             for scorer in scorers
         ]

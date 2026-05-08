@@ -53,12 +53,6 @@ class AttackScoringConfig:
     # Whether to use scoring results as feedback for iterative attacks
     use_score_as_feedback: bool = True
 
-    # Whether to score blocked responses using partial content from prompt_metadata["partial_content"].
-    # When True, blocked responses that contain partial model output (e.g., from Azure Content Safety
-    # triggering mid-generation) will be evaluated by scorers instead of being skipped or
-    # auto-classified as failures/refusals.
-    score_blocked_content: bool = False
-
     def __post_init__(self) -> None:
         """
         Validate configuration values.

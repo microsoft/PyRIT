@@ -454,34 +454,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             return _is_content_filter_error(response_dict)
         return False
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
-        """
-        Extract partial content from a Response API response that was content-filtered.
-
-        The Response API may include partial text in ``response.output`` message sections
-        even when the response has a content filter error.
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            The partial text content, or None if no content was generated.
-        """
-        try:
-            if not hasattr(response, "output") or not response.output:
-                return None
-            parts: list[str] = []
-            for section in response.output:
-                if getattr(section, "type", None) == MessagePieceType.MESSAGE:
-                    content = getattr(section, "content", None)
-                    if content and len(content) > 0:
-                        text = getattr(content[0], "text", None)
-                        if text:
-                            parts.append(text)
-            return "\n".join(parts) if parts else None
-        except (AttributeError, IndexError, TypeError):
-            return None
-
     def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
         """
         Validate a Response API response for errors.

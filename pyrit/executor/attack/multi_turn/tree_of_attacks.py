@@ -136,7 +136,6 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         refusal_scorer: Optional[TrueFalseScorer] = None,
         auxiliary_scorers: Optional[list[Scorer]] = None,
         use_score_as_feedback: bool = True,
-        score_blocked_content: bool = False,
     ) -> None:
         """
         Initialize TAP scoring configuration.
@@ -148,8 +147,6 @@ class TAPAttackScoringConfig(AttackScoringConfig):
             refusal_scorer (Optional[TrueFalseScorer]): Optional scorer for detecting refusals.
             auxiliary_scorers (Optional[List[Scorer]]): Additional scorers for auxiliary metrics.
             use_score_as_feedback (bool): Whether to use scoring results as feedback. Defaults to True.
-            score_blocked_content (bool): Whether to score blocked responses using partial content.
-                Defaults to False.
 
         Raises:
             ValueError: If objective_scorer is not a FloatScaleThresholdScorer or
@@ -171,7 +168,6 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         self.refusal_scorer = refusal_scorer
         self.auxiliary_scorers = auxiliary_scorers or []
         self.use_score_as_feedback = use_score_as_feedback
-        self.score_blocked_content = score_blocked_content
 
     @property
     def threshold(self) -> float:
@@ -328,7 +324,6 @@ class _TreeOfAttacksNode:
         prompt_normalizer: Optional[PromptNormalizer] = None,
         initial_prompt: Optional[Message] = None,
         error_score_map: dict[str, float] | None = None,
-        score_blocked_content: bool = False,
     ) -> None:
         """
         Initialize a tree node.
@@ -357,8 +352,11 @@ class _TreeOfAttacksNode:
                 corresponding score is assigned instead of invoking the scorer. This prevents
                 premature branch pruning when targets return blocked/filtered responses.
                 Defaults to {"blocked": 0.0}. Pass an empty dict to disable.
-            score_blocked_content (bool): If True, blocked responses with partial content will be
-                scored using that content. Defaults to False.
+
+                Note: This check runs before the scorer, so if ``score_blocked_content``
+                is set on the objective scorer, it will have no effect for error types
+                present in this map. To evaluate partial content from blocked responses,
+                pass ``error_score_map={}`` to disable the early-return.
         """
         # Store configuration
         self._objective_target = objective_target
@@ -376,7 +374,6 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._error_score_map = _validate_error_score_map(error_score_map)
-        self._score_blocked_content = score_blocked_content
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -755,7 +752,6 @@ class _TreeOfAttacksNode:
                 role_filter="assistant",
                 objective=objective,
                 skip_on_error_result=False,
-                score_blocked_content=self._score_blocked_content,
             )
 
         # Extract objective score
@@ -880,7 +876,6 @@ class _TreeOfAttacksNode:
             parent_id=self.node_id,
             prompt_normalizer=self._prompt_normalizer,
             error_score_map=self._error_score_map,
-            score_blocked_content=self._score_blocked_content,
         )
 
         # Duplicate the conversations to preserve history
@@ -1408,6 +1403,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 content policy violations from image generation targets). Defaults to
                 {"blocked": 0.0}. Pass an empty dict to disable.
 
+                Note: This check runs before the scorer, so if ``score_blocked_content``
+                is set on the objective scorer, it will have no effect for error types
+                present in this map. To evaluate partial content from blocked responses,
+                pass ``error_score_map={}`` to disable the early-return.
+
         Raises:
             ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,
                 if the adversarial target does not natively support the capabilities TAP needs,
@@ -1514,13 +1514,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 refusal_scorer=attack_scoring_config.refusal_scorer,
                 auxiliary_scorers=attack_scoring_config.auxiliary_scorers or None,
                 use_score_as_feedback=attack_scoring_config.use_score_as_feedback,
-                score_blocked_content=attack_scoring_config.score_blocked_content,
             )
 
         self._attack_scoring_config = tap_scoring_config
         self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
         self._objective_scorer = tap_scoring_config.objective_scorer
-        self._score_blocked_content = tap_scoring_config.score_blocked_content
 
         # Use the adversarial chat target for scoring, as in CrescendoAttack
         self._scoring_target = self._adversarial_chat
@@ -2035,7 +2033,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             prompt_normalizer=self._prompt_normalizer,
             initial_prompt=initial_prompt,
             error_score_map=self._error_score_map,
-            score_blocked_content=self._score_blocked_content,
         )
 
         # Add the adversarial chat conversation ID to the context's tracking (ensuring uniqueness)

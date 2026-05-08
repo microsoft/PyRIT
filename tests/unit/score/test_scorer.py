@@ -591,14 +591,12 @@ async def test_score_response_async_parallel_execution():
         objective="test task",
         role_filter="assistant",
         skip_on_error_result=True,
-        score_blocked_content=False,
     )
     scorer2.score_async.assert_any_call(
         message=response,
         objective="test task",
         role_filter="assistant",
         skip_on_error_result=True,
-        score_blocked_content=False,
     )
 
 
@@ -1648,7 +1646,7 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, score_blocked_content=False)
+        scores = await scorer.score_async(msg)
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1659,7 +1657,8 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
 
         assert len(scores) == 1
         assert scores[0].score_value == "true"
@@ -1672,7 +1671,7 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _MockRefusalScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, score_blocked_content=False)
+        scores = await scorer.score_async(msg)
 
         assert len(scores) == 1
         assert scores[0].score_value == "true"
@@ -1683,7 +1682,8 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _MockRefusalScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1695,7 +1695,8 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece()])
 
-        scores = await scorer.score_async(msg, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1706,9 +1707,10 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_normal_piece()])
 
-        scores_off = await scorer.score_async(msg, score_blocked_content=False)
+        scores_off = await scorer.score_async(msg)
         scorer.scored_pieces.clear()
-        scores_on = await scorer.score_async(msg, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores_on = await scorer.score_async(msg)
 
         assert scores_off[0].score_value == scores_on[0].score_value
 
@@ -1717,7 +1719,8 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_normal_piece(), _make_blocked_piece(partial_content="partial harmful")])
 
-        scores = await scorer.score_async(msg, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
 
         assert len(scores) == 1  # TrueFalseScorer aggregates
         assert len(scorer.scored_pieces) == 2
@@ -1735,14 +1738,15 @@ class TestSkipOnErrorWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True, score_blocked_content=False)
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
         assert scores == []
 
     async def test_skip_on_error_true_with_flag_does_not_skip_when_partial_content(self):
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
         assert len(scores) == 1
         assert scores[0].score_value == "true"
 
@@ -1750,7 +1754,8 @@ class TestSkipOnErrorWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece()])
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True, score_blocked_content=True)
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
         assert scores == []
 
 
@@ -1761,6 +1766,7 @@ class TestSkipOnErrorWithBlockedContent:
 class TestScoreResponseAsyncBlockedContent:
     async def test_score_response_async_passes_flag_to_scorers(self):
         obj_scorer = _BlockedContentScorer()
+        obj_scorer.score_blocked_content = True
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         result = await Scorer.score_response_async(
@@ -1768,7 +1774,6 @@ class TestScoreResponseAsyncBlockedContent:
             objective_scorer=obj_scorer,
             objective="test",
             skip_on_error_result=False,
-            score_blocked_content=True,
         )
 
         assert len(result["objective_scores"]) == 1
@@ -1784,7 +1789,6 @@ class TestScoreResponseAsyncBlockedContent:
             objective_scorer=obj_scorer,
             objective="test",
             skip_on_error_result=False,
-            score_blocked_content=False,
         )
 
         assert result["objective_scores"][0].score_value == "false"
@@ -1792,7 +1796,9 @@ class TestScoreResponseAsyncBlockedContent:
 
     async def test_score_response_multiple_scorers_passes_flag(self):
         scorer1 = _BlockedContentScorer()
+        scorer1.score_blocked_content = True
         scorer2 = _BlockedContentScorer()
+        scorer2.score_blocked_content = True
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scores = await Scorer.score_response_multiple_scorers_async(
@@ -1800,7 +1806,6 @@ class TestScoreResponseAsyncBlockedContent:
             scorers=[scorer1, scorer2],
             objective="test",
             skip_on_error_result=False,
-            score_blocked_content=True,
         )
 
         assert len(scores) == 2

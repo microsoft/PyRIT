@@ -203,7 +203,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._objective_scorer = objective_scorer
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
-        self._score_blocked_content = attack_scoring_config.score_blocked_content
 
         # Initialize refusal scorer - use the one from config if provided, otherwise create default
         self._refusal_scorer = attack_scoring_config.refusal_scorer or SelfAskRefusalScorer(
@@ -680,7 +679,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 message=context.last_response,
                 objective=objective,
                 skip_on_error_result=False,
-                score_blocked_content=self._score_blocked_content,
             )
         return scores[0]
 
@@ -716,7 +714,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 role_filter="assistant",
                 objective=context.objective,
                 skip_on_error_result=False,
-                score_blocked_content=self._score_blocked_content,
             )
 
         objective_score = scoring_results["objective_scores"]

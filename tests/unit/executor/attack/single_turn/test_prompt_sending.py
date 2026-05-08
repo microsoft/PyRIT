@@ -458,7 +458,6 @@ class TestResponseEvaluation:
                 role_filter="assistant",
                 objective="Test objective",
                 skip_on_error_result=True,
-                score_blocked_content=False,
             )
 
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
@@ -481,7 +480,6 @@ class TestResponseEvaluation:
                 role_filter="assistant",
                 objective="Test objective",
                 skip_on_error_result=True,
-                score_blocked_content=False,
             )
 
     async def test_evaluate_response_with_auxiliary_scorers(
@@ -524,7 +522,6 @@ class TestResponseEvaluation:
                 role_filter="assistant",
                 objective="Test objective",
                 skip_on_error_result=True,
-                score_blocked_content=False,
             )
 
 

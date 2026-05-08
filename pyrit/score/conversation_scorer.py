@@ -63,14 +63,6 @@ class ConversationScorer(Scorer, ABC):
         # Build the full conversation text
         conversation_text = ""
 
-        # Check if the caller requested scoring of blocked content by inspecting whether
-        # the incoming message was substituted by score_async._apply_blocked_content_substitution.
-        # A substituted piece has partial_content in metadata but response_error="none".
-        incoming_piece = message.message_pieces[0]
-        use_partial_content = (
-            "partial_content" in incoming_piece.prompt_metadata and incoming_piece.response_error == "none"
-        )
-
         # Goes through each message in the conversation and appends user/assistant messages only
         # Explicitly excludes system, tool, developer messages from being scored/included in conversation history
         # they are allowed in validation but not included in the scored conversation text
@@ -81,7 +73,12 @@ class ConversationScorer(Scorer, ABC):
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
                     # For blocked pieces with partial content, use the partial content
                     # instead of the error JSON when score_blocked_content is enabled
-                    if use_partial_content and piece.is_blocked() and "partial_content" in piece.prompt_metadata:
+                    if (
+                        self.score_blocked_content
+                        and piece.is_blocked()
+                        and piece.prompt_metadata.get("partial_content")
+                    ):
+                        role_display += " (partial content from blocked response)"
                         text = str(piece.prompt_metadata["partial_content"])
                     else:
                         text = piece.converted_value
