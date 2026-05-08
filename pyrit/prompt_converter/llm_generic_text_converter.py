@@ -15,7 +15,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class LLMGenericTextConverter(PromptConverter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     @apply_defaults
     def __init__(
@@ -43,7 +43,7 @@ class LLMGenericTextConverter(PromptConverter):
 
         Args:
             converter_target (PromptTarget): The endpoint that converts the prompt. Must satisfy
-                ``CHAT_CONSUMER_REQUIREMENTS`` (multi-turn + editable history capabilities, possibly
+                ``CHAT_TARGET_REQUIREMENTS`` (multi-turn + editable history capabilities, possibly
                 via normalization-pipeline adaptation). Can be omitted if a default has been configured
                 via PyRIT initialization.
             system_prompt_template (SeedPrompt, Optional): The prompt template to set as the system prompt.

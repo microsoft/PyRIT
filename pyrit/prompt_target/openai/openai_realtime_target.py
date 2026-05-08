@@ -21,7 +21,7 @@ from pyrit.models import (
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -58,7 +58,7 @@ class RealtimeTargetResult:
         return "".join(self.transcripts)
 
 
-class RealtimeTarget(OpenAITarget, PromptChatTarget):
+class RealtimeTarget(OpenAITarget, PromptTarget):
     """
     A prompt target for Azure OpenAI Realtime API.
 
@@ -72,6 +72,7 @@ class RealtimeTarget(OpenAITarget, PromptChatTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
+            supports_editable_history=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
             input_modalities=frozenset(

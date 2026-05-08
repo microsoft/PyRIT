@@ -22,7 +22,7 @@ from pyrit.registry.object_registries.base_instance_registry import (
 
 if TYPE_CHECKING:
     from pyrit.models import SeedAttackTechniqueGroup
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.registry.tag_query import TagQuery
     from pyrit.scenario import AttackTechniqueFactory
     from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
@@ -84,7 +84,7 @@ class AttackTechniqueSpec:
     name: str
     attack_class: type
     strategy_tags: list[str] = field(default_factory=list)
-    adversarial_chat: PromptChatTarget | None = field(default=None)
+    adversarial_chat: PromptTarget | None = field(default=None)
     adversarial_chat_key: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     seed_technique: SeedAttackTechniqueGroup | None = None

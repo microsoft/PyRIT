@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.prompt_target import (
-    CHAT_CONSUMER_REQUIREMENTS,
+    CHAT_TARGET_REQUIREMENTS,
     CapabilityName,
     TargetRequirements,
 )
@@ -35,8 +35,8 @@ def test_construction_from_frozenset():
     assert reqs.required == {CapabilityName.MULTI_TURN, CapabilityName.JSON_OUTPUT}
 
 
-def test_chat_consumer_requirements_shape():
-    assert CHAT_CONSUMER_REQUIREMENTS.required == {
+def test_chat_target_requirements_shape():
+    assert CHAT_TARGET_REQUIREMENTS.required == {
         CapabilityName.EDITABLE_HISTORY,
         CapabilityName.MULTI_TURN,
     }
@@ -58,7 +58,7 @@ def test_validate_passes_on_native_support():
         ),
     )
 
-    CHAT_CONSUMER_REQUIREMENTS.validate(target=target)
+    CHAT_TARGET_REQUIREMENTS.validate(target=target)
 
 
 def test_validate_passes_when_policy_is_adapt():

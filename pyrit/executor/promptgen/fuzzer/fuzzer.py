@@ -36,7 +36,7 @@ from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
 
 if TYPE_CHECKING:
     from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import FuzzerConverter
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -539,7 +539,7 @@ class FuzzerGenerator(
         *,
         objective_target: PromptTarget,
         template_converters: list[FuzzerConverter],
-        scoring_target: PromptChatTarget,
+        scoring_target: PromptTarget,
         converter_config: Optional[StrategyConverterConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         frequency_weight: float = _DEFAULT_FREQUENCY_WEIGHT,
@@ -562,7 +562,7 @@ class FuzzerGenerator(
         Args:
             objective_target (PromptTarget): The target to send the prompts to.
             template_converters (List[FuzzerConverter]): The converters to apply on the selected jailbreak template.
-            scoring_target (PromptChatTarget): The chat target to use for scoring responses.
+            scoring_target (PromptTarget): The chat target to use for scoring responses.
             converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
             prompt_normalizer (Optional[PromptNormalizer]): The prompt normalizer to use.
             frequency_weight (float): Constant that balances between high reward and selection frequency.

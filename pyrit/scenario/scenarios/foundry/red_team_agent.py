@@ -61,7 +61,6 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -246,7 +245,7 @@ class RedTeamAgent(Scenario):
     def __init__(
         self,
         *,
-        adversarial_chat: Optional[PromptChatTarget] = None,
+        adversarial_chat: Optional[PromptTarget] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
@@ -255,7 +254,7 @@ class RedTeamAgent(Scenario):
         Initialize a Foundry Scenario with the specified attack strategies.
 
         Args:
-            adversarial_chat (Optional[PromptChatTarget]): Target for multi-turn attacks
+            adversarial_chat (Optional[PromptTarget]): Target for multi-turn attacks
                 like Crescendo and RedTeaming. Additionally used for scoring defaults.
                 If not provided, a default OpenAI target will be created using environment variables.
             attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,

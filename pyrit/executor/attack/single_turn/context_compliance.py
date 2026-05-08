@@ -23,7 +23,7 @@ from pyrit.models import (
     SeedDataset,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class ContextComplianceAttack(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -70,7 +70,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         Initialize the context compliance attack strategy.
 
         Args:
-            objective_target (PromptChatTarget): The target system to attack. Must be a PromptChatTarget.
+            objective_target (PromptTarget): The target system to attack. Must be a PromptTarget.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
                 including the adversarial chat target used for rephrasing.
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters,

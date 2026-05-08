@@ -73,9 +73,20 @@ class TargetRequirements:
             )
 
 
-# Shared requirement used by scorers and converters that set a system prompt
-# and drive a short multi-turn conversation. Adaptation is acceptable, native
-# support is not required.
-CHAT_CONSUMER_REQUIREMENTS = TargetRequirements(
-    required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
-)
+def _build_chat_target_requirements() -> TargetRequirements:
+    """
+    Build the requirements for a chat-style target (multi-turn with editable history).
+
+    Returns:
+        TargetRequirements: The requirements for a chat-style target.
+    """
+    return TargetRequirements(required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}))
+
+
+CHAT_TARGET_REQUIREMENTS: TargetRequirements = _build_chat_target_requirements()
+"""
+Standard requirements for a chat-style target: must support multi-turn conversations
+with an editable history. This is the replacement for the deprecated
+``PromptChatTarget`` type-based check; consumers validate their target against
+these requirements at construction time.
+"""

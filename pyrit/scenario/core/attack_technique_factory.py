@@ -29,7 +29,7 @@ if TYPE_CHECKING:
         AttackScoringConfig,
     )
     from pyrit.models import SeedAttackTechniqueGroup
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class AttackTechniqueFactory(Identifiable):
         return self._seed_technique
 
     @property
-    def adversarial_chat(self) -> PromptChatTarget | None:
+    def adversarial_chat(self) -> PromptTarget | None:
         """The adversarial chat target baked into this factory, or None."""
         return self._adversarial_config.target if self._adversarial_config else None
 

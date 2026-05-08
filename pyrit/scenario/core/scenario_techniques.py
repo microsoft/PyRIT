@@ -35,8 +35,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
@@ -109,7 +108,7 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
 # ---------------------------------------------------------------------------
 
 
-def get_default_adversarial_target() -> PromptChatTarget:
+def get_default_adversarial_target() -> PromptTarget:
     """
     Resolve the default adversarial chat target.
 
@@ -119,7 +118,7 @@ def get_default_adversarial_target() -> PromptChatTarget:
     ``@apply_defaults`` resolution.
 
     Returns:
-        PromptChatTarget: The resolved adversarial chat target.
+        PromptTarget: The resolved adversarial chat target.
 
     Raises:
         ValueError: If the registered target does not support multi-turn.
@@ -166,7 +165,7 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
         ValueError: If a spec declares ``adversarial_chat_key`` but the key
             is not found in ``TargetRegistry``.
     """
-    default_adversarial: PromptChatTarget | None = None
+    default_adversarial: PromptTarget | None = None
 
     result = []
     for spec in SCENARIO_TECHNIQUES:

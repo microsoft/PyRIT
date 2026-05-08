@@ -20,7 +20,7 @@ from pyrit.models import (
     Message,
     construct_response_from_request,
 )
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
     CapabilityName,
@@ -33,7 +33,7 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate
 logger = logging.getLogger(__name__)
 
 
-class AzureMLChatTarget(PromptChatTarget):
+class AzureMLChatTarget(PromptTarget):
     """
     A prompt target for Azure Machine Learning chat endpoints.
 
@@ -149,7 +149,7 @@ class AzureMLChatTarget(PromptChatTarget):
                 normalizer_overrides={CapabilityName.SYSTEM_PROMPT: message_normalizer},
             )
 
-        PromptChatTarget.__init__(
+        PromptTarget.__init__(
             self,
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint_value,
