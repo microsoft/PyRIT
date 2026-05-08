@@ -78,7 +78,6 @@ class ConversationScorer(Scorer, ABC):
                         and piece.is_blocked()
                         and piece.prompt_metadata.get("partial_content")
                     ):
-                        role_display += " (partial content from blocked response)"
                         text = str(piece.prompt_metadata["partial_content"])
                     else:
                         text = piece.converted_value
