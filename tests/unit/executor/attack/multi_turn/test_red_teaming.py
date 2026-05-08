@@ -31,7 +31,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 
 
@@ -61,7 +61,7 @@ def mock_objective_target() -> MagicMock:
 
 @pytest.fixture
 def mock_adversarial_chat() -> MagicMock:
-    chat = MagicMock(spec=PromptChatTarget)
+    chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock()
     chat.set_system_prompt = MagicMock()
     chat.get_identifier.return_value = _mock_target_id("MockChatTarget")
@@ -556,8 +556,8 @@ class TestContextValidation:
         mock_adversarial_chat: MagicMock,
     ):
         """Test that prepended conversation turns are validated against max_turns."""
-        # Create a separate chat target for objective since prepended_conversation requires PromptChatTarget
-        mock_chat_objective_target = MagicMock(spec=PromptChatTarget)
+        # Create a separate chat target for objective since prepended_conversation requires PromptTarget
+        mock_chat_objective_target = MagicMock(spec=PromptTarget)
         mock_chat_objective_target.send_prompt_async = AsyncMock()
         mock_chat_objective_target.set_system_prompt = MagicMock()
         mock_chat_objective_target.get_identifier.return_value = _mock_target_id("MockChatTarget")

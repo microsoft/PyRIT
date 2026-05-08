@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, get_origin
 
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
@@ -54,6 +54,24 @@ class ScenarioMetadata(ClassRegistryEntry):
 
     # Maximum number of items per dataset.
     max_dataset_size: Optional[int] = field(kw_only=True)
+
+    # Scenario-declared custom parameters.
+    supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(kw_only=True, default=())
+
+
+class ScenarioParameterMetadata(NamedTuple):
+    """
+    A scenario-declared parameter rendered for user-facing display.
+
+    NamedTuple so existing positional construction (e.g. in tests) keeps working
+    while consumers can read fields by name.
+    """
+
+    name: str
+    description: str
+    default: Any
+    param_type: str
+    choices: Optional[str]
 
 
 class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
@@ -196,6 +214,17 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         default_datasets = dataset_config.get_default_dataset_names()
         max_dataset_size = dataset_config.max_dataset_size
 
+        supported_parameters = tuple(
+            ScenarioParameterMetadata(
+                name=p.name,
+                description=p.description,
+                default=p.default,
+                param_type=_param_type_display(p.param_type),
+                choices=", ".join(repr(c) for c in p.choices) if p.choices else None,
+            )
+            for p in scenario_class.supported_parameters()
+        )
+
         return ScenarioMetadata(
             class_name=scenario_class.__name__,
             class_module=scenario_class.__module__,
@@ -206,4 +235,27 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
             aggregate_strategies=tuple(s.value for s in strategy_class.get_aggregate_strategies()),
             default_datasets=tuple(default_datasets),
             max_dataset_size=max_dataset_size,
+            supported_parameters=supported_parameters,
         )
+
+
+def _param_type_display(param_type: Any) -> str:
+    """
+    Render a ``Parameter.param_type`` value as a short user-facing string.
+
+    Args:
+        param_type (Any): The parameter type (None, builtin, or GenericAlias).
+
+    Returns:
+        str: Display string (e.g., ``"int"``, ``"list[str]"``, ``"any"``).
+    """
+    if param_type is None:
+        return "any"
+    # Detect parameterized generics (list[str], dict[str, int], ...) reliably across Python
+    # versions: get_origin returns the unparameterized type for GenericAlias, None otherwise.
+    # On some 3.10 builds GenericAlias passes isinstance(_, type), so we can't rely on that.
+    if get_origin(param_type) is not None:
+        return str(param_type)
+    if isinstance(param_type, type):
+        return param_type.__name__
+    return str(param_type)

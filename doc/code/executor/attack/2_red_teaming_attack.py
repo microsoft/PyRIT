@@ -314,4 +314,4 @@ await ConsoleAttackResultPrinter().print_result_async(result=result, include_aux
 # %% [markdown]
 # ## Other Multi-Turn Attacks
 #
-# The above examples should work using other multi-turn attacks with minimal modification. Check out attacks under `pyrit.executor.attack.multi_turn` for other examples, like Crescendo and Tree of Attacks. These algorithms are always more effective than `RedTeamingAttack`, which is a simple algorithm. However, `RedTeamingAttack` by its nature supports more targets - because it doesn't modify conversation history it can support any `PromptTarget` and not only `PromptChatTargets`.
+# The above examples should work using other multi-turn attacks with minimal modification. Check out attacks under `pyrit.executor.attack.multi_turn` for other examples, like Crescendo and Tree of Attacks. These algorithms are always more effective than `RedTeamingAttack`, which is a simple algorithm. However, `RedTeamingAttack` by its nature supports more targets - because it doesn't modify conversation history it can support any `PromptTarget`, not only chat-style targets that declare `supports_multi_turn=True` and `supports_editable_history=True`.

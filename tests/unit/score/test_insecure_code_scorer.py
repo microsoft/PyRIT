@@ -8,13 +8,13 @@ import pytest
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import InsecureCodeScorer
 
 
 @pytest.fixture
 def mock_chat_target(patch_central_database):
-    return MagicMock(spec=PromptChatTarget)
+    return MagicMock(spec=PromptTarget)
 
 
 async def test_insecure_code_scorer_valid_response(mock_chat_target):

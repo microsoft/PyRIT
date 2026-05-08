@@ -39,7 +39,7 @@ from pyrit.backend.models.converters import (
 from pyrit.models import PromptDataType
 from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries import ConverterRegistry
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
@@ -184,7 +184,16 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
 
 
 def _is_llm_based(converter_class: type) -> bool:
-    """Return True if the converter requires an LLM target parameter."""
+    """
+    Check if the converter requires a target parameter.
+
+    Matches any converter whose ``__init__`` accepts
+    a ``PromptTarget`` (or subclass) parameter.
+    These converters perform LLM-based transformations and should not automatically be applied
+
+    Returns:
+        bool: True if the converter is LLM-based, False otherwise.
+    """
     try:
         sig = inspect.signature(converter_class.__init__)
     except (ValueError, TypeError):
@@ -197,7 +206,7 @@ def _is_llm_based(converter_class: type) -> bool:
         if ann is inspect.Parameter.empty:
             continue
         try:
-            if isinstance(ann, type) and issubclass(ann, PromptChatTarget):
+            if isinstance(ann, type) and issubclass(ann, PromptTarget):
                 return True
         except TypeError:
             continue

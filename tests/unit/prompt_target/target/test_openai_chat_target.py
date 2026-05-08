@@ -32,7 +32,7 @@ from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
-    PromptChatTarget,
+    PromptTarget,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -575,19 +575,21 @@ def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
     os.remove(image_piece.original_value)
 
 
-def test_inheritance_from_prompt_chat_target(target: OpenAIChatTarget):
-    """Test that OpenAIChatTarget properly inherits from PromptChatTarget."""
-    assert isinstance(target, PromptChatTarget), "OpenAIChatTarget must inherit from PromptChatTarget"
+def test_inheritance_from_prompt_target(target: OpenAIChatTarget):
+    """OpenAIChatTarget inherits from PromptTarget and declares chat capabilities."""
+    assert isinstance(target, PromptTarget), "OpenAIChatTarget must inherit from PromptTarget"
+    assert target.capabilities.supports_multi_turn is True
+    assert target.capabilities.supports_editable_history is True
 
 
-def test_inheritance_from_prompt_chat_target_base():
-    """Test that OpenAIChatTargetBase properly inherits from PromptChatTarget."""
-
-    # Create a minimal instance to test inheritance
+def test_inheritance_from_prompt_target_base():
+    """OpenAIChatTarget (via OpenAIChatTargetBase) inherits from PromptTarget."""
     target = OpenAIChatTarget(model_name="test-model", endpoint="https://test.com", api_key="test-key")
-    assert isinstance(target, PromptChatTarget), (
-        "OpenAIChatTarget must inherit from PromptChatTarget through OpenAIChatTargetBase"
+    assert isinstance(target, PromptTarget), (
+        "OpenAIChatTarget must inherit from PromptTarget through OpenAIChatTargetBase"
     )
+    assert target.capabilities.supports_multi_turn is True
+    assert target.capabilities.supports_editable_history is True
 
 
 def test_is_response_format_json_supported(target: OpenAIChatTarget):

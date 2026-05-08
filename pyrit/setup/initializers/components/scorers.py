@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.common.parameter import Parameter
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
     AzureContentFilterScorer,
@@ -41,10 +42,10 @@ from pyrit.score import (
     TrueFalseScorer,
     find_objective_metrics_by_eval_hash,
 )
-from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 RequiredDependencyT = TypeVar("RequiredDependencyT")
@@ -134,10 +135,10 @@ class ScorerInitializer(PyRITInitializer):
     """
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """Get the list of parameters this initializer accepts."""
         return [
-            InitializerParameter(
+            Parameter(
                 name="tags",
                 description="Tags for filtering (e.g., ['default'])",
                 default=["default"],
@@ -571,12 +572,12 @@ class ScorerInitializer(PyRITInitializer):
         """
         return ScorerRegistry.get_registry_singleton()
 
-    def _get_chat_target(self, target_name: str) -> "PromptChatTarget | None":
+    def _get_chat_target(self, target_name: str) -> "PromptTarget | None":
         """
         Get a chat target from the singleton target registry by name.
 
         Returns:
-            PromptChatTarget | None: The chat target instance if found, otherwise None.
+            PromptTarget | None: The chat target instance if found, otherwise None.
         """
         target_registry = TargetRegistry.get_registry_singleton()
         return target_registry.get_instance_by_name(target_name)

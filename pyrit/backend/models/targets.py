@@ -18,6 +18,34 @@ from pydantic import BaseModel, Field
 from pyrit.backend.models.common import PaginationInfo
 
 
+class TargetCapabilitiesInfo(BaseModel):
+    """
+    Wire-format snapshot of a target's capabilities.
+
+    Mirrors the domain ``TargetCapabilities`` dataclass for API consumers
+    (notably the GUI). Modality combinations (``frozenset[frozenset[...]]``)
+    are flattened into sorted unique modality lists since the frontend uses
+    them only for per-piece modality checks.
+    """
+
+    supports_multi_turn: bool = Field(False, description="Target natively supports multi-turn conversations")
+    supports_multi_message_pieces: bool = Field(
+        False, description="Target supports multiple message pieces in a single request"
+    )
+    supports_json_schema: bool = Field(False, description="Target can constrain output to a provided JSON schema")
+    supports_json_output: bool = Field(False, description="Target supports JSON output mode")
+    supports_editable_history: bool = Field(False, description="Target allows attack history to be modified")
+    supports_system_prompt: bool = Field(False, description="Target natively supports system prompts")
+    supported_input_modalities: list[str] = Field(
+        default_factory=lambda: ["text"],
+        description="Sorted unique input modality data types the target accepts (e.g., ['image_path', 'text'])",
+    )
+    supported_output_modalities: list[str] = Field(
+        default_factory=lambda: ["text"],
+        description="Sorted unique output modality data types the target produces (e.g., ['audio_path', 'text'])",
+    )
+
+
 class TargetInstance(BaseModel):
     """
     A runtime target instance.
@@ -36,7 +64,7 @@ class TargetInstance(BaseModel):
     temperature: Optional[float] = Field(None, description="Temperature parameter for generation")
     top_p: Optional[float] = Field(None, description="Top-p parameter for generation")
     max_requests_per_minute: Optional[int] = Field(None, description="Maximum requests per minute")
-    supports_multi_turn: bool = Field(True, description="Whether the target supports multi-turn conversation history")
+    capabilities: TargetCapabilitiesInfo = Field(..., description="Structured snapshot of target capabilities")
     target_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional target-specific parameters")
 
 

@@ -17,7 +17,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget, PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
 from pyrit.score import TrueFalseCompositeScorer
@@ -111,8 +111,8 @@ def mock_objective_scorer() -> TrueFalseCompositeScorer:
 
 
 @pytest.fixture
-def mock_adversarial_target() -> PromptChatTarget:
-    mock = MagicMock(spec=PromptChatTarget)
+def mock_adversarial_target() -> PromptTarget:
+    mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock
 
@@ -280,6 +280,52 @@ class TestScamAttackGeneration:
         atomic_attacks = await scenario._get_atomic_attacks_async()
         assert len(atomic_attacks) > 0
         assert all(run.attack_technique is not None for run in atomic_attacks)
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestScamMaxTurnsParameter:
+    """Tests for the declared max_turns parameter (Stage 6 POC)."""
+
+    def test_supported_parameters_declares_max_turns(self):
+        """Scam exposes max_turns via supported_parameters."""
+        params = Scam.supported_parameters()
+        names = [p.name for p in params]
+        assert "max_turns" in names
+
+    async def test_max_turns_default_used_when_unset_async(
+        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+    ):
+        """When set_params_from_args isn't given max_turns, the declared default (5) is used."""
+        scenario = Scam(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={})
+
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[multi_turn_strategy],
+            dataset_config=mock_dataset_config,
+        )
+        atomic_attacks = await scenario._get_atomic_attacks_async()
+
+        for run in atomic_attacks:
+            assert isinstance(run.attack_technique.attack, RedTeamingAttack)
+            assert run.attack_technique.attack._max_turns == 5
+
+    async def test_max_turns_override_flows_into_attack_async(
+        self, mock_objective_target, mock_objective_scorer, multi_turn_strategy, mock_dataset_config
+    ):
+        """A user-supplied max_turns overrides the default and reaches the underlying attack."""
+        scenario = Scam(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={"max_turns": 10})
+
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            scenario_strategies=[multi_turn_strategy],
+            dataset_config=mock_dataset_config,
+        )
+        atomic_attacks = await scenario._get_atomic_attacks_async()
+
+        for run in atomic_attacks:
+            assert run.attack_technique.attack._max_turns == 10
 
 
 @pytest.mark.usefixtures(*FIXTURES)

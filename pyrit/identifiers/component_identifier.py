@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional, Union
 
 import pyrit
-from pyrit.common.deprecation import print_deprecation_message
 
 logger = logging.getLogger(__name__)
 
@@ -239,36 +238,6 @@ class ComponentIdentifier:
             params=clean_params,
             children=clean_children,
         )
-
-    @classmethod
-    def normalize(cls, value: Union[ComponentIdentifier, dict[str, Any]]) -> ComponentIdentifier:
-        """
-        Normalize a value to a ComponentIdentifier instance.
-
-        Accepts either an existing ComponentIdentifier (returned as-is) or a dict
-        (reconstructed via from_dict). This supports code paths that may receive
-        either typed identifiers or raw dicts from database storage.
-
-        Args:
-            value (Union[ComponentIdentifier, Dict[str, Any]]): A ComponentIdentifier or
-                a dictionary representation.
-
-        Returns:
-            ComponentIdentifier: The normalized identifier instance.
-
-        Raises:
-            TypeError: If value is neither a ComponentIdentifier nor a dict.
-        """
-        if isinstance(value, cls):
-            return value
-        if isinstance(value, dict):
-            print_deprecation_message(
-                old_item="dict for ComponentIdentifier",
-                new_item="ComponentIdentifier",
-                removed_in="0.14.0",
-            )
-            return cls.from_dict(value)  # type: ignore[ty:invalid-argument-type]
-        raise TypeError(f"Expected ComponentIdentifier or dict, got {type(value).__name__}")
 
     def to_dict(self, *, max_value_length: Optional[int] = None) -> dict[str, Any]:
         """

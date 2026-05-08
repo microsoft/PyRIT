@@ -12,7 +12,7 @@ from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -100,7 +100,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text", "image_path"],
     )
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,
@@ -117,7 +117,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
-                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
             true_false_question (Optional[TrueFalseQuestion]): The true/false question object.

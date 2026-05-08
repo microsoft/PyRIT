@@ -107,7 +107,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     const groups: Record<string, typeof filteredConverters> = {}
     const order = ['text', 'image_path', 'audio_path', 'video_path', 'binary_path']
     for (const c of filteredConverters) {
-      const outType = (c.supported_output_types ?? [])[0] ?? 'text'
+      const outType = c.supported_output_types[0]
       if (!groups[outType]) groups[outType] = []
       groups[outType].push(c)
     }
@@ -363,7 +363,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                 )}
                 <div className={styles.metaRow}>
                   <Text size={200} className={styles.badgeText}>In:</Text>
-                  {(selectedConverter.supported_input_types ?? []).map((t) => (
+                  {selectedConverter.supported_input_types.map((t) => (
                     <span key={t} className={`${styles.typeBadge} ${styles[`input_${t}` as keyof typeof styles] ?? ''}`}>
                       {t.replace('_path', '')}
                     </span>
@@ -371,7 +371,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
                 </div>
                 <div className={styles.metaRow}>
                   <Text size={200} className={styles.badgeText}>Out:</Text>
-                  {(selectedConverter.supported_output_types ?? []).map((t) => (
+                  {selectedConverter.supported_output_types.map((t) => (
                     <span key={t} className={`${styles.typeBadge} ${styles[`output_${t}` as keyof typeof styles] ?? ''}`}>
                       {t.replace('_path', '')}
                     </span>
@@ -403,6 +403,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
               previewConverterInstanceId={previewConverterInstanceId}
               onPreview={handlePreview}
               onUseConvertedValue={onUseConvertedValue}
+              outputDataType={selectedConverter?.supported_output_types[0] ?? 'text'}
             />
           </div>
         )}

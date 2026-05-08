@@ -13,7 +13,7 @@ from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     Scorer,
     ScorerPromptValidator,
@@ -150,7 +150,7 @@ class MockFloatScorer(Scorer):
 
 @pytest.mark.parametrize("bad_json", [BAD_JSON, KEY_ERROR_JSON, KEY_ERROR2_JSON])
 async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json: str):
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     bad_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=bad_json, conversation_id="test-convo")]
@@ -173,7 +173,7 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
 
 
 async def test_scorer_score_value_with_llm_exception_display_prompt_id():
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=Exception("Test exception"))
 
@@ -197,7 +197,7 @@ async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_j
     message = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[message])
     chat_target.set_system_prompt = MagicMock()
@@ -231,7 +231,7 @@ async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empt
     message = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[message])
     chat_target.set_system_prompt = MagicMock()
@@ -257,7 +257,7 @@ async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empt
 
 
 async def test_scorer_send_chat_target_async_good_response(good_json):
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     good_json_resp = Message(
@@ -281,7 +281,7 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
 
 
 async def test_scorer_remove_markdown_json_called(good_json):
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
@@ -306,7 +306,7 @@ async def test_scorer_remove_markdown_json_called(good_json):
 
 async def test_score_value_with_llm_prepended_text_message_piece_creates_multipiece_message(good_json):
     """Test that prepended_text_message_piece creates a multi-piece message (text context + main content)."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
@@ -349,7 +349,7 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
 
 async def test_score_value_with_llm_no_prepended_text_creates_single_piece_message(good_json):
     """Test that without prepended_text_message_piece, only a single piece message is created."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
@@ -384,7 +384,7 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
 
 async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
     """Test that prepended_text_message_piece works with audio content (type-independent)."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
@@ -1431,7 +1431,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
 
 async def test_score_value_with_llm_skips_reasoning_piece(good_json):
     """Test that _score_value_with_llm extracts JSON from the text piece, not a reasoning piece."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     # Simulate a reasoning model response: first piece is reasoning, second is the actual text with JSON

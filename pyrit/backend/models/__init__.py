@@ -53,6 +53,7 @@ from pyrit.backend.models.scenarios import (
 )
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
+    TargetCapabilitiesInfo,
     TargetInstance,
     TargetListResponse,
 )
@@ -100,6 +101,7 @@ __all__ = [
     "ScenarioSummary",
     # Targets
     "CreateTargetRequest",
+    "TargetCapabilitiesInfo",
     "TargetInstance",
     "TargetListResponse",
 ]

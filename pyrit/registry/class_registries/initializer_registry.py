@@ -45,8 +45,8 @@ class InitializerMetadata(ClassRegistryEntry):
     # Environment variables required by the initializer.
     required_env_vars: tuple[str, ...] = field(kw_only=True)
 
-    # Supported parameters as tuples of (name, description, required, default).
-    supported_parameters: tuple[tuple[str, str, bool, Optional[list[str]]], ...] = field(kw_only=True, default=())
+    # Supported parameters as tuples of (name, description, default).
+    supported_parameters: tuple[tuple[str, str, Optional[list[str]]], ...] = field(kw_only=True, default=())
 
 
 class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetadata]):
@@ -196,9 +196,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 class_description=description,
                 registry_name=name,
                 required_env_vars=tuple(instance.required_env_vars),
-                supported_parameters=tuple(
-                    (p.name, p.description, p.required, p.default) for p in instance.supported_parameters
-                ),
+                supported_parameters=tuple((p.name, p.description, p.default) for p in instance.supported_parameters),
             )
         except Exception as e:
             logger.warning(f"Failed to get metadata for {name}: {e}")

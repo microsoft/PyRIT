@@ -41,7 +41,7 @@ class MyScenario(Scenario):
 def __init__(
     self,
     *,
-    adversarial_chat: PromptChatTarget | None = None,
+    adversarial_chat: PromptTarget | None = None,
     objective_scorer: TrueFalseScorer | None = None,
     scenario_result_id: str | None = None,
 ) -> None:
