@@ -85,7 +85,7 @@
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
 #    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
-#      default; `True` for scenarios that support a baseline)
+#      `DEFAULT_INCLUDE_BASELINE`; most scenarios default it on, `Jailbreak` defaults it off)
 #
 # ### Example Structure
 #
@@ -175,11 +175,13 @@ await print_scenarios_list_async(context=FrontendCore())  # type: ignore
 #
 # Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
 # each objective directly to the target without any converters or multi-turn techniques. This is
-# controlled by the `include_baseline` parameter on `initialize_async` (default: `True` for
-# scenarios that support a baseline).
+# controlled by the `include_baseline` parameter on `initialize_async`; when omitted, each
+# scenario falls back to its own `DEFAULT_INCLUDE_BASELINE` class attribute (most scenarios
+# default it on; `Jailbreak` defaults it off).
 #
-# To run *only* the baseline (no attack strategies), call `initialize_async` with
-# `include_baseline=True` (the default) and `scenario_strategies=None`. See
+# To run *only* the baseline (no attack strategies), pass `include_baseline=True` and
+# `scenario_strategies=None` explicitly to `initialize_async` — that way the example works
+# regardless of the scenario's default. See
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a working example.
 
 # %% [markdown]

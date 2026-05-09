@@ -540,7 +540,7 @@ class Scenario(ABC):
         # Set instance variables from parameters
         self._objective_target = objective_target
         self._objective_target_identifier = objective_target.get_identifier()
-        self.TARGET_REQUIREMENTS.validate(target=objective_target)
+        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._dataset_config_provided = dataset_config is not None
         self._dataset_config = dataset_config if dataset_config else self.default_dataset_config()
         self._max_concurrency = max_concurrency
@@ -552,7 +552,7 @@ class Scenario(ABC):
         # type is a hard error rather than a silent ignore. When the scenario type supports
         # the baseline, None defers to DEFAULT_INCLUDE_BASELINE on the class.
         if not self.SUPPORTS_DEFAULT_BASELINE:
-            if include_baseline:
+            if include_baseline is True:
                 raise ValueError(
                     f"{type(self).__name__} does not support a default baseline; pass "
                     f"include_baseline=False or omit the argument."

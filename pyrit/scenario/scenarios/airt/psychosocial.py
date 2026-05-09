@@ -147,6 +147,9 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 1
+
+    #: Psychosocial measures multi-turn escalation behavior; a single-shot baseline send
+    #: isn't a meaningful comparator, so the default baseline is forbidden.
     SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
 
     #: Psychosocial runs CrescendoAttack, which requires the target to natively support

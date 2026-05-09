@@ -33,6 +33,9 @@ class AdversarialBenchmark(Scenario):
 
     VERSION: int = 1
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
+
+    #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
+    #: attack would be model-independent and contribute no signal to the comparison.
     SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
 
     @classmethod
