@@ -87,6 +87,152 @@ describe("MessageList", () => {
     expect(screen.getByText("Assistant message test")).toBeInTheDocument();
   });
 
+  describe("structured JSON assistant responses", () => {
+    // Targets like PromptShieldTarget return structured JSON instead of
+    // natural-language text. Render these as pretty-printed JSON in a <pre>
+    // so the user can actually read them.
+
+    it("renders JSON object responses as pretty-printed <pre>", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '{"userPromptAnalysis":{"attackDetected":false},"documentsAnalysis":[]}',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      const block = screen.getByTestId("message-json-0");
+      expect(block.tagName).toBe("PRE");
+      // Pretty-printed (2-space indent) and round-trips to the original payload.
+      const text = block.textContent ?? "";
+      expect(text).toContain('"userPromptAnalysis": {\n');
+      expect(text).toContain('"attackDetected": false');
+      expect(JSON.parse(text)).toEqual({
+        userPromptAnalysis: { attackDetected: false },
+        documentsAnalysis: [],
+      });
+    });
+
+    it("renders JSON array responses as pretty-printed <pre>", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '[{"label":"safe","score":0.97},{"label":"unsafe","score":0.03}]',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      const block = screen.getByTestId("message-json-0");
+      expect(block.tagName).toBe("PRE");
+      expect(JSON.parse(block.textContent ?? "")).toEqual([
+        { label: "safe", score: 0.97 },
+        { label: "unsafe", score: 0.03 },
+      ]);
+    });
+
+    it("does not reformat plain text assistant content", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: "Hello there!",
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      expect(screen.queryByTestId("message-json-0")).not.toBeInTheDocument();
+      expect(screen.getByText("Hello there!")).toBeInTheDocument();
+    });
+
+    it("does not reformat malformed JSON-shaped content", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: "{not really json",
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      expect(screen.queryByTestId("message-json-0")).not.toBeInTheDocument();
+      expect(screen.getByText("{not really json")).toBeInTheDocument();
+    });
+
+    it("does not reformat user messages even if they are JSON-shaped", () => {
+      // A user pasting JSON into the input shouldn't have it silently
+      // reformatted in their own bubble.
+      const messages: Message[] = [
+        {
+          role: "user",
+          content: '{"prompt":"hello"}',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      expect(screen.queryByTestId("message-json-0")).not.toBeInTheDocument();
+      expect(screen.getByText('{"prompt":"hello"}')).toBeInTheDocument();
+    });
+
+    it("does not reformat scalar JSON values", () => {
+      // "true", "42", '"hello"' are all valid JSON but rendering them as
+      // pretty-printed JSON gains nothing — keep them as plain text.
+      for (const scalar of ["true", "42", '"hello"', "null"]) {
+        const { unmount } = render(
+          <TestWrapper>
+            <MessageList
+              messages={[
+                {
+                  role: "assistant",
+                  content: scalar,
+                  timestamp: new Date().toISOString(),
+                },
+              ]}
+            />
+          </TestWrapper>
+        );
+        expect(screen.queryByTestId("message-json-0")).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it("does not reformat content while a message is still loading", () => {
+      // Streaming responses pass through with isLoading=true; the
+      // intermediate text may temporarily look JSON-ish.
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '{"partial":',
+          isLoading: true,
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      expect(screen.queryByTestId("message-json-0")).not.toBeInTheDocument();
+    });
+  });
+
   it("should handle messages with image attachments", () => {
     const messagesWithAttachments: Message[] = [
       {

@@ -80,6 +80,30 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls onError={handleError} data-testid="audio-player" />
 }
 
+/**
+ * If the trimmed text is a JSON object or array, return a 2-space pretty-printed
+ * version of it; otherwise return null. Used to render structured assistant
+ * responses (e.g. PromptShield verdicts) as readable JSON instead of a single
+ * line of compact text.
+ */
+function tryFormatJson(text: string): string | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const first = trimmed[0]
+  const last = trimmed[trimmed.length - 1]
+  // Cheap pre-check: only attempt parsing for object- or array-shaped content
+  // so things like "1" or "true" (which are valid JSON) are still rendered as
+  // plain text.
+  if (!((first === '{' && last === '}') || (first === '[' && last === ']'))) {
+    return null
+  }
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return null
+  }
+}
+
 export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -204,11 +228,32 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               )}
 
               {/* Text content (converted / primary) */}
-              {message.content && (
-                <Text className={message.isLoading ? styles.loadingEllipsis : styles.messageText}>
-                  {message.content}
-                </Text>
-              )}
+              {message.content && (() => {
+                if (message.isLoading) {
+                  return (
+                    <Text className={styles.loadingEllipsis}>
+                      {message.content}
+                    </Text>
+                  )
+                }
+                // For assistant / simulated_assistant messages, detect
+                // structured JSON responses (e.g. PromptShield verdicts) and
+                // render them pretty-printed inside a <pre> so the user can
+                // actually read them. User-typed JSON is left as-is.
+                const formatted = !isUser ? tryFormatJson(message.content) : null
+                if (formatted !== null) {
+                  return (
+                    <pre className={styles.messageJsonBlock} data-testid={`message-json-${index}`}>
+                      {formatted}
+                    </pre>
+                  )
+                }
+                return (
+                  <Text className={styles.messageText}>
+                    {message.content}
+                  </Text>
+                )
+              })()}
 
               {/* Attachments (images, audio, video, files) */}
               {message.attachments && message.attachments.length > 0 && (
