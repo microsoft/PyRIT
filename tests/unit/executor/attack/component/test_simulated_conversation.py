@@ -22,7 +22,7 @@ from pyrit.models import (
     SeedPrompt,
     SimulatedTargetSystemPromptPaths,
 )
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -45,7 +45,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
 @pytest.fixture
 def mock_adversarial_chat() -> MagicMock:
     """Create a mock adversarial chat target for testing."""
-    chat = MagicMock(spec=PromptChatTarget)
+    chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock()
     chat.set_system_prompt = MagicMock()
     chat.get_identifier.return_value = _mock_target_id("MockAdversarialChat")

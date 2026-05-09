@@ -61,6 +61,7 @@
   "overrides": {
     "rollup": "4.59.0",
     "@tootallnate/once": "3.0.1",
-    "follow-redirects": ">=1.15.11"
+    "follow-redirects": "1.16.0",
+    "postcss": "8.5.13"
   }
 }

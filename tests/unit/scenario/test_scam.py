@@ -17,7 +17,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget, PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
 from pyrit.score import TrueFalseCompositeScorer
@@ -111,8 +111,8 @@ def mock_objective_scorer() -> TrueFalseCompositeScorer:
 
 
 @pytest.fixture
-def mock_adversarial_target() -> PromptChatTarget:
-    mock = MagicMock(spec=PromptChatTarget)
+def mock_adversarial_target() -> PromptTarget:
+    mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock
 

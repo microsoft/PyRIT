@@ -537,10 +537,10 @@ class TestGetDefaultConfiguration:
         result = cls.get_default_configuration("tts")
         assert result.capabilities.output_modalities == frozenset({frozenset(["audio_path"])})
 
-    def test_prompt_chat_target_preserves_system_prompt_for_recognized_model(self):
-        from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+    def test_prompt_target_preserves_system_prompt_for_recognized_model(self):
+        from pyrit.prompt_target.common.prompt_target import PromptTarget
 
-        result = PromptChatTarget.get_default_configuration("gpt-4o")
+        result = PromptTarget.get_default_configuration("gpt-4o")
 
         assert result.capabilities.supports_multi_turn is True
         assert result.capabilities.supports_multi_message_pieces is True

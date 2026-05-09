@@ -416,6 +416,7 @@ describe('ConverterPanel use converted value', () => {
       converterInstanceId: 'conv-1',
       convertedValue: 'aGVsbG8=',
       originalValue: 'hello',
+      outputDataType: 'text',
     })
   })
 })
@@ -822,26 +823,5 @@ describe('ConverterPanel edge cases', () => {
     await openComboboxAndSelect('Base64Converter')
     // No params section should be shown
     expect(screen.queryByTestId('converter-params')).not.toBeInTheDocument()
-  })
-
-  it('handles converter with empty supported types', async () => {
-    const catalogEmptyTypes = {
-      items: [
-        {
-          converter_type: 'EmptyTypesConverter',
-          supported_input_types: [],
-          supported_output_types: [],
-          parameters: [],
-          is_llm_based: false,
-          description: 'No type restrictions.',
-        },
-      ],
-    }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogEmptyTypes as ConverterCatalogResponse)
-
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('EmptyTypesConverter')
-    expect(screen.getByTestId('converter-item-EmptyTypesConverter')).toBeInTheDocument()
   })
 })

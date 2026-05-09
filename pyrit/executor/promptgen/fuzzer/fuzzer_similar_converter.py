@@ -10,7 +10,7 @@ from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
 from pyrit.models import SeedPrompt
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 
 class FuzzerSimilarConverter(FuzzerConverter):
@@ -20,7 +20,7 @@ class FuzzerSimilarConverter(FuzzerConverter):
 
     @apply_defaults
     def __init__(
-        self, *, converter_target: Optional[PromptChatTarget] = None, prompt_template: Optional[SeedPrompt] = None
+        self, *, converter_target: Optional[PromptTarget] = None, prompt_template: Optional[SeedPrompt] = None
     ) -> None:
         """Initialize the similar converter with optional chat target and prompt template."""
         prompt_template = (

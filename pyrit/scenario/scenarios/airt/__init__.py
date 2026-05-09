@@ -8,7 +8,7 @@ from typing import Any
 from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
 from pyrit.scenario.scenarios.airt.cyber import Cyber
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
-from pyrit.scenario.scenarios.airt.leakage import Leakage, LeakageStrategy
+from pyrit.scenario.scenarios.airt.leakage import Leakage
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial, PsychosocialStrategy
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
@@ -26,6 +26,8 @@ def __getattr__(name: str) -> Any:
     """
     if name == "RapidResponseStrategy":
         return RapidResponse.get_strategy_class()
+    if name == "LeakageStrategy":
+        return Leakage.get_strategy_class()
     if name == "ContentHarmsStrategy":
         return ContentHarms.get_strategy_class()
     if name == "CyberStrategy":

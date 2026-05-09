@@ -856,7 +856,6 @@ class Scenario(ABC):
             )
 
         from pyrit.executor.attack import AttackScoringConfig
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
         selected_techniques = {s.value for s in self._scenario_strategies}
 
@@ -864,7 +863,6 @@ class Scenario(ABC):
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
 
         scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
-        registry = AttackTechniqueRegistry.get_registry_singleton()
 
         atomic_attacks: list[AtomicAttack] = []
         for technique_name in selected_techniques:
@@ -872,8 +870,6 @@ class Scenario(ABC):
             if factory is None:
                 logger.warning(f"No factory for technique '{technique_name}', skipping.")
                 continue
-
-            scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
 
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
                 if factory.seed_technique is not None:
@@ -898,7 +894,7 @@ class Scenario(ABC):
 
                 attack_technique = factory.create(
                     objective_target=self._objective_target,
-                    attack_scoring_config_override=scoring_for_technique,
+                    attack_scoring_config=scoring_config,
                 )
                 display_group = self._build_display_group(
                     technique_name=technique_name,
