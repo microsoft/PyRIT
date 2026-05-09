@@ -202,6 +202,37 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
+    def test_class_supports_baseline_but_defaults_off(self):
+        """Jailbreak supports a baseline but does not include one by default."""
+        assert Jailbreak.SUPPORTS_DEFAULT_BASELINE is True
+        assert Jailbreak.DEFAULT_INCLUDE_BASELINE is False
+
+    async def test_default_initialize_omits_baseline(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """initialize_async without include_baseline honors DEFAULT_INCLUDE_BASELINE=False."""
+        with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(objective_target=mock_objective_target)
+            assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
+
+    async def test_explicit_include_baseline_true_prepends_baseline(
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+    ):
+        """Caller can override DEFAULT_INCLUDE_BASELINE=False by passing include_baseline=True."""
+        from pyrit.scenario import DatasetConfiguration
+
+        with (
+            patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups),
+            patch.object(DatasetConfiguration, "get_all_seed_attack_groups", return_value=mock_memory_seed_groups),
+        ):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                include_baseline=True,
+            )
+            assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestJailbreakAttackGeneration:
