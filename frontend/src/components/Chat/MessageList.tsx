@@ -252,13 +252,13 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {onCopyToInput && (() => {
                     const disabled = Boolean(noTargetSelected || isSingleTurn || isOperatorLocked || isCrossTarget)
                     const tip = noTargetSelected
-                      ? 'Cannot copy — no target selected'
+                      ? 'Cannot copy to this conversation — no target selected'
                       : isSingleTurn
-                        ? 'Cannot copy — target is single-turn'
+                        ? 'Cannot copy to this conversation — target is single-turn'
                         : isOperatorLocked
-                          ? 'Cannot copy — you are not the operator of this attack'
+                          ? 'Cannot copy to this conversation — you are not the operator of this attack'
                           : isCrossTarget
-                            ? 'Cannot copy — conversation used a different target'
+                            ? 'Cannot copy to this conversation — it used a different target'
                             : 'Copy to input box in this conversation'
                     return (
                       <Tooltip content={tip} relationship="label">
@@ -279,11 +279,11 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {onCopyToNewConversation && (() => {
                     const disabled = Boolean(noTargetSelected || isOperatorLocked || isCrossTarget)
                     const tip = noTargetSelected
-                      ? 'Cannot copy — no target selected'
+                      ? 'Cannot copy to a new conversation — no target selected'
                       : isOperatorLocked
-                        ? 'Cannot add to this attack — you are not the operator'
+                        ? 'Cannot copy to a new conversation — you are not the operator of this attack'
                         : isCrossTarget
-                          ? 'Cannot add to this attack — conversation used a different target'
+                          ? 'Cannot copy to a new conversation — this attack used a different target'
                           : 'Copy to input box in a new conversation'
                     return (
                       <Tooltip content={tip} relationship="label">
@@ -304,13 +304,13 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {onBranchConversation && (() => {
                     const disabled = Boolean(noTargetSelected || isSingleTurn || isOperatorLocked || isCrossTarget)
                     const tip = noTargetSelected
-                      ? 'Cannot branch — no target selected'
+                      ? 'Cannot branch into new conversation — no target selected'
                       : isSingleTurn
-                        ? 'Cannot branch — target is single-turn'
+                        ? 'Cannot branch into new conversation — target is single-turn'
                         : isOperatorLocked
-                          ? 'Cannot add to this attack — you are not the operator'
+                          ? 'Cannot branch into new conversation — you are not the operator of this attack'
                           : isCrossTarget
-                            ? 'Cannot add to this attack — conversation used a different target'
+                            ? 'Cannot branch into new conversation — this attack used a different target'
                             : 'Branch into new conversation'
                     return (
                       <Tooltip content={tip} relationship="label">
@@ -346,9 +346,9 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     }
                     // Show disabled button with reason
                     const tip = noTargetSelected
-                      ? 'Cannot branch — no target selected'
+                      ? 'Cannot branch into new attack — no target selected'
                       : singleTurnBlock
-                        ? 'Cannot branch — target is single-turn'
+                        ? 'Cannot branch into new attack — target is single-turn'
                         : undefined
                     if (!tip) return null
                     return (

@@ -844,6 +844,40 @@ describe("MessageList", () => {
       expect(btn).toBeInTheDocument();
       expect(btn).toBeDisabled();
     });
+
+    it("should give the four disabled action buttons distinct accessible names", () => {
+      // Regression guard: previously several disabled-state tooltips collapsed
+      // to identical strings (e.g. both branch buttons read
+      // "Cannot branch — target is single-turn"), so a screen reader could
+      // not tell them apart. Each disabled action's accessible name must be
+      // unique.
+      render(
+        <TestWrapper>
+          <MessageList
+            messages={assistantMessage}
+            onCopyToInput={jest.fn()}
+            onCopyToNewConversation={jest.fn()}
+            onBranchConversation={jest.fn()}
+            onBranchAttack={jest.fn()}
+            isSingleTurn={true}
+          />
+        </TestWrapper>
+      );
+
+      const btns = [
+        screen.getByTestId("copy-to-input-btn-0"),
+        screen.getByTestId("copy-to-new-conv-btn-0"),
+        screen.getByTestId("branch-conv-btn-0"),
+        screen.getByTestId("branch-attack-btn-0"),
+      ];
+      const names = btns.map(b => b.getAttribute("aria-label") ?? "");
+      // None empty
+      for (const name of names) {
+        expect(name).not.toBe("");
+      }
+      // All distinct
+      expect(new Set(names).size).toBe(names.length);
+    });
   });
 
   describe("original vs converted display", () => {
