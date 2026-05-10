@@ -8,6 +8,7 @@ import {
   Button,
   Tooltip,
   Spinner,
+  mergeClasses,
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
@@ -138,13 +139,16 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
         return (
           <div
             key={index}
-            className={`${styles.message} ${isUser ? styles.userMessage : ''}`}
+            className={mergeClasses(styles.message, isUser && styles.userMessage)}
           >
             <Avatar
               name={avatarName}
               color={isUser ? 'colorful' : isSimulated ? 'steel' : 'brand'}
             />
-            <div className={`${styles.messageContent} ${isUser ? styles.userMessageContent : ''}`}>
+            <div
+              className={mergeClasses(styles.messageContent, isUser && styles.userMessageContent)}
+              data-testid={`message-bubble-${index}`}
+            >
               {/* Error rendering */}
               {message.error && (
                 <div className={styles.errorContainer}>
