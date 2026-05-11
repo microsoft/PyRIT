@@ -4,7 +4,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyrit
 from pyrit.models import AttackOutcome, AttackResult
@@ -26,8 +26,8 @@ class ScenarioIdentifier:
         name: str,
         description: str = "",
         scenario_version: int = 1,
-        init_data: Optional[dict[str, Any]] = None,
-        pyrit_version: Optional[str] = None,
+        init_data: dict[str, Any] | None = None,
+        pyrit_version: str | None = None,
     ) -> None:
         """
         Initialize a ScenarioIdentifier.
@@ -47,7 +47,7 @@ class ScenarioIdentifier:
         self.init_data = init_data
 
 
-ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]
+ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]
 
 
 class ScenarioResult:
@@ -63,11 +63,12 @@ class ScenarioResult:
         attack_results: dict[str, list[AttackResult]],
         objective_scorer_identifier: "ComponentIdentifier",
         scenario_run_state: ScenarioRunState = "CREATED",
-        labels: Optional[dict[str, str]] = None,
-        completion_time: Optional[datetime] = None,
+        labels: dict[str, str] | None = None,
+        creation_time: datetime | None = None,
+        completion_time: datetime | None = None,
         number_tries: int = 0,
-        id: Optional[uuid.UUID] = None,  # noqa: A002
-        display_group_map: Optional[dict[str, str]] = None,
+        id: uuid.UUID | None = None,  # noqa: A002
+        display_group_map: dict[str, str] | None = None,
     ) -> None:
         """
         Initialize a scenario result.
@@ -79,6 +80,7 @@ class ScenarioResult:
             objective_scorer_identifier (ComponentIdentifier): Objective scorer identifier.
             scenario_run_state (ScenarioRunState): Current scenario run state.
             labels (Optional[dict[str, str]]): Optional labels.
+            creation_time (datetime | None): When the scenario result was created.
             completion_time (Optional[datetime]): Optional completion timestamp.
             number_tries (int): Number of run attempts.
             id (Optional[uuid.UUID]): Optional scenario result ID.
@@ -97,9 +99,15 @@ class ScenarioResult:
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results
         self.labels = labels if labels is not None else {}
+        self.creation_time = creation_time if creation_time is not None else datetime.now(timezone.utc)
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}
+
+    @property
+    def display_group_map(self) -> dict[str, str]:
+        """Mapping of atomic_attack_name → display group label."""
+        return self._display_group_map
 
     def get_strategies_used(self) -> list[str]:
         """
@@ -132,7 +140,7 @@ class ScenarioResult:
             grouped.setdefault(group, []).extend(results)
         return grouped
 
-    def get_objectives(self, *, atomic_attack_name: Optional[str] = None) -> list[str]:
+    def get_objectives(self, *, atomic_attack_name: str | None = None) -> list[str]:
         """
         Get the list of unique objectives for this scenario.
 
@@ -162,7 +170,7 @@ class ScenarioResult:
 
         return list(set(objectives))
 
-    def objective_achieved_rate(self, *, atomic_attack_name: Optional[str] = None) -> int:
+    def objective_achieved_rate(self, *, atomic_attack_name: str | None = None) -> int:
         """
         Get the success rate of this scenario.
 
@@ -221,7 +229,7 @@ class ScenarioResult:
         # Already PascalCase or other format, return as-is
         return scenario_name
 
-    def get_scorer_evaluation_metrics(self) -> Optional["ScorerMetrics"]:
+    def get_scorer_evaluation_metrics(self) -> "ScorerMetrics | None":
         """
         Get the evaluation metrics for the scenario's scorer from the scorer evaluation registry.
 

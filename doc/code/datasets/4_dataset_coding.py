@@ -68,7 +68,7 @@ class SimpleDarkBench(_RemoteDatasetLoader):
         # Fetch from HuggingFace
         data = await self._fetch_from_huggingface(
             dataset_name="apart/darkbench",
-            config="default ",
+            config="default",
             split="train",
             cache=cache,
             data_files="darkbench.tsv",
