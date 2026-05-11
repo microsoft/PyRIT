@@ -146,6 +146,7 @@ class FrontendCore:
         self._env_files = config._resolve_env_files()
         self._operator = config.operator
         self._operation = config.operation
+        self._max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
 
         # Lazy-loaded registries
         self._scenario_registry: Optional[ScenarioRegistry] = None
@@ -221,6 +222,7 @@ class FrontendCore:
         derived._env_files = self._env_files
         derived._operator = self._operator
         derived._operation = self._operation
+        derived._max_concurrent_scenario_runs = self._max_concurrent_scenario_runs
         derived._scenario_config = self._scenario_config
 
         # Apply overrides or inherit

@@ -95,18 +95,24 @@ class AttackSummary(BaseModel):
 
     attack_result_id: str = Field(..., description="Database-assigned unique ID for this AttackResult")
     conversation_id: str = Field(..., description="Primary conversation of this attack result")
-    attack_type: str = Field(..., description="Attack class name (e.g., 'CrescendoAttack', 'ManualAttack')")
+    attack_type: str = Field("", description="Attack class name (e.g., 'CrescendoAttack', 'ManualAttack')")
     attack_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional attack-specific parameters")
     target: Optional[TargetInfo] = Field(None, description="Target information from the stored identifier")
     converters: list[str] = Field(
         default_factory=list, description="Request converter class names applied in this attack"
     )
+    objective: str = Field("", description="Natural-language description of the attacker's objective")
     outcome: Optional[Literal["undetermined", "success", "failure"]] = Field(
         None, description="Attack outcome (null if not yet determined)"
     )
+    outcome_reason: str | None = Field(None, description="Reason for the outcome")
+    last_response: str | None = Field(None, description="Model response from the final turn")
     last_message_preview: Optional[str] = Field(
         None, description="Preview of the last message (truncated to ~100 chars)"
     )
+    score_value: str | None = Field(None, description="Score value from the objective scorer")
+    executed_turns: int = Field(0, ge=0, description="Number of turns executed")
+    execution_time_ms: int = Field(0, ge=0, description="Execution time in milliseconds")
     message_count: int = Field(0, description="Total number of messages in the attack")
     related_conversation_ids: list[str] = Field(
         default_factory=list, description="IDs of related conversations within this attack"
