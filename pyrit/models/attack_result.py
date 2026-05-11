@@ -10,13 +10,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
-from pyrit.models.retry_event import RetryEvent
 from pyrit.models.strategy_result import StrategyResult
 
 if TYPE_CHECKING:
     from pyrit.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.conversation_reference import ConversationReference
     from pyrit.models.message_piece import MessagePiece
+    from pyrit.models.retry_event import RetryEvent
     from pyrit.models.score import Score
 
 from pyrit.models.conversation_reference import ConversationType

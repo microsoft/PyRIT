@@ -69,6 +69,9 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: Optional[list[Message]] = None
     _memory_labels_override: Optional[dict[str, str]] = None
 
+    # Set by the ON_ERROR handler to link error AttackResults to ScenarioResults
+    _error_attack_result_id: str | None = None
+
     # Convenience properties that delegate to params or overrides
     @property
     def objective(self) -> str:

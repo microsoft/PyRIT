@@ -909,8 +909,7 @@ class AttackResultEntry(Base):
         if self.retry_events_json:
             from pyrit.models.retry_event import RetryEvent
 
-            for evt_dict in json.loads(self.retry_events_json):
-                retry_events.append(RetryEvent.from_dict(evt_dict))
+            retry_events = [RetryEvent.from_dict(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
 
         return AttackResult(
             conversation_id=self.conversation_id,

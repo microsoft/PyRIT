@@ -3,10 +3,13 @@
 
 """Contextvar-based retry event collector for capturing Tenacity retry events."""
 
+import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Optional
 
+from tenacity import RetryCallState
+
+from pyrit.exceptions.exception_context import get_execution_context
 from pyrit.models.retry_event import RetryEvent
 
 
@@ -22,7 +25,7 @@ class RetryCollector:
 
     events: list[RetryEvent] = field(default_factory=list)
 
-    def record(self, *, retry_state: Any) -> None:
+    def record(self, *, retry_state: RetryCallState) -> None:
         """
         Record a retry event from a Tenacity RetryCallState.
 
@@ -30,26 +33,17 @@ class RetryCollector:
         ExecutionContext to build a structured RetryEvent.
 
         Args:
-            retry_state: The Tenacity RetryCallState from the after callback.
+            retry_state (RetryCallState): The Tenacity retry call state from the after callback.
         """
-        import time
-
-        from pyrit.exceptions.exception_context import get_execution_context
-
-        # Extract basic info from retry_state
-        call_count = getattr(retry_state, "attempt_number", None) or 0
-        start_time = getattr(retry_state, "start_time", None)
-        elapsed = (time.monotonic() - start_time) if start_time is not None else 0.0
-
-        fn = getattr(retry_state, "fn", None)
-        fn_name = getattr(fn, "__name__", "unknown") if fn else "unknown"
+        elapsed = time.monotonic() - retry_state.start_time
+        fn_name = retry_state.fn.__name__ if retry_state.fn is not None else "unknown"
 
         # Extract exception info
         exception_type = ""
         exception_message = ""
-        outcome = getattr(retry_state, "outcome", None)
-        if outcome and getattr(outcome, "failed", False):
-            exc = outcome.exception() if hasattr(outcome, "exception") else None
+        outcome = retry_state.outcome
+        if outcome is not None and outcome.failed:
+            exc = outcome.exception()
             if exc:
                 exception_type = type(exc).__name__
                 exception_message = str(exc)
@@ -68,7 +62,7 @@ class RetryCollector:
             pass
 
         event = RetryEvent(
-            attempt_number=call_count,
+            attempt_number=retry_state.attempt_number,
             function_name=fn_name,
             exception_type=exception_type,
             exception_message=exception_message,
@@ -80,10 +74,10 @@ class RetryCollector:
         self.events.append(event)
 
 
-_retry_collector: ContextVar[Optional[RetryCollector]] = ContextVar("retry_collector", default=None)
+_retry_collector: ContextVar[RetryCollector | None] = ContextVar("retry_collector", default=None)
 
 
-def get_retry_collector() -> Optional[RetryCollector]:
+def get_retry_collector() -> RetryCollector | None:
     """
     Get the current retry collector.
 

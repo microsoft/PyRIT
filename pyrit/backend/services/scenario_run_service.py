@@ -405,10 +405,9 @@ class ScenarioRunService:
 
         # Fall back to persisted error from failed AttackResult
         if not error and getattr(scenario_result, "error_attack_result_ids", None):
-            memory = CentralMemory.get_memory_instance()
             error_ids = scenario_result.error_attack_result_ids
             if isinstance(error_ids, list) and error_ids:
-                error_results = memory.get_attack_results(attack_result_ids=error_ids[:1])
+                error_results = self._memory.get_attack_results(attack_result_ids=error_ids[:1])
                 if error_results:
                     error = error_results[0].error_message
                     error_type = error_results[0].error_type
