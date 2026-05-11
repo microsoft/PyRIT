@@ -132,6 +132,7 @@ class ConfigurationLoader(YamlLoadable):
     operator: Optional[str] = None
     operation: Optional[str] = None
     scenario: Optional[Union[str, dict[str, Any]]] = None
+    extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
@@ -254,7 +255,15 @@ class ConfigurationLoader(YamlLoadable):
         """
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
-        return cls(**filtered_data)
+        known_fields = set(cls.__dataclass_fields__.keys())
+        known_data = {k: v for k, v in filtered_data.items() if k in known_fields and k != "extensions"}
+        extra_data = {k: v for k, v in filtered_data.items() if k not in known_fields}
+        if "extensions" in filtered_data:
+            extensions = filtered_data["extensions"]
+            if not isinstance(extensions, dict):
+                raise ValueError(f"ConfigurationLoader.extensions must be a dict. Got: {type(extensions).__name__}")
+            extra_data = {**extensions, **extra_data}
+        return cls(**known_data, extensions=extra_data)
 
     @staticmethod
     def load_with_overrides(
