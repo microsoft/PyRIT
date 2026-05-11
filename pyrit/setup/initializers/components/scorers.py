@@ -89,7 +89,16 @@ GPT5_1_TARGET: str = "azure_openai_gpt5_1"
 
 # Scorer registry names.
 MAIN: str = "main"
+""""
+The main scorer is an inverted refusal scorer based on the main scorer target (objective_scorer_chat).
+"""
 FALLBACK: str = "fallback"
+"""
+The fallback scorer is an inverted refusal scorer based on the fallback scorer target (openai_chat).
+It is usually used when the main scorer cannot be created due to missing targets.
+And allows for a user to get a working scorer even if they only have an openai_chat target in their environment.
+"""
+
 REFUSAL_GPT4O_OBJECTIVE_STRICT: str = "refusal_gpt4o_objective_strict"
 REFUSAL_GPT4O_OBJECTIVE_LENIENT: str = "refusal_gpt4o_objective_lenient"
 REFUSAL_GPT4O_NO_OBJECTIVE_STRICT: str = "refusal_gpt4o_no_objective_strict"
