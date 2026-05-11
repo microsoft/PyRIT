@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Optional, Union
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in v0.16.0.
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -24,7 +25,7 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario import BaselinePolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.score import (
     TrueFalseScorer,
@@ -84,7 +85,7 @@ class Jailbreak(Scenario):
     #: Jailbreak runs many templates per objective, so the baseline atomic attack is rarely
     #: informative relative to the volume of jailbreak templates. Off by default; callers that
     #: want a comparison can pass ``include_baseline=True`` to ``initialize_async``.
-    DEFAULT_INCLUDE_BASELINE: ClassVar[bool] = False
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.DEFAULT_OFF
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -130,6 +131,7 @@ class Jailbreak(Scenario):
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
         jailbreak_names: list[str] | None = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in v0.16.0.
     ) -> None:
         """
         Initialize the jailbreak scenario.
@@ -142,6 +144,8 @@ class Jailbreak(Scenario):
             num_attempts (Optional[int]): Number of times to try each jailbreak.
             jailbreak_names (Optional[List[str]]): List of jailbreak names from the template list under datasets.
                 to use.
+            include_baseline (bool | None): **Deprecated.** Will be removed in v0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
             ValueError: If both jailbreak_names and num_templates are provided, as random selection
@@ -188,6 +192,16 @@ class Jailbreak(Scenario):
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Jailbreak(include_baseline=...)",
+                new_item="Jailbreak.initialize_async(include_baseline=...)",
+                removed_in="v0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None

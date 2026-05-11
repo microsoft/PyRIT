@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Optional
 
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in v0.16.0.
 from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
@@ -174,6 +175,7 @@ class Encoding(Scenario):
         objective_scorer: Optional[TrueFalseScorer] = None,
         encoding_templates: Optional[Sequence[str]] = None,
         scenario_result_id: Optional[str] = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in v0.16.0.
     ) -> None:
         """
         Initialize the Encoding Scenario.
@@ -185,6 +187,8 @@ class Encoding(Scenario):
             encoding_templates (Optional[Sequence[str]]): Templates used to construct the decoding
                 prompts. Defaults to AskToDecodeConverter.garak_templates.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            include_baseline (bool | None): **Deprecated.** Will be removed in v0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
@@ -197,6 +201,16 @@ class Encoding(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Encoding(include_baseline=...)",
+                new_item="Encoding.initialize_async(include_baseline=...)",
+                removed_in="v0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
         self._resolved_seed_groups: Optional[list[SeedAttackGroup]] = None

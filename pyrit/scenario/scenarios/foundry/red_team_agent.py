@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in v0.16.0.
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
     CrescendoAttack,
@@ -248,6 +249,7 @@ class RedTeamAgent(Scenario):
         adversarial_chat: Optional[PromptTarget] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         scenario_result_id: Optional[str] = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in v0.16.0.
     ) -> None:
         """
         Initialize a Foundry Scenario with the specified attack strategies.
@@ -260,6 +262,8 @@ class RedTeamAgent(Scenario):
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            include_baseline (bool | None): **Deprecated.** Will be removed in v0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
             ValueError: If attack_strategies is empty or contains unsupported strategies.
@@ -283,6 +287,17 @@ class RedTeamAgent(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="RedTeamAgent(include_baseline=...)",
+                new_item="RedTeamAgent.initialize_async(include_baseline=...)",
+                removed_in="v0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
+
         self._scenario_composites: list[FoundryComposite] = []
 
     @apply_defaults

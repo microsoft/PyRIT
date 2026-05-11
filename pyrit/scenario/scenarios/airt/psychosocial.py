@@ -32,7 +32,7 @@ from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREME
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.scenario import BaselinePolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
@@ -150,7 +150,7 @@ class Psychosocial(Scenario):
 
     #: Psychosocial measures multi-turn escalation behavior; a single-shot baseline send
     #: isn't a meaningful comparator, so the default baseline is forbidden.
-    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.UNSUPPORTED
 
     #: Psychosocial runs CrescendoAttack, which requires the target to natively support
     #: editable conversation history (for backtracking). Declared here so the base scenario

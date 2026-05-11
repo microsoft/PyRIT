@@ -13,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
 # Reusable test scorer identifier
@@ -98,10 +98,9 @@ def sample_attack_results():
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    # Tests using this fixture should default to no baseline; set the class flag to forbid
-    # the default baseline so we don't have to thread include_baseline=False through every
-    # initialize_async call.
-    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = False
+    # Tests using this fixture should default to no baseline; set the class policy to UNSUPPORTED
+    # so we don't have to thread include_baseline=False through every initialize_async call.
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.UNSUPPORTED
 
     def __init__(self, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided

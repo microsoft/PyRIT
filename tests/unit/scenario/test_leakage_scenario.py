@@ -14,6 +14,7 @@ from pyrit.models import SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.airt import Leakage, LeakageStrategy
+from pyrit.scenario.core import BaselinePolicy
 from pyrit.score import TrueFalseCompositeScorer
 
 
@@ -104,7 +105,7 @@ class TestLeakageInitialization:
 
     def test_init_supports_default_baseline(self):
         """Leakage opts into the parent's default baseline."""
-        assert Leakage.SUPPORTS_DEFAULT_BASELINE is True
+        assert Leakage.BASELINE_POLICY is BaselinePolicy.DEFAULT_ON
 
 
 @pytest.mark.usefixtures(*FIXTURES)

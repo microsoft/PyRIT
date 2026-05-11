@@ -16,11 +16,13 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -42,6 +44,26 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
+
+
+class BaselinePolicy(Enum):
+    """
+    Declares how a scenario type treats the default baseline atomic attack.
+
+    The baseline is a plain ``PromptSendingAttack`` that sends each objective unmodified,
+    used as a comparison point against the scenario's strategies. Each scenario class
+    declares its policy via ``Scenario.BASELINE_POLICY``; callers can still override at
+    runtime via ``initialize_async(include_baseline=...)`` for the two ``DEFAULT_*`` states.
+    """
+
+    #: Supported and prepended automatically. Caller can opt out at runtime.
+    DEFAULT_ON = "default_on"
+
+    #: Supported but only included when the caller explicitly requests it.
+    DEFAULT_OFF = "default_off"
+
+    #: Not supported. Explicit ``include_baseline=True`` at runtime raises ``ValueError``.
+    UNSUPPORTED = "unsupported"
 
 
 def _assert_json_serializable(*, params: dict[str, Any]) -> None:
@@ -107,18 +129,13 @@ class Scenario(ABC):
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    #: Whether this scenario type supports a default baseline atomic attack. Subclasses whose
-    #: semantics make a default baseline meaningless (e.g. benchmarks that compare against a
-    #: gold-standard answer rather than measure attack lift over an unmodified prompt) override
-    #: this to ``False``. When ``False``, ``initialize_async`` skips the baseline regardless of
-    #: the user-facing default and raises ``ValueError`` if the caller explicitly opts in.
-    SUPPORTS_DEFAULT_BASELINE: ClassVar[bool] = True
-
-    #: Whether this scenario type includes the baseline atomic attack by default. Used only when
-    #: ``SUPPORTS_DEFAULT_BASELINE`` is ``True``. Subclasses can override this to ``False`` when
-    #: their default behavior should omit the baseline (e.g. when the scenario is already
-    #: dominated by a long list of templates and the baseline is rarely informative).
-    DEFAULT_INCLUDE_BASELINE: ClassVar[bool] = True
+    #: How this scenario type treats the default baseline atomic attack. Subclasses override
+    #: when their semantics call for a different default (``DEFAULT_OFF``) or when a baseline
+    #: is meaningless for the comparison the scenario performs (``UNSUPPORTED``). Resolved in
+    #: ``initialize_async`` and overridable per run via ``include_baseline`` for the
+    #: ``DEFAULT_*`` states; ``UNSUPPORTED`` is a hard constraint and a caller-supplied
+    #: ``include_baseline=True`` raises ``ValueError``.
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.DEFAULT_ON
 
     def __init__(
         self,
@@ -128,6 +145,7 @@ class Scenario(ABC):
         strategy_class: type[ScenarioStrategy],
         objective_scorer: Scorer,
         scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
+        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in v0.16.0.
     ) -> None:
         """
         Initialize a scenario.
@@ -141,6 +159,10 @@ class Scenario(ABC):
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
+            include_default_baseline (bool | None): **Deprecated.** Will be removed in v0.16.0.
+                Pass ``include_baseline`` to ``initialize_async`` instead. When set, the value is
+                used as the effective ``include_baseline`` for the next ``initialize_async`` call
+                unless that call passes its own ``include_baseline``.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
@@ -189,6 +211,18 @@ class Scenario(ABC):
         # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
         self.params: dict[str, Any] = {}
         self._declarations_validated: bool = False
+
+        # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along
+        # with the include_default_baseline kwarg above and the legacy fallback branch in
+        # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
+        self._legacy_include_baseline: bool | None = None
+        if include_default_baseline is not None:
+            print_deprecation_message(
+                old_item="Scenario(include_default_baseline=...)",
+                new_item="Scenario.initialize_async(include_baseline=...)",
+                removed_in="v0.16.0",
+            )
+            self._legacy_include_baseline = include_default_baseline
 
     @property
     def name(self) -> str:
@@ -523,13 +557,14 @@ class Scenario(ABC):
             include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
                 all objectives without modifications, allowing comparison between unmodified prompts
                 and the scenario's strategies. If None (the default), the scenario type's
-                ``DEFAULT_INCLUDE_BASELINE`` class attribute decides (only consulted when
-                ``SUPPORTS_DEFAULT_BASELINE`` is True). Passing ``True`` on a scenario whose
-                ``SUPPORTS_DEFAULT_BASELINE`` is False raises ``ValueError``.
+                ``BASELINE_POLICY`` class attribute decides: ``DEFAULT_ON`` includes it,
+                ``DEFAULT_OFF`` omits it, and ``UNSUPPORTED`` always omits it (and rejects an
+                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_POLICY`` is
+                ``UNSUPPORTED`` raises ``ValueError``.
 
         Raises:
             ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed
-                to a scenario that does not support a default baseline.
+                to a scenario whose ``BASELINE_POLICY`` is ``UNSUPPORTED``.
         """
         # Validate required parameters
         if objective_target is None:
@@ -548,19 +583,25 @@ class Scenario(ABC):
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
 
-        # Resolve the effective include_baseline. Capability is checked first so a forbidden
+        # Deprecated. Will be removed in v0.16.0. Honor the legacy constructor-time
+        # include_default_baseline (or subclass include_baseline) only when the caller did
+        # not supply a runtime value.
+        if include_baseline is None and self._legacy_include_baseline is not None:
+            include_baseline = self._legacy_include_baseline
+
+        # Resolve the effective include_baseline. UNSUPPORTED is checked first so a forbidden
         # scenario type never silently inherits a True default; explicit-True on a forbidden
-        # type is a hard error rather than a silent ignore. When the scenario type supports
-        # the baseline, None defers to DEFAULT_INCLUDE_BASELINE on the class.
-        if not self.SUPPORTS_DEFAULT_BASELINE:
+        # type is a hard error rather than a silent ignore. For the DEFAULT_* states, a None
+        # runtime value defers to the policy.
+        if self.BASELINE_POLICY is BaselinePolicy.UNSUPPORTED:
             if include_baseline is True:
                 raise ValueError(
-                    f"{type(self).__name__} does not support a default baseline; pass "
-                    f"include_baseline=False or omit the argument."
+                    f"{type(self).__name__} does not support a default baseline "
+                    f"(BASELINE_POLICY = UNSUPPORTED); pass include_baseline=False or omit the argument."
                 )
             include_baseline = False
         elif include_baseline is None:
-            include_baseline = self.DEFAULT_INCLUDE_BASELINE
+            include_baseline = self.BASELINE_POLICY is BaselinePolicy.DEFAULT_ON
 
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
