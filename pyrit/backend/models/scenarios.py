@@ -21,7 +21,7 @@ from pyrit.backend.models.common import PaginationInfo
 class RegisteredScenario(BaseModel):
     """Summary of a registered scenario."""
 
-    scenario_name: str = Field(..., description="Registry key (e.g., 'foundry.red_team_agent')")
+    scenario_name: str = Field(..., description="Scenario name  (e.g., 'foundry.red_team_agent')")
     scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
     description: str = Field(..., description="Human-readable description of the scenario")
     default_strategy: str = Field(..., description="Default strategy name used when none specified")
@@ -33,7 +33,7 @@ class RegisteredScenario(BaseModel):
     max_dataset_size: Optional[int] = Field(None, description="Maximum items per dataset (None means unlimited)")
 
 
-class ListRegisteredScenarioResponse(BaseModel):
+class ListRegisteredScenariosResponse(BaseModel):
     """Response for listing scenarios."""
 
     items: list[RegisteredScenario] = Field(..., description="List of scenario summaries")
@@ -46,20 +46,20 @@ class ListRegisteredScenarioResponse(BaseModel):
 
 
 class ScenarioRunStatus(str, Enum):
-    """Status of a scenario run."""
+    """Status of a scenario run, aligned with core ScenarioRunState."""
 
-    PENDING = "pending"
-    INITIALIZING = "initializing"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    CREATED = "CREATED"
+    INITIALIZING = "INITIALIZING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class RunScenarioRequest(BaseModel):
     """Request body for starting a scenario run."""
 
-    scenario_name: str = Field(..., description="Registry key of the scenario to run")
+    scenario_name: str = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
     initializers: list[str] | None = Field(
         None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenarioResponse, RegisteredScenario
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
 from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
 from pyrit.registry import ScenarioMetadata
 
@@ -206,7 +206,7 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ListRegisteredScenarioResponse(
+                return_value=ListRegisteredScenariosResponse(
                     items=[],
                     pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
@@ -236,7 +236,7 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ListRegisteredScenarioResponse(
+                return_value=ListRegisteredScenariosResponse(
                     items=[summary],
                     pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
@@ -262,7 +262,7 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ListRegisteredScenarioResponse(
+                return_value=ListRegisteredScenariosResponse(
                     items=[],
                     pagination=PaginationInfo(limit=10, has_more=False, next_cursor=None, prev_cursor=None),
                 )

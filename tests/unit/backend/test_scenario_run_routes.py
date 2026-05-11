@@ -42,7 +42,7 @@ def _mock_run_response(
     *,
     run_id: str = "test-run-id",
     scenario_name: str = "foundry.red_team_agent",
-    run_status: ScenarioRunStatus = ScenarioRunStatus.PENDING,
+    run_status: ScenarioRunStatus = ScenarioRunStatus.CREATED,
 ) -> ScenarioRunSummary:
     """Create a mock ScenarioRunResponse."""
     return ScenarioRunSummary(
@@ -75,7 +75,7 @@ class TestStartScenarioRunRoute:
         assert response.status_code == status.HTTP_202_ACCEPTED
         data = response.json()
         assert data["scenario_result_id"] == "test-run-id"
-        assert data["status"] == "pending"
+        assert data["status"] == "CREATED"
 
     def test_start_run_invalid_scenario_returns_400(self, client: TestClient) -> None:
         """Test that an invalid scenario returns 400."""
@@ -145,7 +145,7 @@ class TestListScenarioRunsRoute:
         """Test that list runs returns all tracked runs."""
         runs = [
             _mock_run_response(run_id="run-1"),
-            _mock_run_response(run_id="run-2", run_status=ScenarioRunStatus.RUNNING),
+            _mock_run_response(run_id="run-2", run_status=ScenarioRunStatus.IN_PROGRESS),
         ]
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
@@ -164,7 +164,7 @@ class TestGetScenarioRunRoute:
 
     def test_get_run_returns_200(self, client: TestClient) -> None:
         """Test that getting an existing run returns 200."""
-        mock_response = _mock_run_response(run_status=ScenarioRunStatus.RUNNING)
+        mock_response = _mock_run_response(run_status=ScenarioRunStatus.IN_PROGRESS)
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
@@ -174,7 +174,7 @@ class TestGetScenarioRunRoute:
             response = client.get("/api/scenarios/runs/test-run-id")
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["status"] == "running"
+        assert response.json()["status"] == "IN_PROGRESS"
 
     def test_get_run_not_found_returns_404(self, client: TestClient) -> None:
         """Test that getting a non-existent run returns 404."""
@@ -203,7 +203,7 @@ class TestCancelScenarioRunRoute:
             response = client.post("/api/scenarios/runs/test-run-id/cancel")
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["status"] == "cancelled"
+        assert response.json()["status"] == "CANCELLED"
 
     def test_cancel_run_not_found_returns_404(self, client: TestClient) -> None:
         """Test that cancelling a non-existent run returns 404."""

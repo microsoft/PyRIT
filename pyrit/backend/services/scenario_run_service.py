@@ -13,7 +13,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
@@ -30,18 +30,12 @@ from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import DatasetConfiguration
 
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
-
-# Maps DB ScenarioRunState values to API ScenarioRunStatus
-_STATE_TO_STATUS = {
-    "CREATED": ScenarioRunStatus.INITIALIZING,
-    "IN_PROGRESS": ScenarioRunStatus.RUNNING,
-    "COMPLETED": ScenarioRunStatus.COMPLETED,
-    "FAILED": ScenarioRunStatus.FAILED,
-    "CANCELLED": ScenarioRunStatus.CANCELLED,
-}
 
 
 @dataclass
@@ -65,6 +59,7 @@ class ScenarioRunService:
     def __init__(self, *, max_concurrent_runs: int = _DEFAULT_MAX_CONCURRENT_RUNS) -> None:
         """Initialize the scenario run service."""
         self._max_concurrent_runs = max_concurrent_runs
+        self._memory = CentralMemory.get_memory_instance()
         self._active_tasks: dict[str, _ActiveTask] = {}
         self._run_semaphore = asyncio.Semaphore(max_concurrent_runs)
 
@@ -97,7 +92,15 @@ class ScenarioRunService:
 
         # Perform all initialization eagerly — errors propagate to caller
         try:
-            scenario = await self._initialize_run_async(request=request)
+            scenario_class = self._resolve_scenario_class(request=request)
+            await self._run_initializers_async(request=request)
+            objective_target = self._resolve_target(request=request)
+            init_kwargs = self._build_init_kwargs(
+                request=request, scenario_class=scenario_class, objective_target=objective_target
+            )
+            scenario = await self._initialize_scenario_async(
+                request=request, scenario_class=scenario_class, init_kwargs=init_kwargs
+            )
         except Exception:
             self._run_semaphore.release()
             raise
@@ -116,7 +119,8 @@ class ScenarioRunService:
         active.task = task
 
         response = self._build_response(scenario_result_id=scenario_result_id)
-        assert response is not None  # guaranteed: we just inserted into DB via initialize_async
+        if response is None:
+            raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
         return response
 
     def get_run(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
@@ -141,11 +145,9 @@ class ScenarioRunService:
         Returns:
             ScenarioRunListResponse with runs.
         """
-        memory = CentralMemory.get_memory_instance()
-
         # This is expensive, and we don't need all the data. At some point
         # we may want to add a lightweight "list" query to the DB layer that only
-        results = memory.get_scenario_results(limit=limit)
+        results = self._memory.get_scenario_results(limit=limit)
         items = [self._build_response_from_db(scenario_result=sr) for sr in results]
         return ScenarioRunListResponse(items=items)
 
@@ -163,13 +165,12 @@ class ScenarioRunService:
             ValueError: If the run is already in a terminal state or not active.
         """
         # Verify run exists in DB
-        memory = CentralMemory.get_memory_instance()
-        results = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
 
         scenario_result = results[0]
-        db_status = _STATE_TO_STATUS.get(scenario_result.scenario_run_state, ScenarioRunStatus.FAILED)
+        db_status = ScenarioRunStatus(scenario_result.scenario_run_state)
 
         if db_status in (ScenarioRunStatus.COMPLETED, ScenarioRunStatus.FAILED, ScenarioRunStatus.CANCELLED):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
@@ -182,50 +183,66 @@ class ScenarioRunService:
                 await asyncio.wait_for(active.task, timeout=5.0)
 
         # Persist cancelled state to DB
-        memory.update_scenario_run_state(scenario_result_id=scenario_result_id, scenario_run_state="CANCELLED")
+        self._memory.update_scenario_run_state(scenario_result_id=scenario_result_id, scenario_run_state="CANCELLED")
 
         return self._build_response(scenario_result_id=scenario_result_id)
 
-    async def _initialize_run_async(self, *, request: RunScenarioRequest) -> Scenario:
+    def _resolve_scenario_class(self, *, request: RunScenarioRequest) -> type:
         """
-        Validate inputs and initialize the scenario eagerly.
-
-        Performs all validation (scenario, initializers, target, strategies) and
-        calls scenario.initialize_async so that any errors are raised immediately
-        to the caller. Running initialization on creation simplifies error handling and ensures
-        that the scenario is fully ready to run when we spawn the background task.
+        Validate and resolve the scenario class from the registry.
 
         Args:
-            request: The run request with scenario name, target, and options.
+            request: The run request containing the scenario name.
 
         Returns:
-            The fully initialized Scenario instance ready for run_async.
+            The scenario class.
 
         Raises:
-            ValueError: If any validation fails (bad scenario name, missing target,
-                invalid strategy, unknown initializer, etc.).
+            ValueError: If the scenario name is not found in the registry.
         """
-        # Validate scenario exists
         scenario_registry = ScenarioRegistry.get_registry_singleton()
         try:
-            scenario_class = scenario_registry.get_class(request.scenario_name)
+            return scenario_registry.get_class(request.scenario_name)
         except KeyError as e:
             raise ValueError(str(e)) from None
 
-        # Validate and run initializers
-        if request.initializers:
-            initializer_registry = InitializerRegistry.get_registry_singleton()
-            for initializer_name in request.initializers:
-                try:
-                    initializer_class = initializer_registry.get_class(initializer_name)
-                except KeyError as e:
-                    raise ValueError(f"Initializer not found: {e}") from None
-                instance = initializer_class()
-                if request.initializer_args and initializer_name in request.initializer_args:
-                    instance.set_params_from_args(args=request.initializer_args[initializer_name])
-                await instance.initialize_async()
+    async def _run_initializers_async(self, *, request: RunScenarioRequest) -> None:
+        """
+        Validate and execute initializers specified in the request.
 
-        # Resolve target
+        Args:
+            request: The run request containing initializer names and args.
+
+        Raises:
+            ValueError: If an initializer name is not found in the registry.
+        """
+        if not request.initializers:
+            return
+
+        initializer_registry = InitializerRegistry.get_registry_singleton()
+        for initializer_name in request.initializers:
+            try:
+                initializer_class = initializer_registry.get_class(initializer_name)
+            except KeyError as e:
+                raise ValueError(f"Initializer not found: {e}") from None
+            instance = initializer_class()
+            if request.initializer_args and initializer_name in request.initializer_args:
+                instance.set_params_from_args(args=request.initializer_args[initializer_name])
+            await instance.initialize_async()
+
+    def _resolve_target(self, *, request: RunScenarioRequest) -> "PromptTarget":
+        """
+        Resolve the objective target from the target registry.
+
+        Args:
+            request: The run request containing the target name.
+
+        Returns:
+            The resolved PromptTarget instance.
+
+        Raises:
+            ValueError: If the target is not found in the registry.
+        """
         target_registry = TargetRegistry.get_registry_singleton()
         objective_target = target_registry.get_instance_by_name(request.target_name)
         if objective_target is None:
@@ -239,8 +256,27 @@ class ScenarioRunService:
             raise ValueError(
                 f"Target '{request.target_name}' not found in registry. Available targets: {', '.join(available_names)}"
             )
+        return objective_target
 
-        # Build init kwargs
+    def _build_init_kwargs(
+        self, *, request: RunScenarioRequest, scenario_class: type[Scenario], objective_target: Any
+    ) -> dict[str, Any]:
+        """
+        Build the kwargs dict for scenario.initialize_async.
+
+        Resolves strategies and dataset configuration from the request.
+
+        Args:
+            request: The run request.
+            scenario_class: The resolved scenario class.
+            objective_target: The resolved target instance.
+
+        Returns:
+            Dict of kwargs to pass to scenario.initialize_async.
+
+        Raises:
+            ValueError: If a strategy name is invalid for the scenario.
+        """
         init_kwargs: dict[str, Any] = {
             "objective_target": objective_target,
             "max_concurrency": request.max_concurrency,
@@ -276,7 +312,22 @@ class ScenarioRunService:
             default_config.max_dataset_size = request.max_dataset_size
             init_kwargs["dataset_config"] = default_config
 
-        # Instantiate and initialize scenario
+        return init_kwargs
+
+    async def _initialize_scenario_async(
+        self, *, request: RunScenarioRequest, scenario_class: type[Scenario], init_kwargs: dict[str, Any]
+    ) -> Scenario:
+        """
+        Instantiate the scenario and call initialize_async.
+
+        Args:
+            request: The run request (for scenario_params and scenario_result_id).
+            scenario_class: The resolved scenario class.
+            init_kwargs: The kwargs to pass to scenario.initialize_async.
+
+        Returns:
+            The fully initialized Scenario instance ready for run_async.
+        """
         constructor_kwargs: dict[str, Any] = {}
         if request.scenario_result_id:
             constructor_kwargs["scenario_result_id"] = request.scenario_result_id
@@ -326,8 +377,7 @@ class ScenarioRunService:
         Returns:
             ScenarioRunResponse if found in the database, None otherwise.
         """
-        memory = CentralMemory.get_memory_instance()
-        results = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
         return self._build_response_from_db(scenario_result=results[0])
@@ -352,7 +402,7 @@ class ScenarioRunService:
             if active.task is not None and active.task.done():
                 del self._active_tasks[scenario_result_id]
 
-        status = _STATE_TO_STATUS.get(scenario_result.scenario_run_state, ScenarioRunStatus.FAILED)
+        status = ScenarioRunStatus(scenario_result.scenario_run_state)
 
         # Build result fields for completed runs
         strategies_used: list[str] = []
@@ -373,7 +423,7 @@ class ScenarioRunService:
             scenario_name=scenario_result.scenario_identifier.name,
             scenario_version=scenario_result.scenario_identifier.version,
             status=status,
-            created_at=scenario_result.created_at,
+            created_at=scenario_result.creation_time,
             updated_at=scenario_result.completion_time,
             error=error,
             strategies_used=strategies_used,
@@ -400,8 +450,7 @@ class ScenarioRunService:
         Raises:
             ValueError: If the run is not in a completed state.
         """
-        memory = CentralMemory.get_memory_instance()
-        results = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
 

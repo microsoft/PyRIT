@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Optional
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenarioResponse, RegisteredScenario
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
 
@@ -54,7 +54,7 @@ class ScenarioService:
         *,
         limit: int = 50,
         cursor: Optional[str] = None,
-    ) -> ListRegisteredScenarioResponse:
+    ) -> ListRegisteredScenariosResponse:
         """
         List all available scenarios with pagination.
 
@@ -71,7 +71,7 @@ class ScenarioService:
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
         next_cursor = page[-1].scenario_name if has_more and page else None
 
-        return ListRegisteredScenarioResponse(
+        return ListRegisteredScenariosResponse(
             items=page,
             pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
         )

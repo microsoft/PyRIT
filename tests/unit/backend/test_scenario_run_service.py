@@ -66,7 +66,7 @@ def _make_db_scenario_result(
     sr.get_strategies_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
-    sr.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    sr.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
     sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
     sr.labels = {}
     sr.objective_achieved_rate.return_value = 0
@@ -135,7 +135,7 @@ class TestScenarioRunServiceStartRun:
         response = await service.start_run_async(request=_make_request())
 
         assert response.scenario_result_id == "sr-uuid-1"
-        assert response.status == ScenarioRunStatus.RUNNING
+        assert response.status == ScenarioRunStatus.IN_PROGRESS
         assert response.scenario_name == "foundry.red_team_agent"
         assert response.error is None
 
@@ -248,7 +248,7 @@ class TestScenarioRunServiceStartRun:
             request=_make_request(initializers=["target", "load_default_datasets"])
         )
 
-        assert response.status == ScenarioRunStatus.RUNNING
+        assert response.status == ScenarioRunStatus.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
@@ -258,7 +258,7 @@ class TestScenarioRunServiceStartRun:
 
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
-        assert response.status == ScenarioRunStatus.RUNNING
+        assert response.status == ScenarioRunStatus.IN_PROGRESS
         mock_scenario_class.assert_called_once_with(scenario_result_id="existing-result-uuid")
 
     async def test_start_run_omits_scenario_result_id_when_none(self, mock_all_registries) -> None:
@@ -292,7 +292,7 @@ class TestScenarioRunServiceGetRun:
         assert fetched is not None
         assert fetched.scenario_result_id == "sr-123"
         assert fetched.scenario_name == "foundry.red_team_agent"
-        assert fetched.status == ScenarioRunStatus.RUNNING
+        assert fetched.status == ScenarioRunStatus.IN_PROGRESS
 
 
 class TestScenarioRunServiceListRuns:
@@ -390,7 +390,7 @@ class TestScenarioRunServiceExecution:
         mock_scenario_result.get_strategies_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
-        mock_scenario_result.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
         mock_scenario_result.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
 
         mock_instance.run_async = AsyncMock(return_value=mock_scenario_result)
