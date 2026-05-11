@@ -65,7 +65,7 @@ from pyrit.identifiers import ComponentIdentifier
 
 For LLM-based converters, also import:
 ```python
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 ```
 
 ## Constructor Pattern
@@ -77,7 +77,7 @@ from pyrit.common.apply_defaults import apply_defaults
 
 class MyConverter(PromptConverter):
     @apply_defaults
-    def __init__(self, *, target: PromptChatTarget, template: str = "default") -> None:
+    def __init__(self, *, target: PromptTarget, template: str = "default") -> None:
         ...
 ```
 

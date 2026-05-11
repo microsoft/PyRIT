@@ -35,7 +35,7 @@ from pyrit.models import (
     ScoreType,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, SelfAskRefusalScorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
@@ -62,7 +62,7 @@ def create_mock_chat_target(*, name: str = "MockChatTarget") -> MagicMock:
     This standardizes the creation of mock chat targets across tests,
     ensuring they all have the required methods and return values.
     """
-    target = MagicMock(spec=PromptChatTarget)
+    target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _mock_target_id(name)

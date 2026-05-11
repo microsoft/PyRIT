@@ -190,3 +190,30 @@ async def test_composite_scorer_raises_when_message_piece_id_is_none(true_scorer
 
     with pytest.raises(RuntimeError, match="Message piece must have an ID"):
         await scorer.score_async(message)
+
+
+def test_get_chat_target_returns_first_available(patch_central_database):
+    """get_chat_target returns the target from the first sub-scorer that has one."""
+    mock_target = MagicMock()
+
+    scorer_without = MockScorer(True, "no target")
+    scorer_with = MockScorer(True, "has target")
+    scorer_with.get_chat_target = MagicMock(return_value=mock_target)
+
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[scorer_without, scorer_with],
+    )
+    assert composite.get_chat_target() is mock_target
+
+
+def test_get_chat_target_returns_none_when_no_sub_scorer_has_target(patch_central_database):
+    """get_chat_target returns None when no sub-scorer has a chat target."""
+    scorer1 = MockScorer(True, "no target")
+    scorer2 = MockScorer(False, "also no target")
+
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.OR,
+        scorers=[scorer1, scorer2],
+    )
+    assert composite.get_chat_target() is None

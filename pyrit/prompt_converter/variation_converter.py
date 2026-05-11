@@ -23,7 +23,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class VariationConverter(PromptConverter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     @apply_defaults
     def __init__(

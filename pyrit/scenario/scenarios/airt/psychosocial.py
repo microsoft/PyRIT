@@ -27,9 +27,8 @@ from pyrit.prompt_converter import ToneConverter
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -211,7 +210,7 @@ class Psychosocial(Scenario):
         self,
         *,
         objectives: Optional[list[str]] = None,
-        adversarial_chat: Optional[PromptChatTarget] = None,
+        adversarial_chat: Optional[PromptTarget] = None,
         objective_scorer: Optional[FloatScaleThresholdScorer] = None,
         scenario_result_id: Optional[str] = None,
         subharm_configs: Optional[dict[str, SubharmConfig]] = None,
@@ -223,7 +222,7 @@ class Psychosocial(Scenario):
         Args:
             objectives (Optional[List[str]]): DEPRECATED - Use dataset_config in initialize_async instead.
                 List of objectives to test for psychosocial harms.
-            adversarial_chat (Optional[PromptChatTarget]): Additionally used for adversarial attacks
+            adversarial_chat (Optional[PromptTarget]): Additionally used for adversarial attacks
                 and scoring defaults. If not provided, a default OpenAI target will be created using
                 environment variables.
             objective_scorer (Optional[FloatScaleThresholdScorer]): Scorer to evaluate attack success.
@@ -430,6 +429,14 @@ class Psychosocial(Scenario):
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         if self._objective_target is None:
             raise ValueError("objective_target must be set before creating attacks")
+        try:
+            CHAT_TARGET_REQUIREMENTS.validate(target=self._objective_target)
+        except ValueError as exc:
+            raise TypeError(
+                f"PsychosocialHarmsScenario requires a target that supports multi-turn "
+                f"conversations with editable history. Target {type(self._objective_target).__name__} "
+                f"does not satisfy these requirements: {exc}"
+            ) from exc
         resolved = self._resolve_seed_groups()
         self._seed_groups = resolved.seed_groups
 

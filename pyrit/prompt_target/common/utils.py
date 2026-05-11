@@ -39,7 +39,7 @@ def validate_top_p(top_p: Optional[float]) -> None:
 def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Enforce rate limit of the target through setting requests per minute.
-    This should be applied to all send_prompt_async() functions on PromptTarget and PromptChatTarget.
+    This should be applied to all send_prompt_async() functions on PromptTarget.
 
     Args:
         func (Callable): The function to be decorated.
