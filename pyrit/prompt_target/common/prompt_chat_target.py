@@ -1,24 +1,24 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
+import warnings
+from typing import Any
 
-from pyrit.models import MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 class PromptChatTarget(PromptTarget):
     """
-    A prompt chat target is a target where you can explicitly set the conversation history using memory.
+    .. deprecated:: 0.14.0
+        ``PromptChatTarget`` is deprecated and will be removed in v0.16.0. Use
+        :class:`PromptTarget` directly with a ``TargetConfiguration`` declaring
+        ``supports_multi_turn=True`` and ``supports_editable_history=True``.
 
-    Some algorithms require conversation to be modified (e.g. deleting the last message) or set explicitly.
-    These algorithms will require PromptChatTargets be used.
-
-    As a concrete example, OpenAI chat targets are PromptChatTargets. You can set made-up conversation history.
-    Realtime chat targets or OpenAI completions are NOT PromptChatTargets. You don't send the conversation history.
+    Backwards-compatible alias for :class:`PromptTarget`. All chat-target functionality
+    (``set_system_prompt``, ``is_response_format_json``) lives on :class:`PromptTarget`.
+    Subclassing or instantiating this class emits a :class:`DeprecationWarning`.
     """
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
@@ -30,75 +30,31 @@ class PromptChatTarget(PromptTarget):
         )
     )
 
-    def __init__(
-        self,
-        *,
-        max_requests_per_minute: Optional[int] = None,
-        endpoint: str = "",
-        model_name: str = "",
-        underlying_model: Optional[str] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
-    ) -> None:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         """
-        Initialize the PromptChatTarget.
-
-        Args:
-            max_requests_per_minute (int, Optional): Maximum number of requests per minute.
-            endpoint (str): The endpoint URL. Defaults to empty string.
-            model_name (str): The model name. Defaults to empty string.
-            underlying_model (str, Optional): The underlying model name (e.g., "gpt-4o") for
-                identification purposes. This is useful when the deployment name in Azure differs
-                from the actual model. Defaults to None.
-            custom_configuration (TargetConfiguration, Optional): Override the default configuration
-                for this target instance. If None, uses the class-level defaults. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
+        Call the superclass __init_subclass__ and emit a deprecation warning when subclassing PromptChatTarget.
+        Use PromptTarget with an appropriate TargetConfiguration instead.
         """
-        super().__init__(
-            max_requests_per_minute=max_requests_per_minute,
-            endpoint=endpoint,
-            model_name=model_name,
-            underlying_model=underlying_model,
-            custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
+        super().__init_subclass__(**kwargs)
+        warnings.warn(
+            f"Subclassing PromptChatTarget is deprecated and will be removed in v0.16.0. "
+            f"Inherit from PromptTarget directly and declare supports_multi_turn=True and "
+            f"supports_editable_history=True in your _DEFAULT_CONFIGURATION. "
+            f"({cls.__name__})",
+            DeprecationWarning,
+            stacklevel=2,
         )
 
-    def is_response_format_json(self, message_piece: MessagePiece) -> bool:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
-        Check if the response format is JSON and ensure the target supports it.
-
-        Args:
-            message_piece: A MessagePiece object with a `prompt_metadata` dictionary that may
-                include a "response_format" key.
-
-        Returns:
-            bool: True if the response format is JSON, False otherwise.
-
-        Raises:
-            ValueError: If "json" response format is requested but unsupported.
+        Initialize the PromptChatTarget. This constructor is deprecated and will emit a warning.
+        Use PromptTarget with an appropriate TargetConfiguration instead.
         """
-        config = self._get_json_response_config(message_piece=message_piece)
-        return config.enabled
-
-    def _get_json_response_config(self, *, message_piece: MessagePiece) -> _JsonResponseConfig:
-        """
-        Get the JSON response configuration from the message piece metadata.
-
-        Args:
-            message_piece: A MessagePiece object with a `prompt_metadata` dictionary that may
-                include JSON response configuration.
-
-        Returns:
-            _JsonResponseConfig: The JSON response configuration.
-
-        Raises:
-            ValueError: If JSON response format is requested but unsupported.
-        """
-        config = _JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
-
-        if config.enabled and not self.configuration.includes(capability=CapabilityName.JSON_OUTPUT):
-            target_name = self.get_identifier().class_name
-            raise ValueError(f"This target {target_name} does not support JSON response format.")
-
-        return config
+        warnings.warn(
+            "PromptChatTarget is deprecated and will be removed in v0.16.0. "
+            "Use PromptTarget directly with a TargetConfiguration declaring "
+            "supports_multi_turn=True and supports_editable_history=True.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

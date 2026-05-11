@@ -26,7 +26,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +102,8 @@ class AnecdoctorGenerator(
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget,
-        processing_model: Optional[PromptChatTarget] = None,
+        objective_target: PromptTarget,
+        processing_model: Optional[PromptTarget] = None,
         converter_config: Optional[StrategyConverterConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
     ) -> None:
@@ -111,8 +111,8 @@ class AnecdoctorGenerator(
         Initialize the Anecdoctor prompt generation strategy.
 
         Args:
-            objective_target (PromptChatTarget): The chat model to be used for prompt generation.
-            processing_model (Optional[PromptChatTarget]): The model used for knowledge graph extraction.
+            objective_target (PromptTarget): The chat model to be used for prompt generation.
+            processing_model (Optional[PromptTarget]): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
             converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.

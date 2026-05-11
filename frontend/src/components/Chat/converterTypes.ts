@@ -3,6 +3,7 @@ export const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
   image: 'image_path',
   audio: 'audio_path',
   video: 'video_path',
+  file: 'binary_path',
 }
 
 export interface PieceConversion {
@@ -10,4 +11,5 @@ export interface PieceConversion {
   convertedValue: string
   originalValue: string
   pieceType: string
+  outputDataType: string
 }

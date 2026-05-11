@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import PromptChatTarget, PromptTarget, limit_requests_per_minute
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
 
 def get_mock_scorer_identifier() -> ComponentIdentifier:
@@ -119,7 +119,16 @@ class MockHttpPostSync:
             raise Exception(f"HTTP Error {self.status}")
 
 
-class MockPromptTarget(PromptChatTarget):
+class MockPromptTarget(PromptTarget):
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            supports_editable_history=True,
+        )
+    )
+
     prompt_sent: list[str]
 
     def __init__(self, id=None, rpm=None) -> None:  # noqa: A002

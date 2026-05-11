@@ -21,7 +21,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_converter import FlipConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class FlipAttack(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -48,7 +48,7 @@ class FlipAttack(PromptSendingAttack):
     ) -> None:
         """
         Args:
-            objective_target (PromptChatTarget): The target system to attack.
+            objective_target (PromptTarget): The target system to attack.
             attack_converter_config (AttackConverterConfig, Optional): Configuration for the prompt converters.
             attack_scoring_config (AttackScoringConfig, Optional): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer, Optional): Normalizer for handling prompts.

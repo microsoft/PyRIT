@@ -19,7 +19,6 @@ from pyrit.executor.attack import (
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -68,7 +67,7 @@ def mock_objective_target():
 
 @pytest.fixture
 def mock_adversarial_target():
-    mock = MagicMock(spec=PromptChatTarget)
+    mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_id("MockAdversarialTarget")
     return mock
 

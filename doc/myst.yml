@@ -108,6 +108,7 @@ project:
             - file: code/targets/4_openai_video_target.ipynb
             - file: code/targets/5_openai_tts_target.ipynb
             - file: code/targets/6_custom_targets.ipynb
+            - file: code/targets/6_1_target_capabilities.ipynb
             - file: code/targets/7_non_open_ai_chat_targets.ipynb
             - file: code/targets/8_non_llm_targets.ipynb
             - file: code/targets/9_rate_limiting.ipynb

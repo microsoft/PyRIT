@@ -21,7 +21,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.models import SeedAttackGroup
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -151,7 +151,7 @@ class Scam(Scenario):
         self,
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
-        adversarial_chat: Optional[PromptChatTarget] = None,
+        adversarial_chat: Optional[PromptTarget] = None,
         include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
     ) -> None:
@@ -161,7 +161,7 @@ class Scam(Scenario):
         Args:
             objective_scorer (Optional[TrueFalseScorer]): Custom scorer for objective
                 evaluation.
-            adversarial_chat (Optional[PromptChatTarget]): Chat target used to rephrase the
+            adversarial_chat (Optional[PromptTarget]): Chat target used to rephrase the
                 objective into the role-play context (in single-turn strategies).
             include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
                 without modifications. Defaults to True. When True, a "baseline" attack is automatically

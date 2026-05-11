@@ -125,7 +125,7 @@ await ConsoleAttackResultPrinter().print_result_async(result=new_result)  # type
 # | Parameter | Type | Description |
 # |-----------|------|-------------|
 # | `objective` | `str` | The goal the adversarial chat works toward |
-# | `adversarial_chat` | `PromptChatTarget` | The LLM that generates attack prompts (also plays the simulated target) |
+# | `adversarial_chat` | `PromptTarget` | The LLM that generates attack prompts (also plays the simulated target). Must declare `supports_multi_turn=True` and `supports_editable_history=True`. |
 # | `objective_scorer` | `TrueFalseScorer` | Evaluates whether the final turn achieved the objective |
 # | `num_turns` | `int` | Number of conversation turns to generate (default: 3) |
 # | `adversarial_chat_system_prompt_path` | `str \| Path` | System prompt for the adversarial chat role |

@@ -14,9 +14,10 @@ export interface ConverterPreviewProps {
   previewConverterInstanceId: string | null
   onPreview: () => void
   onUseConvertedValue?: (conversion: PieceConversion) => void
+  outputDataType: string
 }
 
-export default function ConverterPreview({ activeTab, previewText, attachmentData, selectedConverterType, isPreviewing, previewError, previewOutput, previewConverterInstanceId, onPreview, onUseConvertedValue }: ConverterPreviewProps) {
+export default function ConverterPreview({ activeTab, previewText, attachmentData, selectedConverterType, isPreviewing, previewError, previewOutput, previewConverterInstanceId, onPreview, onUseConvertedValue, outputDataType }: ConverterPreviewProps) {
   const styles = useConverterPanelStyles()
 
   return (
@@ -95,6 +96,7 @@ export default function ConverterPreview({ activeTab, previewText, attachmentDat
             converterInstanceId: previewConverterInstanceId,
             convertedValue: previewOutput,
             originalValue: activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? ''),
+            outputDataType,
           })}
           disabled={!onUseConvertedValue}
           data-testid="use-converted-btn"

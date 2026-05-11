@@ -14,7 +14,6 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.scenario import AtomicAttack, DatasetConfiguration, ScenarioCompositeStrategy
 from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
@@ -69,7 +68,7 @@ def mock_objective_target():
 @pytest.fixture
 def mock_adversarial_target():
     """Create a mock adversarial target for testing."""
-    mock = MagicMock(spec=PromptChatTarget)
+    mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock
 

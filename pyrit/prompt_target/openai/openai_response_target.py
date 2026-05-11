@@ -28,7 +28,7 @@ from pyrit.models import (
     PromptResponseError,
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -59,7 +59,7 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
-class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
+class OpenAIResponseTarget(OpenAITarget, PromptTarget):
     """
     Enables communication with endpoints that support the OpenAI Response API.
 
@@ -72,6 +72,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
+            supports_editable_history=True,
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,

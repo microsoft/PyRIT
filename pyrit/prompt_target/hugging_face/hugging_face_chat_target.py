@@ -21,7 +21,7 @@ from pyrit.common.download_hf_model import download_specific_files
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -29,7 +29,7 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 logger = logging.getLogger(__name__)
 
 
-class HuggingFaceChatTarget(PromptChatTarget):
+class HuggingFaceChatTarget(PromptTarget):
     """
     The HuggingFaceChatTarget interacts with HuggingFace models, specifically for conducting red teaming activities.
     Inherits from PromptTarget to comply with the current design standards.

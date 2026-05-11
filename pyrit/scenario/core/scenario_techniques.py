@@ -44,7 +44,7 @@ from pyrit.registry.object_registries.attack_technique_registry import (
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
         ValueError: If a spec declares ``adversarial_chat_key`` but the key
             is not found in ``TargetRegistry``.
     """
-    default_adversarial: PromptChatTarget | None = None
+    default_adversarial: PromptTarget | None = None
 
     result = []
     for spec in SCENARIO_TECHNIQUES:
