@@ -53,6 +53,5 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 - `harmbench`: Standard harmful behavior benchmarks
 - `dark_bench`: Dark pattern detection examples
 - `airt_*`: Various harm categories from AI Red Team
-- `agent_threat_rules`: Agent Threat Rules (ATR) adversarial payloads for prompt injection, tool poisoning, and other AI-agent attack classes
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
