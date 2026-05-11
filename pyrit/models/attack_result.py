@@ -38,6 +38,9 @@ class AttackOutcome(str, Enum):
     # The attack failed to achieve its objective
     FAILURE = "failure"
 
+    # The attack failed due to an infrastructure error (exception), not a defensive refusal
+    ERROR = "error"
+
     # The outcome of the attack is unknown or could not be determined
     UNDETERMINED = "undetermined"
 

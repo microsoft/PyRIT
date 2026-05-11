@@ -116,7 +116,7 @@ class AttackSummary(BaseModel):
         default_factory=list, description="Request converter class names applied in this attack"
     )
     objective: str = Field("", description="Natural-language description of the attacker's objective")
-    outcome: Optional[Literal["undetermined", "success", "failure"]] = Field(
+    outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = Field(
         None, description="Attack outcome (null if not yet determined)"
     )
     outcome_reason: str | None = Field(None, description="Reason for the outcome")
@@ -261,7 +261,7 @@ class CreateAttackResponse(BaseModel):
 class UpdateAttackRequest(BaseModel):
     """Request to update an attack's outcome."""
 
-    outcome: Literal["undetermined", "success", "failure"] = Field(..., description="Updated attack outcome")
+    outcome: Literal["undetermined", "success", "failure", "error"] = Field(..., description="Updated attack outcome")
 
 
 # ============================================================================

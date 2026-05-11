@@ -2060,9 +2060,7 @@ class MemoryInterface(abc.ABC):
             )
             raise
 
-    def update_scenario_error_attacks(
-        self, *, scenario_result_id: str, error_attack_result_ids: list[str]
-    ) -> bool:
+    def update_scenario_error_attacks(self, *, scenario_result_id: str, error_attack_result_ids: list[str]) -> bool:
         """
         Update the error attack result IDs on an existing scenario result.
 
@@ -2095,9 +2093,7 @@ class MemoryInterface(abc.ABC):
             return True
 
         except Exception as e:
-            logger.exception(
-                f"Failed to update scenario {scenario_result_id} error attacks: {str(e)}"
-            )
+            logger.exception(f"Failed to update scenario {scenario_result_id} error attacks: {str(e)}")
             raise
 
     def get_scenario_results(

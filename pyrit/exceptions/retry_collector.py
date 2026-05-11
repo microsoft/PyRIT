@@ -12,7 +12,8 @@ from pyrit.models.retry_event import RetryEvent
 
 @dataclass
 class RetryCollector:
-    """Collects retry events during attack execution.
+    """
+    Collects retry events during attack execution.
 
     Uses contextvar for thread/task-safe scoping. Each attack execution
     creates its own collector so retry events are naturally scoped
@@ -22,7 +23,8 @@ class RetryCollector:
     events: list[RetryEvent] = field(default_factory=list)
 
     def record(self, *, retry_state: Any) -> None:
-        """Record a retry event from a Tenacity RetryCallState.
+        """
+        Record a retry event from a Tenacity RetryCallState.
 
         Extracts information from the retry state and the current
         ExecutionContext to build a structured RetryEvent.
@@ -82,7 +84,8 @@ _retry_collector: ContextVar[Optional[RetryCollector]] = ContextVar("retry_colle
 
 
 def get_retry_collector() -> Optional[RetryCollector]:
-    """Get the current retry collector.
+    """
+    Get the current retry collector.
 
     Returns:
         The active RetryCollector, or None if not set.
@@ -91,7 +94,8 @@ def get_retry_collector() -> Optional[RetryCollector]:
 
 
 def set_retry_collector(collector: RetryCollector) -> None:
-    """Set the current retry collector.
+    """
+    Set the current retry collector.
 
     Args:
         collector: The RetryCollector to activate.

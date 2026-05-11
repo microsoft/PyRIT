@@ -17,9 +17,10 @@ class AttackStats:
     successes: int
     failures: int
     undetermined: int
+    errors: int
 
 
-def _compute_stats(successes: int, failures: int, undetermined: int) -> AttackStats:
+def _compute_stats(successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
     total_decided = successes + failures
     success_rate = successes / total_decided if total_decided > 0 else None
     return AttackStats(
@@ -28,6 +29,7 @@ def _compute_stats(successes: int, failures: int, undetermined: int) -> AttackSt
         successes=successes,
         failures=failures,
         undetermined=undetermined,
+        errors=errors,
     )
 
 
@@ -71,6 +73,9 @@ def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats
         elif outcome == AttackOutcome.FAILURE:
             overall_counts["failures"] += 1
             by_type_counts[attack_type]["failures"] += 1
+        elif outcome == AttackOutcome.ERROR:
+            overall_counts["errors"] += 1
+            by_type_counts[attack_type]["errors"] += 1
         else:
             overall_counts["undetermined"] += 1
             by_type_counts[attack_type]["undetermined"] += 1
@@ -79,6 +84,7 @@ def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats
         successes=overall_counts["successes"],
         failures=overall_counts["failures"],
         undetermined=overall_counts["undetermined"],
+        errors=overall_counts["errors"],
     )
 
     by_type_stats = {
@@ -86,6 +92,7 @@ def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats
             successes=counts["successes"],
             failures=counts["failures"],
             undetermined=counts["undetermined"],
+            errors=counts["errors"],
         )
         for attack_type, counts in by_type_counts.items()
     }

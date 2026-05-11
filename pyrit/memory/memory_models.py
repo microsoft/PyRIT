@@ -723,7 +723,7 @@ class AttackResultEntry(Base):
     )
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
     execution_time_ms = mapped_column(INTEGER, nullable=False, default=0)
-    outcome: Mapped[Literal["success", "failure", "undetermined"]] = mapped_column(
+    outcome: Mapped[Literal["success", "failure", "error", "undetermined"]] = mapped_column(
         String, nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)

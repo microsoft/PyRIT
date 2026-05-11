@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 
 @dataclass
 class RetryEvent:
-    """A single retry attempt captured during attack execution.
+    """
+    A single retry attempt captured during attack execution.
 
     Records structured information about a Tenacity retry event, including
     which component was retrying, what exception triggered the retry, and
@@ -28,7 +29,8 @@ class RetryEvent:
     elapsed_seconds: float = 0.0
 
     def to_dict(self) -> dict:
-        """Serialize to a dictionary suitable for JSON storage.
+        """
+        Serialize to a dictionary suitable for JSON storage.
 
         Returns:
             dict: Dictionary representation of the retry event.
@@ -47,7 +49,8 @@ class RetryEvent:
 
     @classmethod
     def from_dict(cls, data: dict) -> "RetryEvent":
-        """Deserialize from a dictionary.
+        """
+        Deserialize from a dictionary.
 
         Args:
             data: Dictionary representation of a retry event.

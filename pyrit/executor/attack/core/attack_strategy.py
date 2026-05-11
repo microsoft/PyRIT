@@ -12,7 +12,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
 
 from pyrit.common.logger import logger
-from pyrit.exceptions.retry_collector import RetryCollector, clear_retry_collector, get_retry_collector, set_retry_collector
+from pyrit.exceptions.retry_collector import (
+    RetryCollector,
+    clear_retry_collector,
+    get_retry_collector,
+    set_retry_collector,
+)
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.core import (
     Strategy,
@@ -241,18 +246,18 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             message = f"{attack_name} achieved the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
+        elif result.outcome == AttackOutcome.ERROR:
+            message = f"{attack_name} failed with an error. {reason}"
         else:
             message = f"{attack_name} did not achieve the objective. {reason}"
 
         self._logger.info(message)
 
-    async def _on_error(
-        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
-    ) -> None:
+    async def _on_error(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
         """
         Handle error during attack execution.
 
-        Creates a failed AttackResult with error details and any retry events
+        Creates an error AttackResult with error details and any retry events
         collected during execution, then persists it to memory.
 
         Args:
@@ -273,12 +278,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Build a conversation_id — use context's if available, otherwise generate one
         conversation_id = getattr(context, "conversation_id", None) or str(__import__("uuid").uuid4())
 
-        from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-
         error_result = AttackResult(
             conversation_id=conversation_id,
             objective=context.objective,
-            outcome=AttackOutcome.FAILURE,
+            outcome=AttackOutcome.ERROR,
             outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
             labels=context.memory_labels,
             related_conversations=context.related_conversations,
