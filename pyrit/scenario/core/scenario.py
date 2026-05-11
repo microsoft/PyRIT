@@ -523,8 +523,9 @@ class Scenario(ABC):
             include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
                 all objectives without modifications, allowing comparison between unmodified prompts
                 and the scenario's strategies. If None (the default), the scenario type's
-                ``SUPPORTS_DEFAULT_BASELINE`` class attribute decides. Passing ``True`` on a
-                scenario whose ``SUPPORTS_DEFAULT_BASELINE`` is False raises ``ValueError``.
+                ``DEFAULT_INCLUDE_BASELINE`` class attribute decides (only consulted when
+                ``SUPPORTS_DEFAULT_BASELINE`` is True). Passing ``True`` on a scenario whose
+                ``SUPPORTS_DEFAULT_BASELINE`` is False raises ``ValueError``.
 
         Raises:
             ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed

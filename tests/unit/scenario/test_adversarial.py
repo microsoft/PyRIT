@@ -428,21 +428,19 @@ class TestBenchmarkRuntime:
         for a in attacks:
             assert len(a.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_baseline_excluded(self, mock_objective_target, single_adversarial_model):
         """AdversarialBenchmark must opt out of the parent's default baseline.
 
         Verifies both the class-level capability flag and the observable property
         (no atomic attack is named ``"baseline"``).
         """
-        scenario, attacks = await self._init_and_get_attacks(
+        scenario, _ = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
         )
         assert type(scenario).SUPPORTS_DEFAULT_BASELINE is False
-        assert not any(a.atomic_attack_name == "baseline" for a in attacks)
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
-    @pytest.mark.asyncio
     async def test_baseline_explicit_true_raises(self, mock_objective_target, single_adversarial_model):
         """Explicitly passing include_baseline=True to a forbidden scenario raises ValueError."""
         scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
@@ -452,7 +450,6 @@ class TestBenchmarkRuntime:
                 include_baseline=True,
             )
 
-    @pytest.mark.asyncio
     async def test_baseline_explicit_false_succeeds(self, mock_objective_target, single_adversarial_model):
         """Explicit include_baseline=False on a forbidden scenario is accepted (matches the default)."""
         groups = {"harmbench": _make_seed_groups("harmbench")}
@@ -466,8 +463,7 @@ class TestBenchmarkRuntime:
                 objective_target=mock_objective_target,
                 include_baseline=False,
             )
-            attacks = await scenario._get_atomic_attacks_async()
-        assert not any(a.atomic_attack_name == "baseline" for a in attacks)
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
 
 # ===========================================================================
