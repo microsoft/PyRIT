@@ -85,7 +85,7 @@ class Scam(Scenario):
     VERSION: int = 1
 
     @classmethod
-    def get_override_composite_scorer_questions_path(cls) -> list[Path]:
+    def _get_additional_scoring_questions(cls) -> list[Path]:
         """
         Override true/false question paths for scam objective scoring.
 

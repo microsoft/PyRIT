@@ -115,13 +115,11 @@ class Scenario(ABC):
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     @classmethod
-    def get_override_composite_scorer_questions_path(cls) -> Sequence[Path]:
+    def _get_additional_scoring_questions(cls) -> Sequence[Path]:
         """
-        Override to provide true/false question prompt paths for objective scoring.
+        Paths to additional true/false question prompts for objective scoring.
 
-        When overridden to return a non-empty sequence, the default objective scorer becomes
-        one ``SelfAskTrueFalseScorer`` per path AND-ed together with ``NOT(SelfAskRefusalScorer)``
-        instead of the scenario-level default.
+        These prompts are used in the default scenario scorer in addition to a simple self-ask scorer.
 
         Returns:
             Sequence[Path]: Paths to true/false question prompts, or an empty sequence to use the default scorer.
@@ -347,7 +345,7 @@ class Scenario(ABC):
         chat_target = chat_target or get_default_scorer_target()
 
         # if the scenario has override composite scorer questions, use them to build a composite scorer
-        composite_scorer_questions_paths = type(self).get_override_composite_scorer_questions_path()
+        composite_scorer_questions_paths = type(self)._get_additional_scoring_questions()
         if composite_scorer_questions_paths:
             path_scorers: list[TrueFalseScorer] = [
                 SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question_path=path)
