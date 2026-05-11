@@ -487,5 +487,5 @@ class TestJailbreakAdversarialTarget:
             assert len(atomic_attacks) >= 2
 
             # All role-play attacks should share the same adversarial target
-            adversarial_targets = [run.attack_technique.attack._adversarial_target for run in atomic_attacks]
+            adversarial_targets = [run.attack_technique.attack._adversarial_chat for run in atomic_attacks]
             assert all(t is adversarial_targets[0] for t in adversarial_targets)
