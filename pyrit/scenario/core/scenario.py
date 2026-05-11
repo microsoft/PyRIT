@@ -30,18 +30,21 @@ from pyrit.models import AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.registry.object_registries.scorer_registry import ScorerRegistry
+from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
-from pyrit.score import Scorer, TrueFalseScorer
-from pyrit.score.true_false.self_ask_refusal_scorer import SelfAskRefusalScorer
-from pyrit.score.true_false.self_ask_true_false_scorer import SelfAskTrueFalseScorer
-from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
-from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
+from pyrit.score import (
+    Scorer,
+    SelfAskRefusalScorer,
+    SelfAskTrueFalseScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
