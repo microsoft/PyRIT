@@ -115,5 +115,6 @@ __all__ = [
     "StrategyResultT",
     "TextDataTypeSerializer",
     "UnvalidatedScore",
-    "VideoPathDataTypeSerializer", "RetryEvent",
+    "VideoPathDataTypeSerializer",
+    "RetryEvent"
 ]

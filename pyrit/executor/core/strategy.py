@@ -17,6 +17,11 @@ from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 from pyrit.common import default_values
 from pyrit.common.logger import logger
 from pyrit.exceptions import clear_execution_context, get_execution_context
+from pyrit.exceptions.retry_collector import (
+    RetryCollector,
+    clear_retry_collector,
+    set_retry_collector,
+)
 from pyrit.models import StrategyResultT
 
 if TYPE_CHECKING:
@@ -328,12 +333,24 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         try:
             async with self._execution_context(context):
                 await self._handle_event(event=StrategyEvent.ON_PRE_EXECUTE, context=context)
+
+                # Set up RetryCollector in the parent task so it is visible to
+                # Tenacity callbacks that fire during _perform_async.  Event
+                # handlers run in child tasks (asyncio.create_task) which
+                # inherit a *copy* of the parent's ContextVar — setting the
+                # collector here ensures both the execution path and the event
+                # handlers can see it.
+                collector = RetryCollector()
+                set_retry_collector(collector)
+
                 result = await self._perform_async(context=context)
                 await self._handle_event(event=StrategyEvent.ON_POST_EXECUTE, context=context, result=result)
+                clear_retry_collector()
                 return result
         except Exception as e:
             # Notify error event
             await self._handle_event(event=StrategyEvent.ON_ERROR, context=context, error=e)
+            clear_retry_collector()
 
             # Build enhanced error message with execution context if available
             # Note: The context is preserved on exception by ExecutionContextManager

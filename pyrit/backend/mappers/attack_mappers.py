@@ -30,6 +30,7 @@ from pyrit.backend.models.attacks import (
     Message,
     MessagePiece,
     MessagePieceRequest,
+    RetryEventResponse,
     Score,
     TargetInfo,
 )
@@ -232,6 +233,24 @@ def attack_result_to_summary(
         else None
     )
 
+    # Build retry event responses if available
+    retry_event_responses = None
+    if ar.retry_events:
+        retry_event_responses = [
+            RetryEventResponse(
+                timestamp=evt.timestamp,
+                attempt_number=evt.attempt_number,
+                function_name=evt.function_name,
+                exception_type=evt.exception_type,
+                exception_message=evt.exception_message,
+                component_role=evt.component_role,
+                component_name=evt.component_name,
+                endpoint=evt.endpoint,
+                elapsed_seconds=evt.elapsed_seconds,
+            )
+            for evt in ar.retry_events
+        ]
+
     return AttackSummary(
         attack_result_id=ar.attack_result_id,
         conversation_id=ar.conversation_id,
@@ -246,6 +265,11 @@ def attack_result_to_summary(
         labels=labels,
         created_at=created_at,
         updated_at=updated_at,
+        error_message=ar.error_message,
+        error_type=ar.error_type,
+        error_traceback=ar.error_traceback,
+        total_retries=ar.total_retries,
+        retry_events=retry_event_responses,
     )
 
 

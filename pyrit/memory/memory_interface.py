@@ -2082,7 +2082,8 @@ class MemoryInterface(abc.ABC):
                 return False
 
             scenario_result = scenario_results[0]
-            scenario_result.error_attack_result_ids = error_attack_result_ids
+            existing = scenario_result.error_attack_result_ids or []
+            scenario_result.error_attack_result_ids = list(dict.fromkeys(existing + error_attack_result_ids))
 
             entry = ScenarioResultEntry(entry=scenario_result)
             self._update_entry(entry)

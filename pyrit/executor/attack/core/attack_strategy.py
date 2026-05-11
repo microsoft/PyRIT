@@ -13,10 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Uni
 
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
-    RetryCollector,
-    clear_retry_collector,
     get_retry_collector,
-    set_retry_collector,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.core import (
@@ -191,10 +188,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Initialize start time for execution
         event_data.context.start_time = time.perf_counter()
 
-        # Start a RetryCollector to capture retry events during this attack
-        collector = RetryCollector()
-        set_retry_collector(collector)
-
         # Log the start of the attack
         self._logger.info(f"Starting attack: {event_data.context.objective}")
 
@@ -225,7 +218,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if collector and collector.events:
             event_data.result.retry_events = collector.events
             event_data.result.total_retries = len(collector.events)
-        clear_retry_collector()
 
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
@@ -267,13 +259,11 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         error = event_data.error
         context = event_data.context
         if not error or not context:
-            clear_retry_collector()
             return
 
-        # Collect retry events before clearing
+        # Collect retry events (visible via inherited ContextVar copy)
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
-        clear_retry_collector()
 
         # Build a conversation_id — use context's if available, otherwise generate one
         conversation_id = getattr(context, "conversation_id", None) or str(__import__("uuid").uuid4())
@@ -287,7 +277,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             related_conversations=context.related_conversations,
             error_message=str(error),
             error_type=type(error).__name__,
-            error_traceback=traceback.format_exc(),
+            error_traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
             retry_events=retry_events,
             total_retries=len(retry_events),
         )
