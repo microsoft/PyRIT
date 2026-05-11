@@ -543,7 +543,7 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
-          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png" }]}
+          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
         />
       </TestWrapper>
     );
@@ -571,7 +571,7 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
-          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png" }]}
+          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
           onClearMediaConversion={onClearMediaConversion}
         />
       </TestWrapper>
@@ -646,5 +646,51 @@ describe("ChatInputArea", () => {
 
     expect(onSend).toHaveBeenCalledWith("hello", "convertedHello", []);
     expect(onClearConversion).toHaveBeenCalled();
+  });
+
+  it("should render converted file chip with Open link for text→file conversion", async () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "result.pdf",
+            url: "/api/media?path=%2Ftmp%2Fresult.pdf",
+            iconKind: "file",
+          }}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("original-banner")).toBeInTheDocument();
+    const chip = screen.getByTestId("converted-file-chip");
+    expect(chip).toHaveTextContent("result.pdf");
+    const openLink = screen.getByTestId("converted-file-open");
+    expect(openLink).toHaveAttribute("href", "/api/media?path=%2Ftmp%2Fresult.pdf");
+    expect(openLink).toHaveAttribute("target", "_blank");
+  });
+
+  it("should call onClearConvertedFileChip when chip dismiss is clicked", async () => {
+    const onClearConvertedFileChip = jest.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "result.pdf",
+            url: "/api/media?path=%2Ftmp%2Fresult.pdf",
+            iconKind: "file",
+          }}
+          onClearConvertedFileChip={onClearConvertedFileChip}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByTestId("clear-converted-file-chip"));
+    expect(onClearConvertedFileChip).toHaveBeenCalledTimes(1);
   });
 });
