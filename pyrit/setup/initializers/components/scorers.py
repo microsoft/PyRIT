@@ -45,7 +45,7 @@ from pyrit.score import (
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 RequiredDependencyT = TypeVar("RequiredDependencyT")
@@ -572,12 +572,12 @@ class ScorerInitializer(PyRITInitializer):
         """
         return ScorerRegistry.get_registry_singleton()
 
-    def _get_chat_target(self, target_name: str) -> "PromptChatTarget | None":
+    def _get_chat_target(self, target_name: str) -> "PromptTarget | None":
         """
         Get a chat target from the singleton target registry by name.
 
         Returns:
-            PromptChatTarget | None: The chat target instance if found, otherwise None.
+            PromptTarget | None: The chat target instance if found, otherwise None.
         """
         target_registry = TargetRegistry.get_registry_singleton()
         return target_registry.get_instance_by_name(target_name)

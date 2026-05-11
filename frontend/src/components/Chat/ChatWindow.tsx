@@ -446,7 +446,7 @@ export default function ChatWindow({
     }
   }, [attackResultId])
 
-  const singleTurnLimitReached = activeTarget?.supports_multi_turn === false && messages.some(m => m.role === 'user')
+  const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
 
   // Operator locking: if the loaded attack's operator differs from the current
   // user's operator label, the conversation should be read-only.
@@ -561,7 +561,7 @@ export default function ChatWindow({
           onBranchConversation={attackResultId && activeConversationId ? handleBranchConversation : undefined}
           onBranchAttack={activeTarget && activeConversationId ? handleBranchAttack : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
-          isSingleTurn={activeTarget?.supports_multi_turn === false}
+          isSingleTurn={activeTarget?.capabilities?.supports_multi_turn === false}
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
@@ -591,6 +591,7 @@ export default function ChatWindow({
             if (!existing) return prev
             return { ...prev, text: { ...existing, convertedValue: val } }
           })}
+          converterOutputDataTypes={Object.values(pieceConversions).map((c) => c.outputDataType)}
           mediaConversions={Object.entries(pieceConversions)
             .filter(([k]) => k !== 'text')
             .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue }))}

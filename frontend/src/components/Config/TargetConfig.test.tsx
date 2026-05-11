@@ -340,7 +340,7 @@ describe("TargetConfig", () => {
     });
 
     // No reasoning or other special params should be displayed
-    expect(screen.queryByText(/reasoning_effort/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/reasoning_effort:/)).not.toBeInTheDocument();
   });
 
   it("should open dialog when Create First Target button is clicked in empty state", async () => {

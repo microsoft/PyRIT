@@ -8,7 +8,7 @@ from typing import Optional, Union
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -64,7 +64,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,
@@ -80,7 +80,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
-                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
                 to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.

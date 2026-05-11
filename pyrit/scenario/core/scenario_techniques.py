@@ -25,6 +25,7 @@ from pathlib import Path
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
+    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RedTeamingAttack,
@@ -34,8 +35,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
@@ -56,24 +56,23 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="prompt_sending",
         attack_class=PromptSendingAttack,
-        strategy_tags=["core", "single_turn", "default"],
+        strategy_tags=["core", "single_turn", "default", "light"],
     ),
     AttackTechniqueSpec(
         name="role_play",
         attack_class=RolePlayAttack,
-        strategy_tags=["core", "single_turn"],
+        strategy_tags=["core", "single_turn", "light"],
         extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
     ),
     AttackTechniqueSpec(
         name="many_shot",
         attack_class=ManyShotJailbreakAttack,
-        strategy_tags=["core", "multi_turn", "default"],
+        strategy_tags=["core", "multi_turn", "default", "light"],
     ),
     AttackTechniqueSpec(
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
         strategy_tags=["core", "multi_turn"],
-        accepts_scorer_override=False,
     ),
     AttackTechniqueSpec(
         name="crescendo_simulated",
@@ -94,7 +93,12 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="red_teaming",
         attack_class=RedTeamingAttack,
-        strategy_tags=["core", "multi_turn"],
+        strategy_tags=["core", "multi_turn", "light"],
+    ),
+    AttackTechniqueSpec(
+        name="context_compliance",
+        attack_class=ContextComplianceAttack,
+        strategy_tags=["core", "single_turn", "light"],
     ),
 ]
 
@@ -104,7 +108,7 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
 # ---------------------------------------------------------------------------
 
 
-def get_default_adversarial_target() -> PromptChatTarget:
+def get_default_adversarial_target() -> PromptTarget:
     """
     Resolve the default adversarial chat target.
 
@@ -114,7 +118,7 @@ def get_default_adversarial_target() -> PromptChatTarget:
     ``@apply_defaults`` resolution.
 
     Returns:
-        PromptChatTarget: The resolved adversarial chat target.
+        PromptTarget: The resolved adversarial chat target.
 
     Raises:
         ValueError: If the registered target does not support multi-turn.
@@ -161,7 +165,7 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
         ValueError: If a spec declares ``adversarial_chat_key`` but the key
             is not found in ``TargetRegistry``.
     """
-    default_adversarial: PromptChatTarget | None = None
+    default_adversarial: PromptTarget | None = None
 
     result = []
     for spec in SCENARIO_TECHNIQUES:

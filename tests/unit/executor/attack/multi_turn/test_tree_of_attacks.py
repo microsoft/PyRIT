@@ -37,8 +37,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
@@ -152,7 +151,7 @@ class AttackBuilder:
 
     def __init__(self) -> None:
         self.objective_target: Optional[PromptTarget] = None
-        self.adversarial_chat: Optional[PromptChatTarget] = None
+        self.adversarial_chat: Optional[PromptTarget] = None
         self.objective_scorer: Optional[Scorer] = None
         self.auxiliary_scorers: list[Scorer] = []
         self.tree_params: dict[str, Any] = {}
@@ -253,15 +252,15 @@ class AttackBuilder:
         return cast("PromptTarget", target)
 
     @staticmethod
-    def _create_mock_chat() -> PromptChatTarget:
-        chat = MagicMock(spec=PromptChatTarget)
+    def _create_mock_chat() -> PromptTarget:
+        chat = MagicMock(spec=PromptTarget)
         chat.send_prompt_async = AsyncMock(return_value=None)
         chat.set_system_prompt = MagicMock()
         chat.get_identifier.return_value = ComponentIdentifier(
             class_name="MockChatTarget",
             class_module="test_module",
         )
-        return cast("PromptChatTarget", chat)
+        return cast("PromptTarget", chat)
 
     @staticmethod
     def _create_mock_scorer(name: str) -> TrueFalseScorer:
@@ -2248,9 +2247,9 @@ def test_tap_init_raises_when_objective_scorer_is_none():
     scoring_config = AttackScoringConfig(objective_scorer=None)
     with pytest.raises(ValueError, match="objective_scorer is required"):
         TreeOfAttacksWithPruningAttack(
-            objective_target=MagicMock(spec=PromptChatTarget),
+            objective_target=MagicMock(spec=PromptTarget),
             attack_adversarial_config=MagicMock(
-                target=MagicMock(spec=PromptChatTarget),
+                target=MagicMock(spec=PromptTarget),
                 system_prompt_path=None,
             ),
             attack_scoring_config=scoring_config,

@@ -82,6 +82,18 @@ class Scorer(Identifiable, abc.ABC):
         if chat_target is not None:
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
+    def get_chat_target(self) -> PromptTarget | None:
+        """
+        Return the chat target used by this scorer, or None if it doesn't use one.
+
+        Subclasses that wrap other scorers (e.g. inverters, composites) should
+        override to delegate to their inner scorer(s).
+
+        Returns:
+            PromptTarget | None: The chat target, or None if not applicable.
+        """
+        return getattr(self, "_prompt_target", None)
+
     def get_identifier(self) -> ComponentIdentifier:
         """
         Get the scorer's identifier with eval_hash always attached.

@@ -222,7 +222,7 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_leakage"], max_datase
 scenario = Leakage()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[LeakageStrategy.FirstLetter],
+    scenario_strategies=[LeakageStrategy.first_letter],
     dataset_config=dataset_config,
 )
 

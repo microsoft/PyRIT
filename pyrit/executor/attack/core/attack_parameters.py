@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeVar
 from pyrit.models import Message, SeedAttackGroup, SeedGroup
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
 AttackParamsT = TypeVar("AttackParamsT", bound="AttackParameters")
@@ -78,7 +78,7 @@ class AttackParameters:
         cls: type[AttackParamsT],
         *,
         seed_group: SeedAttackGroup,
-        adversarial_chat: Optional[PromptChatTarget] = None,
+        adversarial_chat: Optional[PromptTarget] = None,
         objective_scorer: Optional[TrueFalseScorer] = None,
         **overrides: Any,
     ) -> AttackParamsT:

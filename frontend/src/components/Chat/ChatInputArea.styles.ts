@@ -67,7 +67,7 @@ export const useChatInputAreaStyles = makeStyles({
   columnLeft: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalS,
     alignItems: 'center',
     marginRight: tokens.spacingHorizontalS,
     alignSelf: 'center',
@@ -77,24 +77,24 @@ export const useChatInputAreaStyles = makeStyles({
     flexDirection: 'column',
     flex: 1,
     minWidth: 0,
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalXS,
   },
   columnRight: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalS,
     alignItems: 'center',
     marginLeft: tokens.spacingHorizontalS,
     alignSelf: 'center',
   },
   textRow: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: tokens.spacingHorizontalXXS,
   },
   convertedRow: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: tokens.spacingHorizontalXXS,
   },
   textInput: {
@@ -107,7 +107,7 @@ export const useChatInputAreaStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     resize: 'none',
     minHeight: '24px',
-    maxHeight: '96px',
+    maxHeight: '60vh',
     overflowY: 'auto',
     '::placeholder': {
       color: tokens.colorNeutralForeground4,
@@ -123,12 +123,16 @@ export const useChatInputAreaStyles = makeStyles({
       borderRadius: '4px',
     },
   },
+  textInputShared: {
+    maxHeight: '30vh',
+  },
   iconButton: {
     minWidth: '32px',
     width: '32px',
     height: '32px',
     padding: 0,
     borderRadius: '50%',
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
   },
   dismissBtn: {
     minWidth: '24px',
@@ -142,6 +146,20 @@ export const useChatInputAreaStyles = makeStyles({
     height: '32px',
     padding: 0,
     borderRadius: '50%',
+  },
+  clearConversionButton: {
+    minWidth: '32px',
+    width: '32px',
+    height: '32px',
+    padding: 0,
+    borderRadius: '50%',
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorNeutralForeground2,
+    ':hover': {
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+      color: tokens.colorNeutralForeground1,
+    },
   },
   singleTurnWarning: {
     display: 'flex',
@@ -204,11 +222,21 @@ export const useChatInputAreaStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     resize: 'none',
     minHeight: '20px',
-    maxHeight: '80px',
+    maxHeight: '30vh',
     overflowY: 'auto',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
     padding: 0,
+    '::-webkit-scrollbar': {
+      width: '8px',
+    },
+    '::-webkit-scrollbar-track': {
+      backgroundColor: 'transparent',
+    },
+    '::-webkit-scrollbar-thumb': {
+      backgroundColor: tokens.colorNeutralStroke1,
+      borderRadius: '4px',
+    },
   },
   convertedMediaPreview: {
     maxHeight: '60px',
@@ -228,6 +256,13 @@ export const useChatInputAreaStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground2,
   },
+  unsupportedWarning: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+    color: tokens.colorPaletteYellowForeground2,
+    fontSize: tokens.fontSizeBase200,
+  },
   originalBadge: {
     display: 'inline-block',
     padding: `0 ${tokens.spacingHorizontalXS}`,
@@ -242,6 +277,7 @@ export const useChatInputAreaStyles = makeStyles({
   convertedBadge: {
     display: 'inline-block',
     padding: `0 ${tokens.spacingHorizontalXS}`,
+    marginRight: tokens.spacingHorizontalXS,
     borderRadius: tokens.borderRadiusSmall,
     backgroundColor: tokens.colorPaletteGreenBackground2,
     color: tokens.colorPaletteGreenForeground2,

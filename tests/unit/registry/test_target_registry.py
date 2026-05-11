@@ -7,7 +7,6 @@ import pytest
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.target_registry import TargetRegistry
 
 
@@ -33,8 +32,8 @@ class MockPromptTarget(PromptTarget):
         pass
 
 
-class MockPromptChatTarget(PromptChatTarget):
-    """Mock PromptChatTarget for testing conversation history support."""
+class MockPromptChatTarget(PromptTarget):
+    """Mock chat-style target for testing conversation history support."""
 
     def __init__(self, *, model_name: str = "mock_chat_model", endpoint: str = "http://chat-test") -> None:
         super().__init__(model_name=model_name, endpoint=endpoint)

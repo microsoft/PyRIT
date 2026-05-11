@@ -52,29 +52,6 @@ class TestRedTeamModuleImports:
         assert SupportedLanguages is not None
 
 
-class TestPromptChatTargetTransitionalCompat:
-    """Verify PromptChatTarget still exists and extends PromptTarget.
-
-    The SDK currently imports PromptChatTarget in 6+ production files
-    (_callback_chat_target.py, _orchestrator_manager.py, _scenario_orchestrator.py,
-    _execution_manager.py, strategy_utils.py, _rai_service_target.py). PyRIT is
-    migrating from PromptChatTarget to PromptTarget, but during the transition
-    both must exist with correct inheritance.
-    """
-
-    def test_prompt_chat_target_exists(self):
-        """PromptChatTarget must remain importable during the transition."""
-        from pyrit.prompt_target import PromptChatTarget
-
-        assert PromptChatTarget is not None
-
-    def test_prompt_chat_target_extends_prompt_target(self):
-        """PromptChatTarget must be a subclass of PromptTarget."""
-        from pyrit.prompt_target import PromptChatTarget
-
-        assert issubclass(PromptChatTarget, PromptTarget)
-
-
 @requires_azure_ai_evaluation
 class TestCallbackChatTargetInheritance:
     """Verify _CallbackChatTarget correctly extends PromptTarget.
