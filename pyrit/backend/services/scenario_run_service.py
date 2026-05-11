@@ -187,7 +187,7 @@ class ScenarioRunService:
 
         return self._build_response(scenario_result_id=scenario_result_id)
 
-    def _resolve_scenario_class(self, *, request: RunScenarioRequest) -> type:
+    def _resolve_scenario_class(self, *, request: RunScenarioRequest) -> type[Scenario]:
         """
         Validate and resolve the scenario class from the registry.
 
