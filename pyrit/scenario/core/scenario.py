@@ -340,7 +340,10 @@ class Scenario(ABC):
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
             registry_default_scorer = entries[0].instance
             chat_target = registry_default_scorer.get_chat_target()
-            logger.info(f"The registry contains default objective scorer: {type(registry_default_scorer).__name__}")
+            logger.info(
+                f"The registry contains default objective scorer: {type(registry_default_scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+            )
 
         chat_target = chat_target or get_default_scorer_target()
 
@@ -356,15 +359,24 @@ class Scenario(ABC):
                 aggregator=TrueFalseScoreAggregator.AND,
                 scorers=[*path_scorers, backstop_scorer],
             )
-            logger.info(f"Using composite default objective scorer: {type(scorer).__name__}")
+            logger.info(
+                f"Using composite default objective scorer: {type(scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__}"
+            )
             return scorer
 
         if registry_default_scorer:
-            logger.info(f"Using registry default objective scorer: {type(registry_default_scorer).__name__}")
+            logger.info(
+                f"Using registry default objective scorer: {type(registry_default_scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+            )
             return registry_default_scorer
 
         scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
-        logger.warning(f"Using fallback default objective scorer: {type(scorer).__name__}")
+        logger.warning(
+            f"Using fallback default objective scorer: {type(scorer).__name__} "
+            f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+        )
         return scorer
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
