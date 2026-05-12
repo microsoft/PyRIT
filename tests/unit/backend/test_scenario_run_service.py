@@ -72,6 +72,9 @@ def _make_db_scenario_result(
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
     sr.display_group_map = {}
+    sr.error_message = None
+    sr.error_type = None
+    sr.error_attack_result_ids = []
     return sr
 
 
@@ -371,7 +374,10 @@ class TestScenarioRunServiceCancelRun:
         result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
-            scenario_result_id=response.scenario_result_id, scenario_run_state="CANCELLED"
+            scenario_result_id=response.scenario_result_id,
+            scenario_run_state="CANCELLED",
+            error_message="Run was cancelled by user",
+            error_type="CancelledError",
         )
         assert result is not None
         assert result.status == ScenarioRunStatus.CANCELLED

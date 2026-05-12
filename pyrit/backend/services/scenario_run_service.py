@@ -409,6 +409,13 @@ class ScenarioRunService:
         error = scenario_result.error_message
         error_type = scenario_result.error_type
 
+        # Fallback: look up error from persisted error AttackResults
+        if not error and scenario_result.error_attack_result_ids:
+            error_ars = self._memory.get_attack_results(attack_result_ids=scenario_result.error_attack_result_ids)
+            if error_ars:
+                error = error_ars[0].error_message
+                error_type = error_ars[0].error_type
+
         # Fallback: in-memory error for in-flight tasks where DB hasn't been updated yet
         if not error and active is not None:
             error = active.error
