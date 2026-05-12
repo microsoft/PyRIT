@@ -15,7 +15,7 @@ from pyrit.executor.attack.single_turn.role_play import RolePlayAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedGroup, SeedObjective
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
@@ -447,11 +447,13 @@ class TestJailbreakProperties:
 class TestJailbreakAdversarialTarget:
     """Tests for adversarial target creation and caching."""
 
-    def test_create_adversarial_target_returns_openai_chat_target(self) -> None:
-        """Test that _create_adversarial_target returns a new OpenAIChatTarget."""
+    def test_get_or_create_adversarial_target_returns_prompt_target(self) -> None:
+        """Test that _get_or_create_adversarial_target returns a PromptTarget."""
+        from pyrit.prompt_target import PromptTarget
+
         scenario = Jailbreak()
-        target = scenario._create_adversarial_target()
-        assert isinstance(target, OpenAIChatTarget)
+        target = scenario._get_or_create_adversarial_target()
+        assert isinstance(target, PromptTarget)
 
     def test_get_or_create_adversarial_target_reuses_instance(self) -> None:
         """Test that _get_or_create_adversarial_target returns the same instance on repeated calls."""
@@ -484,6 +486,6 @@ class TestJailbreakAdversarialTarget:
             atomic_attacks = await scenario._get_atomic_attacks_async()
             assert len(atomic_attacks) >= 2
 
-            # All role-play attacks should share the same adversarial chat target
+            # All role-play attacks should share the same adversarial target
             adversarial_targets = [run.attack_technique.attack._adversarial_chat for run in atomic_attacks]
             assert all(t is adversarial_targets[0] for t in adversarial_targets)

@@ -111,6 +111,12 @@ operation: op_trash_panda
 #   - /path/to/.env
 #   - /path/to/.env.local
 
+# Max Concurrent Scenario Runs
+# ----------------------------
+# Maximum number of scenario runs that can execute concurrently in the backend.
+# Applies only to the pyrit_backend server.
+max_concurrent_scenario_runs: 3
+
 # Silent Mode
 # -----------
 # If true, suppresses print statements during initialization.

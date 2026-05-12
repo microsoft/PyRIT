@@ -326,6 +326,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         conditions: Optional[Any] = None,
         distinct: bool = False,
         join_scores: bool = False,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Fetch data from the specified table model with optional conditions.
@@ -335,6 +337,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Flag to return distinct rows (default is False).
             join_scores: Flag to join the scores table (default is False).
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             List of model instances representing the rows fetched from the table.
@@ -354,8 +358,12 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     )
                 if conditions is not None:
                     query = query.filter(conditions)
+                if order_by is not None:
+                    query = query.order_by(order_by)
                 if distinct:
-                    return query.distinct().all()
+                    query = query.distinct()
+                if limit is not None:
+                    query = query.limit(limit)
                 return query.all()
             except SQLAlchemyError as e:
                 logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]

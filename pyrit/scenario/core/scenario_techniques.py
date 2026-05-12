@@ -22,6 +22,7 @@ import dataclasses
 import inspect
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
@@ -35,12 +36,15 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
-from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
     AttackTechniqueSpec,
 )
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -101,40 +105,6 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
         strategy_tags=["core", "single_turn", "light"],
     ),
 ]
-
-
-# ---------------------------------------------------------------------------
-# Default adversarial target
-# ---------------------------------------------------------------------------
-
-
-def get_default_adversarial_target() -> PromptTarget:
-    """
-    Resolve the default adversarial chat target.
-
-    First checks the ``TargetRegistry`` for an ``"adversarial_chat"`` entry
-    (populated by ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars).
-    Falls back to a plain ``OpenAIChatTarget(temperature=1.2)`` using
-    ``@apply_defaults`` resolution.
-
-    Returns:
-        PromptTarget: The resolved adversarial chat target.
-
-    Raises:
-        ValueError: If the registered target does not support multi-turn.
-    """
-    registry = TargetRegistry.get_registry_singleton()
-    if "adversarial_chat" in registry:
-        target = registry.get("adversarial_chat")
-        if target:
-            if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
-                raise ValueError(
-                    f"Registry entry 'adversarial_chat' must support multi-turn conversations, "
-                    f"but {type(target).__name__} does not."
-                )
-            return target
-
-    return OpenAIChatTarget(temperature=1.2)
 
 
 # ---------------------------------------------------------------------------
