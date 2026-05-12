@@ -19,6 +19,7 @@ function renderPreview(overrides: Partial<ConverterPreviewProps> = {}) {
     previewConverterInstanceId: null,
     onPreview: jest.fn(),
     onUseConvertedValue: jest.fn(),
+    outputDataType: 'text',
   }
   return render(
     <TestWrapper>
@@ -197,6 +198,7 @@ describe('Use Converted Value button', () => {
       converterInstanceId: 'conv-1',
       convertedValue: 'aGVsbG8=',
       originalValue: 'hello',
+      outputDataType: 'text',
     })
   })
 
@@ -216,6 +218,7 @@ describe('Use Converted Value button', () => {
       converterInstanceId: 'conv-2',
       convertedValue: '/path/to/output.png',
       originalValue: 'data:image/png;base64,abc',
+      outputDataType: 'text',
     })
   })
 

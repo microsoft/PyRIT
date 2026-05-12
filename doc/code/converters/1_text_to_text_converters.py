@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -239,6 +239,7 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter import (
     DenylistConverter,
+    ImagePromptStyleConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -309,3 +310,10 @@ print("Math Prompt:", await math_prompt_converter.convert_async(prompt=prompt)) 
 # Scientific converter translates into scientific language
 scientific_translation_converter = ScientificTranslationConverter(converter_target=attack_llm, mode="academic")
 print("Scientific Translation:", await scientific_translation_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Image filter converter transforms simple prompt into an image filter style prompt (ie "draw me a picture in the style of ..")
+converter = ImagePromptStyleConverter(
+    converter_target=attack_llm, filter_name="laundromat_fisheye", variation="wide_mirror_shot"
+)
+result = await converter.convert_async(prompt="make a raccoon in a pirate ship")
+print("Image Filter Conversion:", result.output_text)  # type: ignore

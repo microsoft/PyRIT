@@ -2,8 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
-import { Message, TargetInfo, TargetInstance } from "../../types";
-import type { TargetCapabilitiesInfo } from "../../types";
+import { Message, TargetCapabilitiesInfo, TargetInfo, TargetInstance } from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 

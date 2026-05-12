@@ -591,6 +591,7 @@ export default function ChatWindow({
             if (!existing) return prev
             return { ...prev, text: { ...existing, convertedValue: val } }
           })}
+          converterOutputDataTypes={Object.values(pieceConversions).map((c) => c.outputDataType)}
           mediaConversions={Object.entries(pieceConversions)
             .filter(([k]) => k !== 'text')
             .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue }))}

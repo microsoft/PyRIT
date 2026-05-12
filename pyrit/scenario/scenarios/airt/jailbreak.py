@@ -1,11 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
@@ -20,12 +18,13 @@ from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.models import SeedAttackGroup
 from pyrit.prompt_converter import TextJailbreakConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import (
     TrueFalseScorer,
 )
@@ -162,7 +161,7 @@ class Jailbreak(Scenario):
 
         self._num_templates = num_templates
         self._num_attempts = num_attempts
-        self._adversarial_target: Optional[OpenAIChatTarget] = None
+        self._adversarial_target: Optional[PromptTarget] = None
 
         # Note that num_templates and jailbreak_names are mutually exclusive.
         # If self._num_templates is None, then this returns all discoverable jailbreak templates.
@@ -191,33 +190,18 @@ class Jailbreak(Scenario):
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
 
-    def _create_adversarial_target(self) -> OpenAIChatTarget:
-        """
-        Create a new adversarial target instance.
-
-        Returns:
-            OpenAIChatTarget: A fresh adversarial target using an unfiltered endpoint.
-        """
-        endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
-
-    def _get_or_create_adversarial_target(self) -> OpenAIChatTarget:
+    def _get_or_create_adversarial_target(self) -> PromptTarget:
         """
         Return the shared adversarial target, creating it on first access.
 
-        Reuses a single OpenAIChatTarget instance across all role-play attacks
+        Reuses a single PromptTarget instance across all role-play attacks
         to avoid repeated client and TLS setup.
 
         Returns:
-            OpenAIChatTarget: The shared adversarial target.
+            PromptTarget: The shared adversarial target.
         """
         if self._adversarial_target is None:
-            self._adversarial_target = self._create_adversarial_target()
+            self._adversarial_target = get_default_adversarial_target()
         return self._adversarial_target
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
