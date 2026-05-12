@@ -2067,6 +2067,9 @@ class MemoryInterface(abc.ABC):
         This links failed AttackResults to the ScenarioResult so the REST API
         can quickly find error details without scanning all attacks.
 
+        Performs the read-modify-write within a single DB session to avoid
+        inter-session consistency issues.
+
         Args:
             scenario_result_id: The ID of the scenario result to update.
             error_attack_result_ids: IDs of AttackResults that contain error information.
@@ -2074,19 +2077,21 @@ class MemoryInterface(abc.ABC):
         Returns:
             True if the update was successful, False otherwise.
         """
+        import json
+
         try:
-            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
+            with closing(self.get_session()) as session:
+                entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
-            if not scenario_results:
-                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
-                return False
+                if not entry:
+                    logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
+                    return False
 
-            scenario_result = scenario_results[0]
-            existing = scenario_result.error_attack_result_ids or []
-            scenario_result.error_attack_result_ids = list(dict.fromkeys(existing + error_attack_result_ids))
+                existing: list[str] = json.loads(entry.error_attack_result_ids_json) if entry.error_attack_result_ids_json else []
+                merged = list(dict.fromkeys(existing + error_attack_result_ids))
+                entry.error_attack_result_ids_json = json.dumps(merged)
 
-            entry = ScenarioResultEntry(entry=scenario_result)
-            self._update_entry(entry)
+                session.commit()
 
             logger.info(
                 f"Updated scenario {scenario_result_id} with {len(error_attack_result_ids)} error attack result(s)"

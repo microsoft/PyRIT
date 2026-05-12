@@ -7,6 +7,7 @@ import dataclasses
 import logging  # noqa: TC003
 import time
 import traceback
+import uuid
 from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
@@ -141,7 +142,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._events = {
             StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute,
             StrategyEvent.ON_POST_EXECUTE: self._on_post_execute,
-            StrategyEvent.ON_ERROR: self._on_error,
+            StrategyEvent.ON_ERROR: self._on_error_async,
         }
         self._memory = CentralMemory.get_memory_instance()
 
@@ -248,7 +249,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         self._logger.info(message)
 
-    async def _on_error(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
+    async def _on_error_async(
+        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
+    ) -> None:
         """
         Handle error during attack execution.
 
@@ -264,12 +267,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if not error or not context:
             return
 
+        # Clear any stale ID from a previous execution
+        context._error_attack_result_id = None
+
         # Collect retry events (visible via inherited ContextVar copy)
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
 
         # Build a conversation_id — use context's if available, otherwise generate one
-        conversation_id = getattr(context, "conversation_id", None) or str(__import__("uuid").uuid4())
+        conversation_id = getattr(context, "conversation_id", None) or str(uuid.uuid4())
 
         error_result = AttackResult(
             conversation_id=conversation_id,
@@ -289,11 +295,11 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if context.start_time:
             error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
 
-        # Store the error attack result ID on the context so scenario-level
-        # code can link it to the ScenarioResult
+        # Persist first, then set the ID on the context so scenario-level code
+        # only sees the reference if the write succeeded.
+        self._memory.add_attack_results_to_memory(attack_results=[error_result])
         context._error_attack_result_id = error_result.attack_result_id
 
-        self._memory.add_attack_results_to_memory(attack_results=[error_result])
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
 

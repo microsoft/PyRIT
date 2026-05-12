@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from pyrit.backend.mappers.attack_mappers import retry_events_to_response
 from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
     AttackSummary,
@@ -492,32 +493,14 @@ class ScenarioRunService:
 
                 timestamp = ar.timestamp or datetime.now(timezone.utc)
 
-                # Build retry event responses if available
-                retry_event_responses = None
-                retry_events = getattr(ar, "retry_events", None)
-                if isinstance(retry_events, list) and retry_events:
-                    from pyrit.backend.models.attacks import RetryEventResponse
+                # Build retry event responses using the shared mapper
+                retry_event_responses = retry_events_to_response(ar.retry_events)
 
-                    retry_event_responses = [
-                        RetryEventResponse(
-                            timestamp=evt.timestamp,
-                            attempt_number=evt.attempt_number,
-                            function_name=evt.function_name,
-                            exception_type=evt.exception_type,
-                            exception_message=evt.exception_message,
-                            component_role=evt.component_role,
-                            component_name=evt.component_name,
-                            endpoint=evt.endpoint,
-                            elapsed_seconds=evt.elapsed_seconds,
-                        )
-                        for evt in retry_events
-                    ]
-
-                # Extract error/retry fields with safe defaults
-                ar_error_message = ar.error_message if isinstance(ar.error_message, str) else None
-                ar_error_type = ar.error_type if isinstance(ar.error_type, str) else None
-                ar_error_traceback = ar.error_traceback if isinstance(ar.error_traceback, str) else None
-                ar_total_retries = ar.total_retries if isinstance(ar.total_retries, int) else 0
+                # Extract error/retry fields
+                ar_error_message = ar.error_message
+                ar_error_type = ar.error_type
+                ar_error_traceback = ar.error_traceback
+                ar_total_retries = ar.total_retries
 
                 details.append(
                     AttackSummary(

@@ -4,7 +4,7 @@
 """
 add error and retry fields to attack and scenario results.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 4f9db4b0a77f
 Revises: 108a72344872
 Create Date: 2026-05-08 00:00:00.000000
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"
+revision: str = "4f9db4b0a77f"
 down_revision: str | None = "108a72344872"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
