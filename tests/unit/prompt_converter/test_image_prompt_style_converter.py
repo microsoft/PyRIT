@@ -113,6 +113,41 @@ def test_init_invalid_variation_raises(mock_target) -> None:
         )
 
 
+def test_init_filter_missing_style_instructions_raises(mock_target, tmp_path) -> None:
+    bad_yaml = tmp_path / "missing_style.yaml"
+    bad_yaml.write_text("variations:\n  v1: desc\n")
+    with pytest.raises(ValueError, match="missing required key 'style_instructions'"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_path=bad_yaml)
+
+
+def test_init_filter_missing_variations_raises(mock_target, tmp_path) -> None:
+    bad_yaml = tmp_path / "missing_variations.yaml"
+    bad_yaml.write_text("style_instructions: some style\n")
+    with pytest.raises(ValueError, match="missing required key 'variations'"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_path=bad_yaml)
+
+
+def test_init_filter_empty_variations_raises(mock_target, tmp_path) -> None:
+    bad_yaml = tmp_path / "empty_variations.yaml"
+    bad_yaml.write_text("style_instructions: some style\nvariations: {}\n")
+    with pytest.raises(ValueError, match="non-empty mapping"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_path=bad_yaml)
+
+
+def test_init_filter_non_mapping_top_level_raises(mock_target, tmp_path) -> None:
+    bad_yaml = tmp_path / "list_top_level.yaml"
+    bad_yaml.write_text("- not\n- a\n- mapping\n")
+    with pytest.raises(ValueError, match="expected a YAML mapping at the top level"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_path=bad_yaml)
+
+
+def test_init_filter_style_instructions_wrong_type_raises(mock_target, tmp_path) -> None:
+    bad_yaml = tmp_path / "bad_style_type.yaml"
+    bad_yaml.write_text("style_instructions:\n  - not\n  - a\n  - string\nvariations:\n  v1: desc\n")
+    with pytest.raises(ValueError, match="must be a string"):
+        ImagePromptStyleConverter(converter_target=mock_target, filter_path=bad_yaml)
+
+
 def test_list_available_filters() -> None:
     filters = ImagePromptStyleConverter.list_available_filters()
     assert isinstance(filters, list)

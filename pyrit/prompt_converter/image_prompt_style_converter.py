@@ -3,8 +3,8 @@
 
 import logging
 import random
-import uuid
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -12,13 +12,12 @@ from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
-    Message,
-    MessagePiece,
     PromptDataType,
     SeedPrompt,
 )
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
+from pyrit.prompt_converter.prompt_converter import ConverterResult
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ IMAGE_PROMPT_STYLE_DIR = Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
 SYSTEM_PROMPT_FILENAME = "image_prompt_style_system_prompt.yaml"
 
 
-class ImagePromptStyleConverter(PromptConverter):
+class ImagePromptStyleConverter(LLMGenericTextConverter):
     """
     LLM-based converter that expands a short objective into a detailed image generation prompt
     using a photographic style filter and scene variation.
@@ -35,14 +34,11 @@ class ImagePromptStyleConverter(PromptConverter):
     then uses an LLM to expand the user's objective into a fully styled image generation prompt.
     """
 
-    SUPPORTED_INPUT_TYPES = ("text",)
-    SUPPORTED_OUTPUT_TYPES = ("text",)
-
     @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         filter_name: str | None = None,
         filter_path: str | Path | None = None,
         variation: str | None = None,
@@ -54,7 +50,8 @@ class ImagePromptStyleConverter(PromptConverter):
         a random built-in filter is selected.
 
         Args:
-            converter_target: The LLM endpoint that generates the expanded prompt.
+            converter_target: The LLM endpoint that generates the expanded prompt. Must satisfy
+                ``CHAT_TARGET_REQUIREMENTS`` (inherited from ``LLMGenericTextConverter``).
                 Can be omitted if a default has been configured via PyRIT initialization.
             filter_name: Name of a built-in filter YAML file (without extension) in the
                 image_prompt_style directory.  Mutually exclusive with ``filter_path``.
@@ -73,12 +70,11 @@ class ImagePromptStyleConverter(PromptConverter):
         if filter_name and filter_path:
             raise ValueError("Only one of 'filter_name' or 'filter_path' may be specified, not both.")
 
-        self.converter_target = converter_target
         self._variation = variation
 
         # Load the shared system prompt template
         system_prompt_path = IMAGE_PROMPT_STYLE_DIR / SYSTEM_PROMPT_FILENAME
-        self._system_prompt_template = SeedPrompt.from_yaml_file(system_prompt_path)
+        system_prompt_template = SeedPrompt.from_yaml_file(system_prompt_path)
 
         # Resolve the filter YAML file
         if filter_path is not None:
@@ -100,6 +96,7 @@ class ImagePromptStyleConverter(PromptConverter):
 
         with open(resolved_path, encoding="utf-8") as f:
             filter_data = yaml.safe_load(f)
+        self._validate_filter_data(filter_data, resolved_path)
 
         self._style_instructions: str = filter_data["style_instructions"]
         self._variations: dict[str, str] = filter_data["variations"]
@@ -123,6 +120,14 @@ class ImagePromptStyleConverter(PromptConverter):
                     f"Available variations: {available_names}"
                 )
 
+        # `style_instructions` is constant per-instance, so bake it into the template kwargs now.
+        # `variation` may be random per-call, so it's set inside convert_async before delegating.
+        super().__init__(
+            converter_target=converter_target,
+            system_prompt_template=system_prompt_template,
+            style_instructions=self._style_instructions,
+        )
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the converter identifier with filter and variation parameters.
@@ -135,7 +140,7 @@ class ImagePromptStyleConverter(PromptConverter):
                 "filter_name": self._filter_name,
                 "variation": self._variation,
             },
-            children={"converter_target": self.converter_target.get_identifier()},
+            children={"converter_target": self._converter_target.get_identifier()},
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
@@ -155,46 +160,45 @@ class ImagePromptStyleConverter(PromptConverter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        # Select variation
+        # Select variation (random per-call when not pinned at init)
         if self._variation is not None:
             name = self._variation_map[self._variation.strip().lower()]
         else:
             name = random.choice(list(self._variations.keys()))
 
-        variation_text = f"{name}: {self._variations[name]}"
+        # Inject the per-call variation into the parent's system-prompt render kwargs
+        self._prompt_kwargs["variation"] = f"{name}: {self._variations[name]}"
 
-        # Render the system prompt with style instructions and selected variation
-        system_prompt = self._system_prompt_template.render_template_value(
-            style_instructions=self._style_instructions,
-            variation=variation_text,
-        )
+        return await super().convert_async(prompt=prompt, input_type=input_type)
 
-        conversation_id = str(uuid.uuid4())
+    @staticmethod
+    def _validate_filter_data(filter_data: Any, resolved_path: Path) -> None:
+        """
+        Validate the structure of a parsed filter YAML.
 
-        self.converter_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=conversation_id,
-            attack_identifier=None,
-        )
-
-        request = Message(
-            [
-                MessagePiece(
-                    role="user",
-                    original_value=prompt,
-                    conversation_id=conversation_id,
-                    sequence=1,
-                    prompt_target_identifier=self.converter_target.get_identifier(),
-                    original_value_data_type=input_type,
-                    converted_value_data_type=input_type,
-                    converter_identifiers=[self.get_identifier()],
-                    converted_value=prompt,
-                )
-            ]
-        )
-
-        response = await self.converter_target.send_prompt_async(message=request)
-        return ConverterResult(output_text=response[0].get_value(), output_type="text")
+        Raises:
+            ValueError: If the filter is malformed (not a mapping, missing required keys,
+                wrong value types, or empty variations).
+        """
+        if not isinstance(filter_data, dict):
+            raise ValueError(
+                f"Filter '{resolved_path}' is malformed: expected a YAML mapping at the top level, "
+                f"got {type(filter_data).__name__}."
+            )
+        if "style_instructions" not in filter_data:
+            raise ValueError(f"Filter '{resolved_path}' is missing required key 'style_instructions'.")
+        if "variations" not in filter_data:
+            raise ValueError(f"Filter '{resolved_path}' is missing required key 'variations'.")
+        if not isinstance(filter_data["style_instructions"], str):
+            raise ValueError(
+                f"Filter '{resolved_path}' key 'style_instructions' must be a string, "
+                f"got {type(filter_data['style_instructions']).__name__}."
+            )
+        if not isinstance(filter_data["variations"], dict) or not filter_data["variations"]:
+            raise ValueError(
+                f"Filter '{resolved_path}' key 'variations' must be a non-empty mapping of "
+                f"variation name → description."
+            )
 
     @classmethod
     def list_available_filters(cls) -> list[str]:
@@ -218,7 +222,8 @@ class ImagePromptStyleConverter(PromptConverter):
             Sorted list of variation key names defined in the filter.
 
         Raises:
-            ValueError: If filter_name does not correspond to an existing YAML file.
+            ValueError: If filter_name does not correspond to an existing YAML file, or if the
+                filter file is malformed.
         """
         resolved_path = IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
         if not resolved_path.exists():
@@ -227,5 +232,6 @@ class ImagePromptStyleConverter(PromptConverter):
 
         with open(resolved_path, encoding="utf-8") as f:
             filter_data = yaml.safe_load(f)
+        cls._validate_filter_data(filter_data, resolved_path)
 
-        return sorted(filter_data.get("variations", {}).keys())
+        return sorted(filter_data["variations"].keys())
