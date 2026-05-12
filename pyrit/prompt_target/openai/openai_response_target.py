@@ -443,17 +443,64 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
         """
         Check if a Response API response has a content filter error.
 
+        The Responses API signals content filtering in two ways:
+        1. Via ``response.error`` with a content_filter code (older/alternative path)
+        2. Via ``response.status == "incomplete"`` with
+           ``response.incomplete_details.reason == "content_filter"``
+
         Args:
             response: A Response object from the OpenAI SDK.
 
         Returns:
             True if content was filtered, False otherwise.
         """
+        # Path 1: error-based detection (e.g., error.code == "content_filter")
         if hasattr(response, "error") and response.error is not None:
-            # Convert response to dict and use common filter detection
             response_dict = response.model_dump()
-            return _is_content_filter_error(response_dict)
+            if _is_content_filter_error(response_dict):
+                return True
+
+        # Path 2: incomplete status with content_filter reason
+        if getattr(response, "status", None) == "incomplete":
+            incomplete_details = getattr(response, "incomplete_details", None)
+            if incomplete_details and getattr(incomplete_details, "reason", None) == "content_filter":
+                return True
+
         return False
+
+    def _extract_partial_content(self, response: Any) -> Optional[str]:
+        """
+        Extract partial content from a Response API response that was content-filtered.
+
+        When the Responses API triggers a content filter, the response may contain partial
+        output in ``response.output`` message sections with ``status='completed'``. Messages
+        with ``status='incomplete'`` typically contain refusal text and are excluded.
+
+        Args:
+            response: A Response object from the OpenAI SDK.
+
+        Returns:
+            The partial text content from completed output messages, or None if no
+            partial content was generated.
+        """
+        try:
+            if not hasattr(response, "output") or not response.output:
+                return None
+            parts: list[str] = []
+            for section in response.output:
+                if getattr(section, "type", None) != MessagePieceType.MESSAGE:
+                    continue
+                # Only include completed messages — incomplete messages contain refusal text
+                if getattr(section, "status", None) != "completed":
+                    continue
+                content = getattr(section, "content", None)
+                if content and len(content) > 0:
+                    text = getattr(content[0], "text", None)
+                    if text:
+                        parts.append(text)
+            return "\n".join(parts) if parts else None
+        except (AttributeError, IndexError, TypeError):
+            return None
 
     def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
         """

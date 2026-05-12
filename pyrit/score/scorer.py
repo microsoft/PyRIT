@@ -74,8 +74,8 @@ class Scorer(Identifiable, abc.ABC):
     #: instead of being filtered out or short-circuited.
     #: Set this on scorer instances before use. Defaults to False.
     #:
-    #: Note: This attribute will only take effect if the target supports partial content extraction when content
-    #: filters are triggered (e.g., Chat Completions model via OpenAIChatTarget).
+    #: Note: Partial content extraction is supported for ``OpenAIChatTarget``
+    #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
     score_blocked_content: bool = False
 
     def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
