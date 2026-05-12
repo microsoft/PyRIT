@@ -184,7 +184,12 @@ class ScenarioRunService:
                 await asyncio.wait_for(active.task, timeout=5.0)
 
         # Persist cancelled state to DB
-        self._memory.update_scenario_run_state(scenario_result_id=scenario_result_id, scenario_run_state="CANCELLED")
+        self._memory.update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state="CANCELLED",
+            error_message="Run was cancelled by user",
+            error_type="CancelledError",
+        )
 
         return self._build_response(scenario_result_id=scenario_result_id)
 
@@ -396,22 +401,17 @@ class ScenarioRunService:
         scenario_result_id = str(scenario_result.id)
         active = self._active_tasks.get(scenario_result_id)
 
-        # Clean up finished active tasks after reading the error
-        error = None
-        error_type = None
-        if active is not None:
-            error = active.error
-            if active.task is not None and active.task.done():
-                del self._active_tasks[scenario_result_id]
+        # Clean up finished active tasks
+        if active is not None and active.task is not None and active.task.done():
+            del self._active_tasks[scenario_result_id]
 
-        # Fall back to persisted error from failed AttackResult
-        if not error and getattr(scenario_result, "error_attack_result_ids", None):
-            error_ids = scenario_result.error_attack_result_ids
-            if isinstance(error_ids, list) and error_ids:
-                error_results = self._memory.get_attack_results(attack_result_ids=error_ids[:1])
-                if error_results:
-                    error = error_results[0].error_message
-                    error_type = error_results[0].error_type
+        # Primary source: DB-persisted error fields
+        error = scenario_result.error_message
+        error_type = scenario_result.error_type
+
+        # Fallback: in-memory error for in-flight tasks where DB hasn't been updated yet
+        if not error and active is not None:
+            error = active.error
 
         status = ScenarioRunStatus(scenario_result.scenario_run_state)
 

@@ -11,7 +11,6 @@ from tenacity import RetryCallState
 from pyrit.exceptions.exception_context import get_execution_context
 from pyrit.exceptions.retry_collector import get_retry_collector
 
-
 logger = logging.getLogger(__name__)
 
 

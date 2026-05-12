@@ -100,6 +100,9 @@ def upgrade() -> None:
         sa.Column("number_tries", sa.INTEGER(), nullable=False),
         sa.Column("completion_time", sa.DateTime(), nullable=False),
         sa.Column("timestamp", sa.DateTime(), nullable=False),
+        sa.Column("error_attack_result_ids_json", sa.Unicode(), nullable=True),
+        sa.Column("error_message", sa.Unicode(), nullable=True),
+        sa.Column("error_type", sa.String(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table(
@@ -180,6 +183,12 @@ def upgrade() -> None:
         sa.Column("adversarial_chat_conversation_ids", sa.JSON(), nullable=True),
         sa.Column("timestamp", sa.DateTime(), nullable=False),
         sa.Column("pyrit_version", sa.String(), nullable=True),
+        sa.Column("labels", sa.JSON(), nullable=True),
+        sa.Column("error_message", sa.Unicode(), nullable=True),
+        sa.Column("error_type", sa.String(), nullable=True),
+        sa.Column("error_traceback", sa.Unicode(), nullable=True),
+        sa.Column("retry_events_json", sa.Unicode(), nullable=True),
+        sa.Column("total_retries", sa.INTEGER(), nullable=True),
         sa.ForeignKeyConstraint(
             ["last_response_id"],
             ["PromptMemoryEntries.id"],

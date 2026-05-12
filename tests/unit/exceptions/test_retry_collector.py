@@ -110,3 +110,40 @@ class TestRetryCollector:
         asyncio.run(run())
         assert results.get("a_has_collector") is True
         assert results.get("b_sees_none") is True
+
+    def test_record_extracts_execution_context(self) -> None:
+        """record() extracts component_role, component_name, and endpoint from ExecutionContext."""
+        from unittest.mock import MagicMock
+
+        from pyrit.exceptions.exception_context import (
+            ComponentRole,
+            ExecutionContext,
+            set_execution_context,
+        )
+
+        c = RetryCollector()
+
+        ctx = ExecutionContext(
+            component_role=ComponentRole.OBJECTIVE_TARGET,
+            component_name="OpenAIChatTarget",
+            endpoint="https://api.openai.com",
+        )
+        set_execution_context(ctx)
+
+        retry_state = MagicMock()
+        retry_state.attempt_number = 1
+        retry_state.start_time = 0.0
+        retry_state.fn = MagicMock()
+        retry_state.fn.__name__ = "send_prompt_async"
+        outcome = MagicMock()
+        outcome.failed = True
+        outcome.exception.return_value = RuntimeError("timeout")
+        retry_state.outcome = outcome
+
+        c.record(retry_state=retry_state)
+
+        assert len(c.events) == 1
+        evt = c.events[0]
+        assert evt.component_role == "objective_target"
+        assert evt.component_name == "OpenAIChatTarget"
+        assert evt.endpoint == "https://api.openai.com"

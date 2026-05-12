@@ -365,6 +365,40 @@ class TestAttackResultToSummary:
 
         assert before <= summary.created_at <= after
 
+    def test_retry_events_mapped_to_response(self) -> None:
+        """Test that retry events on an AttackResult are mapped to RetryEventResponse DTOs."""
+        from pyrit.models.retry_event import RetryEvent
+
+        now = datetime.now(timezone.utc)
+        ar = _make_attack_result()
+        ar.retry_events = [
+            RetryEvent(
+                timestamp=now,
+                attempt_number=1,
+                function_name="send_prompt_async",
+                exception_type="RateLimitError",
+                exception_message="rate limit exceeded",
+                component_role="objective_target",
+                component_name="OpenAIChatTarget",
+                endpoint="https://api.openai.com",
+                elapsed_seconds=1.5,
+            ),
+        ]
+        ar.total_retries = 1
+
+        stats = ConversationStats(message_count=0)
+        summary = attack_result_to_summary(ar, stats=stats)
+
+        assert summary.retry_events is not None
+        assert len(summary.retry_events) == 1
+        evt = summary.retry_events[0]
+        assert evt.attempt_number == 1
+        assert evt.function_name == "send_prompt_async"
+        assert evt.exception_type == "RateLimitError"
+        assert evt.component_role == "objective_target"
+        assert evt.elapsed_seconds == 1.5
+        assert summary.total_retries == 1
+
     """Tests for pyrit_scores_to_dto function."""
 
     def test_maps_scores(self) -> None:

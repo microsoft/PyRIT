@@ -399,6 +399,26 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} outcome is undetermined. Reason: Not specified"
         mock_logger.info.assert_called_with(expected_message)
 
+    async def test_on_post_execute_logs_error_outcome(
+        self, event_handler, sample_attack_context, sample_attack_result, mock_logger
+    ):
+        """Test that post-execute handler logs error outcome"""
+        sample_attack_result.outcome = AttackOutcome.ERROR
+        sample_attack_result.outcome_reason = "Connection timeout"
+
+        event_data = StrategyEventData(
+            event=StrategyEvent.ON_POST_EXECUTE,
+            strategy_name="TestStrategy",
+            strategy_id="test-id",
+            context=sample_attack_context,
+            result=sample_attack_result,
+        )
+
+        await event_handler.on_event(event_data)
+
+        expected_message = f"{event_handler.__class__.__name__} failed with an error. Reason: Connection timeout"
+        mock_logger.info.assert_called_with(expected_message)
+
     async def test_on_post_execute_adds_results_to_memory(self, mock_memory):
         """Test that post-execute handler adds results to memory"""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
@@ -447,12 +467,12 @@ class TestDefaultAttackStrategyEventHandler:
             handler = _DefaultAttackStrategyEventHandler()
 
             sample_attack_context.start_time = 100.0
-            retry_event = RetryEvent(attempt_number=1, function_name="send_prompt_async", exception_type="RateLimitError")
+            retry_event = RetryEvent(
+                attempt_number=1, function_name="send_prompt_async", exception_type="RateLimitError"
+            )
 
             collector = RetryCollector(events=[retry_event])
-            with patch(
-                "pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector
-            ):
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector):
                 event_data = StrategyEventData(
                     event=StrategyEvent.ON_POST_EXECUTE,
                     strategy_name="TestStrategy",
@@ -474,9 +494,7 @@ class TestDefaultAttackStrategyEventHandler:
 
             sample_attack_context.start_time = 100.0
             collector = RetryCollector(events=[])
-            with patch(
-                "pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector
-            ):
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector):
                 event_data = StrategyEventData(
                     event=StrategyEvent.ON_POST_EXECUTE,
                     strategy_name="TestStrategy",
@@ -499,9 +517,7 @@ class TestDefaultAttackStrategyEventHandler:
             retry_event = RetryEvent(attempt_number=2, function_name="send_prompt_async", exception_type="TimeoutError")
             collector = RetryCollector(events=[retry_event])
 
-            with patch(
-                "pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector
-            ):
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector):
                 event_data = StrategyEventData(
                     event=StrategyEvent.ON_ERROR,
                     strategy_name="TestStrategy",
@@ -523,9 +539,7 @@ class TestDefaultAttackStrategyEventHandler:
 
             sample_attack_context.start_time = 100.0
 
-            with patch(
-                "pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=None
-            ):
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=None):
                 event_data = StrategyEventData(
                     event=StrategyEvent.ON_ERROR,
                     strategy_name="TestStrategy",
@@ -547,9 +561,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context.start_time = 100.0
             error = ValueError("something broke")
 
-            with patch(
-                "pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=None
-            ):
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=None):
                 event_data = StrategyEventData(
                     event=StrategyEvent.ON_ERROR,
                     strategy_name="TestStrategy",

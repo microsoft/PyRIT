@@ -995,6 +995,10 @@ class ScenarioResultEntry(Base):
     # Pointer to failed attack result(s) — avoids scanning all attacks for error info
     error_attack_result_ids_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
 
+    # Scenario-level error info (persisted so it survives process restarts)
+    error_message: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
+    error_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     def __init__(self, *, entry: ScenarioResult) -> None:
         """
         Initialize a ScenarioResultEntry from a ScenarioResult object.
@@ -1044,6 +1048,9 @@ class ScenarioResultEntry(Base):
         self.error_attack_result_ids_json = (
             json.dumps(entry.error_attack_result_ids) if entry.error_attack_result_ids else None
         )
+
+        self.error_message = entry.error_message
+        self.error_type = entry.error_type
 
         self.timestamp = datetime.now(tz=timezone.utc)
 
@@ -1104,6 +1111,8 @@ class ScenarioResultEntry(Base):
             completion_time=self.completion_time,
             display_group_map=display_group_map,
             error_attack_result_ids=error_attack_result_ids,
+            error_message=self.error_message,
+            error_type=self.error_type,
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:

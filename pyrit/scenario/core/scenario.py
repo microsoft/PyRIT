@@ -1110,17 +1110,20 @@ class Scenario(ABC):
                             )
 
                         # Mark scenario as failed
+                        error_msg = (
+                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
+                            f"See attack results for details."
+                        )
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=error_msg,
+                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
                         )
 
                         # Raise exception with detailed information
-                        raise ValueError(
-                            f"Failed to execute atomic attack {i} ('{atomic_attack.atomic_attack_name}') "
-                            f"in scenario '{self._name}': {incomplete_count} of {incomplete_count + completed_count} "
-                            f"objectives incomplete. First failure: {atomic_results.incomplete_objectives[0][1]}"
-                        ) from atomic_results.incomplete_objectives[0][1]
+                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
                     logger.info(
                         f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
                         f"{len(atomic_results.completed_results)} results"
@@ -1139,6 +1142,8 @@ class Scenario(ABC):
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=str(e),
+                            error_type=type(e).__name__,
                         )
 
                     raise
