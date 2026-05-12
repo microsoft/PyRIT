@@ -181,6 +181,15 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
+        registry_name="objective_scorer_chat",
+        target_class=OpenAIChatTarget,
+        endpoint_var="OBJECTIVE_SCORER_CHAT_ENDPOINT",
+        key_var="OBJECTIVE_SCORER_CHAT_KEY",
+        model_var="OBJECTIVE_SCORER_CHAT_MODEL",
+        underlying_model_var="OBJECTIVE_SCORER_CHAT_UNDERLYING_MODEL",
+        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.SCORER],
+    ),
+    TargetConfig(
         registry_name="azure_foundry_deepseek",
         target_class=OpenAIChatTarget,
         endpoint_var="AZURE_FOUNDRY_DEEPSEEK_ENDPOINT",

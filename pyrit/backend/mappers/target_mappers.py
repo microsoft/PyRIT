@@ -7,6 +7,37 @@ Target mappers – domain → DTO translation for target-related models.
 
 from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+
+# Capability flag names that should never be surfaced as identifier-level params:
+# they are sourced from `target_obj.capabilities` instead.
+_CAPABILITY_PARAM_NAMES = frozenset(cap.value for cap in CapabilityName)
+
+
+def _target_capabilities_to_info(capabilities: TargetCapabilities) -> TargetCapabilitiesInfo:
+    """
+    Build a TargetCapabilitiesInfo DTO from a domain TargetCapabilities object.
+
+    Modality combinations are flattened into sorted unique modality lists since
+    the frontend uses them only for per-piece modality checks.
+
+    Args:
+        capabilities: The domain TargetCapabilities object.
+
+    Returns:
+        TargetCapabilitiesInfo DTO mirroring the capability flags and flattened
+        input/output modalities.
+    """
+    return TargetCapabilitiesInfo(
+        supports_multi_turn=capabilities.supports_multi_turn,
+        supports_multi_message_pieces=capabilities.supports_multi_message_pieces,
+        supports_json_schema=capabilities.supports_json_schema,
+        supports_json_output=capabilities.supports_json_output,
+        supports_editable_history=capabilities.supports_editable_history,
+        supports_system_prompt=capabilities.supports_system_prompt,
+        supported_input_modalities=sorted({str(t) for combo in capabilities.input_modalities for t in combo}),
+        supported_output_modalities=sorted({str(t) for combo in capabilities.output_modalities for t in combo}),
+    )
 
 
 def target_object_to_instance(target_registry_name: str, target_obj: PromptTarget) -> TargetInstance:
@@ -26,8 +57,10 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     identifier = target_obj.get_identifier()
     params = identifier.params
 
-    # Keys that are extracted as top-level TargetInstance fields
-    # or are internal-only (target_configuration is the verbose capabilities blob).
+    # Keys that are extracted as top-level TargetInstance fields, are internal-only
+    # (e.g., target_configuration is the verbose capabilities blob), or duplicate
+    # capability flags (filtered via _CAPABILITY_PARAM_NAMES) — those are sourced
+    # solely from target_obj.capabilities and must not leak into target_specific_params.
     extracted_keys = {
         "endpoint",
         "model_name",
@@ -35,29 +68,14 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         "temperature",
         "top_p",
         "max_requests_per_minute",
-        "supports_multi_turn",
         "target_specific_params",
         "target_configuration",
-    }
+    } | _CAPABILITY_PARAM_NAMES
 
     # Collect remaining params as target_specific_params so the frontend can display them
     explicit_specific = params.get("target_specific_params") or {}
     extra = {k: v for k, v in params.items() if k not in extracted_keys and v is not None}
     combined_specific = {**extra, **explicit_specific} or None
-
-    caps = target_obj.capabilities
-    input_modalities = sorted({modality for combo in caps.input_modalities for modality in combo})
-    output_modalities = sorted({modality for combo in caps.output_modalities for modality in combo})
-    capabilities = TargetCapabilitiesInfo(
-        supports_multi_turn=caps.supports_multi_turn,
-        supports_multi_message_pieces=caps.supports_multi_message_pieces,
-        supports_json_schema=caps.supports_json_schema,
-        supports_json_output=caps.supports_json_output,
-        supports_editable_history=caps.supports_editable_history,
-        supports_system_prompt=caps.supports_system_prompt,
-        supported_input_modalities=input_modalities,
-        supported_output_modalities=output_modalities,
-    )
 
     return TargetInstance(
         target_registry_name=target_registry_name,
@@ -68,7 +86,6 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         temperature=params.get("temperature"),
         top_p=params.get("top_p"),
         max_requests_per_minute=params.get("max_requests_per_minute"),
-        supports_multi_turn=caps.supports_multi_turn,
-        capabilities=capabilities,
+        capabilities=_target_capabilities_to_info(target_obj.capabilities),
         target_specific_params=combined_specific,
     )

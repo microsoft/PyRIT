@@ -90,18 +90,29 @@ def mock_float_threshold_scorer():
     return mock
 
 
-@pytest.mark.usefixtures("patch_central_database")
-class TestFoundryInitialization:
-    """Tests for RedTeamAgent initialization."""
-
-    @patch.dict(
+@pytest.fixture
+def mock_runtime_env():
+    with patch.dict(
         "os.environ",
         {
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
+            "OPENAI_CHAT_ENDPOINT": "https://test.openai.azure.com/",
+            "OPENAI_CHAT_KEY": "test-key",
+            "OPENAI_CHAT_MODEL": "gpt-4",
         },
-    )
+    ):
+        yield
+
+
+FIXTURES = ["patch_central_database", "mock_runtime_env"]
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestFoundryInitialization:
+    """Tests for RedTeamAgent initialization."""
+
     async def test_init_with_single_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -119,14 +130,6 @@ class TestFoundryInitialization:
             assert scenario.atomic_attack_count > 0
             assert scenario.name == "RedTeamAgent"
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_init_with_multiple_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -149,14 +152,6 @@ class TestFoundryInitialization:
             )
             assert scenario.atomic_attack_count >= len(strategies)
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     def test_init_with_custom_adversarial_target(
         self, mock_objective_target, mock_adversarial_target, mock_objective_scorer
     ):
@@ -168,14 +163,6 @@ class TestFoundryInitialization:
 
         assert scenario._adversarial_chat == mock_adversarial_target
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer):
         """Test initialization with custom objective scorer."""
         scenario = RedTeamAgent(
@@ -184,14 +171,6 @@ class TestFoundryInitialization:
 
         assert scenario._attack_scoring_config.objective_scorer == mock_objective_scorer
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_init_with_memory_labels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -214,14 +193,6 @@ class TestFoundryInitialization:
             assert scenario._memory_labels == memory_labels
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     def test_init_creates_default_scorer_when_not_provided(
         self, mock_get_scorer, mock_objective_target, mock_memory_seed_groups
     ):
@@ -239,14 +210,6 @@ class TestFoundryInitialization:
             # seed_groups are resolved lazily during _get_atomic_attacks_async
             assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
@@ -257,18 +220,10 @@ class TestFoundryInitialization:
             await scenario.initialize_async(objective_target=mock_objective_target)
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryStrategyNormalization:
     """Tests for attack strategy normalization."""
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_normalize_easy_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -286,14 +241,6 @@ class TestFoundryStrategyNormalization:
             # EASY should expand to multiple attack strategies
             assert scenario.atomic_attack_count > 1
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_normalize_moderate_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -311,14 +258,6 @@ class TestFoundryStrategyNormalization:
             # MODERATE should expand to moderate attack strategies (currently only 1: Tense)
             assert scenario.atomic_attack_count >= 1
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_normalize_difficult_strategies(
         self, mock_objective_target, mock_float_threshold_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -337,14 +276,6 @@ class TestFoundryStrategyNormalization:
             # DIFFICULT should expand to multiple attack strategies
             assert scenario.atomic_attack_count > 1
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_normalize_mixed_difficulty_levels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -362,14 +293,6 @@ class TestFoundryStrategyNormalization:
             # Combined difficulty levels should expand to multiple strategies
             assert scenario.atomic_attack_count > 5  # EASY has 20, MODERATE has 1, combined should have more
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_normalize_with_specific_and_difficulty_levels(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -391,18 +314,10 @@ class TestFoundryStrategyNormalization:
             assert scenario.atomic_attack_count >= 20
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryAttackCreation:
     """Tests for attack creation from strategies."""
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_get_attack_from_single_turn_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -425,14 +340,6 @@ class TestFoundryAttackCreation:
             assert isinstance(atomic_attack, AtomicAttack)
             assert atomic_attack.seed_groups == mock_memory_seed_groups
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_get_attack_from_multi_turn_strategy(
         self,
         mock_objective_target,
@@ -462,18 +369,10 @@ class TestFoundryAttackCreation:
             assert atomic_attack.seed_groups == mock_memory_seed_groups
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryGetAttack:
     """Tests for the _get_attack method."""
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_get_attack_single_turn_with_converters(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -496,14 +395,6 @@ class TestFoundryGetAttack:
 
             assert isinstance(attack, PromptSendingAttack)
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_get_attack_multi_turn_with_adversarial_target(
         self,
         mock_objective_target,
@@ -533,18 +424,10 @@ class TestFoundryGetAttack:
             assert isinstance(attack, CrescendoAttack)
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryAllStrategies:
     """Tests that all strategies can be instantiated."""
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     @pytest.mark.parametrize(
         "strategy",
         [
@@ -591,14 +474,6 @@ class TestFoundryAllStrategies:
             atomic_attack = scenario._get_attack_from_strategy(composite_strategy)
             assert isinstance(atomic_attack, AtomicAttack)
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     @pytest.mark.parametrize(
         "strategy",
         [
@@ -634,18 +509,10 @@ class TestFoundryAllStrategies:
             assert isinstance(atomic_attack, AtomicAttack)
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryProperties:
     """Tests for RedTeamAgent properties and attributes."""
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_scenario_composites_set_after_initialize(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -671,14 +538,6 @@ class TestFoundryProperties:
             assert len(scenario._scenario_composites) == len(strategies)
             assert scenario.atomic_attack_count == len(strategies)
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     def test_scenario_version_is_set(self, mock_objective_target, mock_objective_scorer):
         """Test that scenario version is properly set."""
         scenario = RedTeamAgent(
@@ -687,14 +546,6 @@ class TestFoundryProperties:
 
         assert scenario.VERSION == 1
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_scenario_atomic_attack_count_matches_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -718,14 +569,6 @@ class TestFoundryProperties:
             # Should have at least as many runs as specific strategies provided
             assert scenario.atomic_attack_count >= len(strategies)
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_initialize_with_foundry_composite_directly(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -749,14 +592,6 @@ class TestFoundryProperties:
         assert result.converters == [FoundryStrategy.Base64]
         assert result.name == "ComposedStrategy(crescendo, base64)"
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     async def test_initialize_with_mixed_composites_and_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
     ):
@@ -779,14 +614,6 @@ class TestFoundryProperties:
         assert scenario._scenario_composites[1].attack is None
         assert scenario._scenario_composites[1].converters == [FoundryStrategy.ROT13]
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     async def test_initialize_converts_scenario_composite_strategy_to_foundry_composite(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
@@ -810,14 +637,6 @@ class TestFoundryProperties:
         assert result.attack == FoundryStrategy.Crescendo
         assert result.converters == [FoundryStrategy.Base64]
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     async def test_initialize_converts_converter_first_composite_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config
@@ -840,14 +659,6 @@ class TestFoundryProperties:
         assert result.attack == FoundryStrategy.Crescendo
         assert result.converters == [FoundryStrategy.Base64]
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://test.openai.azure.com/",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "test-key",
-            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4",
-        },
-    )
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     async def test_initialize_converts_converter_only_composite_strategy(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config

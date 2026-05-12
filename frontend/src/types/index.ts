@@ -73,7 +73,6 @@ export interface TargetInstance {
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
-  supports_multi_turn?: boolean
   capabilities?: TargetCapabilitiesInfo | null
   target_specific_params?: Record<string, unknown> | null
 }
