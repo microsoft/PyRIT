@@ -215,6 +215,11 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         module, discovers the first concrete ``PyRITInitializer``
         subclass, and registers it under *name*.
 
+        Note:
+            Registrations are runtime-only and are not rediscovered on
+            server restart.  Script files persist on disk as import
+            artifacts for the current process.
+
         Args:
             name: Registry name for the new initializer.
             script_content: Python source code that defines a
@@ -230,10 +235,13 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         self._ensure_discovered()
 
+        if name in self._class_entries:
+            raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
+
         # Deferred: importing pyrit.setup triggers heavy __init__.py chain
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
-        # Write to a managed temp directory so importlib can load it
+        # Write to a managed directory so importlib can load it
         managed_dir = self._get_custom_scripts_dir()
         script_path = managed_dir / f"{name}.py"
         try:
@@ -248,29 +256,28 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
+
+            discovered: type[PyRITInitializer] | None = None
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (
+                    inspect.isclass(attr)
+                    and issubclass(attr, PyRITInitializer)
+                    and attr is not PyRITInitializer
+                    and not inspect.isabstract(attr)
+                    and attr.__module__ == module.__name__
+                ):
+                    discovered = attr
+                    break
+
+            if discovered is None:
+                raise ValueError(f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass.")
         except ValueError:
+            script_path.unlink(missing_ok=True)
             raise
         except Exception as e:
-            raise ValueError(f"Failed to load initializer script '{name}': {e}") from e
-
-        discovered: type[PyRITInitializer] | None = None
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if (
-                inspect.isclass(attr)
-                and issubclass(attr, PyRITInitializer)
-                and attr is not PyRITInitializer
-                and not inspect.isabstract(attr)
-                and attr.__module__ == module.__name__
-            ):
-                discovered = attr
-                break
-
-        if discovered is None:
             script_path.unlink(missing_ok=True)
-            raise ValueError(
-                f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass."
-            )
+            raise ValueError(f"Failed to load initializer script '{name}': {e}") from e
 
         entry = ClassEntry(registered_class=discovered)
         self._class_entries[name] = entry
@@ -285,6 +292,11 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         Works for both built-in and custom initializers. For custom
         initializers added via ``register_from_content``, the saved
         script file is also deleted.
+
+        Note:
+            Custom registrations are runtime-only and are not
+            rediscovered on restart.  Script files are persisted solely
+            as import artifacts for the current process.
 
         Args:
             name: The registry name to remove.

@@ -46,6 +46,4 @@ class RegisterInitializerRequest(BaseModel):
     """Request body for registering a custom initializer by uploading script content."""
 
     name: str = Field(..., description="Registry name for the initializer (e.g., 'my_custom')")
-    script_content: str = Field(
-        ..., description="Python source code containing a PyRITInitializer subclass"
-    )
+    script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")

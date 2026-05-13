@@ -322,13 +322,9 @@ class TestInitializerServiceRegister:
             ]
             service._registry = mock_registry
 
-            result = await service.register_initializer_async(
-                name="my_custom", script_content=_SAMPLE_SCRIPT
-            )
+            result = await service.register_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
 
-            mock_registry.register_from_content.assert_called_once_with(
-                name="my_custom", script_content=_SAMPLE_SCRIPT
-            )
+            mock_registry.register_from_content.assert_called_once_with(name="my_custom", script_content=_SAMPLE_SCRIPT)
             assert result.initializer_name == "my_custom"
 
     async def test_register_initializer_propagates_value_error(self) -> None:
@@ -376,9 +372,7 @@ class TestRegisterInitializerRoute:
 
     def test_post_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
         app.state.allow_custom_initializers = False
-        response = client.post(
-            "/api/initializers", json={"name": "test", "script_content": _SAMPLE_SCRIPT}
-        )
+        response = client.post("/api/initializers", json={"name": "test", "script_content": _SAMPLE_SCRIPT})
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "disabled" in response.json()["detail"].lower()
 
@@ -403,9 +397,7 @@ class TestRegisterInitializerRoute:
             data = response.json()
             assert data["initializer_name"] == "my_custom"
 
-    def test_post_returns_400_for_invalid_script(
-        self, client_with_custom_initializers_enabled: TestClient
-    ) -> None:
+    def test_post_returns_400_for_invalid_script(self, client_with_custom_initializers_enabled: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.register_initializer_async = AsyncMock(side_effect=ValueError("no classes"))
@@ -417,9 +409,7 @@ class TestRegisterInitializerRoute:
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_post_forwards_name_and_content(
-        self, client_with_custom_initializers_enabled: TestClient
-    ) -> None:
+    def test_post_forwards_name_and_content(self, client_with_custom_initializers_enabled: TestClient) -> None:
         summary = RegisteredInitializer(
             initializer_name="my_init",
             initializer_type="MyInit",
@@ -437,6 +427,20 @@ class TestRegisterInitializerRoute:
             call_kwargs = mock_service.register_initializer_async.call_args.kwargs
             assert call_kwargs["name"] == "my_init"
             assert call_kwargs["script_content"] == _SAMPLE_SCRIPT
+
+    def test_post_returns_409_for_duplicate_name(self, client_with_custom_initializers_enabled: TestClient) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.register_initializer_async = AsyncMock(
+                side_effect=ValueError("Initializer 'dup' is already registered.")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.post(
+                "/api/initializers", json={"name": "dup", "script_content": _SAMPLE_SCRIPT}
+            )
+
+            assert response.status_code == status.HTTP_409_CONFLICT
 
 
 class TestUnregisterInitializerRoute:

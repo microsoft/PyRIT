@@ -103,6 +103,7 @@ async def get_initializer(initializer_name: str) -> RegisteredInitializer:
     status_code=status.HTTP_201_CREATED,
     responses={
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
+        409: {"model": ProblemDetail, "description": "Initializer name already registered"},
     },
 )
 async def register_initializer(
@@ -128,7 +129,10 @@ async def register_initializer(
     try:
         return await service.register_initializer_async(name=body.name, script_content=body.script_content)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+        detail = str(e)
+        if "already registered" in detail:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
 
 
 @router.delete(

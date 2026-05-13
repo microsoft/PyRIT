@@ -93,10 +93,54 @@ def test_register_from_content_bad_syntax_raises_value_error():
     registry._discovered = True
 
     with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
-        mock_dir.return_value = Path(tempfile.mkdtemp())
+        tmp_dir = Path(tempfile.mkdtemp())
+        mock_dir.return_value = tmp_dir
 
         with pytest.raises(ValueError, match="Failed to load"):
             registry.register_from_content(name="bad", script_content="def bad syntax(:\n")
+
+
+def test_register_from_content_bad_syntax_cleans_up_file():
+    """Test that a failed import cleans up the script file."""
+    registry = InitializerRegistry(lazy_discovery=True)
+    registry._discovered = True
+
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        tmp_dir = Path(tempfile.mkdtemp())
+        mock_dir.return_value = tmp_dir
+
+        with pytest.raises(ValueError):
+            registry.register_from_content(name="orphan", script_content="def bad syntax(:\n")
+
+        assert not (tmp_dir / "orphan.py").exists()
+
+
+def test_register_from_content_no_class_cleans_up_file():
+    """Test that missing initializer class cleans up the script file."""
+    registry = InitializerRegistry(lazy_discovery=True)
+    registry._discovered = True
+
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        tmp_dir = Path(tempfile.mkdtemp())
+        mock_dir.return_value = tmp_dir
+
+        with pytest.raises(ValueError, match="does not contain"):
+            registry.register_from_content(name="no_class", script_content="x = 1\n")
+
+        assert not (tmp_dir / "no_class.py").exists()
+
+
+def test_register_from_content_rejects_duplicate_name():
+    """Test that registering over an existing name raises ValueError."""
+    registry = InitializerRegistry(lazy_discovery=True)
+    registry._discovered = True
+
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        mock_dir.return_value = Path(tempfile.mkdtemp())
+        registry.register_from_content(name="dup", script_content=_VALID_SCRIPT)
+
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register_from_content(name="dup", script_content=_VALID_SCRIPT)
 
 
 def test_register_from_content_ignores_imported_classes():
