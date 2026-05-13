@@ -685,7 +685,7 @@ class Scenario(ABC):
         # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
         if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
             print_deprecation_message(
-                old_item=f"Implicit baseline injection for {type(self).__name__} overriding _get_atomic_attacks_async()",
+                old_item=f"Implicit baseline injection for {type(self).__name__}._get_atomic_attacks_async()",
                 new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
                 removed_in="0.16.0",
             )
