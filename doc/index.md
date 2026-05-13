@@ -118,9 +118,10 @@ initializers:
 Run security assessments from the command line with `pyrit_scan` or the interactive `pyrit_shell`. Execute built-in scenarios against your AI targets.
 
 ```bash
-pyrit_scan airt.rapid_response --target openai_chat
+pyrit_scan airt.scam --target openai_chat
 ```
-<<< Insert Scanner Screenshot >>>
+
+![scanner-demo](scanner-demo.png)
 
 Use `pyrit_scan --help` to learn more about what else `pyrit_scan` can do.
 For more details, see the [Scanner](scanner/0_scanner) page.
