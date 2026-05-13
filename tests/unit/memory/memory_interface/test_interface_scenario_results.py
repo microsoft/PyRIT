@@ -648,6 +648,60 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
     assert "gpt-4" in results[0].objective_target_identifier.params["model_name"]
 
 
+def test_update_scenario_error_attacks_success(sqlite_instance: MemoryInterface, sample_attack_results):
+    """Test successfully linking error attack result IDs to a scenario result."""
+    scenario_result = create_scenario_result(
+        name="Error Scenario",
+        attack_results={"Attack1": [sample_attack_results[0]]},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+
+    error_ids = ["error-ar-1", "error-ar-2"]
+    sqlite_instance.update_scenario_error_attacks(
+        scenario_result_id=str(scenario_result.id),
+        error_attack_result_ids=error_ids,
+    )
+
+    # Verify the error IDs were persisted
+    results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result.id)])
+    assert len(results) == 1
+    assert results[0].error_attack_result_ids == error_ids
+
+
+def test_update_scenario_error_attacks_appends_to_existing(sqlite_instance: MemoryInterface, sample_attack_results):
+    """Test that updating error attacks appends to existing IDs without duplicates."""
+    scenario_result = create_scenario_result(
+        name="Error Scenario",
+        attack_results={"Attack1": [sample_attack_results[0]]},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+
+    # First update
+    sqlite_instance.update_scenario_error_attacks(
+        scenario_result_id=str(scenario_result.id),
+        error_attack_result_ids=["error-ar-1"],
+    )
+
+    # Second update with overlap and new ID
+    sqlite_instance.update_scenario_error_attacks(
+        scenario_result_id=str(scenario_result.id),
+        error_attack_result_ids=["error-ar-1", "error-ar-2"],
+    )
+
+    results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result.id)])
+    # Should be deduplicated: ["error-ar-1", "error-ar-2"]
+    assert results[0].error_attack_result_ids == ["error-ar-1", "error-ar-2"]
+
+
+def test_update_scenario_error_attacks_not_found(sqlite_instance: MemoryInterface):
+    """Test that updating a nonexistent scenario result raises ValueError."""
+    with pytest.raises(ValueError, match="not found in memory"):
+        sqlite_instance.update_scenario_error_attacks(
+            scenario_result_id="nonexistent-id",
+            error_attack_result_ids=["error-ar-1"],
+        )
+
+
 def test_get_scenario_results_by_target_identifier_filter_hash(sqlite_instance: MemoryInterface):
     """Test filtering scenario results by identifier filter."""
     target_id_1 = ComponentIdentifier(

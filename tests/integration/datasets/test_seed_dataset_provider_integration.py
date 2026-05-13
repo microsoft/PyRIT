@@ -14,6 +14,7 @@ from pyrit.datasets.seed_datasets.remote import _SimpleSafetyTestsDataset, _XSTe
 from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetFilter,
 )
+from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models import SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
@@ -676,7 +677,7 @@ class TestHarmbenchMetadataInScenario:
 
         # Mock scorer to avoid Azure dependency
         mock_scorer = MagicMock(spec=TrueFalseScorer)
-        mock_scorer.get_identifier.return_value = {"__type__": "MockScorer"}
+        mock_scorer.get_identifier.return_value = ComponentIdentifier.from_dict({"__type__": "MockScorer"})
 
         target = TextTarget()
         rta = RedTeamAgent(

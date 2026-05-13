@@ -9,29 +9,42 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 """
 
 import asyncio
+import copy
+import json
 import logging
 import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, ClassVar, Optional, Union, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
 from tqdm.auto import tqdm
 
-from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
+from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
+from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
+from pyrit.score import (
+    Scorer,
+    SelfAskRefusalScorer,
+    SelfAskTrueFalseScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -39,6 +52,56 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
+
+
+def _assert_json_serializable(*, params: dict[str, Any]) -> None:
+    """
+    Raise if any value in ``params`` cannot round-trip through JSON.
+
+    Stage 5 stores ``params`` on ``ScenarioIdentifier.init_data`` for resume
+    validation; the underlying memory column is JSON. Catching unserializable
+    values here gives a clear error rather than a database failure.
+
+    Args:
+        params (dict[str, Any]): Effective parameters to validate.
+
+    Raises:
+        ValueError: If any value is not JSON-serializable.
+    """
+    try:
+        json.dumps(params)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Scenario params contain a non-JSON-serializable value (cannot persist for resume): {exc}. "
+            f"Use only JSON-safe types (str, int, float, bool, list, dict, None) for scenario parameters."
+        ) from exc
+
+
+def _format_param_key_diff(*, stored: dict[str, Any], current: dict[str, Any]) -> str:
+    """
+    Render the set-level difference between two param dicts as a short string.
+
+    Lists only key names (no values) so secrets or large blobs in scenario
+    parameters do not leak into logs.
+
+    Args:
+        stored (dict[str, Any]): Persisted params from the previous run.
+        current (dict[str, Any]): Effective params for the current run.
+
+    Returns:
+        str: A short summary like ``"added: x, y; removed: z; changed: max_turns"``.
+    """
+    parts: list[str] = []
+    added = sorted(set(current) - set(stored))
+    removed = sorted(set(stored) - set(current))
+    changed = sorted(k for k in set(stored) & set(current) if stored[k] != current[k])
+    if added:
+        parts.append(f"added: {', '.join(added)}")
+    if removed:
+        parts.append(f"removed: {', '.join(removed)}")
+    if changed:
+        parts.append(f"changed: {', '.join(changed)}")
+    return "; ".join(parts) if parts else "no diff details"
 
 
 class Scenario(ABC):
@@ -53,6 +116,18 @@ class Scenario(ABC):
     #: Capability requirements placed on ``objective_target``. Subclasses override to declare
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    @classmethod
+    def _get_additional_scoring_questions(cls) -> Sequence[Path]:
+        """
+        Paths to additional true/false question prompts for objective scoring.
+
+        These prompts are used in the default scenario scorer in addition to a simple self-ask scorer.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question prompts, or an empty sequence to use the default scorer.
+        """
+        return []
 
     def __init__(
         self,
@@ -127,6 +202,10 @@ class Scenario(ABC):
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
 
+        # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
+        self.params: dict[str, Any] = {}
+        self._declarations_validated: bool = False
+
     @property
     def name(self) -> str:
         """Get the name of the scenario."""
@@ -178,6 +257,23 @@ class Scenario(ABC):
         Returns:
             DatasetConfiguration: The default dataset configuration.
         """
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Override to declare custom parameters this scenario accepts.
+
+        Declared parameters flow from CLI/config through ``set_params_from_args``
+        into ``self.params`` before ``initialize_async()`` runs. Implemented as
+        a classmethod so ``--list-scenarios`` can introspect without instantiating.
+
+        Note: ``PyRITInitializer.supported_parameters`` is an instance ``@property``;
+        this asymmetry is intentional pending a future alignment.
+
+        Returns:
+            list[Parameter]: Declared parameters (default: empty list).
+        """
+        return []
 
     def _get_attack_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
         """
@@ -236,17 +332,187 @@ class Scenario(ABC):
         return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        # Deferred import to avoid circular dependency:
+        # Deferred import to avoid circular dependency.
         from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
 
+        # first check if the registry has a default objective scorer
+        # if available either itself, or its chat target will be used
+        chat_target: PromptTarget | None = None
+        registry_default_scorer: TrueFalseScorer | None = None
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
-            scorer = entries[0].instance
-            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
+            registry_default_scorer = entries[0].instance
+            chat_target = registry_default_scorer.get_chat_target()
+            logger.info(
+                f"The registry contains default objective scorer: {type(registry_default_scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+            )
+
+        chat_target = chat_target or get_default_scorer_target()
+
+        # if the scenario has override composite scorer questions, use them to build a composite scorer
+        composite_scorer_questions_paths = type(self)._get_additional_scoring_questions()
+        if composite_scorer_questions_paths:
+            path_scorers: list[TrueFalseScorer] = [
+                SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question_path=path)
+                for path in composite_scorer_questions_paths
+            ]
+            backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+            scorer = TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.AND,
+                scorers=[*path_scorers, backstop_scorer],
+            )
+            logger.info(
+                f"Using composite default objective scorer: {type(scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__}"
+            )
             return scorer
-        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
-        logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
+
+        if registry_default_scorer:
+            logger.info(
+                f"Using registry default objective scorer: {type(registry_default_scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+            )
+            return registry_default_scorer
+
+        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+        logger.warning(
+            f"Using fallback default objective scorer: {type(scorer).__name__} "
+            f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+        )
         return scorer
+
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """
+        Populate ``self.params`` from merged CLI / config arguments.
+
+        Coerces each value to its declared ``param_type``, validates, and
+        materializes declared defaults for params not in ``args``. Every
+        declared parameter is guaranteed a key in ``self.params`` after this
+        call; params without a declared default land as ``None``.
+
+        Args:
+            args (dict[str, Any]): Map of parameter name to raw value. Keys
+                with ``None`` values are treated as absent (YAML ``null``).
+                Argparse callers should use ``argparse.SUPPRESS``.
+
+        Raises:
+            ValueError: Invalid declaration, unknown parameter, coercion
+                failure, or value not in ``choices``.
+        """
+        declared = list(self.supported_parameters())
+        if not self._declarations_validated:
+            self._validate_declarations(declared=declared)
+            self._declarations_validated = True
+
+        declared_by_name = {p.name: p for p in declared}
+
+        # None values are treated as absent so YAML `key: null` falls through to defaults.
+        supplied = {name: value for name, value in args.items() if value is not None}
+
+        coerced: dict[str, Any] = {}
+        for name, raw_value in supplied.items():
+            param = declared_by_name.get(name)
+            if param is None:
+                # Stash unknowns so _validate_params can list them all at once.
+                coerced[name] = raw_value
+                continue
+            coerced[name] = coerce_value(param=param, raw_value=raw_value)
+
+        self._validate_params(params=coerced, declared=declared)
+
+        for param in declared:
+            if param.name in coerced:
+                continue
+            # Materialize every declared param so scenarios can rely on
+            # ``self.params[name]`` never raising ``KeyError``. Params declared
+            # without an explicit default land as None, and the scenario raises
+            # a domain-specific error at run time if it cannot proceed.
+            coerced[param.name] = (
+                copy.deepcopy(coerce_value(param=param, raw_value=param.default)) if param.default is not None else None
+            )
+
+        self.params = coerced
+
+    def _validate_declarations(self, *, declared: list[Parameter]) -> None:
+        """
+        Validate the scenario's parameter declarations on first use.
+
+        Args:
+            declared (list[Parameter]): The ``supported_parameters()`` snapshot.
+
+        Raises:
+            ValueError: If declarations contain duplicate names, an
+                unsupported ``param_type``, ``choices`` not coercible to
+                ``param_type``, or a default that fails coercion / is not
+                in ``choices``.
+        """
+        seen: set[str] = set()
+        for param in declared:
+            if param.name in seen:
+                raise ValueError(f"Scenario '{type(self).__name__}' declares duplicate parameter name '{param.name}'.")
+            seen.add(param.name)
+
+            try:
+                validate_param_type(param=param)
+            except ValueError as exc:
+                raise ValueError(f"Scenario '{type(self).__name__}' {exc}") from exc
+
+            if param.choices is not None and get_origin(param.param_type) is list:
+                # argparse `nargs='+'` applies choices per-item; core checks the whole list.
+                # Reject the combination until we reconcile the semantics.
+                raise ValueError(
+                    f"Scenario '{type(self).__name__}' parameter '{param.name}' declares choices on a list "
+                    f"param_type ({param.param_type!r}); this combination is not supported. "
+                    f"Use a scalar param_type with choices, or omit choices on list params."
+                )
+
+            if param.choices is not None and param.param_type is not None:
+                # Each choice must be coercible — fail at declaration time, not user time.
+                for choice in param.choices:
+                    try:
+                        coerce_value(param=param, raw_value=choice)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Scenario '{type(self).__name__}' parameter '{param.name}' choice "
+                            f"{choice!r} is not coercible to {param.param_type!r}: {exc}"
+                        ) from exc
+
+            if param.default is not None:
+                try:
+                    coerced_default = coerce_value(param=param, raw_value=param.default)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Scenario '{type(self).__name__}' parameter '{param.name}' has an invalid default: {exc}"
+                    ) from exc
+
+                if param.choices is not None and coerced_default not in param.choices:
+                    raise ValueError(
+                        f"Scenario '{type(self).__name__}' parameter '{param.name}' default "
+                        f"{param.default!r} is not in declared choices {param.choices!r}."
+                    )
+
+    def _validate_params(self, *, params: dict[str, Any], declared: list[Parameter]) -> None:
+        """
+        Validate supplied params against the scenario's declarations.
+
+        Args:
+            params (dict[str, Any]): Coerced (declared names) or raw (unknown) values.
+            declared (list[Parameter]): Declarations snapshot from the caller, so
+                the whole call sees one consistent view.
+
+        Raises:
+            ValueError: If any keys in ``params`` are not declared.
+        """
+        declared_names = {p.name for p in declared}
+
+        unknown = sorted(set(params.keys()) - declared_names)
+        if unknown:
+            raise ValueError(
+                f"Scenario '{type(self).__name__}' received unknown parameter(s): {', '.join(unknown)}. "
+                f"Supported parameters: "
+                f"{', '.join(sorted(declared_names)) if declared_names else 'none'}."
+            )
 
     def _prepare_strategies(
         self,
@@ -331,6 +597,13 @@ class Scenario(ABC):
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
+        # Materialize declared defaults for programmatic callers that skip the
+        # explicit set_params_from_args step. Frontend-driven flows already
+        # call it (which sets _declarations_validated=True), so this is a no-op
+        # in that path.
+        if not self._declarations_validated:
+            self.set_params_from_args(args={})
+
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
         if self._include_baseline:
@@ -342,23 +615,27 @@ class Scenario(ABC):
             atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
         }
 
-        # Check if we're resuming an existing scenario
+        # Snapshot params onto the identifier before the resume branch so the identifier
+        # is fully populated regardless of which branch we take. Deep-copy avoids sharing
+        # mutable state with self.params.
+        params_snapshot = copy.deepcopy(self.params)
+        _assert_json_serializable(params=params_snapshot)
+        self._identifier.init_data = params_snapshot
+
+        # Check if we're resuming an existing scenario. Any divergence is a hard error
+        # rather than a silent restart, so the original progress isn't orphaned without
+        # the user knowing.
         if self._scenario_result_id:
             existing_results = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
 
-            if existing_results:
-                existing_result = existing_results[0]
-
-                # Validate that the stored scenario matches current configuration
-                if self._validate_stored_scenario(stored_result=existing_result):
-                    return  # Valid match - skip creating new scenario result
-                # Validation failed - will create new scenario result
-                self._scenario_result_id = None
-            else:
-                logger.warning(
-                    f"Scenario result ID {self._scenario_result_id} not found in memory. Creating new scenario result."
+            if not existing_results:
+                raise ValueError(
+                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
+                    f"Drop scenario_result_id to start a new scenario."
                 )
-                self._scenario_result_id = None
+
+            self._validate_stored_scenario(stored_result=existing_results[0])
+            return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
         self._display_group_map = {aa.atomic_attack_name: aa.display_group for aa in self._atomic_attacks}
@@ -458,41 +735,54 @@ class Scenario(ABC):
         )
         raise ValueError(error_msg)
 
-    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> bool:
+    def _validate_stored_scenario(self, *, stored_result: ScenarioResult) -> None:
         """
-        Validate that a stored scenario result matches the current scenario configuration.
+        Validate that a stored scenario result exactly matches the current scenario configuration.
+
+        Resume is opt-in via ``scenario_result_id``; any divergence from the stored
+        result is treated as user error rather than a silent restart, since the
+        original progress would otherwise be orphaned without warning.
 
         Args:
             stored_result (ScenarioResult): The scenario result retrieved from memory.
 
-        Returns:
-            bool: True if the stored scenario matches current configuration, False otherwise.
+        Raises:
+            ValueError: If the stored scenario name, version, or parameters do not
+                match the current configuration.
         """
         stored_name = stored_result.scenario_identifier.name
         stored_version = stored_result.scenario_identifier.version
 
         if stored_name != self._identifier.name:
-            logger.warning(
-                f"Scenario result ID {self._scenario_result_id} has mismatched name: "
-                f"stored='{stored_name}', current='{self._identifier.name}'. "
-                f"Creating new scenario result."
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' belongs to scenario '{stored_name}' "
+                f"but current scenario is '{self._identifier.name}'. "
+                f"Drop scenario_result_id to start a new scenario."
             )
-            return False
 
         if stored_version != self._identifier.version:
-            logger.warning(
-                f"Scenario result ID {self._scenario_result_id} has mismatched version: "
-                f"stored={stored_version}, current={self._identifier.version}. "
-                f"Creating new scenario result."
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' was created with "
+                f"{self._identifier.name} version {stored_version} but current version is "
+                f"{self._identifier.version}. Drop scenario_result_id to start a new scenario."
             )
-            return False
 
-        # Valid match - log resumption
+        # Treat None (legacy result without persisted params) as empty. Compare both sides
+        # post-JSON-roundtrip so types that the memory column rewrites (tuple → list, non-str
+        # dict keys → str) don't surface as false mismatches under param_type=None.
+        stored_params = stored_result.scenario_identifier.init_data or {}
+        current_params_normalized = json.loads(json.dumps(self.params))
+        if stored_params != current_params_normalized:
+            diff = _format_param_key_diff(stored=stored_params, current=current_params_normalized)
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' has mismatched parameters ({diff}). "
+                f"Drop scenario_result_id to start a new scenario, or pass matching parameters to resume."
+            )
+
         logger.info(
             f"Resuming scenario '{self._name}' from existing result "
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
-        return True
 
     def _get_completed_objectives_for_attack(self, *, atomic_attack_name: str) -> set[str]:
         """
@@ -626,7 +916,6 @@ class Scenario(ABC):
             )
 
         from pyrit.executor.attack import AttackScoringConfig
-        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
         selected_techniques = {s.value for s in self._scenario_strategies}
 
@@ -634,7 +923,6 @@ class Scenario(ABC):
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
 
         scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
-        registry = AttackTechniqueRegistry.get_registry_singleton()
 
         atomic_attacks: list[AtomicAttack] = []
         for technique_name in selected_techniques:
@@ -642,8 +930,6 @@ class Scenario(ABC):
             if factory is None:
                 logger.warning(f"No factory for technique '{technique_name}', skipping.")
                 continue
-
-            scoring_for_technique = scoring_config if registry.accepts_scorer_override(technique_name) else None
 
             for dataset_name, seed_groups in seed_groups_by_dataset.items():
                 if factory.seed_technique is not None:
@@ -668,7 +954,7 @@ class Scenario(ABC):
 
                 attack_technique = factory.create(
                     objective_target=self._objective_target,
-                    attack_scoring_config_override=scoring_for_technique,
+                    attack_scoring_config=scoring_config,
                 )
                 display_group = self._build_display_group(
                     technique_name=technique_name,
@@ -869,18 +1155,35 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
+                        # Collect error attack result IDs from the exceptions
+                        error_ids = []
+                        for _, exc in atomic_results.incomplete_objectives:
+                            error_id = getattr(exc, "error_attack_result_id", None)
+                            if error_id:
+                                error_ids.append(error_id)
+
+                        # Link error attack results to the scenario result
+                        if error_ids:
+                            self._memory.update_scenario_error_attacks(
+                                scenario_result_id=scenario_result_id,
+                                error_attack_result_ids=error_ids,
+                            )
+
                         # Mark scenario as failed
+                        error_msg = (
+                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
+                            f"See attack results for details."
+                        )
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=error_msg,
+                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
                         )
 
                         # Raise exception with detailed information
-                        raise ValueError(
-                            f"Failed to execute atomic attack {i} ('{atomic_attack.atomic_attack_name}') "
-                            f"in scenario '{self._name}': {incomplete_count} of {incomplete_count + completed_count} "
-                            f"objectives incomplete. First failure: {atomic_results.incomplete_objectives[0][1]}"
-                        ) from atomic_results.incomplete_objectives[0][1]
+                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
                     logger.info(
                         f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
                         f"{len(atomic_results.completed_results)} results"
@@ -899,6 +1202,8 @@ class Scenario(ABC):
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=str(e),
+                            error_type=type(e).__name__,
                         )
 
                     raise

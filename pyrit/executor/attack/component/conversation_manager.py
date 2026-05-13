@@ -20,8 +20,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, PromptTarget
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core import AttackContext
@@ -390,8 +389,8 @@ class ConversationManager:
 
         if config.non_chat_target_behavior == "raise":
             raise ValueError(
-                "prepended_conversation requires the objective target to be a chat-capable "
-                "PromptTarget. Non-chat objective targets do not support conversation history. "
+                "prepended_conversation requires the objective target to support multi-turn "
+                "conversations with editable history. The current target does not. "
                 "Use PrependedConversationConfig with non_chat_target_behavior='normalize_first_turn' "
                 "to normalize the conversation into the first message instead."
             )

@@ -53,6 +53,17 @@ export interface PaginationInfo {
 
 // --- Targets ---
 
+export interface TargetCapabilitiesInfo {
+  supports_multi_turn: boolean
+  supports_multi_message_pieces: boolean
+  supports_json_schema: boolean
+  supports_json_output: boolean
+  supports_editable_history: boolean
+  supports_system_prompt: boolean
+  supported_input_modalities: string[]
+  supported_output_modalities: string[]
+}
+
 export interface TargetInstance {
   target_registry_name: string
   target_type: string
@@ -62,7 +73,7 @@ export interface TargetInstance {
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
-  supports_multi_turn?: boolean
+  capabilities?: TargetCapabilitiesInfo | null
   target_specific_params?: Record<string, unknown> | null
 }
 
@@ -129,7 +140,7 @@ export interface AttackSummary {
   attack_specific_params?: Record<string, unknown> | null
   target?: TargetInfo | null
   converters: string[]
-  outcome?: 'undetermined' | 'success' | 'failure' | null
+  outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
   last_message_preview?: string | null
   message_count: number
   related_conversation_ids: string[]

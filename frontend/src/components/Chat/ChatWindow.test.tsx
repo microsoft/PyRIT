@@ -2,9 +2,23 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
-import { Message, TargetInfo, TargetInstance } from "../../types";
+import { Message, TargetCapabilitiesInfo, TargetInfo, TargetInstance } from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
+
+const buildCapabilities = (
+  overrides: Partial<TargetCapabilitiesInfo> = {}
+): TargetCapabilitiesInfo => ({
+  supports_multi_turn: true,
+  supports_multi_message_pieces: false,
+  supports_json_schema: false,
+  supports_json_output: false,
+  supports_editable_history: false,
+  supports_system_prompt: false,
+  supported_input_modalities: [],
+  supported_output_modalities: [],
+  ...overrides,
+});
 
 // Fluent UI Combobox portal interactions are slow in JSDOM under full test load
 jest.setTimeout(60000);
@@ -1227,7 +1241,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -1261,7 +1275,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     render(
@@ -1310,7 +1324,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_tts_1",
       target_type: "OpenAITTSTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -1523,7 +1537,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -2114,6 +2128,26 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("conversation-panel")).not.toBeInTheDocument();
     });
+  });
+
+  it("should expose the conversations panel toggle via aria-label", () => {
+    // Regression guard: the toggle button is icon-only and previously relied
+    // on aria-label without a visible tooltip; assert both are wired up so
+    // the button is reachable by accessible name (catches regression to
+    // missing aria-label).
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-aria-toggle"
+          conversationId="conv-aria-toggle"
+          activeConversationId="conv-aria-toggle"
+        />
+      </TestWrapper>
+    );
+
+    const toggleBtn = screen.getByRole("button", { name: /toggle conversations panel/i });
+    expect(toggleBtn).toBe(screen.getByTestId("toggle-panel-btn"));
   });
 
   it("should toggle converter panel when convert button is clicked", async () => {

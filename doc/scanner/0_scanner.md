@@ -28,11 +28,12 @@ pyrit_scan foundry.red_team_agent --target openai_chat --initializers target loa
 
 ## Built-in Scenarios
 
-PyRIT ships with scenarios organized into three families:
+PyRIT ships with scenarios organized into the following families:
 
 | Family | Scenarios | Documentation |
 |--------|-----------|---------------|
 | **AIRT** | ContentHarms, Psychosocial, Cyber, Jailbreak, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
+| **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
 | **Garak** | Encoding | [Garak Scenarios](garak.ipynb) |
 
@@ -40,4 +41,4 @@ Each scenario page shows how to run it with minimal configuration.
 
 ## For Developers
 
-If you want to **build custom scenarios** or understand the programming model behind scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb). For details on attack strategies, dataset configuration, and advanced programmatic usage, see [Scenario Parameters](../code/scenarios/1_scenario_parameters.ipynb).
+If you want to **build custom scenarios** or understand the programming model behind scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb). For details on attack strategies, dataset configuration, and advanced programmatic usage, see [Common Scenario Parameters](../code/scenarios/1_common_scenario_parameters.ipynb).

@@ -22,9 +22,11 @@ import dataclasses
 import inspect
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
+    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RedTeamingAttack,
@@ -34,13 +36,15 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
     AttackTechniqueSpec,
 )
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -56,24 +60,23 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="prompt_sending",
         attack_class=PromptSendingAttack,
-        strategy_tags=["core", "single_turn", "default"],
+        strategy_tags=["core", "single_turn", "default", "light"],
     ),
     AttackTechniqueSpec(
         name="role_play",
         attack_class=RolePlayAttack,
-        strategy_tags=["core", "single_turn"],
+        strategy_tags=["core", "single_turn", "light"],
         extra_kwargs={"role_play_definition_path": RolePlayPaths.MOVIE_SCRIPT.value},
     ),
     AttackTechniqueSpec(
         name="many_shot",
         attack_class=ManyShotJailbreakAttack,
-        strategy_tags=["core", "multi_turn", "default"],
+        strategy_tags=["core", "multi_turn", "default", "light"],
     ),
     AttackTechniqueSpec(
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
         strategy_tags=["core", "multi_turn"],
-        accepts_scorer_override=False,
     ),
     AttackTechniqueSpec(
         name="crescendo_simulated",
@@ -94,43 +97,14 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="red_teaming",
         attack_class=RedTeamingAttack,
-        strategy_tags=["core", "multi_turn"],
+        strategy_tags=["core", "multi_turn", "light"],
+    ),
+    AttackTechniqueSpec(
+        name="context_compliance",
+        attack_class=ContextComplianceAttack,
+        strategy_tags=["core", "single_turn", "light"],
     ),
 ]
-
-
-# ---------------------------------------------------------------------------
-# Default adversarial target
-# ---------------------------------------------------------------------------
-
-
-def get_default_adversarial_target() -> PromptChatTarget:
-    """
-    Resolve the default adversarial chat target.
-
-    First checks the ``TargetRegistry`` for an ``"adversarial_chat"`` entry
-    (populated by ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars).
-    Falls back to a plain ``OpenAIChatTarget(temperature=1.2)`` using
-    ``@apply_defaults`` resolution.
-
-    Returns:
-        PromptChatTarget: The resolved adversarial chat target.
-
-    Raises:
-        ValueError: If the registered target does not support multi-turn.
-    """
-    registry = TargetRegistry.get_registry_singleton()
-    if "adversarial_chat" in registry:
-        target = registry.get("adversarial_chat")
-        if target:
-            if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
-                raise ValueError(
-                    f"Registry entry 'adversarial_chat' must support multi-turn conversations, "
-                    f"but {type(target).__name__} does not."
-                )
-            return target
-
-    return OpenAIChatTarget(temperature=1.2)
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +135,7 @@ def build_scenario_techniques() -> list[AttackTechniqueSpec]:
         ValueError: If a spec declares ``adversarial_chat_key`` but the key
             is not found in ``TargetRegistry``.
     """
-    default_adversarial: PromptChatTarget | None = None
+    default_adversarial: PromptTarget | None = None
 
     result = []
     for spec in SCENARIO_TECHNIQUES:

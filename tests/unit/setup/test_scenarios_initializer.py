@@ -11,7 +11,7 @@ import pytest
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import SeedPrompt
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.setup.initializers import ScenarioTechniqueInitializer
@@ -41,7 +41,7 @@ def reset_registries():
 @pytest.fixture
 def mock_adversarial_target():
     """A mock adversarial target registered as 'adversarial_chat' so build_scenario_techniques resolves cleanly."""
-    target = MagicMock(spec=PromptChatTarget)
+    target = MagicMock(spec=PromptTarget)
     # capabilities check inside get_default_adversarial_target requires multi_turn support
     target.capabilities.includes.return_value = True
     registry = TargetRegistry.get_registry_singleton()
@@ -235,12 +235,11 @@ class TestScenarioTechniqueInitializerRegistration:
     @pytest.mark.asyncio
     async def test_falls_back_to_default_target_when_registry_empty(self):
         """With no 'adversarial_chat' in TargetRegistry, the fallback constructs an OpenAIChatTarget."""
-        # Patch OpenAIChatTarget at the import site inside scenario_techniques
-        # (which is what get_default_adversarial_target calls), so the test does
-        # not depend on OPENAI_CHAT_MODEL or any other env var being set.
-        fallback_target = MagicMock(spec=PromptChatTarget)
+        # Patch OpenAIChatTarget at the fallback construction site so the test
+        # does not depend on OPENAI_CHAT_MODEL or any other env var being set.
+        fallback_target = MagicMock(spec=PromptTarget)
         with patch(
-            "pyrit.scenario.core.scenario_techniques.OpenAIChatTarget",
+            "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
             return_value=fallback_target,
         ) as mock_openai:
             init = ScenarioTechniqueInitializer()

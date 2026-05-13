@@ -32,7 +32,7 @@ from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
-    PromptChatTarget,
+    PromptTarget,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -575,19 +575,21 @@ def test_validate_request_unsupported_data_types(target: OpenAIChatTarget):
     os.remove(image_piece.original_value)
 
 
-def test_inheritance_from_prompt_chat_target(target: OpenAIChatTarget):
-    """Test that OpenAIChatTarget properly inherits from PromptChatTarget."""
-    assert isinstance(target, PromptChatTarget), "OpenAIChatTarget must inherit from PromptChatTarget"
+def test_inheritance_from_prompt_target(target: OpenAIChatTarget):
+    """OpenAIChatTarget inherits from PromptTarget and declares chat capabilities."""
+    assert isinstance(target, PromptTarget), "OpenAIChatTarget must inherit from PromptTarget"
+    assert target.capabilities.supports_multi_turn is True
+    assert target.capabilities.supports_editable_history is True
 
 
-def test_inheritance_from_prompt_chat_target_base():
-    """Test that OpenAIChatTargetBase properly inherits from PromptChatTarget."""
-
-    # Create a minimal instance to test inheritance
+def test_inheritance_from_prompt_target_base():
+    """OpenAIChatTarget (via OpenAIChatTargetBase) inherits from PromptTarget."""
     target = OpenAIChatTarget(model_name="test-model", endpoint="https://test.com", api_key="test-key")
-    assert isinstance(target, PromptChatTarget), (
-        "OpenAIChatTarget must inherit from PromptChatTarget through OpenAIChatTargetBase"
+    assert isinstance(target, PromptTarget), (
+        "OpenAIChatTarget must inherit from PromptTarget through OpenAIChatTargetBase"
     )
+    assert target.capabilities.supports_multi_turn is True
+    assert target.capabilities.supports_editable_history is True
 
 
 def test_is_response_format_json_supported(target: OpenAIChatTarget):
@@ -1594,6 +1596,62 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
         mock_serializer.save_data.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
+
+
+# ── _extract_partial_content tests ──────────────────────────────────────────
+
+
+class TestExtractPartialContentChatTarget:
+    def test_extracts_partial_content_from_content_filter_response(self, target: OpenAIChatTarget):
+        mock_response = create_mock_completion(
+            content="Partial harmful content before cutoff", finish_reason="content_filter"
+        )
+        result = target._extract_partial_content(mock_response)
+        assert result == "Partial harmful content before cutoff"
+
+    def test_returns_none_when_no_content(self, target: OpenAIChatTarget):
+        mock_response = create_mock_completion(content=None, finish_reason="content_filter")
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+    def test_returns_none_when_empty_content(self, target: OpenAIChatTarget):
+        mock_response = create_mock_completion(content="", finish_reason="content_filter")
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+    def test_returns_none_when_no_choices(self, target: OpenAIChatTarget):
+        mock_response = MagicMock(spec=ChatCompletion)
+        mock_response.choices = []
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+
+class TestContentFilterPreservesPartialContent:
+    async def test_200_content_filter_attaches_partial_content_metadata(self, target: OpenAIChatTarget):
+        """Integration: 200 + content_filter response preserves partial content in metadata."""
+        message = Message(
+            message_pieces=[MessagePiece(role="user", conversation_id="test-convo", original_value="test prompt")]
+        )
+        mock_completion = create_mock_completion(content="Harmful partial content here", finish_reason="content_filter")
+        target._async_client.chat.completions.create = AsyncMock(return_value=mock_completion)  # type: ignore[method-assign]
+
+        response = await target.send_prompt_async(message=message)
+
+        assert response[0].message_pieces[0].response_error == "blocked"
+        assert response[0].message_pieces[0].prompt_metadata["partial_content"] == "Harmful partial content here"
+
+    async def test_200_content_filter_no_metadata_when_no_content(self, target: OpenAIChatTarget):
+        """200 + content_filter with no content doesn't attach metadata."""
+        message = Message(
+            message_pieces=[MessagePiece(role="user", conversation_id="test-convo", original_value="test prompt")]
+        )
+        mock_completion = create_mock_completion(content=None, finish_reason="content_filter")
+        target._async_client.chat.completions.create = AsyncMock(return_value=mock_completion)  # type: ignore[method-assign]
+
+        response = await target.send_prompt_async(message=message)
+
+        assert response[0].message_pieces[0].response_error == "blocked"
+        assert "partial_content" not in response[0].message_pieces[0].prompt_metadata
 
 
 async def test_save_audio_response_async_flac_format(patch_central_database):

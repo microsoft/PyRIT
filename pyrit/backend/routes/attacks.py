@@ -93,7 +93,9 @@ async def list_attacks(
         description="Filter by converter presence. true = attacks with at least one converter; "
         "false = attacks with no converters. Omit for no filter.",
     ),
-    outcome: Optional[Literal["undetermined", "success", "failure"]] = Query(None, description="Filter by outcome"),
+    outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = Query(
+        None, description="Filter by outcome"
+    ),
     label: Optional[list[str]] = Query(
         None,
         description="Filter by labels (format: key:value). May be specified multiple times; "

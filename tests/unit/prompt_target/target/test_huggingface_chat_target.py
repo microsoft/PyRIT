@@ -107,7 +107,7 @@ def mock_download_specific_files():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-def test_init_with_no_token_var_raises(monkeypatch):
+def test_init_with_no_token_var_raises(monkeypatch, patch_central_database):
     # Ensure the environment variable is unset
     monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
 

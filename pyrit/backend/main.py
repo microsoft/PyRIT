@@ -18,7 +18,18 @@ from fastapi.staticfiles import StaticFiles
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
-from pyrit.backend.routes import attacks, auth, converters, health, labels, media, scenarios, targets, version
+from pyrit.backend.routes import (
+    attacks,
+    auth,
+    converters,
+    health,
+    initializers,
+    labels,
+    media,
+    scenarios,
+    targets,
+    version,
+)
 from pyrit.memory import CentralMemory
 
 # Check for development mode from environment variable
@@ -86,6 +97,7 @@ app.include_router(attacks.router, prefix="/api", tags=["attacks"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
+app.include_router(initializers.router, prefix="/api", tags=["initializers"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])

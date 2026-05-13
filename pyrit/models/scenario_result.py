@@ -4,7 +4,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyrit
 from pyrit.models import AttackOutcome, AttackResult
@@ -26,8 +26,8 @@ class ScenarioIdentifier:
         name: str,
         description: str = "",
         scenario_version: int = 1,
-        init_data: Optional[dict[str, Any]] = None,
-        pyrit_version: Optional[str] = None,
+        init_data: dict[str, Any] | None = None,
+        pyrit_version: str | None = None,
     ) -> None:
         """
         Initialize a ScenarioIdentifier.
@@ -47,7 +47,7 @@ class ScenarioIdentifier:
         self.init_data = init_data
 
 
-ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]
+ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]
 
 
 class ScenarioResult:
@@ -59,50 +59,66 @@ class ScenarioResult:
         self,
         *,
         scenario_identifier: ScenarioIdentifier,
-        objective_target_identifier: Union[dict[str, Any], "ComponentIdentifier"],
+        objective_target_identifier: "ComponentIdentifier",
         attack_results: dict[str, list[AttackResult]],
-        objective_scorer_identifier: Union[dict[str, Any], "ComponentIdentifier"],
+        objective_scorer_identifier: "ComponentIdentifier",
         scenario_run_state: ScenarioRunState = "CREATED",
-        labels: Optional[dict[str, str]] = None,
-        completion_time: Optional[datetime] = None,
+        labels: dict[str, str] | None = None,
+        creation_time: datetime | None = None,
+        completion_time: datetime | None = None,
         number_tries: int = 0,
-        id: Optional[uuid.UUID] = None,  # noqa: A002
-        display_group_map: Optional[dict[str, str]] = None,
+        id: uuid.UUID | None = None,  # noqa: A002
+        display_group_map: dict[str, str] | None = None,
+        error_attack_result_ids: list[str] | None = None,
+        error_message: str | None = None,
+        error_type: str | None = None,
     ) -> None:
         """
         Initialize a scenario result.
 
         Args:
             scenario_identifier (ScenarioIdentifier): Identifier for the executed scenario.
-            objective_target_identifier (Union[Dict[str, Any], TargetIdentifier]): Target identifier.
+            objective_target_identifier (ComponentIdentifier): Target identifier.
             attack_results (dict[str, List[AttackResult]]): Results grouped by atomic attack name.
-            objective_scorer_identifier (Union[Dict[str, Any], ScorerIdentifier]): Objective scorer identifier.
+            objective_scorer_identifier (ComponentIdentifier): Objective scorer identifier.
             scenario_run_state (ScenarioRunState): Current scenario run state.
             labels (Optional[dict[str, str]]): Optional labels.
+            creation_time (datetime | None): When the scenario result was created.
             completion_time (Optional[datetime]): Optional completion timestamp.
             number_tries (int): Number of run attempts.
             id (Optional[uuid.UUID]): Optional scenario result ID.
             display_group_map (Optional[dict[str, str]]): Optional mapping of
                 atomic_attack_name → display group label. Used by the console
                 printer to aggregate results for user-facing output.
+            error_attack_result_ids (Optional[list[str]]): IDs of AttackResults that
+                contain error information. Used for quick error lookup without scanning
+                all attack results.
+            error_message (Optional[str]): Scenario-level error message when the run fails.
+            error_type (Optional[str]): Exception class name when the run fails.
 
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
-
         self.id = id if id is not None else uuid.uuid4()
         self.scenario_identifier = scenario_identifier
 
-        # Normalize objective_target_identifier to ComponentIdentifier
-        self.objective_target_identifier = ComponentIdentifier.normalize(objective_target_identifier)
+        self.objective_target_identifier = objective_target_identifier
 
-        self.objective_scorer_identifier = ComponentIdentifier.normalize(objective_scorer_identifier)
+        self.objective_scorer_identifier = objective_scorer_identifier
 
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results
         self.labels = labels if labels is not None else {}
+        self.creation_time = creation_time if creation_time is not None else datetime.now(timezone.utc)
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}
+        self.error_attack_result_ids = error_attack_result_ids or []
+        self.error_message = error_message
+        self.error_type = error_type
+
+    @property
+    def display_group_map(self) -> dict[str, str]:
+        """Mapping of atomic_attack_name → display group label."""
+        return self._display_group_map
 
     def get_strategies_used(self) -> list[str]:
         """
@@ -135,7 +151,7 @@ class ScenarioResult:
             grouped.setdefault(group, []).extend(results)
         return grouped
 
-    def get_objectives(self, *, atomic_attack_name: Optional[str] = None) -> list[str]:
+    def get_objectives(self, *, atomic_attack_name: str | None = None) -> list[str]:
         """
         Get the list of unique objectives for this scenario.
 
@@ -165,7 +181,7 @@ class ScenarioResult:
 
         return list(set(objectives))
 
-    def objective_achieved_rate(self, *, atomic_attack_name: Optional[str] = None) -> int:
+    def objective_achieved_rate(self, *, atomic_attack_name: str | None = None) -> int:
         """
         Get the success rate of this scenario.
 
@@ -224,7 +240,7 @@ class ScenarioResult:
         # Already PascalCase or other format, return as-is
         return scenario_name
 
-    def get_scorer_evaluation_metrics(self) -> Optional["ScorerMetrics"]:
+    def get_scorer_evaluation_metrics(self) -> "ScorerMetrics | None":
         """
         Get the evaluation metrics for the scenario's scorer from the scorer evaluation registry.
 

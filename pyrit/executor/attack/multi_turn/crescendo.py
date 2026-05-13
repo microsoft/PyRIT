@@ -45,8 +45,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     Scorer,
@@ -676,7 +675,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective=context.objective,
         ):
             scores = await self._refusal_scorer.score_async(
-                message=context.last_response, objective=objective, skip_on_error_result=False
+                message=context.last_response,
+                objective=objective,
+                skip_on_error_result=False,
             )
         return scores[0]
 

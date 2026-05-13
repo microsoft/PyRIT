@@ -20,7 +20,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_converter import FlipConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -42,8 +42,8 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
 
 @pytest.fixture
 def mock_objective_target():
-    """Create a mock PromptChatTarget for testing"""
-    target = MagicMock(spec=PromptChatTarget)
+    """Create a mock PromptTarget for testing"""
+    target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
     target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target

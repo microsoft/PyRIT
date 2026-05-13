@@ -19,7 +19,7 @@ import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Literal, Union, get_args, get_origin
 from urllib.parse import parse_qs, urlparse
 
 from pyrit import prompt_converter
@@ -39,7 +39,7 @@ from pyrit.backend.models.converters import (
 from pyrit.models import PromptDataType
 from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries import ConverterRegistry
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
@@ -161,11 +161,11 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
         is_sentinel = hasattr(p.default, "__class__") and "Sentinel" in type(p.default).__name__
         required = no_default or is_sentinel
 
-        default_value: Optional[str] = None
+        default_value: str | None = None
         if not required and p.default is not None:
             default_value = str(p.default)
 
-        choices: Optional[list[str]] = None
+        choices: list[str] | None = None
         if get_origin(p.annotation) is Literal:
             choices = [str(a) for a in get_args(p.annotation)]
 
@@ -184,7 +184,16 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
 
 
 def _is_llm_based(converter_class: type) -> bool:
-    """Return True if the converter requires an LLM target parameter."""
+    """
+    Check if the converter requires a target parameter.
+
+    Matches any converter whose ``__init__`` accepts
+    a ``PromptTarget`` (or subclass) parameter.
+    These converters perform LLM-based transformations and should not automatically be applied
+
+    Returns:
+        bool: True if the converter is LLM-based, False otherwise.
+    """
     try:
         sig = inspect.signature(converter_class.__init__)
     except (ValueError, TypeError):
@@ -197,7 +206,7 @@ def _is_llm_based(converter_class: type) -> bool:
         if ann is inspect.Parameter.empty:
             continue
         try:
-            if isinstance(ann, type) and issubclass(ann, PromptChatTarget):
+            if isinstance(ann, type) and issubclass(ann, PromptTarget):
                 return True
         except TypeError:
             continue
@@ -283,7 +292,7 @@ class ConverterService:
 
         return ConverterCatalogResponse(items=items)
 
-    async def get_converter_async(self, *, converter_id: str) -> Optional[ConverterInstance]:
+    async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
         Get a converter instance by ID.
 
@@ -295,7 +304,7 @@ class ConverterService:
             return None
         return self._build_instance_from_object(converter_id=converter_id, converter_obj=obj)
 
-    def get_converter_object(self, *, converter_id: str) -> Optional[Any]:
+    def get_converter_object(self, *, converter_id: str) -> Any | None:
         """
         Get the actual converter object.
 

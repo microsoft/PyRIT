@@ -365,6 +365,40 @@ class TestAttackResultToSummary:
 
         assert before <= summary.created_at <= after
 
+    def test_retry_events_mapped_to_response(self) -> None:
+        """Test that retry events on an AttackResult are mapped to RetryEventResponse DTOs."""
+        from pyrit.models.retry_event import RetryEvent
+
+        now = datetime.now(timezone.utc)
+        ar = _make_attack_result()
+        ar.retry_events = [
+            RetryEvent(
+                timestamp=now,
+                attempt_number=1,
+                function_name="send_prompt_async",
+                exception_type="RateLimitError",
+                exception_message="rate limit exceeded",
+                component_role="objective_target",
+                component_name="OpenAIChatTarget",
+                endpoint="https://api.openai.com",
+                elapsed_seconds=1.5,
+            ),
+        ]
+        ar.total_retries = 1
+
+        stats = ConversationStats(message_count=0)
+        summary = attack_result_to_summary(ar, stats=stats)
+
+        assert summary.retry_events is not None
+        assert len(summary.retry_events) == 1
+        evt = summary.retry_events[0]
+        assert evt.attempt_number == 1
+        assert evt.function_name == "send_prompt_async"
+        assert evt.exception_type == "RateLimitError"
+        assert evt.component_role == "objective_target"
+        assert evt.elapsed_seconds == 1.5
+        assert summary.total_retries == 1
+
     """Tests for pyrit_scores_to_dto function."""
 
     def test_maps_scores(self) -> None:
@@ -1102,7 +1136,7 @@ class TestTargetObjectToInstance:
         assert result.model_name is None
 
     def test_supports_multi_turn_true_when_capability_set(self) -> None:
-        """Test that targets with supports_multi_turn capability have supports_multi_turn=True."""
+        """Test that targets with supports_multi_turn capability expose it via capabilities."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
@@ -1117,10 +1151,10 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.supports_multi_turn is True
+        assert result.capabilities.supports_multi_turn is True
 
     def test_supports_multi_turn_false_when_capability_not_set(self) -> None:
-        """Test that targets without supports_multi_turn capability have supports_multi_turn=False."""
+        """Test that targets without supports_multi_turn capability expose False via capabilities."""
         target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=False)
         mock_identifier = ComponentIdentifier(
@@ -1131,7 +1165,67 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.supports_multi_turn is False
+        assert result.capabilities.supports_multi_turn is False
+
+    def test_supports_multi_turn_not_extracted_from_identifier_params(self) -> None:
+        """Identifier-level supports_multi_turn must not leak into target_specific_params or override capabilities."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "supports_multi_turn": False,
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supports_multi_turn is True
+        # supports_multi_turn from identifier params should NOT bleed into target_specific_params
+        assert result.target_specific_params is None or "supports_multi_turn" not in result.target_specific_params
+
+    def test_capabilities_includes_all_capability_flags(self) -> None:
+        """Test that all boolean capability flags are exposed via the capabilities DTO."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_json_schema=True,
+            supports_json_output=True,
+            supports_editable_history=True,
+            supports_system_prompt=True,
+        )
+        mock_identifier = ComponentIdentifier(class_name="FullCapTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supports_multi_turn is True
+        assert result.capabilities.supports_multi_message_pieces is True
+        assert result.capabilities.supports_json_schema is True
+        assert result.capabilities.supports_json_output is True
+        assert result.capabilities.supports_editable_history is True
+        assert result.capabilities.supports_system_prompt is True
+
+    def test_capabilities_defaults_when_capabilities_minimal(self) -> None:
+        """Test that unset capability flags default to False."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        mock_identifier = ComponentIdentifier(class_name="MinimalTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supports_multi_turn is False
+        assert result.capabilities.supports_multi_message_pieces is False
+        assert result.capabilities.supports_json_schema is False
+        assert result.capabilities.supports_json_output is False
+        assert result.capabilities.supports_editable_history is False
+        assert result.capabilities.supports_system_prompt is False
 
     def test_extra_params_in_target_specific_params(self) -> None:
         """Test that non-extracted params like reasoning_effort appear in target_specific_params."""
@@ -1256,6 +1350,123 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params["presence_penalty"] == 0.3
         assert result.target_specific_params["seed"] == 42
         assert result.target_specific_params["max_completion_tokens"] == 2048
+
+    def test_supported_input_modalities_text_only_default(self) -> None:
+        """Test that a target with default capabilities reports only 'text'."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        mock_identifier = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supported_input_modalities == ["text"]
+
+    def test_supported_input_modalities_multimodal(self) -> None:
+        """Test that a multimodal target reports all individual input types."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset({"text"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "image_path"}),
+                }
+            ),
+        )
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supported_input_modalities == ["image_path", "text"]
+
+    def test_supported_input_modalities_audio_video(self) -> None:
+        """Test that a target supporting audio and video reports those types."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset({"text"}),
+                    frozenset({"audio_path"}),
+                    frozenset({"image_path"}),
+                    frozenset({"text", "audio_path", "image_path"}),
+                }
+            ),
+        )
+        mock_identifier = ComponentIdentifier(class_name="RealtimeTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supported_input_modalities == ["audio_path", "image_path", "text"]
+
+    def test_supported_output_modalities_default_text(self) -> None:
+        """Test that a target with default capabilities reports only 'text' as output."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        mock_identifier = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supported_output_modalities == ["text"]
+
+    def test_supported_output_modalities_image_target(self) -> None:
+        """Test that an image-output target reports 'image_path' in supported_output_modalities."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            output_modalities=frozenset({frozenset({"image_path"})}),
+        )
+        mock_identifier = ComponentIdentifier(class_name="OpenAIImageTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supported_output_modalities == ["image_path"]
+
+    def test_supported_output_modalities_video_with_audio(self) -> None:
+        """Test that a video target reports flattened sorted unique output modalities."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(
+            output_modalities=frozenset(
+                {
+                    frozenset({"audio_path", "video_path"}),
+                    frozenset({"video_path"}),
+                }
+            ),
+        )
+        mock_identifier = ComponentIdentifier(class_name="SoraTarget", class_module="pyrit.prompt_target")
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.capabilities.supported_output_modalities == ["audio_path", "video_path"]
+
+    def test_target_configuration_excluded_from_target_specific_params(self) -> None:
+        """Test that the verbose target_configuration blob is filtered from target_specific_params."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
+        mock_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={
+                "endpoint": "https://api.openai.com",
+                "model_name": "gpt-4",
+                "target_configuration": {"capabilities": {"supports_multi_turn": True}},
+                "reasoning_effort": "high",
+            },
+        )
+        target_obj.get_identifier.return_value = mock_identifier
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.target_specific_params is not None
+        assert "target_configuration" not in result.target_specific_params
+        assert result.target_specific_params["reasoning_effort"] == "high"
 
 
 # ============================================================================

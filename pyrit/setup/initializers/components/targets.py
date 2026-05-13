@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
+from pyrit.common.parameter import Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
     OpenAIChatTarget,
@@ -32,7 +33,7 @@ from pyrit.prompt_target import (
     RealtimeTarget,
 )
 from pyrit.registry import TargetRegistry
-from pyrit.setup.initializers.pyrit_initializer import InitializerParameter, PyRITInitializer
+from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,15 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL",
         temperature=1.2,
         tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
+    ),
+    TargetConfig(
+        registry_name="objective_scorer_chat",
+        target_class=OpenAIChatTarget,
+        endpoint_var="OBJECTIVE_SCORER_CHAT_ENDPOINT",
+        key_var="OBJECTIVE_SCORER_CHAT_KEY",
+        model_var="OBJECTIVE_SCORER_CHAT_MODEL",
+        underlying_model_var="OBJECTIVE_SCORER_CHAT_UNDERLYING_MODEL",
+        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.SCORER],
     ),
     TargetConfig(
         registry_name="azure_foundry_deepseek",
@@ -485,10 +495,10 @@ class TargetInitializer(PyRITInitializer):
     """
 
     @property
-    def supported_parameters(self) -> list[InitializerParameter]:
+    def supported_parameters(self) -> list[Parameter]:
         """Get the list of parameters this initializer accepts."""
         return [
-            InitializerParameter(
+            Parameter(
                 name="tags",
                 description="Target tags to register (e.g., ['default'], ['default', 'scorer'], or ['all'])",
                 default=["default"],

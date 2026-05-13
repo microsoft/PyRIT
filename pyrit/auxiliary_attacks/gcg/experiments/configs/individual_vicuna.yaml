@@ -14,7 +14,6 @@ tokenizer_paths: ["lmsys/vicuna-13b-v1.5"]
 tokenizer_kwargs: [{"use_fast": False}]
 model_paths: ["lmsys/vicuna-13b-v1.5"]
 model_kwargs: [{"low_cpu_mem_usage": True, "use_cache": False}]
-conversation_templates: ["vicuna"]
 devices: ["cuda:0"]
 train_data: ""
 test_data: ""
@@ -28,4 +27,3 @@ learning_rate: 0.01
 topk: 256
 temp: 1
 filter_cand: True
-gbda_deterministic: True

@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
+    ContextComplianceAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
     RolePlayAttack,
@@ -18,7 +19,6 @@ from pyrit.executor.attack import (
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -67,7 +67,7 @@ def mock_objective_target():
 
 @pytest.fixture
 def mock_adversarial_target():
-    mock = MagicMock(spec=PromptChatTarget)
+    mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_id("MockAdversarialTarget")
     return mock
 
@@ -261,7 +261,7 @@ class TestRapidResponseAttackGeneration:
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         assert technique_classes == {PromptSendingAttack, ManyShotJailbreakAttack}
 
-    async def test_single_turn_strategy_produces_prompt_sending_and_role_play(
+    async def test_single_turn_strategy_produces_single_turn_attacks(
         self, mock_objective_target, mock_objective_scorer
     ):
         attacks = await self._init_and_get_attacks(
@@ -270,7 +270,11 @@ class TestRapidResponseAttackGeneration:
             strategies=[_strategy_class().SINGLE_TURN],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        assert technique_classes == {PromptSendingAttack, RolePlayAttack}
+        # Every core technique tagged ``single_turn`` in SCENARIO_TECHNIQUES must appear.
+        assert {PromptSendingAttack, RolePlayAttack, ContextComplianceAttack} <= technique_classes
+        # And no multi-turn-only attack should leak in.
+        assert ManyShotJailbreakAttack not in technique_classes
+        assert TreeOfAttacksWithPruningAttack not in technique_classes
 
     async def test_multi_turn_strategy_produces_multi_turn_attacks(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
@@ -651,7 +655,7 @@ class TestRegistrationAndFactoryFromSpec:
         mock_target = MagicMock(spec=PromptTarget)
         mock_target.capabilities.includes.return_value = False
         target_registry.register(name="adversarial_chat", instance=mock_target)
-        with pytest.raises(ValueError, match="must support multi-turn"):
+        with pytest.raises(ValueError, match="must support"):
             get_default_adversarial_target()
 
 

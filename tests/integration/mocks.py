@@ -9,7 +9,7 @@ from sqlalchemy import inspect
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import PromptChatTarget, limit_requests_per_minute
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
 
 def get_memory_interface() -> Generator[MemoryInterface, None, None]:
@@ -36,7 +36,16 @@ def get_sqlite_memory() -> Generator[SQLiteMemory, None, None]:
     sqlite_memory.dispose_engine()
 
 
-class MockPromptTarget(PromptChatTarget):
+class MockPromptTarget(PromptTarget):
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            supports_editable_history=True,
+        )
+    )
+
     prompt_sent: list[str]
 
     def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
