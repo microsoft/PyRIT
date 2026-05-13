@@ -949,7 +949,9 @@ class Scenario(ABC):
         ``_build_display_group()``.
 
         Subclasses that do **not** use the factory/registry pattern should
-        override this method entirely.
+        override this method entirely. Overrides that want baseline support
+        must call ``self._build_baseline_atomic_attack`` with the strategy
+        seeds.
 
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
