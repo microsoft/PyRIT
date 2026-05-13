@@ -8,7 +8,7 @@ Initializers configure the PyRIT environment (targets, datasets, env vars)
 before scenario execution. These models represent initializer metadata.
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 

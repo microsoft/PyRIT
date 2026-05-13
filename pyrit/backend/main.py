@@ -18,7 +18,18 @@ from fastapi.staticfiles import StaticFiles
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
-from pyrit.backend.routes import attacks, auth, converters, health, initializers, labels, media, scenarios, targets, version
+from pyrit.backend.routes import (
+    attacks,
+    auth,
+    converters,
+    health,
+    initializers,
+    labels,
+    media,
+    scenarios,
+    targets,
+    version,
+)
 from pyrit.memory import CentralMemory
 
 # Check for development mode from environment variable

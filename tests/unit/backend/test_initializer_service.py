@@ -98,9 +98,7 @@ class TestInitializerServiceListInitializers:
             assert item.supported_parameters[0].default == ["default"]
 
     async def test_list_initializers_paginates_with_limit(self) -> None:
-        metadata_list = [
-            _make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)
-        ]
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
@@ -114,9 +112,7 @@ class TestInitializerServiceListInitializers:
             assert result.pagination.next_cursor == "init_2"
 
     async def test_list_initializers_paginates_with_cursor(self) -> None:
-        metadata_list = [
-            _make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)
-        ]
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
@@ -131,9 +127,7 @@ class TestInitializerServiceListInitializers:
             assert result.pagination.has_more is True
 
     async def test_list_initializers_last_page_has_more_false(self) -> None:
-        metadata_list = [
-            _make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)
-        ]
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
