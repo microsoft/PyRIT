@@ -345,3 +345,38 @@ def test_print_wrapped_text_with_newlines(printer, capsys):
     assert "Line one" in captured.out
     assert "Line two" in captured.out
     assert "Line four" in captured.out
+
+
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+async def test_print_messages_async_blocked_without_partial_content(mock_display, printer, capsys):
+    piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    msg = Message(message_pieces=[piece])
+    await printer.print_messages_async(messages=[msg])
+    captured = capsys.readouterr()
+    assert "BLOCKED BY TARGET" in captured.out
+    assert "content filter" in captured.out
+    # Should NOT print the raw error JSON as the message body
+    assert "status_code" not in captured.out
+
+
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+async def test_print_messages_async_blocked_with_partial_content(mock_display, printer, capsys):
+    piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value_data_type="error",
+        response_error="blocked",
+        prompt_metadata={"partial_content": "The model started to say something before being cut off"},
+    )
+    msg = Message(message_pieces=[piece])
+    await printer.print_messages_async(messages=[msg])
+    captured = capsys.readouterr()
+    assert "BLOCKED BY TARGET" in captured.out
+    assert "Partial content" in captured.out
+    assert "before filter triggered" in captured.out
+    assert "The model started to say something before being cut off" in captured.out

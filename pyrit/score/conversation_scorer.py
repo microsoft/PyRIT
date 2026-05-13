@@ -71,7 +71,17 @@ class ConversationScorer(Scorer, ABC):
                 # Only include user and assistant messages in the conversation text
                 if piece.api_role in ["user", "assistant", "tool"]:
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
-                    conversation_text += f"{role_display}: {piece.converted_value}\n"
+                    # For blocked pieces with partial content, use the partial content
+                    # instead of the error JSON when score_blocked_content is enabled
+                    if (
+                        self.score_blocked_content
+                        and piece.is_blocked()
+                        and piece.prompt_metadata.get("partial_content")
+                    ):
+                        text = str(piece.prompt_metadata["partial_content"])
+                    else:
+                        text = piece.converted_value
+                    conversation_text += f"{role_display}: {text}\n"
 
         # Create a new message with the concatenated conversation text
         # Preserve the original message piece metadata
