@@ -683,13 +683,20 @@ class Scenario(ABC):
 
         # Deprecation rescue. Will be removed in 0.16.0. If the override didn't emit baseline,
         # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
+        # Reuse seeds from the first existing attack rather than re-resolving from
+        # dataset_config; re-resolution under max_dataset_size would draw a fresh sample
+        # (the very ADO 9012 bug this PR fixes). When no atomic attacks exist yet the
+        # rescue falls back to the dataset_config one-time resolution.
         if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
             print_deprecation_message(
                 old_item=f"Implicit baseline injection for {type(self).__name__}._get_atomic_attacks_async()",
                 new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
                 removed_in="0.16.0",
             )
-            seed_groups = self._dataset_config.get_all_seed_attack_groups()
+            if self._atomic_attacks:
+                seed_groups = self._atomic_attacks[0].seed_groups
+            else:
+                seed_groups = self._dataset_config.get_all_seed_attack_groups()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
         # Store original objectives for each atomic attack (before any mutations during execution)

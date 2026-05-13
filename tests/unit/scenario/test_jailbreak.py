@@ -203,35 +203,30 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
-    def test_class_supports_baseline_but_defaults_off(self):
-        """Jailbreak supports a baseline but does not include one by default."""
-        assert Jailbreak.BASELINE_POLICY is BaselinePolicy.Disabled
+    def test_class_inherits_default_baseline_policy(self):
+        """Jailbreak inherits the base default (Enabled) — baseline included by default."""
+        assert Jailbreak.BASELINE_POLICY is BaselinePolicy.Enabled
 
-    async def test_default_initialize_omits_baseline(
+    async def test_default_initialize_includes_baseline(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """initialize_async without include_baseline honors BASELINE_POLICY=Disabled."""
+        """initialize_async without include_baseline honors BASELINE_POLICY=Enabled."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(objective_target=mock_objective_target)
-            assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
+            assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
 
-    async def test_explicit_include_baseline_true_prepends_baseline(
+    async def test_explicit_include_baseline_false_omits_baseline(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """Caller can override BASELINE_POLICY=Disabled by passing include_baseline=True."""
-        from pyrit.scenario import DatasetConfiguration
-
-        with (
-            patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups),
-            patch.object(DatasetConfiguration, "get_all_seed_attack_groups", return_value=mock_memory_seed_groups),
-        ):
+        """Caller can opt out of baseline by passing include_baseline=False."""
+        with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
-                include_baseline=True,
+                include_baseline=False,
             )
-            assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+            assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -273,7 +268,9 @@ class TestJailbreakAttackGeneration:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(
-                objective_target=mock_objective_target, scenario_strategies=[complex_jailbreak_strategy]
+                objective_target=mock_objective_target,
+                scenario_strategies=[complex_jailbreak_strategy],
+                include_baseline=False,
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
@@ -289,7 +286,9 @@ class TestJailbreakAttackGeneration:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(
-                objective_target=mock_objective_target, scenario_strategies=[manyshot_jailbreak_strategy]
+                objective_target=mock_objective_target,
+                scenario_strategies=[manyshot_jailbreak_strategy],
+                include_baseline=False,
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
@@ -303,7 +302,9 @@ class TestJailbreakAttackGeneration:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(
-                objective_target=mock_objective_target, scenario_strategies=[promptsending_jailbreak_strategy]
+                objective_target=mock_objective_target,
+                scenario_strategies=[promptsending_jailbreak_strategy],
+                include_baseline=False,
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
@@ -317,7 +318,9 @@ class TestJailbreakAttackGeneration:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(
-                objective_target=mock_objective_target, scenario_strategies=[skeleton_jailbreak_attack]
+                objective_target=mock_objective_target,
+                scenario_strategies=[skeleton_jailbreak_attack],
+                include_baseline=False,
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
@@ -331,7 +334,9 @@ class TestJailbreakAttackGeneration:
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
 
             await scenario.initialize_async(
-                objective_target=mock_objective_target, scenario_strategies=[roleplay_jailbreak_strategy]
+                objective_target=mock_objective_target,
+                scenario_strategies=[roleplay_jailbreak_strategy],
+                include_baseline=False,
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             for run in atomic_attacks:
@@ -393,11 +398,11 @@ class TestJailbreakAttackGeneration:
         """Test that n successfully tries each jailbreak template n-many times."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             base_scenario = Jailbreak(objective_scorer=mock_objective_scorer)
-            await base_scenario.initialize_async(objective_target=mock_objective_target)
+            await base_scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
             atomic_attacks_1 = await base_scenario._get_atomic_attacks_async()
 
             mult_scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_attempts=mock_random_num_attempts)
-            await mult_scenario.initialize_async(objective_target=mock_objective_target)
+            await mult_scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
             atomic_attacks_n = await mult_scenario._get_atomic_attacks_async()
 
             assert len(atomic_attacks_1) * mock_random_num_attempts == len(atomic_attacks_n)
@@ -512,7 +517,9 @@ class TestJailbreakAdversarialTarget:
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer, num_templates=2)
             await scenario.initialize_async(
-                objective_target=mock_objective_target, scenario_strategies=[roleplay_jailbreak_strategy]
+                objective_target=mock_objective_target,
+                scenario_strategies=[roleplay_jailbreak_strategy],
+                include_baseline=False,
             )
             atomic_attacks = await scenario._get_atomic_attacks_async()
             assert len(atomic_attacks) >= 2

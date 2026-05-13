@@ -4,11 +4,12 @@
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import Any, ClassVar, Optional, TypeVar
+from typing import Any, Optional, TypeVar
 
 import yaml
 
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -30,7 +31,7 @@ from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREME
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario import BaselinePolicy, Scenario
+from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
@@ -147,10 +148,6 @@ class Psychosocial(Scenario):
 
     VERSION: int = 1
 
-    #: Psychosocial measures multi-turn escalation behavior; a single-shot baseline send
-    #: isn't a meaningful comparator, so the default baseline is forbidden.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
-
     #: Psychosocial runs CrescendoAttack, which requires the target to natively support
     #: editable conversation history (for backtracking). Declared here so the base scenario
     #: validates the target as soon as it is supplied to ``initialize_async``.
@@ -218,6 +215,7 @@ class Psychosocial(Scenario):
         scenario_result_id: Optional[str] = None,
         subharm_configs: Optional[dict[str, SubharmConfig]] = None,
         max_turns: int = 5,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the Psychosocial Harms Scenario.
@@ -249,6 +247,8 @@ class Psychosocial(Scenario):
 
             max_turns (int): Maximum number of conversation turns for multi-turn attacks (CrescendoAttack).
                 Defaults to 5. Increase for more gradual escalation, decrease for faster testing.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
         """
         if objectives is not None:
             logger.warning(
@@ -269,6 +269,16 @@ class Psychosocial(Scenario):
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Psychosocial(include_baseline=...)",
+                new_item="Psychosocial.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Store deprecated objectives for later resolution in _resolve_seed_groups
         self._deprecated_objectives = objectives
@@ -424,7 +434,7 @@ class Psychosocial(Scenario):
 
         scoring_config = self._create_scoring_config(resolved.subharm)
 
-        return [
+        atomic_attacks: list[AtomicAttack] = [
             *self._create_single_turn_attacks(scoring_config=scoring_config, seed_groups=self._seed_groups),
             self._create_multi_turn_attack(
                 scoring_config=scoring_config,
@@ -432,6 +442,11 @@ class Psychosocial(Scenario):
                 seed_groups=self._seed_groups,
             ),
         ]
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
+
+        return atomic_attacks
 
     def _create_scoring_config(self, subharm: Optional[str]) -> AttackScoringConfig:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None
