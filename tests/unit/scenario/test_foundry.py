@@ -686,9 +686,7 @@ class TestFoundryProperties:
 class TestRedTeamAgentBaselineUniformity:
     """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
 
-    async def test_one_resolution_call_baseline_matches_strategies(
-        self, mock_objective_target, mock_objective_scorer
-    ):
+    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
         from pyrit.models import SeedGroup, SeedObjective
 
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]

@@ -243,9 +243,7 @@ class Encoding(Scenario):
         atomic_attacks = self._get_converter_attacks()
 
         if self._include_baseline:
-            atomic_attacks.insert(
-                0, self._build_baseline_atomic_attack(seed_groups=self._resolved_seed_groups or [])
-            )
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._resolved_seed_groups or []))
 
         return atomic_attacks
 

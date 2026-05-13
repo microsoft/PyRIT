@@ -17,7 +17,7 @@ import pytest
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselinePolicy, Scenario, ScenarioStrategy
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import TrueFalseScorer
 
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
 

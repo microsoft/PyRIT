@@ -928,9 +928,7 @@ class TestScenarioBaselineUniformObjectives:
                     )
                 ]
                 if self._include_baseline:
-                    atomic_attacks.insert(
-                        0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups)
-                    )
+                    atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
                 return atomic_attacks
 
         # Two distinct samples wired up. A buggy implementation with a second

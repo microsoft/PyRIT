@@ -757,9 +757,7 @@ class Scenario(ABC):
 
         attack = PromptSendingAttack(
             objective_target=self._objective_target,
-            attack_scoring_config=AttackScoringConfig(
-                objective_scorer=cast("TrueFalseScorer", self._objective_scorer)
-            ),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer)),
         )
 
         return AtomicAttack(
