@@ -65,25 +65,22 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 ---
 
 ## Getting Started
-
-1. Download and install [Python 3.13](https://www.python.org/downloads/latest/python3.13/).
-
-2. Install PyRIT and verify installation.\
-For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
-
+1. Install PyRIT and verify installation.\
+For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page\
 ```bash
+# note: for local installation, python version 3.13 is recommended: https://www.python.org/downloads/latest/python3.13
 pip install pyrit
 python -c "import pyrit; print(f'PyRIT version installed: {pyrit.__version__}')"
 ```
 
-3. Create and populate endpoint and startup configuration files in `~/.pyrit/.env` and `~/.pyrit/.pyrit_conf` with minimal content below.\
+2. Create and populate endpoint and startup configuration files in `~/.pyrit/.env` and `~/.pyrit/.pyrit_conf` with minimal content below.\
 For more details, see the [Configure PyRIT](getting_started/configuration) page.
 
 :::::{grid} 1 1 2 2
 
 ::::{card} 🔑 ~/.pyrit/.env
 ```bash
-# example OPENAI_CHAT_ENDPOINT values: 
+# example OPENAI_CHAT_ENDPOINT values:
 # "https://api.openai.com/v1"
 # "https://<project>.cognitiveservices.azure.com/openai/v1/"
 # "https://<project>.services.ai.azure.com/openai/v1"
@@ -110,7 +107,7 @@ initializers:
 
 :::::
 
-4. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
+3. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
 
 ::::{tab-set}
 
@@ -133,11 +130,11 @@ Use CoPyRIT's graphical interface for interactive red teaming. Chat with AI syst
 Start the local web app and give it a try:
 
 ```bash
-pyrit_backend # serves webapp on http://localhost:8000/ 
+pyrit_backend # serves webapp on http://localhost:8000/
 ```
 ![copyrit-demo](copyrit-demo.gif)
 
-For more details, see the [GUI](gui/gui_0) page.
+For more details, see the [GUI](gui/0_gui) page.
 :::
 
 :::{tab-item}🧩 Framework
