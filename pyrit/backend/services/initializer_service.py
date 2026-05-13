@@ -130,7 +130,10 @@ class InitializerService:
 
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:
         """
-        Remove an initializer from the registry and clean up its script file.
+        Remove an initializer from the registry.
+
+        Works for both built-in and custom initializers. If the
+        initializer was uploaded, its script file is also cleaned up.
 
         Args:
             initializer_name: The registry name to remove.

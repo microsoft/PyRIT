@@ -230,6 +230,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         self._ensure_discovered()
 
+        # Deferred: importing pyrit.setup triggers heavy __init__.py chain
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
         # Write to a managed temp directory so importlib can load it
@@ -279,7 +280,11 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
     def unregister_and_cleanup(self, name: str) -> None:
         """
-        Unregister an initializer and delete its script file if it was uploaded.
+        Unregister an initializer and clean up its script file if one exists.
+
+        Works for both built-in and custom initializers. For custom
+        initializers added via ``register_from_content``, the saved
+        script file is also deleted.
 
         Args:
             name: The registry name to remove.
@@ -300,6 +305,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         Returns:
             Path to ``~/.pyrit/custom_initializers/``, created if needed.
         """
+        # Deferred: importing pyrit.common.path triggers pyrit __init__.py
         from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 
         custom_dir = CONFIGURATION_DIRECTORY_PATH / "custom_initializers"

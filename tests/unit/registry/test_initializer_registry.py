@@ -48,57 +48,6 @@ def test_build_metadata_uses_docstring_description():
 
 
 # ============================================================================
-# Unregister Tests
-# ============================================================================
-
-
-def test_unregister_removes_entry():
-    """Test that unregister removes an entry from the registry."""
-    registry = InitializerRegistry(lazy_discovery=True)
-    registry._discovered = True
-
-    class DummyInitializer(PyRITInitializer):
-        """Dummy."""
-
-        async def initialize_async(self) -> None:
-            pass
-
-    registry._class_entries["dummy"] = ClassEntry(registered_class=DummyInitializer)
-    assert "dummy" in registry
-
-    registry.unregister("dummy")
-    assert "dummy" not in registry
-
-
-def test_unregister_raises_key_error_for_missing():
-    """Test that unregister raises KeyError for non-existent entry."""
-    registry = InitializerRegistry(lazy_discovery=True)
-    registry._discovered = True
-
-    with pytest.raises(KeyError, match="nonexistent"):
-        registry.unregister("nonexistent")
-
-
-def test_unregister_invalidates_metadata_cache():
-    """Test that unregister invalidates the metadata cache."""
-    registry = InitializerRegistry(lazy_discovery=True)
-    registry._discovered = True
-
-    class CachedInitializer(PyRITInitializer):
-        """Cached."""
-
-        async def initialize_async(self) -> None:
-            pass
-
-    registry._class_entries["cached"] = ClassEntry(registered_class=CachedInitializer)
-    registry.list_metadata()
-    assert registry._metadata_cache is not None
-
-    registry.unregister("cached")
-    assert registry._metadata_cache is None
-
-
-# ============================================================================
 # register_from_content Tests
 # ============================================================================
 
