@@ -253,6 +253,9 @@ class ConfigurationLoader(YamlLoadable):
 
         Returns:
             A new ConfigurationLoader instance.
+
+        Raises:
+            ValueError: If ``extensions`` is present but not a dict.
         """
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
