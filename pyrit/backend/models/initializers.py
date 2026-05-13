@@ -42,3 +42,14 @@ class ListRegisteredInitializersResponse(BaseModel):
 
     items: list[RegisteredInitializer] = Field(..., description="List of initializer summaries")
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class RegisterInitializerRequest(BaseModel):
+    """Request body for registering a custom initializer from a script file."""
+
+    script_path: str = Field(
+        ..., description="Absolute path to a Python file containing a PyRITInitializer subclass on the server"
+    )
+    name: Optional[str] = Field(
+        None, description="Custom registry name. If omitted, derived from the class name."
+    )

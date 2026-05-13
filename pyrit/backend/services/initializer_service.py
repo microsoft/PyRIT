@@ -2,13 +2,15 @@
 # Licensed under the MIT license.
 
 """
-Initializer service for listing available initializers.
+Initializer service for listing, registering, and removing initializers.
 
-Provides read-only access to the InitializerRegistry, exposing initializer
+Provides access to the InitializerRegistry, exposing initializer
 metadata through the REST API.
 """
 
+import logging
 from functools import lru_cache
+from pathlib import Path
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
@@ -17,6 +19,8 @@ from pyrit.backend.models.initializers import (
     RegisteredInitializer,
 )
 from pyrit.registry import InitializerMetadata, InitializerRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
@@ -47,7 +51,7 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
 
 class InitializerService:
     """
-    Service for listing available initializers.
+    Service for listing, registering, and removing initializers.
 
     Uses InitializerRegistry as the source of truth for initializer metadata.
     """
@@ -98,6 +102,49 @@ class InitializerService:
             if metadata.registry_name == initializer_name:
                 return _metadata_to_registered_initializer(metadata)
         return None
+
+    async def register_initializer_async(
+        self,
+        *,
+        script_path: str,
+        name: str | None = None,
+    ) -> list[RegisteredInitializer]:
+        """
+        Register initializer(s) from a Python script file.
+
+        Args:
+            script_path: Path to a Python file containing PyRITInitializer subclass(es).
+            name: Optional custom registry name (only when script has one class).
+
+        Returns:
+            List of newly registered initializer summaries.
+
+        Raises:
+            FileNotFoundError: If the script does not exist.
+            ValueError: If the script contains no valid initializers.
+        """
+        resolved_path = Path(script_path)
+        registered_names = self._registry.register_from_script(script_path=resolved_path, name=name)
+
+        result: list[RegisteredInitializer] = []
+        for reg_name in registered_names:
+            initializer = await self.get_initializer_async(initializer_name=reg_name)
+            if initializer:
+                result.append(initializer)
+        return result
+
+    async def unregister_initializer_async(self, *, initializer_name: str) -> None:
+        """
+        Remove an initializer from the registry.
+
+        Args:
+            initializer_name: The registry name to remove.
+
+        Raises:
+            KeyError: If the initializer is not registered.
+        """
+        self._registry.unregister(initializer_name)
+        logger.info(f"Unregistered initializer: {initializer_name}")
 
     @staticmethod
     def _paginate(

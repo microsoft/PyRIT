@@ -208,6 +208,88 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 required_env_vars=(),
             )
 
+    def register_from_script(self, *, script_path: Path, name: str | None = None) -> list[str]:
+        """
+        Register initializer(s) from an external Python script.
+
+        Loads the file, discovers all concrete PyRITInitializer subclasses,
+        and registers each one. If *name* is provided and only a single
+        class is found, that name overrides the auto-derived registry key.
+
+        Args:
+            script_path: Absolute path to a ``.py`` file.
+            name: Optional custom registry name (only when the script
+                contains exactly one initializer class).
+
+        Returns:
+            List of registry names that were registered.
+
+        Raises:
+            FileNotFoundError: If *script_path* does not exist.
+            ValueError: If the script contains no valid initializer classes,
+                or *name* is provided but the script has more than one class.
+        """
+        self._ensure_discovered()
+
+        if not script_path.exists():
+            raise FileNotFoundError(f"Initialization script not found: {script_path}")
+
+        if script_path.suffix != ".py":
+            raise ValueError(f"Initialization script must be a Python file (.py): {script_path}")
+
+        from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+
+        import inspect
+
+        try:
+            spec = importlib.util.spec_from_file_location(f"custom_initializer.{script_path.stem}", script_path)
+            if not spec or not spec.loader:
+                raise ValueError(f"Could not load initializer script: {script_path}")
+
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Failed to load initializer script {script_path}: {e}") from e
+
+        discovered_classes: list[type[PyRITInitializer]] = []
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                inspect.isclass(attr)
+                and issubclass(attr, PyRITInitializer)
+                and attr is not PyRITInitializer
+                and not inspect.isabstract(attr)
+                and attr.__module__ == module.__name__
+            ):
+                discovered_classes.append(attr)
+
+        if not discovered_classes:
+            raise ValueError(
+                f"Script {script_path} does not contain any concrete PyRITInitializer subclasses."
+            )
+
+        if name and len(discovered_classes) > 1:
+            raise ValueError(
+                f"Custom name '{name}' was provided but the script contains "
+                f"{len(discovered_classes)} initializer classes. "
+                f"Remove the name to auto-derive, or ensure only one class in the script."
+            )
+
+        registered_names: list[str] = []
+        for cls in discovered_classes:
+            registry_name = name if (name and len(discovered_classes) == 1) else class_name_to_snake_case(
+                cls.__name__, suffix="Initializer"
+            )
+            entry = ClassEntry(registered_class=cls)
+            self._class_entries[registry_name] = entry
+            self._metadata_cache = None
+            registered_names.append(registry_name)
+            logger.info(f"Registered custom initializer: {registry_name} ({cls.__name__})")
+
+        return registered_names
+
     @staticmethod
     def resolve_script_paths(*, script_paths: list[str]) -> list[Path]:
         """
