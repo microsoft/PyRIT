@@ -43,9 +43,9 @@ class ListRegisteredInitializersResponse(BaseModel):
 
 
 class RegisterInitializerRequest(BaseModel):
-    """Request body for registering a custom initializer from a script file."""
+    """Request body for registering a custom initializer by uploading script content."""
 
-    script_path: str = Field(
-        ..., description="Absolute path to a Python file containing a PyRITInitializer subclass on the server"
+    name: str = Field(..., description="Registry name for the initializer (e.g., 'my_custom')")
+    script_content: str = Field(
+        ..., description="Python source code containing a PyRITInitializer subclass"
     )
-    name: str | None = Field(None, description="Custom registry name. If omitted, derived from the class name.")

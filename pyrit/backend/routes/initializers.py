@@ -99,7 +99,7 @@ async def get_initializer(initializer_name: str) -> RegisteredInitializer:
 
 @router.post(
     "",
-    response_model=list[RegisteredInitializer],
+    response_model=RegisteredInitializer,
     status_code=status.HTTP_201_CREATED,
     responses={
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
@@ -108,28 +108,25 @@ async def get_initializer(initializer_name: str) -> RegisteredInitializer:
 async def register_initializer(
     request: Request,
     body: RegisterInitializerRequest,
-) -> list[RegisteredInitializer]:
+) -> RegisteredInitializer:
     """
-    Register initializer(s) from a Python script on the server.
+    Register an initializer by uploading Python source code.
 
-    Loads the script, discovers PyRITInitializer subclasses, and registers
-    them in the initializer registry. Requires allow_custom_initializers
-    to be enabled in pyrit_conf.
+    The script must contain a concrete PyRITInitializer subclass.
+    Requires allow_custom_initializers to be enabled in pyrit_conf.
 
     Args:
         request: The incoming FastAPI request.
-        body: Request body with script_path and optional name.
+        body: Request body with name and script_content.
 
     Returns:
-        List of newly registered initializer summaries.
+        The newly registered initializer summary.
     """
     _check_custom_initializers_allowed(request)
     service = get_initializer_service()
 
     try:
-        return await service.register_initializer_async(script_path=body.script_path, name=body.name)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+        return await service.register_initializer_async(name=body.name, script_content=body.script_content)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 

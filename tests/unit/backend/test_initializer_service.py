@@ -298,6 +298,17 @@ class TestInitializerRoutes:
 # ============================================================================
 
 
+_SAMPLE_SCRIPT = """
+from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+
+class MyCustomInitializer(PyRITInitializer):
+    \"\"\"A custom test initializer.\"\"\"
+
+    async def initialize_async(self) -> None:
+        pass
+"""
+
+
 class TestInitializerServiceRegister:
     """Tests for InitializerService.register_initializer_async."""
 
@@ -305,52 +316,30 @@ class TestInitializerServiceRegister:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             mock_registry = MagicMock()
-            mock_registry.register_from_script.return_value = ["my_custom"]
+            mock_registry.register_from_content.return_value = "my_custom"
             mock_registry.list_metadata.return_value = [
                 _make_initializer_metadata(registry_name="my_custom", class_name="MyCustomInitializer")
             ]
             service._registry = mock_registry
 
-            result = await service.register_initializer_async(script_path="/tmp/my_init.py")
+            result = await service.register_initializer_async(
+                name="my_custom", script_content=_SAMPLE_SCRIPT
+            )
 
-            mock_registry.register_from_script.assert_called_once()
-            assert len(result) == 1
-            assert result[0].initializer_name == "my_custom"
-
-    async def test_register_initializer_with_name(self) -> None:
-        with patch.object(InitializerService, "__init__", lambda self: None):
-            service = InitializerService()
-            mock_registry = MagicMock()
-            mock_registry.register_from_script.return_value = ["custom_name"]
-            mock_registry.list_metadata.return_value = [
-                _make_initializer_metadata(registry_name="custom_name", class_name="MyInitializer")
-            ]
-            service._registry = mock_registry
-
-            result = await service.register_initializer_async(script_path="/tmp/my_init.py", name="custom_name")
-
-            call_kwargs = mock_registry.register_from_script.call_args
-            assert call_kwargs.kwargs["name"] == "custom_name"
-
-    async def test_register_initializer_propagates_file_not_found(self) -> None:
-        with patch.object(InitializerService, "__init__", lambda self: None):
-            service = InitializerService()
-            mock_registry = MagicMock()
-            mock_registry.register_from_script.side_effect = FileNotFoundError("not found")
-            service._registry = mock_registry
-
-            with pytest.raises(FileNotFoundError):
-                await service.register_initializer_async(script_path="/nonexistent.py")
+            mock_registry.register_from_content.assert_called_once_with(
+                name="my_custom", script_content=_SAMPLE_SCRIPT
+            )
+            assert result.initializer_name == "my_custom"
 
     async def test_register_initializer_propagates_value_error(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             mock_registry = MagicMock()
-            mock_registry.register_from_script.side_effect = ValueError("no classes found")
+            mock_registry.register_from_content.side_effect = ValueError("no classes found")
             service._registry = mock_registry
 
             with pytest.raises(ValueError):
-                await service.register_initializer_async(script_path="/tmp/empty.py")
+                await service.register_initializer_async(name="bad", script_content="x = 1")
 
 
 class TestInitializerServiceUnregister:
@@ -364,13 +353,13 @@ class TestInitializerServiceUnregister:
 
             await service.unregister_initializer_async(initializer_name="target")
 
-            mock_registry.unregister.assert_called_once_with("target")
+            mock_registry.unregister_and_cleanup.assert_called_once_with("target")
 
     async def test_unregister_initializer_propagates_key_error(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             mock_registry = MagicMock()
-            mock_registry.unregister.side_effect = KeyError("not found")
+            mock_registry.unregister_and_cleanup.side_effect = KeyError("not found")
             service._registry = mock_registry
 
             with pytest.raises(KeyError):
@@ -387,11 +376,13 @@ class TestRegisterInitializerRoute:
 
     def test_post_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
         app.state.allow_custom_initializers = False
-        response = client.post("/api/initializers", json={"script_path": "/tmp/init.py"})
+        response = client.post(
+            "/api/initializers", json={"name": "test", "script_content": _SAMPLE_SCRIPT}
+        )
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "disabled" in response.json()["detail"].lower()
 
-    def test_post_returns_201_with_registered_initializers(
+    def test_post_returns_201_with_registered_initializer(
         self, client_with_custom_initializers_enabled: TestClient
     ) -> None:
         summary = RegisteredInitializer(
@@ -401,60 +392,51 @@ class TestRegisterInitializerRoute:
         )
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.register_initializer_async = AsyncMock(return_value=[summary])
+            mock_service.register_initializer_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
 
             response = client_with_custom_initializers_enabled.post(
-                "/api/initializers", json={"script_path": "/tmp/init.py"}
+                "/api/initializers", json={"name": "my_custom", "script_content": _SAMPLE_SCRIPT}
             )
 
             assert response.status_code == status.HTTP_201_CREATED
             data = response.json()
-            assert len(data) == 1
-            assert data[0]["initializer_name"] == "my_custom"
+            assert data["initializer_name"] == "my_custom"
 
-    def test_post_returns_404_when_script_not_found(self, client_with_custom_initializers_enabled: TestClient) -> None:
-        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.register_initializer_async = AsyncMock(side_effect=FileNotFoundError("not found"))
-            mock_get_service.return_value = mock_service
-
-            response = client_with_custom_initializers_enabled.post(
-                "/api/initializers", json={"script_path": "/nonexistent.py"}
-            )
-
-            assert response.status_code == status.HTTP_404_NOT_FOUND
-
-    def test_post_returns_400_for_invalid_script(self, client_with_custom_initializers_enabled: TestClient) -> None:
+    def test_post_returns_400_for_invalid_script(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.register_initializer_async = AsyncMock(side_effect=ValueError("no classes"))
             mock_get_service.return_value = mock_service
 
             response = client_with_custom_initializers_enabled.post(
-                "/api/initializers", json={"script_path": "/tmp/empty.py"}
+                "/api/initializers", json={"name": "bad", "script_content": "x = 1"}
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_post_with_custom_name(self, client_with_custom_initializers_enabled: TestClient) -> None:
+    def test_post_forwards_name_and_content(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
         summary = RegisteredInitializer(
-            initializer_name="custom_name",
+            initializer_name="my_init",
             initializer_type="MyInit",
             description="desc",
         )
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.register_initializer_async = AsyncMock(return_value=[summary])
+            mock_service.register_initializer_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
 
-            response = client_with_custom_initializers_enabled.post(
-                "/api/initializers", json={"script_path": "/tmp/init.py", "name": "custom_name"}
+            client_with_custom_initializers_enabled.post(
+                "/api/initializers", json={"name": "my_init", "script_content": _SAMPLE_SCRIPT}
             )
 
-            assert response.status_code == status.HTTP_201_CREATED
             call_kwargs = mock_service.register_initializer_async.call_args.kwargs
-            assert call_kwargs["name"] == "custom_name"
+            assert call_kwargs["name"] == "my_init"
+            assert call_kwargs["script_content"] == _SAMPLE_SCRIPT
 
 
 class TestUnregisterInitializerRoute:

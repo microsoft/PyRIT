@@ -207,50 +207,52 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 required_env_vars=(),
             )
 
-    def register_from_script(self, *, script_path: Path, name: str | None = None) -> list[str]:
+    def register_from_content(self, *, name: str, script_content: str) -> str:
         """
-        Register initializer(s) from an external Python script.
+        Register an initializer from uploaded Python source code.
 
-        Loads the file, discovers all concrete PyRITInitializer subclasses,
-        and registers each one. If *name* is provided and only a single
-        class is found, that name overrides the auto-derived registry key.
+        Writes *script_content* to a managed directory, loads it as a
+        module, discovers the first concrete ``PyRITInitializer``
+        subclass, and registers it under *name*.
 
         Args:
-            script_path: Absolute path to a ``.py`` file.
-            name: Optional custom registry name (only when the script
-                contains exactly one initializer class).
+            name: Registry name for the new initializer.
+            script_content: Python source code that defines a
+                ``PyRITInitializer`` subclass.
 
         Returns:
-            List of registry names that were registered.
+            The registry name that was registered.
 
         Raises:
-            FileNotFoundError: If *script_path* does not exist.
-            ValueError: If the script contains no valid initializer classes,
-                or *name* is provided but the script has more than one class.
+            ValueError: If the source cannot be compiled, does not
+                contain a valid initializer class, or *name* collides
+                with an existing entry.
         """
         self._ensure_discovered()
 
-        if not script_path.exists():
-            raise FileNotFoundError(f"Initialization script not found: {script_path}")
-
-        if script_path.suffix != ".py":
-            raise ValueError(f"Initialization script must be a Python file (.py): {script_path}")
-
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
+        # Write to a managed temp directory so importlib can load it
+        managed_dir = self._get_custom_scripts_dir()
+        script_path = managed_dir / f"{name}.py"
         try:
-            spec = importlib.util.spec_from_file_location(f"custom_initializer.{script_path.stem}", script_path)
+            script_path.write_text(script_content, encoding="utf-8")
+        except OSError as e:
+            raise ValueError(f"Failed to write initializer script: {e}") from e
+
+        try:
+            spec = importlib.util.spec_from_file_location(f"custom_initializer.{name}", script_path)
             if not spec or not spec.loader:
-                raise ValueError(f"Could not load initializer script: {script_path}")
+                raise ValueError(f"Could not load initializer script for '{name}'")
 
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         except ValueError:
             raise
         except Exception as e:
-            raise ValueError(f"Failed to load initializer script {script_path}: {e}") from e
+            raise ValueError(f"Failed to load initializer script '{name}': {e}") from e
 
-        discovered_classes: list[type[PyRITInitializer]] = []
+        discovered: type[PyRITInitializer] | None = None
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
             if (
@@ -260,32 +262,49 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 and not inspect.isabstract(attr)
                 and attr.__module__ == module.__name__
             ):
-                discovered_classes.append(attr)
+                discovered = attr
+                break
 
-        if not discovered_classes:
-            raise ValueError(f"Script {script_path} does not contain any concrete PyRITInitializer subclasses.")
-
-        if name and len(discovered_classes) > 1:
+        if discovered is None:
+            script_path.unlink(missing_ok=True)
             raise ValueError(
-                f"Custom name '{name}' was provided but the script contains "
-                f"{len(discovered_classes)} initializer classes. "
-                f"Remove the name to auto-derive, or ensure only one class in the script."
+                f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass."
             )
 
-        registered_names: list[str] = []
-        for cls in discovered_classes:
-            registry_name = (
-                name
-                if (name and len(discovered_classes) == 1)
-                else class_name_to_snake_case(cls.__name__, suffix="Initializer")
-            )
-            entry = ClassEntry(registered_class=cls)
-            self._class_entries[registry_name] = entry
-            self._metadata_cache = None
-            registered_names.append(registry_name)
-            logger.info(f"Registered custom initializer: {registry_name} ({cls.__name__})")
+        entry = ClassEntry(registered_class=discovered)
+        self._class_entries[name] = entry
+        self._metadata_cache = None
+        logger.info(f"Registered custom initializer: {name} ({discovered.__name__})")
+        return name
 
-        return registered_names
+    def unregister_and_cleanup(self, name: str) -> None:
+        """
+        Unregister an initializer and delete its script file if it was uploaded.
+
+        Args:
+            name: The registry name to remove.
+
+        Raises:
+            KeyError: If the name is not registered.
+        """
+        self.unregister(name)
+
+        script_path = self._get_custom_scripts_dir() / f"{name}.py"
+        script_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _get_custom_scripts_dir() -> Path:
+        """
+        Get the directory for storing uploaded custom initializer scripts.
+
+        Returns:
+            Path to ``~/.pyrit/custom_initializers/``, created if needed.
+        """
+        from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+
+        custom_dir = CONFIGURATION_DIRECTORY_PATH / "custom_initializers"
+        custom_dir.mkdir(parents=True, exist_ok=True)
+        return custom_dir
 
     @staticmethod
     def resolve_script_paths(*, script_paths: list[str]) -> list[Path]:

@@ -3,6 +3,7 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -98,18 +99,10 @@ def test_unregister_invalidates_metadata_cache():
 
 
 # ============================================================================
-# register_from_script Tests
+# register_from_content Tests
 # ============================================================================
 
-
-def test_register_from_script_discovers_class():
-    """Test registering an initializer from a script file."""
-    registry = InitializerRegistry(lazy_discovery=True)
-    registry._discovered = True
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(
-            """
+_VALID_SCRIPT = """
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 class ScriptTestInitializer(PyRITInitializer):
@@ -118,77 +111,51 @@ class ScriptTestInitializer(PyRITInitializer):
     async def initialize_async(self) -> None:
         pass
 """
-        )
-        script_path = Path(f.name)
-
-    try:
-        names = registry.register_from_script(script_path=script_path)
-        assert names == ["script_test"]
-        assert "script_test" in registry
-    finally:
-        script_path.unlink()
 
 
-def test_register_from_script_with_custom_name():
-    """Test registering with a custom name."""
+def test_register_from_content_discovers_class():
+    """Test registering an initializer from uploaded content."""
     registry = InitializerRegistry(lazy_discovery=True)
     registry._discovered = True
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(
-            """
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        mock_dir.return_value = Path(tempfile.mkdtemp())
+        name = registry.register_from_content(name="my_custom", script_content=_VALID_SCRIPT)
 
-class AnotherInitializer(PyRITInitializer):
-    \"\"\"Another init.\"\"\"
-
-    async def initialize_async(self) -> None:
-        pass
-"""
-        )
-        script_path = Path(f.name)
-
-    try:
-        names = registry.register_from_script(script_path=script_path, name="my_custom_name")
-        assert names == ["my_custom_name"]
-        assert "my_custom_name" in registry
-    finally:
-        script_path.unlink()
+        assert name == "my_custom"
+        assert "my_custom" in registry
 
 
-def test_register_from_script_file_not_found():
-    """Test that FileNotFoundError is raised for missing script."""
+def test_register_from_content_no_classes_raises_value_error():
+    """Test that ValueError is raised when content has no initializer classes."""
     registry = InitializerRegistry(lazy_discovery=True)
     registry._discovered = True
 
-    with pytest.raises(FileNotFoundError):
-        registry.register_from_script(script_path=Path("/nonexistent/init.py"))
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        mock_dir.return_value = Path(tempfile.mkdtemp())
 
-
-def test_register_from_script_no_classes():
-    """Test that ValueError is raised when script has no initializer classes."""
-    registry = InitializerRegistry(lazy_discovery=True)
-    registry._discovered = True
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write("x = 1\n")
-        script_path = Path(f.name)
-
-    try:
         with pytest.raises(ValueError, match="does not contain"):
-            registry.register_from_script(script_path=script_path)
-    finally:
-        script_path.unlink()
+            registry.register_from_content(name="empty", script_content="x = 1\n")
 
 
-def test_register_from_script_ignores_imported_classes():
+def test_register_from_content_bad_syntax_raises_value_error():
+    """Test that a script with syntax errors raises ValueError."""
+    registry = InitializerRegistry(lazy_discovery=True)
+    registry._discovered = True
+
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        mock_dir.return_value = Path(tempfile.mkdtemp())
+
+        with pytest.raises(ValueError, match="Failed to load"):
+            registry.register_from_content(name="bad", script_content="def bad syntax(:\n")
+
+
+def test_register_from_content_ignores_imported_classes():
     """Test that imported base classes are not registered."""
     registry = InitializerRegistry(lazy_discovery=True)
     registry._discovered = True
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(
-            """
+    script = """
 from pyrit.setup.initializers.simple import SimpleInitializer
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
@@ -198,44 +165,27 @@ class LocalOnlyInitializer(PyRITInitializer):
     async def initialize_async(self) -> None:
         pass
 """
-        )
-        script_path = Path(f.name)
 
-    try:
-        names = registry.register_from_script(script_path=script_path)
-        assert "local_only" in names
-        assert "simple" not in names
-    finally:
-        script_path.unlink()
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir") as mock_dir:
+        mock_dir.return_value = Path(tempfile.mkdtemp())
+        name = registry.register_from_content(name="local_only", script_content=script)
+
+        assert name == "local_only"
+        cls = registry.get_class("local_only")
+        assert cls.__name__ == "LocalOnlyInitializer"
 
 
-def test_register_from_script_bad_script_raises_value_error():
-    """Test that a script with syntax errors raises ValueError."""
+def test_unregister_and_cleanup_removes_entry_and_file():
+    """Test that unregister_and_cleanup removes both registry entry and script file."""
     registry = InitializerRegistry(lazy_discovery=True)
     registry._discovered = True
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write("def bad syntax(:\n")
-        script_path = Path(f.name)
+    tmp_dir = Path(tempfile.mkdtemp())
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir", return_value=tmp_dir):
+        registry.register_from_content(name="cleanup_test", script_content=_VALID_SCRIPT)
+        assert "cleanup_test" in registry
+        assert (tmp_dir / "cleanup_test.py").exists()
 
-    try:
-        with pytest.raises(ValueError, match="Failed to load"):
-            registry.register_from_script(script_path=script_path)
-    finally:
-        script_path.unlink()
-
-
-def test_register_from_script_non_py_raises_value_error():
-    """Test that non-.py files raise ValueError."""
-    registry = InitializerRegistry(lazy_discovery=True)
-    registry._discovered = True
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("not python\n")
-        script_path = Path(f.name)
-
-    try:
-        with pytest.raises(ValueError, match="must be a Python file"):
-            registry.register_from_script(script_path=script_path)
-    finally:
-        script_path.unlink()
+        registry.unregister_and_cleanup("cleanup_test")
+        assert "cleanup_test" not in registry
+        assert not (tmp_dir / "cleanup_test.py").exists()

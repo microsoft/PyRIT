@@ -10,7 +10,6 @@ metadata through the REST API.
 
 import logging
 from functools import lru_cache
-from pathlib import Path
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
@@ -106,36 +105,32 @@ class InitializerService:
     async def register_initializer_async(
         self,
         *,
-        script_path: str,
-        name: str | None = None,
-    ) -> list[RegisteredInitializer]:
+        name: str,
+        script_content: str,
+    ) -> RegisteredInitializer:
         """
-        Register initializer(s) from a Python script file.
+        Register an initializer from uploaded Python source code.
 
         Args:
-            script_path: Path to a Python file containing PyRITInitializer subclass(es).
-            name: Optional custom registry name (only when script has one class).
+            name: Registry name for the new initializer.
+            script_content: Python source code containing a PyRITInitializer subclass.
 
         Returns:
-            List of newly registered initializer summaries.
+            The newly registered initializer summary.
 
         Raises:
-            FileNotFoundError: If the script does not exist.
-            ValueError: If the script contains no valid initializers.
+            ValueError: If the script is invalid or contains no initializer class.
         """
-        resolved_path = Path(script_path)
-        registered_names = self._registry.register_from_script(script_path=resolved_path, name=name)
+        self._registry.register_from_content(name=name, script_content=script_content)
 
-        result: list[RegisteredInitializer] = []
-        for reg_name in registered_names:
-            initializer = await self.get_initializer_async(initializer_name=reg_name)
-            if initializer:
-                result.append(initializer)
-        return result
+        initializer = await self.get_initializer_async(initializer_name=name)
+        if not initializer:
+            raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
+        return initializer
 
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:
         """
-        Remove an initializer from the registry.
+        Remove an initializer from the registry and clean up its script file.
 
         Args:
             initializer_name: The registry name to remove.
@@ -143,7 +138,7 @@ class InitializerService:
         Raises:
             KeyError: If the initializer is not registered.
         """
-        self._registry.unregister(initializer_name)
+        self._registry.unregister_and_cleanup(initializer_name)
         logger.info(f"Unregistered initializer: {initializer_name}")
 
     @staticmethod
