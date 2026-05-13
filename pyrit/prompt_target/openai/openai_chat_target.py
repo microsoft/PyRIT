@@ -288,6 +288,26 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             pass
         return False
 
+    def _extract_partial_content(self, response: Any) -> Optional[str]:
+        """
+        Extract partial content from a Chat Completions response with finish_reason=content_filter.
+
+        When Azure Content Safety triggers mid-generation, the model may have produced partial
+        text in ``response.choices[0].message.content`` before being cut off.
+
+        Args:
+            response: A ChatCompletion object from the OpenAI SDK.
+
+        Returns:
+            The partial text content, or None if no content was generated.
+        """
+        try:
+            if response.choices and response.choices[0].message and response.choices[0].message.content:
+                return response.choices[0].message.content
+        except (AttributeError, IndexError):
+            pass
+        return None
+
     def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
         """
         Validate a Chat Completions API response for errors.

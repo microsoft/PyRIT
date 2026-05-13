@@ -212,8 +212,26 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
                             print()
                     continue
 
+                # Blocked/filtered pieces: show clear indicator and partial content if available
+                if piece.is_blocked():
+                    self._print_colored(f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED)
+                    partial_content = piece.prompt_metadata.get("partial_content")
+                    if partial_content:
+                        self._print_colored(
+                            f"{self._indent}📝 Partial content (before filter triggered):",
+                            Style.DIM,
+                            Fore.CYAN,
+                        )
+                        self._print_wrapped_text(str(partial_content), Fore.YELLOW)
+                    else:
+                        self._print_colored(
+                            f"{self._indent}Content was blocked by the target's content filter.",
+                            Style.DIM,
+                            Fore.RED,
+                        )
+
                 # Handle converted values for user and assistant messages
-                if piece.converted_value != piece.original_value:
+                elif piece.converted_value != piece.original_value:
                     self._print_colored(f"{self._indent} Original:", Fore.CYAN)
                     self._print_wrapped_text(piece.original_value, Fore.WHITE)
                     print()

@@ -1075,6 +1075,89 @@ def test_check_content_filter_different_error(target: OpenAIResponseTarget):
     assert target._check_content_filter(mock_response) is False
 
 
+def test_check_content_filter_detects_incomplete_status_with_content_filter_reason(target: OpenAIResponseTarget):
+    """Test _check_content_filter detects status=incomplete with reason=content_filter."""
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "incomplete"
+    mock_incomplete_details = MagicMock()
+    mock_incomplete_details.reason = "content_filter"
+    mock_response.incomplete_details = mock_incomplete_details
+
+    assert target._check_content_filter(mock_response) is True
+
+
+def test_check_content_filter_ignores_incomplete_status_without_content_filter_reason(target: OpenAIResponseTarget):
+    """Test _check_content_filter returns False for incomplete with non-content-filter reason."""
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "incomplete"
+    mock_incomplete_details = MagicMock()
+    mock_incomplete_details.reason = "max_tokens"
+    mock_response.incomplete_details = mock_incomplete_details
+
+    assert target._check_content_filter(mock_response) is False
+
+
+class TestExtractPartialContentResponseTarget:
+    def test_extracts_completed_message_content(self, target: OpenAIResponseTarget):
+        """Extract text from completed output messages, skip incomplete ones."""
+        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
+
+        completed_section = MagicMock()
+        completed_section.type = MessagePieceType.MESSAGE
+        completed_section.status = "completed"
+        content_item = MagicMock()
+        content_item.text = "Partial harmful content"
+        completed_section.content = [content_item]
+
+        incomplete_section = MagicMock()
+        incomplete_section.type = MessagePieceType.MESSAGE
+        incomplete_section.status = "incomplete"
+        refusal_item = MagicMock()
+        refusal_item.text = "I'm sorry, but I cannot assist with that request."
+        incomplete_section.content = [refusal_item]
+
+        mock_response = MagicMock()
+        mock_response.output = [completed_section, incomplete_section]
+
+        result = target._extract_partial_content(mock_response)
+        assert result == "Partial harmful content"
+
+    def test_returns_none_when_no_output(self, target: OpenAIResponseTarget):
+        mock_response = MagicMock()
+        mock_response.output = []
+        assert target._extract_partial_content(mock_response) is None
+
+    def test_returns_none_when_only_incomplete_messages(self, target: OpenAIResponseTarget):
+        """All messages are incomplete (refusals) — no partial content."""
+        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
+
+        section = MagicMock()
+        section.type = MessagePieceType.MESSAGE
+        section.status = "incomplete"
+        content_item = MagicMock()
+        content_item.text = "I cannot help with that."
+        section.content = [content_item]
+
+        mock_response = MagicMock()
+        mock_response.output = [section]
+
+        assert target._extract_partial_content(mock_response) is None
+
+    def test_ignores_non_message_sections(self, target: OpenAIResponseTarget):
+        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
+
+        section = MagicMock()
+        section.type = MessagePieceType.REASONING
+        section.status = "completed"
+
+        mock_response = MagicMock()
+        mock_response.output = [section]
+
+        assert target._extract_partial_content(mock_response) is None
+
+
 def test_validate_response_success(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     """Test _validate_response passes for valid completed response."""
     mock_response = MagicMock()
