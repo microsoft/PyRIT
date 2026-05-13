@@ -86,7 +86,7 @@ class AttackService:
         converter_types: Optional[Sequence[str]] = None,
         converter_types_match: Literal["any", "all"] = "all",
         has_converters: Optional[bool] = None,
-        outcome: Optional[Literal["undetermined", "success", "failure"]] = None,
+        outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = None,
         labels: Optional[dict[str, str | Sequence[str]]] = None,
         min_turns: Optional[int] = None,
         max_turns: Optional[int] = None,
@@ -370,6 +370,7 @@ class AttackService:
             "undetermined": AttackOutcome.UNDETERMINED,
             "success": AttackOutcome.SUCCESS,
             "failure": AttackOutcome.FAILURE,
+            "error": AttackOutcome.ERROR,
         }
         new_outcome = outcome_map.get(request.outcome, AttackOutcome.UNDETERMINED)
 

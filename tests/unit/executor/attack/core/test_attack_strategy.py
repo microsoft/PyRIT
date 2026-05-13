@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.exceptions.retry_collector import RetryCollector
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
@@ -20,6 +21,7 @@ from pyrit.models import (
     AttackResult,
     Message,
 )
+from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
 
 
@@ -397,6 +399,26 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} outcome is undetermined. Reason: Not specified"
         mock_logger.info.assert_called_with(expected_message)
 
+    async def test_on_post_execute_logs_error_outcome(
+        self, event_handler, sample_attack_context, sample_attack_result, mock_logger
+    ):
+        """Test that post-execute handler logs error outcome"""
+        sample_attack_result.outcome = AttackOutcome.ERROR
+        sample_attack_result.outcome_reason = "Connection timeout"
+
+        event_data = StrategyEventData(
+            event=StrategyEvent.ON_POST_EXECUTE,
+            strategy_name="TestStrategy",
+            strategy_id="test-id",
+            context=sample_attack_context,
+            result=sample_attack_result,
+        )
+
+        await event_handler.on_event(event_data)
+
+        expected_message = f"{event_handler.__class__.__name__} failed with an error. Reason: Connection timeout"
+        mock_logger.info.assert_called_with(expected_message)
+
     async def test_on_post_execute_adds_results_to_memory(self, mock_memory):
         """Test that post-execute handler adds results to memory"""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
@@ -436,6 +458,141 @@ class TestDefaultAttackStrategyEventHandler:
 
         with pytest.raises(ValueError, match="Attack result is None"):
             await event_handler.on_event(event_data)
+
+    async def test_on_post_execute_attaches_retry_events(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """Test that post-execute handler attaches retry events from collector to the result"""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+
+            sample_attack_context.start_time = 100.0
+            retry_event = RetryEvent(
+                attempt_number=1, function_name="send_prompt_async", exception_type="RateLimitError"
+            )
+
+            collector = RetryCollector(events=[retry_event])
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector):
+                event_data = StrategyEventData(
+                    event=StrategyEvent.ON_POST_EXECUTE,
+                    strategy_name="TestStrategy",
+                    strategy_id="test-id",
+                    context=sample_attack_context,
+                    result=sample_attack_result,
+                )
+                await handler.on_event(event_data)
+
+            assert sample_attack_result.retry_events == [retry_event]
+            assert sample_attack_result.total_retries == 1
+
+    async def test_on_post_execute_no_retry_events_when_collector_empty(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """Test that post-execute handler does not set retry_events when collector has no events"""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+
+            sample_attack_context.start_time = 100.0
+            collector = RetryCollector(events=[])
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector):
+                event_data = StrategyEventData(
+                    event=StrategyEvent.ON_POST_EXECUTE,
+                    strategy_name="TestStrategy",
+                    strategy_id="test-id",
+                    context=sample_attack_context,
+                    result=sample_attack_result,
+                )
+                await handler.on_event(event_data)
+
+            # Empty collector means the guard `if collector and collector.events` is False
+            assert not sample_attack_result.retry_events
+            assert sample_attack_result.total_retries == 0
+
+    async def test_on_error_attaches_retry_events(self, sample_attack_context, mock_memory):
+        """Test that error handler attaches collected retry events to the error AttackResult"""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+
+            sample_attack_context.start_time = 100.0
+            retry_event = RetryEvent(attempt_number=2, function_name="send_prompt_async", exception_type="TimeoutError")
+            collector = RetryCollector(events=[retry_event])
+
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=collector):
+                event_data = StrategyEventData(
+                    event=StrategyEvent.ON_ERROR,
+                    strategy_name="TestStrategy",
+                    strategy_id="test-id",
+                    context=sample_attack_context,
+                    error=RuntimeError("test error"),
+                )
+                await handler.on_event(event_data)
+
+            stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+            assert stored_result.outcome == AttackOutcome.ERROR
+            assert stored_result.retry_events == [retry_event]
+            assert stored_result.total_retries == 1
+
+    async def test_on_error_empty_retry_events_when_no_collector(self, sample_attack_context, mock_memory):
+        """Test that error handler sets empty retry_events when no collector exists"""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+
+            sample_attack_context.start_time = 100.0
+
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=None):
+                event_data = StrategyEventData(
+                    event=StrategyEvent.ON_ERROR,
+                    strategy_name="TestStrategy",
+                    strategy_id="test-id",
+                    context=sample_attack_context,
+                    error=RuntimeError("test error"),
+                )
+                await handler.on_event(event_data)
+
+            stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+            assert stored_result.retry_events == []
+            assert stored_result.total_retries == 0
+
+    async def test_on_error_persists_result_to_memory(self, sample_attack_context, mock_memory):
+        """Test that error handler creates an error AttackResult and persists it"""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+
+            sample_attack_context.start_time = 100.0
+            error = ValueError("something broke")
+
+            with patch("pyrit.executor.attack.core.attack_strategy.get_retry_collector", return_value=None):
+                event_data = StrategyEventData(
+                    event=StrategyEvent.ON_ERROR,
+                    strategy_name="TestStrategy",
+                    strategy_id="test-id",
+                    context=sample_attack_context,
+                    error=error,
+                )
+                with patch("time.perf_counter", return_value=100.5):
+                    await handler.on_event(event_data)
+
+            mock_memory.add_attack_results_to_memory.assert_called_once()
+            stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+            assert stored_result.outcome == AttackOutcome.ERROR
+            assert stored_result.error_message == "something broke"
+            assert stored_result.error_type == "ValueError"
+            assert stored_result.execution_time_ms == 500
+
+    async def test_on_error_skips_when_no_error_or_context(self, mock_memory):
+        """Test that error handler returns early when error or context is None"""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_ERROR,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=None,
+                error=RuntimeError("test"),
+            )
+            await handler.on_event(event_data)
+            mock_memory.add_attack_results_to_memory.assert_not_called()
 
     async def test_on_event_handles_other_events(self, event_handler, sample_attack_context, mock_logger):
         """Test that on_event handles events not in the specific handlers"""

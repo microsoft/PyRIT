@@ -8,6 +8,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models.attack_result import AttackOutcome, AttackResult
+from pyrit.models.retry_event import RetryEvent
 
 
 class TestAttackResultDeprecation:
@@ -206,3 +207,147 @@ class TestAttackResultTimestamp:
         assert hydrated.timestamp is not None
         assert hydrated.timestamp.tzinfo is timezone.utc
         assert hydrated.timestamp.replace(tzinfo=None) == datetime(2026, 4, 17, 12, 0, 0)  # noqa: DTZ001
+
+
+class TestAttackResultErrorFields:
+    """Tests for the error and retry fields on AttackResult."""
+
+    def test_error_fields_default_to_none(self) -> None:
+        """AttackResult without error fields defaults to None/empty."""
+        result = AttackResult(conversation_id="c1", objective="test")
+        assert result.error_message is None
+        assert result.error_type is None
+        assert result.error_traceback is None
+        assert result.retry_events == []
+        assert result.total_retries == 0
+
+    def test_error_fields_set_correctly(self) -> None:
+        """AttackResult stores error fields when provided."""
+        result = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            error_message="Connection refused",
+            error_type="ConnectionError",
+            error_traceback="Traceback (most recent call last):\n  ...",
+            total_retries=3,
+        )
+        assert result.error_message == "Connection refused"
+        assert result.error_type == "ConnectionError"
+        assert "Traceback" in result.error_traceback
+        assert result.total_retries == 3
+
+    def test_retry_events_stored_on_result(self) -> None:
+        """AttackResult stores retry events."""
+        events = [
+            RetryEvent(attempt_number=1, function_name="fn1", exception_type="TimeoutError"),
+            RetryEvent(attempt_number=2, function_name="fn1", exception_type="TimeoutError"),
+        ]
+        result = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            retry_events=events,
+            total_retries=2,
+        )
+        assert len(result.retry_events) == 2
+        assert result.retry_events[0].attempt_number == 1
+        assert result.retry_events[1].attempt_number == 2
+
+
+class TestAttackResultErrorRoundTrip:
+    """Tests that error/retry fields survive the AttackResult -> AttackResultEntry -> AttackResult round-trip."""
+
+    def test_error_fields_roundtrip(self) -> None:
+        """Error fields are serialized to entry and deserialized back."""
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            outcome=AttackOutcome.FAILURE,
+            error_message="Rate limit hit",
+            error_type="RateLimitError",
+            error_traceback="Traceback...\n  File ...",
+            total_retries=5,
+        )
+        entry = AttackResultEntry(entry=original)
+
+        # Verify serialized values on entry
+        assert entry.error_message == "Rate limit hit"
+        assert entry.error_type == "RateLimitError"
+        assert entry.error_traceback == "Traceback...\n  File ..."
+        assert entry.total_retries == 5
+
+        # Deserialize back
+        hydrated = entry.get_attack_result()
+        assert hydrated.error_message == "Rate limit hit"
+        assert hydrated.error_type == "RateLimitError"
+        assert hydrated.error_traceback == "Traceback...\n  File ..."
+        assert hydrated.total_retries == 5
+
+    def test_retry_events_roundtrip(self) -> None:
+        """Retry events are serialized to JSON and deserialized back."""
+        events = [
+            RetryEvent(
+                attempt_number=1,
+                function_name="send_async",
+                exception_type="TimeoutError",
+                exception_message="timed out",
+                component_role="target",
+                component_name="AzureTarget",
+                endpoint="https://api.azure.com",
+                elapsed_seconds=5.5,
+            ),
+            RetryEvent(
+                attempt_number=2,
+                function_name="send_async",
+                exception_type="RateLimitError",
+                exception_message="429",
+                elapsed_seconds=10.0,
+            ),
+        ]
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            retry_events=events,
+            total_retries=2,
+        )
+        entry = AttackResultEntry(entry=original)
+        assert entry.retry_events_json is not None
+
+        hydrated = entry.get_attack_result()
+        assert len(hydrated.retry_events) == 2
+        assert hydrated.retry_events[0].attempt_number == 1
+        assert hydrated.retry_events[0].function_name == "send_async"
+        assert hydrated.retry_events[0].exception_type == "TimeoutError"
+        assert hydrated.retry_events[0].component_name == "AzureTarget"
+        assert hydrated.retry_events[1].attempt_number == 2
+        assert hydrated.retry_events[1].exception_type == "RateLimitError"
+        assert hydrated.total_retries == 2
+
+    def test_no_error_fields_roundtrip(self) -> None:
+        """AttackResult without error fields round-trips cleanly."""
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+        )
+        entry = AttackResultEntry(entry=original)
+        assert entry.error_message is None
+        assert entry.error_type is None
+        assert entry.retry_events_json is None
+        assert entry.total_retries == 0
+
+        hydrated = entry.get_attack_result()
+        assert hydrated.error_message is None
+        assert hydrated.error_type is None
+        assert hydrated.retry_events == []
+        assert hydrated.total_retries == 0
+
+    def test_traceback_truncation(self) -> None:
+        """Very long tracebacks are truncated to 10KB."""
+        long_traceback = "x" * 20000
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            error_traceback=long_traceback,
+        )
+        entry = AttackResultEntry(entry=original)
+        assert len(entry.error_traceback) == 10240

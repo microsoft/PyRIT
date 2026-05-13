@@ -14,7 +14,6 @@ from pyrit.executor.attack import (
 )
 from pyrit.prompt_converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
     AttackTechniqueSpec,
@@ -22,18 +21,14 @@ from pyrit.registry.object_registries.attack_technique_registry import (
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.score import (
-    SelfAskRefusalScorer,
-    SelfAskTrueFalseScorer,
-    TrueFalseCompositeScorer,
-    TrueFalseInverterScorer,
-    TrueFalseScoreAggregator,
-    TrueFalseScorer,
-)
+from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +101,16 @@ class Leakage(Scenario):
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     @classmethod
+    def _get_additional_scoring_questions(cls) -> list[Path]:
+        """
+        Override true/false question paths for leakage objective scoring.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question paths for leakage objective scoring.
+        """
+        return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "leakage.yaml"]
+
+    @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         """Return the dynamically generated strategy class, building it on first access."""
         if cls._cached_strategy_class is None:
@@ -157,34 +162,6 @@ class Leakage(Scenario):
             objective_scorer=objective_scorer,
             include_default_baseline=True,
             scenario_result_id=scenario_result_id,
-        )
-
-    def _get_default_objective_scorer(self) -> TrueFalseCompositeScorer:
-        """
-        Retrieve the default objective scorer.
-
-        Uses a composite scorer:
-        1. SelfAskTrueFalseScorer with leakage detection prompt.
-        2. Inverted SelfAskRefusalScorer as backstop (response must not be a refusal).
-
-        The chat target is resolved from the base class default scorer if available,
-        otherwise falls back to OpenAIChatTarget().
-
-        Returns:
-            TrueFalseCompositeScorer: A composite scorer combining leakage detection and refusal backstop.
-        """
-        base_scorer = super()._get_default_objective_scorer()
-        chat_target = base_scorer.get_chat_target() or OpenAIChatTarget()
-
-        presence_of_leakage = SelfAskTrueFalseScorer(
-            chat_target=chat_target,
-            true_false_question_path=SCORER_SEED_PROMPT_PATH / "true_false_question" / "leakage.yaml",
-        )
-
-        backstop = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
-
-        return TrueFalseCompositeScorer(
-            aggregator=TrueFalseScoreAggregator.AND, scorers=[presence_of_leakage, backstop]
         )
 
     def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:

@@ -655,7 +655,7 @@ class TestRegistrationAndFactoryFromSpec:
         mock_target = MagicMock(spec=PromptTarget)
         mock_target.capabilities.includes.return_value = False
         target_registry.register(name="adversarial_chat", instance=mock_target)
-        with pytest.raises(ValueError, match="must support multi-turn"):
+        with pytest.raises(ValueError, match="must support"):
             get_default_adversarial_target()
 
 

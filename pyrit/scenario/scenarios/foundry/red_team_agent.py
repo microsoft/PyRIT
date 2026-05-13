@@ -10,13 +10,11 @@ available attacks against specified datasets.
 """
 
 import logging
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
@@ -61,12 +59,12 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
@@ -269,7 +267,7 @@ class RedTeamAgent(Scenario):
         Raises:
             ValueError: If attack_strategies is empty or contains unsupported strategies.
         """
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         if not attack_scoring_config:
             attack_scoring_config = AttackScoringConfig(objective_scorer=self._get_default_objective_scorer())
         self._attack_scoring_config = attack_scoring_config
@@ -424,15 +422,6 @@ class RedTeamAgent(Scenario):
         self._seed_groups = self._resolve_seed_groups()
 
         return [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
-
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
 
     def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
         """
