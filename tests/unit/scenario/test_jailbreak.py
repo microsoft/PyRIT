@@ -16,7 +16,7 @@ from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core import BaselineDefaultPolicy
+from pyrit.scenario.core import BaselinePolicy
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
@@ -205,12 +205,12 @@ class TestJailbreakInitialization:
 
     def test_class_supports_baseline_but_defaults_off(self):
         """Jailbreak supports a baseline but does not include one by default."""
-        assert Jailbreak.BASELINE_DEFAULT_POLICY is BaselineDefaultPolicy.Disabled
+        assert Jailbreak.BASELINE_POLICY is BaselinePolicy.Disabled
 
     async def test_default_initialize_omits_baseline(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """initialize_async without include_baseline honors BASELINE_DEFAULT_POLICY=Disabled."""
+        """initialize_async without include_baseline honors BASELINE_POLICY=Disabled."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(objective_target=mock_objective_target)
@@ -219,7 +219,7 @@ class TestJailbreakInitialization:
     async def test_explicit_include_baseline_true_prepends_baseline(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """Caller can override BASELINE_DEFAULT_POLICY=Disabled by passing include_baseline=True."""
+        """Caller can override BASELINE_POLICY=Disabled by passing include_baseline=True."""
         from pyrit.scenario import DatasetConfiguration
 
         with (

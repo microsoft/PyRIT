@@ -23,7 +23,7 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import AtomicAttack, BaselineDefaultPolicy
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
@@ -438,7 +438,7 @@ class TestBenchmarkRuntime:
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
         )
-        assert type(scenario).BASELINE_DEFAULT_POLICY is BaselineDefaultPolicy.Forbidden
+        assert type(scenario).BASELINE_POLICY is BaselinePolicy.Forbidden
         assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
     async def test_baseline_explicit_true_raises(self, mock_objective_target, single_adversarial_model):

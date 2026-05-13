@@ -13,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselineDefaultPolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy, Scenario, ScenarioStrategy
 
 # Test constants
 TEST_ATTACK_TYPE = "TestAttack"
@@ -137,7 +137,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    BASELINE_DEFAULT_POLICY: ClassVar[BaselineDefaultPolicy] = BaselineDefaultPolicy.Forbidden
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
     def __init__(self, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
         # Get strategy_class from kwargs or use default
