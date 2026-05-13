@@ -440,6 +440,11 @@ deploy path you used:
 Use `az containerapp secret set` with the `@file` form (the file path is on
 the command line, not the secret value).
 
+> **`updated.env` is your local file** — same format as `infra/env.demo.template`
+> and the file you passed to `--env-file` during initial deployment, but with
+> the new values you want to deploy. The filename is just a convention; you
+> can name it anything.
+
 > ⚠️ **Verify the file exists before running `az`.** The CLI's `@file`
 > expansion is silent: if the path is wrong, `az` falls back to storing the
 > literal string `@./your-typo.env` as the secret value, with no error. The

@@ -230,6 +230,11 @@ The Container App reads its `.env` contents from an **inline secret** named
 `@file` form (the file path is on the command line, not the secret value, so
 nothing leaks via `ps`).
 
+> **`updated.env` is your local file** — same format as `infra/env.demo.template`
+> and the file you passed to `--env-file` during initial deployment, but with
+> the new values you want to deploy. The filename is just a convention; you
+> can name it anything.
+
 > ⚠️ **Verify the file exists before running `az`.** The Azure CLI's `@file`
 > expansion is silent: if the path doesn't exist or has a typo, `az` falls
 > back to the literal string `@./your-typo.env` and stores **that** as the
