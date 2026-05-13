@@ -49,25 +49,22 @@ def has_revision_violations() -> bool:
         _report(violations)
         return True
 
-    # CI (PR): check full branch diff against origin/main
-    merge_base = _git_stdout("merge-base", "origin/main", "HEAD")
-    head_sha = _git_stdout("rev-parse", "HEAD")
-    if merge_base and merge_base != head_sha:
-        violations = _get_violations([f"{merge_base}...HEAD"])
+    # CI (PR): diff branch against its merge-base with origin/main.
+    # The three-dot syntax (A...B) resolves to ``git diff $(merge-base A B) B``
+    # automatically, so we don't need a separate merge-base call.  When
+    # origin/main is missing (shallow clone) git exits non-zero.
+    pr_diff = _git("diff", "--name-status", "origin/main...HEAD", "--", _VERSIONS_PATH)
+    if pr_diff.returncode == 0:
+        violations = [line for line in pr_diff.stdout.strip().splitlines() if line and not line.startswith("A")]
         if violations:
             _report(violations)
             return True
-    elif not merge_base:
-        # On CI this is almost always a shallow-clone problem and must not be
-        # treated as "no violations".  Locally (e.g. a brand-new repo with no
-        # origin/main) it's expected, so we only fail in CI.
-        if _fail_ci("git merge-base origin/main HEAD returned empty"):
-            return True
+    elif _fail_ci("origin/main is not available (shallow clone?)"):
+        return True
 
-    # CI (merge-queue / push-to-main): compare HEAD against its first parent.
-    # In a merge queue the branch *is* main, so merge-base == HEAD and the
-    # check above produces an empty diff.  Comparing HEAD~1..HEAD catches
-    # deletions or modifications introduced by the merge commit.
+    # CI (merge-queue / push-to-main): on main the branch *is* origin/main, so
+    # the diff above is empty.  Compare HEAD against its first parent to catch
+    # deletions or modifications introduced by the merge commit itself.
     head_parent = _git("rev-parse", "--verify", "HEAD~1")
     if head_parent.returncode == 0:
         violations = _get_violations(["HEAD~1..HEAD"])
