@@ -2,11 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import Parameter, apply_defaults
 from pyrit.common.path import (
     EXECUTOR_RED_TEAM_PATH,
@@ -23,20 +21,14 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.models import SeedAttackGroup
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import (
-    SelfAskRefusalScorer,
-    SelfAskTrueFalseScorer,
-    TrueFalseCompositeScorer,
-    TrueFalseInverterScorer,
-    TrueFalseScoreAggregator,
-    TrueFalseScorer,
-)
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
@@ -91,6 +83,16 @@ class Scam(Scenario):
     """
 
     VERSION: int = 1
+
+    @classmethod
+    def _get_additional_scoring_questions(cls) -> list[Path]:
+        """
+        Override true/false question paths for scam objective scoring.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question paths for scam objective scoring.
+        """
+        return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml"]
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -172,7 +174,7 @@ class Scam(Scenario):
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         # Used for multiturn strategies and RolePlayAttack rephrasing
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
 
         super().__init__(
@@ -185,55 +187,6 @@ class Scam(Scenario):
 
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
-
-    def _get_default_objective_scorer(self) -> TrueFalseCompositeScorer:
-        """
-        Retrieve the default objective scorer.
-        The scoring mechanism is as follows:
-        1. Detect for objective achieved using a SelfAskTrueFalseScorer with a custom true/false question path.
-        2. Detect for NON-refusal as a backstop. (If the target model refuses to produce scam materials, we want that
-        to register as a negative score).
-
-        Returns:
-            TrueFalseCompositeScorer: Default objective scorer with backstop and scam materials evaluation.
-        """
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        scam_materials = SelfAskTrueFalseScorer(
-            chat_target=OpenAIChatTarget(
-                endpoint=endpoint,
-                api_key=get_azure_openai_auth(endpoint or ""),
-                model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                temperature=0.9,
-            ),
-            true_false_question_path=SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml",
-        )
-
-        backstop = TrueFalseInverterScorer(
-            scorer=SelfAskRefusalScorer(
-                chat_target=OpenAIChatTarget(
-                    endpoint=endpoint,
-                    api_key=get_azure_openai_auth(endpoint or ""),
-                    model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-                )
-            )
-        )
-
-        return TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[scam_materials, backstop])
-
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        """
-        Provide an OpenAI target for the role-play rephrasing step.
-
-        Returns:
-            OpenAIChatTarget: Target that supplies the persuasion script rephrasing.
-        """
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """

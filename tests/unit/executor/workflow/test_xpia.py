@@ -91,9 +91,11 @@ def workflow(
     mock_attack_setup_target: MagicMock, mock_scorer: MagicMock, mock_prompt_normalizer: MagicMock
 ) -> XPIAWorkflow:
     """Create an XPIA workflow instance for testing."""
-    return XPIAWorkflow(
+    workflow = XPIAWorkflow(
         attack_setup_target=mock_attack_setup_target, scorer=mock_scorer, prompt_normalizer=mock_prompt_normalizer
     )
+    workflow._memory = MagicMock()
+    return workflow
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -237,6 +239,7 @@ class TestXPIAWorkflowPerform:
         workflow = XPIAWorkflow(
             attack_setup_target=mock_attack_setup_target, scorer=None, prompt_normalizer=mock_prompt_normalizer
         )
+        workflow._memory = MagicMock()
 
         # Setup mock responses
         mock_response = MagicMock()

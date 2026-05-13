@@ -41,6 +41,7 @@ from pyrit.prompt_converter.first_letter_converter import FirstLetterConverter
 from pyrit.prompt_converter.flip_converter import FlipConverter
 from pyrit.prompt_converter.image_color_saturation_converter import ImageColorSaturationConverter
 from pyrit.prompt_converter.image_compression_converter import ImageCompressionConverter
+from pyrit.prompt_converter.image_prompt_style_converter import ImagePromptStyleConverter
 from pyrit.prompt_converter.image_resizing_converter import ImageResizingConverter
 from pyrit.prompt_converter.image_rotation_converter import ImageRotationConverter
 from pyrit.prompt_converter.insert_punctuation_converter import InsertPunctuationConverter
@@ -171,6 +172,7 @@ __all__ = [
     "FlipConverter",
     "ImageColorSaturationConverter",
     "ImageCompressionConverter",
+    "ImagePromptStyleConverter",
     "ImageResizingConverter",
     "ImageRotationConverter",
     "IndexSelectionStrategy",

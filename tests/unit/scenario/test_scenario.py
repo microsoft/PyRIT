@@ -854,12 +854,16 @@ class TestGetDefaultObjectiveScorer:
         mock_registry.get_by_tag.return_value = [mock_entry]
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
-        result = Scenario._get_default_objective_scorer(MagicMock())
+        # Mock self with _get_additional_scoring_questions returning empty sequence
+        mock_self = MagicMock()
+        type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
+
+        result = Scenario._get_default_objective_scorer(mock_self)
         assert result is mock_scorer
 
-    @patch("pyrit.scenario.core.scenario.OpenAIChatTarget")
+    @patch("pyrit.scenario.core.scenario.get_default_scorer_target")
     @patch("pyrit.scenario.core.scenario.ScorerRegistry")
-    def test_returns_fallback_when_registry_empty(self, mock_registry_cls, mock_oai_target) -> None:
+    def test_returns_fallback_when_registry_empty(self, mock_registry_cls, mock_get_scorer_target) -> None:
         """Test fallback to TrueFalseInverterScorer when no tagged scorer exists."""
         from pyrit.score import TrueFalseInverterScorer
 
@@ -867,7 +871,11 @@ class TestGetDefaultObjectiveScorer:
         mock_registry.get_by_tag.return_value = []
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
-        result = Scenario._get_default_objective_scorer(MagicMock())
+        # Mock self with _get_additional_scoring_questions returning empty sequence
+        mock_self = MagicMock()
+        type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
+
+        result = Scenario._get_default_objective_scorer(mock_self)
         assert isinstance(result, TrueFalseInverterScorer)
 
 

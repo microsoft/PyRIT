@@ -198,6 +198,7 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
     if context._operation:
         default_labels["operation"] = context._operation
     app.state.default_labels = default_labels
+    app.state.max_concurrent_scenario_runs = context._max_concurrent_scenario_runs
 
     display_host = parsed_args.host
     print(f"🚀 Starting PyRIT backend on http://{display_host}:{parsed_args.port}")

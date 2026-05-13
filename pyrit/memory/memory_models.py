@@ -723,7 +723,7 @@ class AttackResultEntry(Base):
     )
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
     execution_time_ms = mapped_column(INTEGER, nullable=False, default=0)
-    outcome: Mapped[Literal["success", "failure", "undetermined"]] = mapped_column(
+    outcome: Mapped[Literal["success", "failure", "error", "undetermined"]] = mapped_column(
         String, nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)
@@ -735,6 +735,15 @@ class AttackResultEntry(Base):
     # Version of PyRIT used when this attack result was created
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
+
+    # Error information (populated when attack fails with exception)
+    error_message = mapped_column(Unicode, nullable=True)
+    error_type = mapped_column(String, nullable=True)
+    error_traceback = mapped_column(Unicode, nullable=True)
+
+    # Retry events (JSON-serialized list of RetryEvent dicts)
+    retry_events_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
+    total_retries = mapped_column(INTEGER, nullable=True, default=0)
 
     last_response: Mapped[Optional["PromptMemoryEntry"]] = relationship(
         "PromptMemoryEntry",
@@ -797,6 +806,18 @@ class AttackResultEntry(Base):
 
         self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
         self.pyrit_version = pyrit.__version__
+
+        # Error information
+        self.error_message = entry.error_message
+        self.error_type = entry.error_type
+        # Truncate traceback to 10KB to avoid excessive DB storage
+        self.error_traceback = entry.error_traceback[:10240] if entry.error_traceback else None
+
+        # Retry events
+        self.retry_events_json = (
+            json.dumps([evt.to_dict() for evt in entry.retry_events]) if entry.retry_events else None
+        )
+        self.total_retries = entry.total_retries
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> Optional[uuid.UUID]:
@@ -883,6 +904,13 @@ class AttackResultEntry(Base):
                 attack_identifier=ComponentIdentifier.from_dict(self.attack_identifier),
             )
 
+        # Deserialize retry events from JSON
+        retry_events = []
+        if self.retry_events_json:
+            from pyrit.models.retry_event import RetryEvent
+
+            retry_events = [RetryEvent.from_dict(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
+
         return AttackResult(
             conversation_id=self.conversation_id,
             attack_result_id=str(self.id),
@@ -898,6 +926,11 @@ class AttackResultEntry(Base):
             metadata=self.attack_metadata or {},
             timestamp=_ensure_utc(self.timestamp) or datetime.now(tz=timezone.utc),
             labels=self.labels or {},
+            error_message=self.error_message,
+            error_type=self.error_type,
+            error_traceback=self.error_traceback,
+            retry_events=retry_events,
+            total_retries=self.total_retries or 0,
         )
 
 
@@ -949,7 +982,7 @@ class ScenarioResultEntry(Base):
     scenario_init_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     objective_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[Optional[dict[str, str]]] = mapped_column(JSON, nullable=True)
-    scenario_run_state: Mapped[Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]] = mapped_column(
+    scenario_run_state: Mapped[Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]] = mapped_column(
         String, nullable=False, default="CREATED"
     )
     attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
@@ -958,6 +991,13 @@ class ScenarioResultEntry(Base):
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
     completion_time = mapped_column(DateTime, nullable=False)
     timestamp = mapped_column(DateTime, nullable=False)
+
+    # Pointer to failed attack result(s) — avoids scanning all attacks for error info
+    error_attack_result_ids_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
+
+    # Scenario-level error info (persisted so it survives process restarts)
+    error_message: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
+    error_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     def __init__(self, *, entry: ScenarioResult) -> None:
         """
@@ -1004,6 +1044,14 @@ class ScenarioResultEntry(Base):
         # Serialize display_group_map if present
         self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
 
+        # Serialize error_attack_result_ids if present
+        self.error_attack_result_ids_json = (
+            json.dumps(entry.error_attack_result_ids) if entry.error_attack_result_ids else None
+        )
+
+        self.error_message = entry.error_message
+        self.error_type = entry.error_type
+
         self.timestamp = datetime.now(tz=timezone.utc)
 
     def get_scenario_result(self) -> ScenarioResult:
@@ -1045,6 +1093,11 @@ class ScenarioResultEntry(Base):
         if self.display_group_map_json:
             display_group_map = json.loads(self.display_group_map_json)
 
+        # Deserialize error_attack_result_ids if stored
+        error_attack_result_ids: list[str] | None = None
+        if self.error_attack_result_ids_json:
+            error_attack_result_ids = json.loads(self.error_attack_result_ids_json)
+
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
@@ -1053,9 +1106,13 @@ class ScenarioResultEntry(Base):
             objective_scorer_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
             scenario_run_state=self.scenario_run_state,
             labels=self.labels,
+            creation_time=self.timestamp,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
             display_group_map=display_group_map,
+            error_attack_result_ids=error_attack_result_ids,
+            error_message=self.error_message,
+            error_type=self.error_type,
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:

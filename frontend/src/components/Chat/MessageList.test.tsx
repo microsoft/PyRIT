@@ -87,6 +87,50 @@ describe("MessageList", () => {
     expect(screen.getByText("Assistant message test")).toBeInTheDocument();
   });
 
+  describe("bubble class composition", () => {
+    // Regression guard for an earlier bug where the user-bubble background
+    // override silently lost to the assistant-bubble base style. The cause was
+    // string-concatenated class names — Griffel's atomic CSS doesn't dedupe
+    // conflicting properties unless mergeClasses is used. We assert here that
+    // the two bubble containers receive distinguishable className strings, so
+    // the override always has a chance to win.
+    it("renders user and assistant bubbles with distinct class signatures", () => {
+      render(
+        <TestWrapper>
+          <MessageList
+            messages={[
+              {
+                role: "user",
+                content: "u",
+                timestamp: new Date().toISOString(),
+              },
+              {
+                role: "assistant",
+                content: "a",
+                timestamp: new Date().toISOString(),
+              },
+            ]}
+          />
+        </TestWrapper>
+      );
+      const userBubble = screen.getByTestId("message-bubble-0");
+      const assistantBubble = screen.getByTestId("message-bubble-1");
+      // The two bubble class strings must differ — otherwise the user
+      // override silently lost (which was the original bug).
+      expect(userBubble.className).not.toBe(assistantBubble.className);
+      // Both bubbles must carry at least one style hook (catches a future
+      // refactor that drops the className entirely).
+      expect(userBubble.className.trim()).not.toBe('');
+      expect(assistantBubble.className.trim()).not.toBe('');
+      // The user bubble must carry at least one style hook the assistant
+      // bubble doesn't have — that's the override actually being applied.
+      const userClasses = userBubble.className.split(/\s+/).filter(Boolean);
+      const assistantClasses = new Set(assistantBubble.className.split(/\s+/).filter(Boolean));
+      const userOnly = userClasses.filter(c => !assistantClasses.has(c));
+      expect(userOnly.length).toBeGreaterThan(0);
+    });
+  });
+
   it("should handle messages with image attachments", () => {
     const messagesWithAttachments: Message[] = [
       {

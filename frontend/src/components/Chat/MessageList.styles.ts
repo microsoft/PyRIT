@@ -20,13 +20,15 @@ export const useMessageListStyles = makeStyles({
     flexDirection: 'row-reverse',
   },
   messageContent: {
-    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
     padding: tokens.spacingVerticalM,
     borderRadius: tokens.borderRadiusMedium,
     flex: 1,
   },
   userMessageContent: {
-    backgroundColor: tokens.colorBrandBackground,
+    backgroundColor: tokens.colorBrandBackground2,
+    border: `1px solid ${tokens.colorBrandStroke2}`,
   },
   messageText: {
     whiteSpace: 'pre-wrap',

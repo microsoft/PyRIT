@@ -16,6 +16,7 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
 from tqdm.auto import tqdm
@@ -27,14 +28,23 @@ from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-from pyrit.score import Scorer, SelfAskRefusalScorer, TrueFalseInverterScorer, TrueFalseScorer
+from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
+from pyrit.score import (
+    Scorer,
+    SelfAskRefusalScorer,
+    SelfAskTrueFalseScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -106,6 +116,18 @@ class Scenario(ABC):
     #: Capability requirements placed on ``objective_target``. Subclasses override to declare
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    @classmethod
+    def _get_additional_scoring_questions(cls) -> Sequence[Path]:
+        """
+        Paths to additional true/false question prompts for objective scoring.
+
+        These prompts are used in the default scenario scorer in addition to a simple self-ask scorer.
+
+        Returns:
+            Sequence[Path]: Paths to true/false question prompts, or an empty sequence to use the default scorer.
+        """
+        return []
 
     def __init__(
         self,
@@ -310,16 +332,54 @@ class Scenario(ABC):
         return technique_name
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
-        # Deferred import to avoid circular dependency:
+        # Deferred import to avoid circular dependency.
         from pyrit.setup.initializers.components.scorers import ScorerInitializerTags
 
+        # first check if the registry has a default objective scorer
+        # if available either itself, or its chat target will be used
+        chat_target: PromptTarget | None = None
+        registry_default_scorer: TrueFalseScorer | None = None
         entries = ScorerRegistry.get_registry_singleton().get_by_tag(tag=ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER)
         if entries and isinstance(entries[0].instance, TrueFalseScorer):
-            scorer = entries[0].instance
-            logger.info(f"Using registered default objective scorer: {type(scorer).__name__}")
+            registry_default_scorer = entries[0].instance
+            chat_target = registry_default_scorer.get_chat_target()
+            logger.info(
+                f"The registry contains default objective scorer: {type(registry_default_scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+            )
+
+        chat_target = chat_target or get_default_scorer_target()
+
+        # if the scenario has override composite scorer questions, use them to build a composite scorer
+        composite_scorer_questions_paths = type(self)._get_additional_scoring_questions()
+        if composite_scorer_questions_paths:
+            path_scorers: list[TrueFalseScorer] = [
+                SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question_path=path)
+                for path in composite_scorer_questions_paths
+            ]
+            backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+            scorer = TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.AND,
+                scorers=[*path_scorers, backstop_scorer],
+            )
+            logger.info(
+                f"Using composite default objective scorer: {type(scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__}"
+            )
             return scorer
-        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget()))
-        logger.info(f"No registered default objective scorer found, using fallback: {type(scorer).__name__}")
+
+        if registry_default_scorer:
+            logger.info(
+                f"Using registry default objective scorer: {type(registry_default_scorer).__name__} "
+                f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+            )
+            return registry_default_scorer
+
+        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+        logger.warning(
+            f"Using fallback default objective scorer: {type(scorer).__name__} "
+            f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
+        )
         return scorer
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
@@ -1095,18 +1155,35 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
+                        # Collect error attack result IDs from the exceptions
+                        error_ids = []
+                        for _, exc in atomic_results.incomplete_objectives:
+                            error_id = getattr(exc, "error_attack_result_id", None)
+                            if error_id:
+                                error_ids.append(error_id)
+
+                        # Link error attack results to the scenario result
+                        if error_ids:
+                            self._memory.update_scenario_error_attacks(
+                                scenario_result_id=scenario_result_id,
+                                error_attack_result_ids=error_ids,
+                            )
+
                         # Mark scenario as failed
+                        error_msg = (
+                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
+                            f"See attack results for details."
+                        )
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=error_msg,
+                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
                         )
 
                         # Raise exception with detailed information
-                        raise ValueError(
-                            f"Failed to execute atomic attack {i} ('{atomic_attack.atomic_attack_name}') "
-                            f"in scenario '{self._name}': {incomplete_count} of {incomplete_count + completed_count} "
-                            f"objectives incomplete. First failure: {atomic_results.incomplete_objectives[0][1]}"
-                        ) from atomic_results.incomplete_objectives[0][1]
+                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
                     logger.info(
                         f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
                         f"{len(atomic_results.completed_results)} results"
@@ -1125,6 +1202,8 @@ class Scenario(ABC):
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=str(e),
+                            error_type=type(e).__name__,
                         )
 
                     raise

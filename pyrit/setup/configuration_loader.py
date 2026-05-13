@@ -132,6 +132,7 @@ class ConfigurationLoader(YamlLoadable):
     operator: Optional[str] = None
     operation: Optional[str] = None
     scenario: Optional[Union[str, dict[str, Any]]] = None
+    max_concurrent_scenario_runs: int = 3
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -262,7 +263,7 @@ class ConfigurationLoader(YamlLoadable):
             extensions = filtered_data["extensions"]
             if not isinstance(extensions, dict):
                 raise ValueError(f"ConfigurationLoader.extensions must be a dict. Got: {type(extensions).__name__}")
-            extra_data = {**extensions, **extra_data}
+            extra_data = {**extra_data, **extensions}
         return cls(**known_data, extensions=extra_data)
 
     @staticmethod
