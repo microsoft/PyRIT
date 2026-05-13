@@ -702,7 +702,12 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
         return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
-        return self._atomic_attacks_to_return
+        atomic_attacks = list(self._atomic_attacks_to_return)
+        if self._include_baseline:
+            groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+            all_seed_groups = [g for groups in groups_by_dataset.values() for g in groups]
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
+        return atomic_attacks
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -721,10 +726,12 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_all_seed_attack_groups.return_value = [
-            SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
-            SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
-        ]
+        mock_dataset_config.get_seed_attack_groups.return_value = {
+            "default": [
+                SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
+                SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
+            ]
+        }
 
         # Initialize with None (default strategy) — [] also works, both expand defaults
         await scenario.initialize_async(
@@ -749,9 +756,9 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_all_seed_attack_groups.return_value = [
-            SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
-        ]
+        mock_dataset_config.get_seed_attack_groups.return_value = {
+            "default": [SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")])]
+        }
 
         # Initialize with None — [] also expands defaults now, both are equivalent
         await scenario.initialize_async(
@@ -808,7 +815,7 @@ class TestScenarioBaselineOnlyExecution:
         ]
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_all_seed_attack_groups.return_value = expected_seeds
+        mock_dataset_config.get_seed_attack_groups.return_value = {"default": expected_seeds}
 
         await scenario.initialize_async(
             objective_target=mock_objective_target,

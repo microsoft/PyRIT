@@ -49,7 +49,6 @@ from pyrit.score import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -682,15 +681,6 @@ class Scenario(ABC):
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
-        # Transitional guard (removed when _get_baseline / _get_baseline_data are deleted).
-        # Skip the legacy post-hoc insert when _get_atomic_attacks_async already emitted
-        # baseline at index 0 (the structural path); fall through to the old behavior for
-        # overrides not yet migrated.
-        already_emitted_baseline = bool(self._atomic_attacks) and self._atomic_attacks[0].atomic_attack_name == "baseline"
-        if include_baseline and not already_emitted_baseline:
-            baseline_attack = self._get_baseline()
-            self._atomic_attacks.insert(0, baseline_attack)
-
         # Store original objectives for each atomic attack (before any mutations during execution)
         self._original_objectives_map = {
             atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
@@ -778,69 +768,6 @@ class Scenario(ABC):
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
-
-    def _get_baseline(self) -> AtomicAttack:
-        """
-        Get a baseline AtomicAttack, which simply sends all the objectives without any modifications.
-
-        If other atomic attacks exist, derives baseline data from the first attack.
-        Otherwise, creates a standalone baseline from the dataset configuration and scenario settings.
-
-        Returns:
-            AtomicAttack: The baseline AtomicAttack instance.
-
-        Raises:
-            ValueError: If required data (seed_groups, objective_target, attack_scoring_config)
-                       is not available.
-        """
-        seed_groups, attack_scoring_config, objective_target = self._get_baseline_data()
-
-        # Create baseline attack with no converters
-        attack = PromptSendingAttack(
-            objective_target=objective_target,
-            attack_scoring_config=attack_scoring_config,
-        )
-
-        return AtomicAttack(
-            atomic_attack_name="baseline",
-            attack_technique=AttackTechnique(attack=attack),
-            seed_groups=seed_groups,
-            memory_labels=self._memory_labels,
-        )
-
-    def _get_baseline_data(self) -> tuple[list["SeedAttackGroup"], "AttackScoringConfig", PromptTarget]:
-        """
-        Get the data needed to create a baseline attack.
-
-        Returns the scenario-level data
-
-        Returns:
-            Tuple containing (seed_groups, attack_scoring_config, objective_target)
-
-        Raises:
-            ValueError: If required data is not available.
-        """
-        # Create from scenario-level settings
-        if not self._objective_target:
-            raise ValueError("Objective target is required to create baseline attack.")
-        if not self._dataset_config:
-            raise ValueError("Dataset config is required to create baseline attack.")
-        if not self._objective_scorer:
-            raise ValueError("Objective scorer is required to create baseline attack.")
-
-        seed_groups = self._dataset_config.get_all_seed_attack_groups()
-        if not seed_groups or len(seed_groups) == 0:
-            raise ValueError("Seed groups are required to create baseline attack.")
-
-        # Import here to avoid circular imports
-        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-
-        attack_scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
-
-        if not attack_scoring_config:
-            raise ValueError("Attack scoring config is required to create baseline attack.")
-
-        return seed_groups, attack_scoring_config, self._objective_target
 
     def _raise_dataset_exception(self) -> None:
         error_msg = textwrap.dedent(
