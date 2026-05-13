@@ -710,6 +710,17 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
         return atomic_attacks
 
 
+class _LegacyOverrideScenario(ConcreteScenarioWithTrueFalseScorer):
+    """Override that does NOT emit baseline — exercises the deprecation rescue path.
+
+    Real user scenarios written before the structural fix may follow this pattern;
+    the rescue path warns and injects baseline so they keep working until v0.16.0.
+    """
+
+    async def _get_atomic_attacks_async(self):
+        return list(self._atomic_attacks_to_return)
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioBaselineOnlyExecution:
     """Tests for baseline-only execution (empty strategies with include_baseline=True)."""
@@ -991,6 +1002,63 @@ class TestBuildBaselineAtomicAttack:
 
         with pytest.raises(ValueError, match="Objective scorer is required"):
             scenario._build_baseline_atomic_attack(seed_groups=self._seed_groups())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestBaselineEmissionDeprecationRescue:
+    """Deprecation rescue (removed in v0.16.0): overrides that don't emit baseline get a
+    DeprecationWarning + auto-injected baseline so they keep working during the migration."""
+
+    @staticmethod
+    def _dataset_config():
+        from pyrit.models import SeedGroup, SeedObjective
+
+        return DatasetConfiguration(
+            seed_groups=[SeedGroup(seeds=[SeedObjective(value="x")])],
+        )
+
+    async def test_rescue_emits_warning_and_injects_baseline(self, mock_objective_target):
+        import warnings
+
+        scenario = _LegacyOverrideScenario(name="LegacyOverride", version=1)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                dataset_config=self._dataset_config(),
+                include_baseline=True,
+            )
+
+        deprecations = [
+            w
+            for w in caught
+            if issubclass(w.category, DeprecationWarning) and "_get_atomic_attacks_async" in str(w.message)
+        ]
+        assert len(deprecations) == 1, "rescue should emit exactly one DeprecationWarning naming the method"
+        assert "v0.16.0" in str(deprecations[0].message)
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+
+    async def test_well_behaved_override_does_not_trigger_rescue(self, mock_objective_target):
+        import warnings
+
+        scenario = ConcreteScenarioWithTrueFalseScorer(name="GoodCitizen", version=1)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                dataset_config=self._dataset_config(),
+                include_baseline=True,
+            )
+
+        rescue_warnings = [
+            w
+            for w in caught
+            if issubclass(w.category, DeprecationWarning) and "_get_atomic_attacks_async" in str(w.message)
+        ]
+        assert not rescue_warnings, "well-behaved override should not trigger the rescue path"
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
 
 
 @pytest.mark.usefixtures("patch_central_database")

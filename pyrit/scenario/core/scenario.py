@@ -681,6 +681,17 @@ class Scenario(ABC):
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
+        # Deprecation rescue (removed in v0.16.0): if the override didn't emit baseline,
+        # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
+        if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
+            print_deprecation_message(
+                old_item=f"{type(self).__name__}._get_atomic_attacks_async() not emitting baseline",
+                new_item="call self._build_baseline_atomic_attack(seed_groups=...) inside the override",
+                removed_in="v0.16.0",
+            )
+            seed_groups = self._dataset_config.get_all_seed_attack_groups()
+            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
+
         # Store original objectives for each atomic attack (before any mutations during execution)
         self._original_objectives_map = {
             atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
