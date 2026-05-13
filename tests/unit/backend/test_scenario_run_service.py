@@ -72,6 +72,9 @@ def _make_db_scenario_result(
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
     sr.display_group_map = {}
+    sr.error_message = None
+    sr.error_type = None
+    sr.error_attack_result_ids = []
     return sr
 
 
@@ -294,6 +297,26 @@ class TestScenarioRunServiceGetRun:
         assert fetched.scenario_name == "foundry.red_team_agent"
         assert fetched.status == ScenarioRunStatus.IN_PROGRESS
 
+    def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
+        """Test that get_run extracts error from persisted error AttackResult when no active task."""
+        db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
+        db_result.error_attack_result_ids = ["err-ar-1"]
+
+        # Mock the error AttackResult lookup
+        error_ar = MagicMock()
+        error_ar.error_message = "Connection refused"
+        error_ar.error_type = "ConnectionError"
+        mock_memory.get_scenario_results.return_value = [db_result]
+        mock_memory.get_attack_results.return_value = [error_ar]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-fail")
+
+        assert fetched is not None
+        assert fetched.error == "Connection refused"
+        assert fetched.error_type == "ConnectionError"
+        mock_memory.get_attack_results.assert_called_once_with(attack_result_ids=["err-ar-1"])
+
 
 class TestScenarioRunServiceListRuns:
     """Tests for ScenarioRunService.list_runs."""
@@ -351,7 +374,10 @@ class TestScenarioRunServiceCancelRun:
         result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
-            scenario_result_id=response.scenario_result_id, scenario_run_state="CANCELLED"
+            scenario_result_id=response.scenario_result_id,
+            scenario_run_state="CANCELLED",
+            error_message="Run was cancelled by user",
+            error_type="CancelledError",
         )
         assert result is not None
         assert result.status == ScenarioRunStatus.CANCELLED
@@ -470,6 +496,11 @@ class TestScenarioRunServiceGetResults:
         mock_attack_result.executed_turns = 3
         mock_attack_result.execution_time_ms = 1500
         mock_attack_result.timestamp = None
+        mock_attack_result.error_message = None
+        mock_attack_result.error_type = None
+        mock_attack_result.error_traceback = None
+        mock_attack_result.total_retries = 0
+        mock_attack_result.retry_events = []
 
         db_result = _make_db_scenario_result(
             result_id="sr-123",

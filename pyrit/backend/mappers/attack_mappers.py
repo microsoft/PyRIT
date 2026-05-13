@@ -30,6 +30,7 @@ from pyrit.backend.models.attacks import (
     Message,
     MessagePiece,
     MessagePieceRequest,
+    RetryEventResponse,
     Score,
     TargetInfo,
 )
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
+    from pyrit.models.retry_event import RetryEvent
 
 # ============================================================================
 # Domain → DTO  (for API responses)
@@ -181,6 +183,34 @@ def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]
     return value
 
 
+def retry_events_to_response(retry_events: list[RetryEvent] | None) -> list[RetryEventResponse] | None:
+    """
+    Convert a list of RetryEvent domain objects to RetryEventResponse DTOs.
+
+    Args:
+        retry_events: Domain retry events, or None.
+
+    Returns:
+        List of RetryEventResponse DTOs, or None if the input is None or empty.
+    """
+    if not retry_events:
+        return None
+    return [
+        RetryEventResponse(
+            timestamp=evt.timestamp,
+            attempt_number=evt.attempt_number,
+            function_name=evt.function_name,
+            exception_type=evt.exception_type,
+            exception_message=evt.exception_message,
+            component_role=evt.component_role,
+            component_name=evt.component_name,
+            endpoint=evt.endpoint,
+            elapsed_seconds=evt.elapsed_seconds,
+        )
+        for evt in retry_events
+    ]
+
+
 def attack_result_to_summary(
     ar: AttackResult,
     *,
@@ -232,6 +262,9 @@ def attack_result_to_summary(
         else None
     )
 
+    # Build retry event responses if available
+    retry_event_responses = retry_events_to_response(ar.retry_events)
+
     return AttackSummary(
         attack_result_id=ar.attack_result_id,
         conversation_id=ar.conversation_id,
@@ -246,6 +279,11 @@ def attack_result_to_summary(
         labels=labels,
         created_at=created_at,
         updated_at=updated_at,
+        error_message=ar.error_message,
+        error_type=ar.error_type,
+        error_traceback=ar.error_traceback,
+        total_retries=ar.total_retries,
+        retry_events=retry_event_responses,
     )
 
 

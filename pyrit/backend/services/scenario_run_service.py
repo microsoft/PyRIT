@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from pyrit.backend.mappers.attack_mappers import retry_events_to_response
 from pyrit.backend.models.scenarios import (
     AtomicAttackResults,
     AttackSummary,
@@ -183,7 +184,12 @@ class ScenarioRunService:
                 await asyncio.wait_for(active.task, timeout=5.0)
 
         # Persist cancelled state to DB
-        self._memory.update_scenario_run_state(scenario_result_id=scenario_result_id, scenario_run_state="CANCELLED")
+        self._memory.update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state="CANCELLED",
+            error_message="Run was cancelled by user",
+            error_type="CancelledError",
+        )
 
         return self._build_response(scenario_result_id=scenario_result_id)
 
@@ -395,12 +401,24 @@ class ScenarioRunService:
         scenario_result_id = str(scenario_result.id)
         active = self._active_tasks.get(scenario_result_id)
 
-        # Clean up finished active tasks after reading the error
-        error = None
-        if active is not None:
+        # Clean up finished active tasks
+        if active is not None and active.task is not None and active.task.done():
+            del self._active_tasks[scenario_result_id]
+
+        # Primary source: DB-persisted error fields
+        error = scenario_result.error_message
+        error_type = scenario_result.error_type
+
+        # Fallback: look up error from persisted error AttackResults
+        if not error and scenario_result.error_attack_result_ids:
+            error_ars = self._memory.get_attack_results(attack_result_ids=scenario_result.error_attack_result_ids)
+            if error_ars:
+                error = error_ars[0].error_message
+                error_type = error_ars[0].error_type
+
+        # Fallback: in-memory error for in-flight tasks where DB hasn't been updated yet
+        if not error and active is not None:
             error = active.error
-            if active.task is not None and active.task.done():
-                del self._active_tasks[scenario_result_id]
 
         status = ScenarioRunStatus(scenario_result.scenario_run_state)
 
@@ -422,6 +440,7 @@ class ScenarioRunService:
             created_at=scenario_result.creation_time,
             updated_at=scenario_result.completion_time,
             error=error,
+            error_type=error_type,
             strategies_used=strategies_used,
             total_attacks=total_attacks,
             completed_attacks=completed_attacks,
@@ -463,6 +482,8 @@ class ScenarioRunService:
             details: list[AttackSummary] = []
             success_count = 0
             failure_count = 0
+            group_total_retries = 0
+            group_error_count = 0
 
             for ar in attack_results:
                 score_value = None
@@ -474,6 +495,16 @@ class ScenarioRunService:
                     last_response_text = str(ar.last_response)
 
                 timestamp = ar.timestamp or datetime.now(timezone.utc)
+
+                # Build retry event responses using the shared mapper
+                retry_event_responses = retry_events_to_response(ar.retry_events)
+
+                # Extract error/retry fields
+                ar_error_message = ar.error_message
+                ar_error_type = ar.error_type
+                ar_error_traceback = ar.error_traceback
+                ar_total_retries = ar.total_retries
+
                 details.append(
                     AttackSummary(
                         attack_result_id=ar.attack_result_id,
@@ -487,6 +518,11 @@ class ScenarioRunService:
                         execution_time_ms=ar.execution_time_ms,
                         created_at=timestamp,
                         updated_at=timestamp,
+                        error_message=ar_error_message,
+                        error_type=ar_error_type,
+                        error_traceback=ar_error_traceback,
+                        total_retries=ar_total_retries,
+                        retry_events=retry_event_responses,
                     )
                 )
 
@@ -494,6 +530,10 @@ class ScenarioRunService:
                     success_count += 1
                 elif ar.outcome == AttackOutcome.FAILURE:
                     failure_count += 1
+
+                group_total_retries += ar_total_retries
+                if ar_error_message:
+                    group_error_count += 1
 
             attacks.append(
                 AtomicAttackResults(
@@ -503,6 +543,8 @@ class ScenarioRunService:
                     success_count=success_count,
                     failure_count=failure_count,
                     total_count=len(details),
+                    total_retries=group_total_retries,
+                    error_count=group_error_count,
                 )
             )
 
