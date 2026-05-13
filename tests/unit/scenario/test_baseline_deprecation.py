@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Deprecated. Will be removed in v0.16.0 along with the corresponding
+Deprecated. Will be removed in 0.16.0 along with the corresponding
 ``include_default_baseline`` / ``include_baseline`` constructor shims in
 ``Scenario`` and its subclasses (``Cyber``, ``Jailbreak``, ``Scam``,
 ``RedTeamAgent``, ``Encoding``).
@@ -87,7 +87,7 @@ class TestScenarioBaseDeprecation:
         assert len(deprecations) == 1
         msg = str(deprecations[0].message)
         assert "include_default_baseline" in msg
-        assert "v0.16.0" in msg
+        assert "0.16.0" in msg
         assert scenario._legacy_include_baseline is False
 
     def test_base_kwarg_omitted_emits_no_warning(self):
@@ -161,7 +161,7 @@ class TestSubclassBaselineKwargDeprecation:
             w for w in caught if issubclass(w.category, DeprecationWarning) and class_name in str(w.message)
         ]
         assert len(deprecations) >= 1, f"{class_name} did not emit a DeprecationWarning naming the class"
-        assert "v0.16.0" in str(deprecations[0].message)
+        assert "0.16.0" in str(deprecations[0].message)
         assert scenario._legacy_include_baseline is False
 
 

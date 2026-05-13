@@ -714,7 +714,7 @@ class _LegacyOverrideScenario(ConcreteScenarioWithTrueFalseScorer):
     """Override that does NOT emit baseline — exercises the deprecation rescue path.
 
     Real user scenarios written before the structural fix may follow this pattern;
-    the rescue path warns and injects baseline so they keep working until v0.16.0.
+    the rescue path warns and injects baseline so they keep working until 0.16.0.
     """
 
     async def _get_atomic_attacks_async(self):
@@ -1006,7 +1006,7 @@ class TestBuildBaselineAtomicAttack:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBaselineEmissionDeprecationRescue:
-    """Deprecation rescue (removed in v0.16.0): overrides that don't emit baseline get a
+    """Deprecation rescue (removed in 0.16.0): overrides that don't emit baseline get a
     DeprecationWarning + auto-injected baseline so they keep working during the migration."""
 
     @staticmethod
@@ -1036,7 +1036,7 @@ class TestBaselineEmissionDeprecationRescue:
             if issubclass(w.category, DeprecationWarning) and "_get_atomic_attacks_async" in str(w.message)
         ]
         assert len(deprecations) == 1, "rescue should emit exactly one DeprecationWarning naming the method"
-        assert "v0.16.0" in str(deprecations[0].message)
+        assert "0.16.0" in str(deprecations[0].message)
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
 
     async def test_well_behaved_override_does_not_trigger_rescue(self, mock_objective_target):

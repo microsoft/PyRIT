@@ -167,7 +167,7 @@ class Scenario(ABC):
         strategy_class: type[ScenarioStrategy],
         objective_scorer: Scorer,
         scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
-        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in v0.16.0.
+        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a scenario.
@@ -181,7 +181,7 @@ class Scenario(ABC):
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
-            include_default_baseline (bool | None): **Deprecated.** Will be removed in v0.16.0.
+            include_default_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0.
                 Pass ``include_baseline`` to ``initialize_async`` instead. When set, the value is
                 used as the effective ``include_baseline`` for the next ``initialize_async`` call
                 unless that call passes its own ``include_baseline``.
@@ -238,7 +238,7 @@ class Scenario(ABC):
         # before _get_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
 
-        # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along
         # with the include_default_baseline kwarg above and the legacy fallback branch in
         # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
         self._legacy_include_baseline: bool | None = None
@@ -246,7 +246,7 @@ class Scenario(ABC):
             print_deprecation_message(
                 old_item="Scenario(include_default_baseline=...)",
                 new_item="Scenario.initialize_async(include_baseline=...)",
-                removed_in="v0.16.0",
+                removed_in="0.16.0",
             )
             self._legacy_include_baseline = include_default_baseline
 
@@ -647,7 +647,7 @@ class Scenario(ABC):
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
 
-        # Deprecated. Will be removed in v0.16.0. Honor the legacy constructor-time
+        # Deprecated. Will be removed in 0.16.0. Honor the legacy constructor-time
         # include_default_baseline (or subclass include_baseline) only when the caller did
         # not supply a runtime value.
         if include_baseline is None and self._legacy_include_baseline is not None:
@@ -681,13 +681,13 @@ class Scenario(ABC):
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
-        # Deprecation rescue (removed in v0.16.0): if the override didn't emit baseline,
+        # Deprecation rescue. Will be removed in 0.16.0. If the override didn't emit baseline,
         # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
         if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
             print_deprecation_message(
-                old_item=f"{type(self).__name__}._get_atomic_attacks_async() not emitting baseline",
-                new_item="call self._build_baseline_atomic_attack(seed_groups=...) inside the override",
-                removed_in="v0.16.0",
+                old_item=f"Implicit baseline injection for {type(self).__name__} overriding _get_atomic_attacks_async()",
+                new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
+                removed_in="0.16.0",
             )
             seed_groups = self._dataset_config.get_all_seed_attack_groups()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))

@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in v0.16.0.
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
@@ -110,7 +110,7 @@ class Cyber(Scenario):
         *,
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in v0.16.0.
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the cyber harms scenario.
@@ -119,7 +119,7 @@ class Cyber(Scenario):
             objective_scorer (TrueFalseScorer | None): Objective scorer for malware detection. If not
                 provided, defaults to a composite scorer using malware detection + refusal backstop.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
-            include_baseline (bool | None): **Deprecated.** Will be removed in v0.16.0. Pass
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
         """
         self._objective_scorer: TrueFalseScorer = (
@@ -133,12 +133,12 @@ class Cyber(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-        # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along with
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
         # the include_baseline kwarg above.
         if include_baseline is not None:
             print_deprecation_message(
                 old_item="Cyber(include_baseline=...)",
                 new_item="Cyber.initialize_async(include_baseline=...)",
-                removed_in="v0.16.0",
+                removed_in="0.16.0",
             )
             self._legacy_include_baseline = include_baseline
