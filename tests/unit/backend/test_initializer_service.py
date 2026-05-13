@@ -29,7 +29,7 @@ def client() -> TestClient:
 
 
 @pytest.fixture
-def client_with_custom_initializers_enabled() -> TestClient:
+def client_with_custom_initializers_enabled():
     """Create a test client with allow_custom_initializers enabled."""
     app.state.allow_custom_initializers = True
     yield TestClient(app)
@@ -413,14 +413,10 @@ class TestRegisterInitializerRoute:
             assert len(data) == 1
             assert data[0]["initializer_name"] == "my_custom"
 
-    def test_post_returns_404_when_script_not_found(
-        self, client_with_custom_initializers_enabled: TestClient
-    ) -> None:
+    def test_post_returns_404_when_script_not_found(self, client_with_custom_initializers_enabled: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.register_initializer_async = AsyncMock(
-                side_effect=FileNotFoundError("not found")
-            )
+            mock_service.register_initializer_async = AsyncMock(side_effect=FileNotFoundError("not found"))
             mock_get_service.return_value = mock_service
 
             response = client_with_custom_initializers_enabled.post(
@@ -429,14 +425,10 @@ class TestRegisterInitializerRoute:
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_post_returns_400_for_invalid_script(
-        self, client_with_custom_initializers_enabled: TestClient
-    ) -> None:
+    def test_post_returns_400_for_invalid_script(self, client_with_custom_initializers_enabled: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.register_initializer_async = AsyncMock(
-                side_effect=ValueError("no classes")
-            )
+            mock_service.register_initializer_async = AsyncMock(side_effect=ValueError("no classes"))
             mock_get_service.return_value = mock_service
 
             response = client_with_custom_initializers_enabled.post(
@@ -473,9 +465,7 @@ class TestUnregisterInitializerRoute:
         response = client.delete("/api/initializers/target")
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_delete_returns_204_on_success(
-        self, client_with_custom_initializers_enabled: TestClient
-    ) -> None:
+    def test_delete_returns_204_on_success(self, client_with_custom_initializers_enabled: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.unregister_initializer_async = AsyncMock(return_value=None)
@@ -485,9 +475,7 @@ class TestUnregisterInitializerRoute:
 
             assert response.status_code == status.HTTP_204_NO_CONTENT
 
-    def test_delete_returns_404_when_not_found(
-        self, client_with_custom_initializers_enabled: TestClient
-    ) -> None:
+    def test_delete_returns_404_when_not_found(self, client_with_custom_initializers_enabled: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.unregister_initializer_async = AsyncMock(side_effect=KeyError("not found"))

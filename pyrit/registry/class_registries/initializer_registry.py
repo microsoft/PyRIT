@@ -11,6 +11,7 @@ PyRITInitializer subclasses from the pyrit/setup/initializers directory structur
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,8 +116,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             file_path: Path to the Python file to process.
             base_class: The PyRITInitializer base class.
         """
-        import inspect
-
         short_name = file_path.stem
 
         try:
@@ -239,8 +238,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
-        import inspect
-
         try:
             spec = importlib.util.spec_from_file_location(f"custom_initializer.{script_path.stem}", script_path)
             if not spec or not spec.loader:
@@ -266,9 +263,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 discovered_classes.append(attr)
 
         if not discovered_classes:
-            raise ValueError(
-                f"Script {script_path} does not contain any concrete PyRITInitializer subclasses."
-            )
+            raise ValueError(f"Script {script_path} does not contain any concrete PyRITInitializer subclasses.")
 
         if name and len(discovered_classes) > 1:
             raise ValueError(
@@ -279,8 +274,10 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
         registered_names: list[str] = []
         for cls in discovered_classes:
-            registry_name = name if (name and len(discovered_classes) == 1) else class_name_to_snake_case(
-                cls.__name__, suffix="Initializer"
+            registry_name = (
+                name
+                if (name and len(discovered_classes) == 1)
+                else class_name_to_snake_case(cls.__name__, suffix="Initializer")
             )
             entry = ClassEntry(registered_class=cls)
             self._class_entries[registry_name] = entry

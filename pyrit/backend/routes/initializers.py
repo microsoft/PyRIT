@@ -13,15 +13,13 @@ Route structure:
     DELETE /api/initializers/{name}         — unregister an initializer
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ListRegisteredInitializersResponse,
-    RegisterInitializerRequest,
     RegisteredInitializer,
+    RegisterInitializerRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
 
@@ -55,7 +53,7 @@ def _check_custom_initializers_allowed(request: Request) -> None:
 )
 async def list_initializers(
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: Optional[str] = Query(None, description="Pagination cursor (initializer_name to start after)"),
+    cursor: str | None = Query(None, description="Pagination cursor (initializer_name to start after)"),
 ) -> ListRegisteredInitializersResponse:
     """
     List all available initializers.

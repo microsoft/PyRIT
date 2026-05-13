@@ -350,9 +350,7 @@ class AttackService:
             created_at=now,
         )
 
-    async def update_attack_async(
-        self, *, attack_result_id: str, request: UpdateAttackRequest
-    ) -> AttackSummary | None:
+    async def update_attack_async(self, *, attack_result_id: str, request: UpdateAttackRequest) -> AttackSummary | None:
         """
         Update an attack's outcome.
 
