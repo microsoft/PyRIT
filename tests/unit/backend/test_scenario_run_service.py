@@ -555,7 +555,7 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched is not None
         assert fetched.status == ScenarioRunStatus.IN_PROGRESS
         assert fetched.total_attacks == 3
-        assert fetched.completed_attacks == 2
+        assert fetched.completed_attacks == 3
         assert fetched.strategies_used == ["attack_a", "attack_b"]
         assert fetched.objective_achieved_rate == 33
 

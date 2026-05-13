@@ -9,7 +9,6 @@ through the REST API.
 """
 
 from functools import lru_cache
-from typing import Optional
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import (
@@ -67,7 +66,7 @@ class ScenarioService:
         self,
         *,
         limit: int = 50,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
     ) -> ListRegisteredScenariosResponse:
         """
         List all available scenarios with pagination.
@@ -90,7 +89,7 @@ class ScenarioService:
             pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
         )
 
-    async def get_scenario_async(self, *, scenario_name: str) -> Optional[RegisteredScenario]:
+    async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """
         Get a single scenario by registry name.
 
@@ -110,7 +109,7 @@ class ScenarioService:
     def _paginate(
         *,
         items: list[RegisteredScenario],
-        cursor: Optional[str],
+        cursor: str | None,
         limit: int,
     ) -> tuple[list[RegisteredScenario], bool]:
         """

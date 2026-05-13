@@ -9,7 +9,6 @@ metadata through the REST API.
 """
 
 from functools import lru_cache
-from typing import Optional
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
@@ -61,7 +60,7 @@ class InitializerService:
         self,
         *,
         limit: int = 50,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
     ) -> ListRegisteredInitializersResponse:
         """
         List all available initializers with pagination.
@@ -84,7 +83,7 @@ class InitializerService:
             pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
         )
 
-    async def get_initializer_async(self, *, initializer_name: str) -> Optional[RegisteredInitializer]:
+    async def get_initializer_async(self, *, initializer_name: str) -> RegisteredInitializer | None:
         """
         Get a single initializer by registry name.
 
@@ -104,7 +103,7 @@ class InitializerService:
     def _paginate(
         *,
         items: list[RegisteredInitializer],
-        cursor: Optional[str],
+        cursor: str | None,
         limit: int,
     ) -> tuple[list[RegisteredInitializer], bool]:
         """
