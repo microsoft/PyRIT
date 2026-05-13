@@ -5,7 +5,6 @@ import logging
 import time
 from typing import Any, Optional, Union
 
-import mlflow
 import numpy as np
 import torch.multiprocessing as mp
 from ml_collections import config_dict
@@ -110,7 +109,7 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             topk (int): Number of top candidates to consider. Defaults to 256.
             temp (int): Temperature for sampling. Defaults to 1.
             filter_cand (bool): Whether to filter invalid candidates. Defaults to True.
-            gbda_deterministic (bool): Whether to use deterministic mode. Defaults to True.
+            gbda_deterministic (bool): Unused, kept for config compatibility. Defaults to True.
             logfile (str): Path to log file. Defaults to "".
             random_seed (int): Random seed for reproducibility. Defaults to 42.
         """
@@ -166,8 +165,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         )
         logger.info(f"Parameters: {params}")
 
-        # Start mlflow logging
-        mlflow.start_run()
         log_gpu_memory(step=0)
         log_params(params=params)
 
@@ -300,7 +297,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
                 test_goals=test_goals,
                 test_targets=test_targets,
                 test_workers=test_workers,
-                mpa_deterministic=params.gbda_deterministic,
                 mpa_lr=params.learning_rate,
                 mpa_batch_size=params.batch_size,
                 mpa_n_steps=params.n_steps,
@@ -315,7 +311,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             test_goals=getattr(params, "test_goals", []),
             test_targets=getattr(params, "test_targets", []),
             test_workers=test_workers,
-            mpa_deterministic=params.gbda_deterministic,
             mpa_lr=params.learning_rate,
             mpa_batch_size=params.batch_size,
             mpa_n_steps=params.n_steps,

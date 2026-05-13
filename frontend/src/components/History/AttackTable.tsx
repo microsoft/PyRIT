@@ -16,6 +16,7 @@ import {
   CheckmarkCircleRegular,
   DismissCircleRegular,
   QuestionCircleRegular,
+  ErrorCircleRegular,
 } from '@fluentui/react-icons'
 import type { AttackSummary } from '../../types'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
@@ -23,12 +24,14 @@ import { useAttackHistoryStyles } from './AttackHistory.styles'
 const OUTCOME_ICONS: Record<string, React.ReactElement> = {
   success: <CheckmarkCircleRegular style={{ color: tokens.colorPaletteGreenForeground1 }} />,
   failure: <DismissCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
+  error: <ErrorCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
   undetermined: <QuestionCircleRegular style={{ color: tokens.colorNeutralForeground3 }} />,
 }
 
-const OUTCOME_COLORS: Record<string, 'success' | 'danger' | 'informative'> = {
+const OUTCOME_COLORS: Record<string, 'success' | 'danger' | 'informative' | 'warning'> = {
   success: 'success',
   failure: 'danger',
+  error: 'warning',
   undetermined: 'informative',
 }
 

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioListResponse, ScenarioSummary
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
 from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
 from pyrit.registry import ScenarioMetadata
 
@@ -65,7 +65,6 @@ def _make_scenario_metadata(
 class TestScenarioServiceListScenarios:
     """Tests for ScenarioService.list_scenarios_async."""
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_returns_empty_when_no_scenarios(self) -> None:
         """Test that list returns empty list when no scenarios are registered."""
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -78,7 +77,6 @@ class TestScenarioServiceListScenarios:
             assert result.items == []
             assert result.pagination.has_more is False
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_returns_scenarios_from_registry(self) -> None:
         """Test that list returns scenarios from registry."""
         metadata = _make_scenario_metadata()
@@ -100,7 +98,6 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].default_datasets == ["test_dataset"]
             assert result.items[0].max_dataset_size is None
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_paginates_with_limit(self) -> None:
         """Test that list respects the limit parameter."""
         metadata_list = [
@@ -118,7 +115,6 @@ class TestScenarioServiceListScenarios:
             assert result.pagination.has_more is True
             assert result.pagination.next_cursor == "test.scenario_2"
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_paginates_with_cursor(self) -> None:
         """Test that list uses cursor for pagination."""
         metadata_list = [
@@ -137,7 +133,6 @@ class TestScenarioServiceListScenarios:
             assert result.items[1].scenario_name == "test.scenario_3"
             assert result.pagination.has_more is True
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_last_page_has_more_false(self) -> None:
         """Test that last page shows has_more=False."""
         metadata_list = [
@@ -155,7 +150,6 @@ class TestScenarioServiceListScenarios:
             assert result.pagination.has_more is False
             assert result.pagination.next_cursor is None
 
-    @pytest.mark.asyncio
     async def test_list_scenarios_includes_max_dataset_size(self) -> None:
         """Test that max_dataset_size is included in response."""
         metadata = _make_scenario_metadata(max_dataset_size=10)
@@ -173,7 +167,6 @@ class TestScenarioServiceListScenarios:
 class TestScenarioServiceGetScenario:
     """Tests for ScenarioService.get_scenario_async."""
 
-    @pytest.mark.asyncio
     async def test_get_scenario_returns_matching_scenario(self) -> None:
         """Test that get returns the matching scenario."""
         metadata = _make_scenario_metadata(registry_name="foundry.red_team_agent")
@@ -188,7 +181,6 @@ class TestScenarioServiceGetScenario:
             assert result is not None
             assert result.scenario_name == "foundry.red_team_agent"
 
-    @pytest.mark.asyncio
     async def test_get_scenario_returns_none_for_missing(self) -> None:
         """Test that get returns None when scenario not found."""
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -210,18 +202,18 @@ class TestScenarioRoutes:
     """Tests for scenario API routes."""
 
     def test_list_scenarios_returns_200(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios returns 200."""
+        """Test that GET /api/scenarios/catalog returns 200."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ScenarioListResponse(
+                return_value=ListRegisteredScenariosResponse(
                     items=[],
                     pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios")
+            response = client.get("/api/scenarios/catalog")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -229,8 +221,8 @@ class TestScenarioRoutes:
             assert data["pagination"]["has_more"] is False
 
     def test_list_scenarios_with_items(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios returns scenario data."""
-        summary = ScenarioSummary(
+        """Test that GET /api/scenarios/catalog returns scenario data."""
+        summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
@@ -244,14 +236,14 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ScenarioListResponse(
+                return_value=ListRegisteredScenariosResponse(
                     items=[summary],
                     pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
                 )
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios")
+            response = client.get("/api/scenarios/catalog")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -270,21 +262,21 @@ class TestScenarioRoutes:
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_scenarios_async = AsyncMock(
-                return_value=ScenarioListResponse(
+                return_value=ListRegisteredScenariosResponse(
                     items=[],
                     pagination=PaginationInfo(limit=10, has_more=False, next_cursor=None, prev_cursor=None),
                 )
             )
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios?limit=10&cursor=test.scenario_1")
+            response = client.get("/api/scenarios/catalog?limit=10&cursor=test.scenario_1")
 
             assert response.status_code == status.HTTP_200_OK
             mock_service.list_scenarios_async.assert_called_once_with(limit=10, cursor="test.scenario_1")
 
     def test_get_scenario_returns_200(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios/{name} returns 200 when found."""
-        summary = ScenarioSummary(
+        """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""
+        summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
@@ -300,26 +292,26 @@ class TestScenarioRoutes:
             mock_service.get_scenario_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios/foundry.red_team_agent")
+            response = client.get("/api/scenarios/catalog/foundry.red_team_agent")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["scenario_name"] == "foundry.red_team_agent"
 
     def test_get_scenario_returns_404_when_not_found(self, client: TestClient) -> None:
-        """Test that GET /api/scenarios/{name} returns 404 when not found."""
+        """Test that GET /api/scenarios/catalog/{name} returns 404 when not found."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_scenario_async = AsyncMock(return_value=None)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios/nonexistent")
+            response = client.get("/api/scenarios/catalog/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_get_scenario_with_dotted_name(self, client: TestClient) -> None:
         """Test that dotted scenario names (e.g., 'foundry.red_team_agent') work in path."""
-        summary = ScenarioSummary(
+        summary = RegisteredScenario(
             scenario_name="garak.encoding",
             scenario_type="EncodingScenario",
             description="Encoding scenario",
@@ -335,7 +327,7 @@ class TestScenarioRoutes:
             mock_service.get_scenario_async = AsyncMock(return_value=summary)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/scenarios/garak.encoding")
+            response = client.get("/api/scenarios/catalog/garak.encoding")
 
             assert response.status_code == status.HTTP_200_OK
             mock_service.get_scenario_async.assert_called_once_with(scenario_name="garak.encoding")

@@ -354,6 +354,8 @@ class MemoryInterface(abc.ABC):
         conditions: Optional[Any] = None,
         distinct: bool = False,
         join_scores: bool = False,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Fetch data from the specified table model with optional conditions.
@@ -363,6 +365,8 @@ class MemoryInterface(abc.ABC):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Whether to return distinct rows only. Defaults to False.
             join_scores: Whether to join the scores table. Defaults to False.
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             List of model instances representing the rows fetched from the table.
@@ -378,6 +382,8 @@ class MemoryInterface(abc.ABC):
         distinct: bool = False,
         join_scores: bool = False,
         batch_size: int | None = None,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Execute queries in batches to avoid exceeding database bind variable limits.
@@ -394,6 +400,8 @@ class MemoryInterface(abc.ABC):
             join_scores: Whether to join the scores table.
             batch_size: Override for the number of values per batch.
                 Defaults to ``_MAX_BIND_VARS`` when not specified.
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             MutableSequence[Model]: Merged and deduplicated results from all batched queries.
@@ -411,6 +419,8 @@ class MemoryInterface(abc.ABC):
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
+                order_by=order_by,
+                limit=limit,
             )
 
         # Execute multiple separate queries and merge results
@@ -426,6 +436,7 @@ class MemoryInterface(abc.ABC):
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
+                order_by=order_by,
             )
 
             # Deduplicate by primary key (id)
@@ -2005,7 +2016,14 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to add attack results to scenario {scenario_result_id}: {str(e)}")
             raise
 
-    def update_scenario_run_state(self, *, scenario_result_id: str, scenario_run_state: str) -> bool:
+    def update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: str,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
         """
         Update the run state of an existing scenario result.
 
@@ -2013,41 +2031,67 @@ class MemoryInterface(abc.ABC):
             scenario_result_id (str): The ID of the scenario result to update.
             scenario_run_state (str): The new state for the scenario
                 (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
 
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Example:
-            >>> memory.update_scenario_run_state(
-            ...     scenario_result_id="123e4567-e89b-12d3-a456-426614174000",
-            ...     scenario_run_state="COMPLETED"
-            ... )
+        Raises:
+            ValueError: If the scenario result is not found.
         """
-        try:
-            # Retrieve current scenario result
-            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
 
-            if not scenario_results:
-                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
-                return False
+        if not scenario_results:
+            raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            scenario_result = scenario_results[0]
+        scenario_result = scenario_results[0]
 
-            # Update the scenario run state
-            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
+        # Update the scenario run state
+        scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
 
-            # Save updated result back to memory using update
-            entry = ScenarioResultEntry(entry=scenario_result)
-            self._update_entry(entry)
+        if error_message is not None:
+            scenario_result.error_message = error_message
+        if error_type is not None:
+            scenario_result.error_type = error_type
 
-            logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
-            return True
+        # Save updated result back to memory using update
+        entry = ScenarioResultEntry(entry=scenario_result)
+        self._update_entry(entry)
 
-        except Exception as e:
-            logger.exception(
-                f"Failed to update scenario {scenario_result_id} state to '{scenario_run_state}': {str(e)}"
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
+
+    def update_scenario_error_attacks(self, *, scenario_result_id: str, error_attack_result_ids: list[str]) -> None:
+        """
+        Update the error attack result IDs on an existing scenario result.
+
+        This links failed AttackResults to the ScenarioResult so the REST API
+        can quickly find error details without scanning all attacks.
+
+        Performs the read-modify-write within a single DB session to avoid
+        inter-session consistency issues.
+
+        Args:
+            scenario_result_id: The ID of the scenario result to update.
+            error_attack_result_ids: IDs of AttackResults that contain error information.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        import json
+
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+
+            existing: list[str] = (
+                json.loads(entry.error_attack_result_ids_json) if entry.error_attack_result_ids_json else []
             )
-            raise
+            merged = list(dict.fromkeys(existing + error_attack_result_ids))
+            entry.error_attack_result_ids_json = json.dumps(merged)
+
+            session.commit()
+
+        logger.info(f"Updated scenario {scenario_result_id} with {len(error_attack_result_ids)} error attack result(s)")
 
     def get_scenario_results(
         self,
@@ -2062,9 +2106,12 @@ class MemoryInterface(abc.ABC):
         objective_target_endpoint: Optional[str] = None,
         objective_target_model_name: Optional[str] = None,
         identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
         """
         Retrieve a list of ScenarioResult objects based on the specified filters.
+
+        Results are always ordered by completion_time descending (most recent first).
 
         Args:
             scenario_result_ids (Optional[Sequence[str]], optional): A list of scenario result IDs.
@@ -2088,9 +2135,11 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
                 A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
+            limit (int | None): Maximum number of results to return. Defaults to None (no limit).
 
         Returns:
-            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters.
+            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters,
+                ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
             return []
@@ -2149,6 +2198,8 @@ class MemoryInterface(abc.ABC):
             )
 
         try:
+            order_by_clause = ScenarioResultEntry.completion_time.desc()
+
             # Handle scenario_result_ids with batched queries if needed
             if scenario_result_ids:
                 entries = self._execute_batched_query(
@@ -2156,9 +2207,16 @@ class MemoryInterface(abc.ABC):
                     batch_column=ScenarioResultEntry.id,
                     batch_values=list(scenario_result_ids),
                     other_conditions=conditions,
+                    order_by=order_by_clause,
+                    limit=limit,
                 )
             else:
-                entries = self._query_entries(ScenarioResultEntry, conditions=and_(*conditions) if conditions else None)
+                entries = self._query_entries(
+                    ScenarioResultEntry,
+                    conditions=and_(*conditions) if conditions else None,
+                    order_by=order_by_clause,
+                    limit=limit,
+                )
 
             # Convert entries to ScenarioResults and populate attack_results efficiently
             scenario_results = []

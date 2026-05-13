@@ -2130,6 +2130,26 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("should expose the conversations panel toggle via aria-label", () => {
+    // Regression guard: the toggle button is icon-only and previously relied
+    // on aria-label without a visible tooltip; assert both are wired up so
+    // the button is reachable by accessible name (catches regression to
+    // missing aria-label).
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-aria-toggle"
+          conversationId="conv-aria-toggle"
+          activeConversationId="conv-aria-toggle"
+        />
+      </TestWrapper>
+    );
+
+    const toggleBtn = screen.getByRole("button", { name: /toggle conversations panel/i });
+    expect(toggleBtn).toBe(screen.getByTestId("toggle-panel-btn"));
+  });
+
   it("should toggle converter panel when convert button is clicked", async () => {
     render(
       <TestWrapper>

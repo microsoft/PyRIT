@@ -28,4 +28,3 @@ learning_rate: 0.01
 topk: 256
 temp: 1
 filter_cand: True
-gbda_deterministic: True

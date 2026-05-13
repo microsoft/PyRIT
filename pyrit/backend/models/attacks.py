@@ -90,23 +90,43 @@ class TargetInfo(BaseModel):
     model_name: Optional[str] = Field(None, description="Model or deployment name")
 
 
+class RetryEventResponse(BaseModel):
+    """A single retry attempt captured during execution."""
+
+    timestamp: datetime = Field(..., description="When the retry occurred")
+    attempt_number: int = Field(..., ge=1, description="Tenacity attempt number (1-based)")
+    function_name: str = Field(..., description="The retried function name")
+    exception_type: str = Field("", description="Exception class name")
+    exception_message: str = Field("", description="Exception message")
+    component_role: str = Field("", description="Component role from ExecutionContext")
+    component_name: str | None = Field(None, description="Component class name")
+    endpoint: str | None = Field(None, description="Target endpoint URL")
+    elapsed_seconds: float = Field(0.0, ge=0, description="Time since first attempt in seconds")
+
+
 class AttackSummary(BaseModel):
     """Summary view of an attack (for list views, omits full message content)."""
 
     attack_result_id: str = Field(..., description="Database-assigned unique ID for this AttackResult")
     conversation_id: str = Field(..., description="Primary conversation of this attack result")
-    attack_type: str = Field(..., description="Attack class name (e.g., 'CrescendoAttack', 'ManualAttack')")
+    attack_type: str = Field("", description="Attack class name (e.g., 'CrescendoAttack', 'ManualAttack')")
     attack_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional attack-specific parameters")
     target: Optional[TargetInfo] = Field(None, description="Target information from the stored identifier")
     converters: list[str] = Field(
         default_factory=list, description="Request converter class names applied in this attack"
     )
-    outcome: Optional[Literal["undetermined", "success", "failure"]] = Field(
+    objective: str = Field("", description="Natural-language description of the attacker's objective")
+    outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = Field(
         None, description="Attack outcome (null if not yet determined)"
     )
+    outcome_reason: str | None = Field(None, description="Reason for the outcome")
+    last_response: str | None = Field(None, description="Model response from the final turn")
     last_message_preview: Optional[str] = Field(
         None, description="Preview of the last message (truncated to ~100 chars)"
     )
+    score_value: str | None = Field(None, description="Score value from the objective scorer")
+    executed_turns: int = Field(0, ge=0, description="Number of turns executed")
+    execution_time_ms: int = Field(0, ge=0, description="Execution time in milliseconds")
     message_count: int = Field(0, description="Total number of messages in the attack")
     related_conversation_ids: list[str] = Field(
         default_factory=list, description="IDs of related conversations within this attack"
@@ -114,6 +134,17 @@ class AttackSummary(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict, description="User-defined labels for filtering")
     created_at: datetime = Field(..., description="Attack creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
+
+    # Error information
+    error_message: str | None = Field(None, description="Error message if the attack failed with an exception")
+    error_type: str | None = Field(None, description="Exception class name (e.g., 'RateLimitError')")
+    error_traceback: str | None = Field(None, description="Formatted traceback string")
+
+    # Retry information
+    total_retries: int = Field(0, ge=0, description="Total number of retries during this attack")
+    retry_events: list[RetryEventResponse] | None = Field(
+        None, description="Detailed retry events (omitted in list views unless requested)"
+    )
 
 
 # ============================================================================
@@ -230,7 +261,7 @@ class CreateAttackResponse(BaseModel):
 class UpdateAttackRequest(BaseModel):
     """Request to update an attack's outcome."""
 
-    outcome: Literal["undetermined", "success", "failure"] = Field(..., description="Updated attack outcome")
+    outcome: Literal["undetermined", "success", "failure", "error"] = Field(..., description="Updated attack outcome")
 
 
 # ============================================================================

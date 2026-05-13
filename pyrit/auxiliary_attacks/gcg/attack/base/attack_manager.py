@@ -12,7 +12,6 @@ import time
 from copy import deepcopy
 from typing import Any, Optional
 
-import mlflow
 import numpy as np
 import pandas as pd
 import torch
@@ -902,14 +901,13 @@ class MultiPromptAttack:
                 f"====================================================\n"
             )
 
-        # Log to mlflow
+        # Log loss and GPU memory
         log_loss(step=step_num, loss=loss)
         log_gpu_memory(step=step_num)
 
-        # Log results table to mlflow
+        # Log results table at end of training
         if step_num == n_steps:
             log_table_summary(losses=log["losses"], controls=log["controls"], n_steps=n_steps)
-            mlflow.end_run()
 
 
 class ProgressiveMultiPromptAttack:
@@ -1113,7 +1111,6 @@ class ProgressiveMultiPromptAttack:
                 self.test_goals,
                 self.test_targets,
                 self.test_workers,
-                **self.mpa_kwargs,
             )
             if num_goals == len(self.goals) and num_workers == len(self.workers):
                 stop_inner_on_success = False
@@ -1351,7 +1348,6 @@ class IndividualPromptAttack:
                 self.test_goals,
                 self.test_targets,
                 self.test_workers,
-                **self.mpa_kwargs,
             )
             attack.run(
                 n_steps=n_steps,
@@ -1523,7 +1519,6 @@ class EvaluateAttack:
                         self.test_prefixes,
                         self.logfile,
                         self.managers,
-                        **self.mpa_kwargs,
                     )
                     all_inputs = [p.eval_str for p in attack.prompts[0]._prompts]
                     max_new_tokens = [p.test_new_toks for p in attack.prompts[0]._prompts]
