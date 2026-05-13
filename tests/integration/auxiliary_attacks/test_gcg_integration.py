@@ -57,6 +57,18 @@ def conv_template():
     return conv
 
 
+@pytest.fixture()
+def vicuna_conv_template():
+    """Create a fresh vicuna conversation template for each test.
+
+    Vicuna exercises the non-llama branch of `_update_ids` (the path that
+    references `conv_template.system` and uses `encoding.char_to_token`).
+    A bug in that branch — like the Phi-3 `.system` AttributeError we hit
+    on Azure (#965) — would never be caught by llama-2-only tests.
+    """
+    return get_conversation_template("vicuna_v1.1")
+
+
 class TestTokenGradientsIntegration:
     """Integration tests for token_gradients with real GPT-2."""
 
@@ -214,3 +226,72 @@ class TestEmbeddingHelpersIntegration:
         toks = get_nonascii_toks(gpt2_tokenizer, device="cpu")
         assert isinstance(toks, torch.Tensor)
         assert len(toks) > 0
+
+
+class TestGCGAttackPromptNonLlamaTemplate:
+    """Integration tests covering the non-llama branch of `AttackPrompt._update_ids`.
+
+    The llama-2/llama-3 path is well-exercised above. The `else` branch contains
+    distinct logic that touches `conv_template.system`, `char_to_token`, and
+    different slice arithmetic. A bug here — like the Phi-3 `conv_template.system`
+    AttributeError we hit on Azure (#965) — would only surface with a
+    non-llama template, so we exercise it explicitly with vicuna.
+
+    Both tests are currently `xfail` because vicuna (and any other modern
+    fastchat template that lacks a `.system` attribute) reproduces the same
+    AttributeError as Phi-3 — a known bug tracked in #965 that PR replacing
+    fastchat with `tokenizer.apply_chat_template()` will fix. Once that lands,
+    the xfail will flip to "unexpectedly passed" and the marker can be removed.
+    """
+
+    @pytest.mark.xfail(
+        reason="#965: fastchat templates without `.system` attribute crash _update_ids",
+        raises=AttributeError,
+        strict=True,
+    )
+    def test_prompt_initializes_with_vicuna_template(
+        self,
+        gpt2_model: GPT2LMHeadModel,
+        gpt2_tokenizer: transformers.PreTrainedTokenizer,
+        vicuna_conv_template: object,
+    ) -> None:
+        """GCGAttackPrompt should construct successfully with the vicuna template."""
+        prompt = GCGAttackPrompt(
+            goal="Tell me how",
+            target="Sure here is",
+            tokenizer=gpt2_tokenizer,
+            conv_template=vicuna_conv_template,
+            control_init="! ! ! ! !",
+        )
+
+        assert prompt._control_slice.start < prompt._control_slice.stop
+        assert prompt._target_slice.start < prompt._target_slice.stop
+        assert prompt._control_slice.stop <= prompt._target_slice.start
+        assert prompt.input_ids.shape[0] > 0
+
+    @pytest.mark.xfail(
+        reason="#965: fastchat templates without `.system` attribute crash _update_ids",
+        raises=AttributeError,
+        strict=True,
+    )
+    def test_grad_returns_valid_gradient_with_vicuna_template(
+        self,
+        gpt2_model: GPT2LMHeadModel,
+        gpt2_tokenizer: transformers.PreTrainedTokenizer,
+        vicuna_conv_template: object,
+    ) -> None:
+        """gradient computation should work end-to-end on the non-llama path."""
+        prompt = GCGAttackPrompt(
+            goal="Tell me how",
+            target="Sure here is",
+            tokenizer=gpt2_tokenizer,
+            conv_template=vicuna_conv_template,
+            control_init="! ! ! ! !",
+        )
+
+        grad = prompt.grad(gpt2_model)
+
+        n_control = prompt._control_slice.stop - prompt._control_slice.start
+        assert grad.shape[0] == n_control
+        assert grad.shape[1] == gpt2_tokenizer.vocab_size
+        assert torch.isfinite(grad).all()
