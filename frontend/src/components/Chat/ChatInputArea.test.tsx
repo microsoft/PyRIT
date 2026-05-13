@@ -223,8 +223,24 @@ describe("ChatInputArea", () => {
       </TestWrapper>
     );
 
-    const attachButton = screen.getByTitle("Attach files");
+    const attachButton = screen.getByRole("button", { name: /attach files/i });
     expect(attachButton).toBeInTheDocument();
+  });
+
+  it("should expose all icon-only buttons via aria-label, not only title", () => {
+    // Regression guard against using only `title=` for icon buttons.
+    // `title` is not a reliable accessible name for screen readers; aria-label
+    // is. All icon-only buttons in the input area must be reachable by role
+    // + name (i.e., they have an aria-label that matches the visible tooltip).
+    render(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("button", { name: /attach files/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /toggle converter panel/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeInTheDocument();
   });
 
   it("should handle file attachment selection", async () => {
@@ -478,7 +494,7 @@ describe("ChatInputArea", () => {
     });
 
     // Send button should be enabled since there's an attachment
-    expect(screen.getByTitle("Send message")).toBeEnabled();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
   });
 
   it("should show single-turn banner when singleTurnLimitReached is true", () => {

@@ -235,12 +235,11 @@ class TestScenarioTechniqueInitializerRegistration:
     @pytest.mark.asyncio
     async def test_falls_back_to_default_target_when_registry_empty(self):
         """With no 'adversarial_chat' in TargetRegistry, the fallback constructs an OpenAIChatTarget."""
-        # Patch OpenAIChatTarget at the import site inside scenario_techniques
-        # (which is what get_default_adversarial_target calls), so the test does
-        # not depend on OPENAI_CHAT_MODEL or any other env var being set.
+        # Patch OpenAIChatTarget at the fallback construction site so the test
+        # does not depend on OPENAI_CHAT_MODEL or any other env var being set.
         fallback_target = MagicMock(spec=PromptTarget)
         with patch(
-            "pyrit.scenario.core.scenario_techniques.OpenAIChatTarget",
+            "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
             return_value=fallback_target,
         ) as mock_openai:
             init = ScenarioTechniqueInitializer()

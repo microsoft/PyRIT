@@ -165,6 +165,43 @@ class TestConfigurationLoader:
         assert config.memory_db_type == "sqlite"  # Normalized to snake_case
         assert config.initializers == []  # Uses default, not None
 
+    def test_from_dict_preserves_unknown_top_level_keys_in_extensions(self):
+        """Unknown top-level keys should be preserved for downstream tooling."""
+        data = {
+            "memory_db_type": "in_memory",
+            "targets": [{"name": "x"}],
+            "scan_modes": {"default": {"threshold": 0.8}},
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.memory_db_type == "in_memory"
+        assert config.extensions == {
+            "targets": [{"name": "x"}],
+            "scan_modes": {"default": {"threshold": 0.8}},
+        }
+
+    def test_from_dict_merges_explicit_extensions_with_unknown_keys(self):
+        data = {
+            "memory_db_type": "sqlite",
+            "extensions": {"team": "red"},
+            "targets": [{"name": "x"}],
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.extensions == {"team": "red", "targets": [{"name": "x"}]}
+
+    def test_from_dict_explicit_extensions_wins_on_collision(self):
+        """When a key appears both as unknown top-level and inside extensions, extensions wins."""
+        data = {
+            "memory_db_type": "sqlite",
+            "extensions": {"targets": "from_extensions"},
+            "targets": "top_level_value",
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.extensions["targets"] == "from_extensions"
+
+    def test_from_dict_rejects_non_dict_extensions(self):
+        with pytest.raises(ValueError, match="extensions must be a dict"):
+            ConfigurationLoader.from_dict({"extensions": ["not", "a", "dict"]})
+
     def test_from_yaml_file(self):
         """Test loading configuration from a YAML file."""
         yaml_content = """

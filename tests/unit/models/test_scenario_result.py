@@ -165,3 +165,24 @@ class TestScenarioResult:
 
     def test_normalize_scenario_name_mixed_case_with_underscore(self):
         assert ScenarioResult.normalize_scenario_name("Content_harms") == "Content_harms"
+
+    def test_error_attack_result_ids_defaults_to_empty(self):
+        """error_attack_result_ids defaults to empty list."""
+        sr = ScenarioResult(
+            scenario_identifier=_make_scenario_identifier(),
+            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            attack_results={},
+            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+        )
+        assert sr.error_attack_result_ids == []
+
+    def test_error_attack_result_ids_stored(self):
+        """error_attack_result_ids are stored correctly."""
+        sr = ScenarioResult(
+            scenario_identifier=_make_scenario_identifier(),
+            objective_target_identifier=ComponentIdentifier.from_dict({}),
+            attack_results={},
+            objective_scorer_identifier=ComponentIdentifier.from_dict({}),
+            error_attack_result_ids=["id-1", "id-2"],
+        )
+        assert sr.error_attack_result_ids == ["id-1", "id-2"]
