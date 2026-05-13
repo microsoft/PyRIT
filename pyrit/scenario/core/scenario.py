@@ -1217,18 +1217,35 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
+                        # Collect error attack result IDs from the exceptions
+                        error_ids = []
+                        for _, exc in atomic_results.incomplete_objectives:
+                            error_id = getattr(exc, "error_attack_result_id", None)
+                            if error_id:
+                                error_ids.append(error_id)
+
+                        # Link error attack results to the scenario result
+                        if error_ids:
+                            self._memory.update_scenario_error_attacks(
+                                scenario_result_id=scenario_result_id,
+                                error_attack_result_ids=error_ids,
+                            )
+
                         # Mark scenario as failed
+                        error_msg = (
+                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
+                            f"See attack results for details."
+                        )
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=error_msg,
+                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
                         )
 
                         # Raise exception with detailed information
-                        raise ValueError(
-                            f"Failed to execute atomic attack {i} ('{atomic_attack.atomic_attack_name}') "
-                            f"in scenario '{self._name}': {incomplete_count} of {incomplete_count + completed_count} "
-                            f"objectives incomplete. First failure: {atomic_results.incomplete_objectives[0][1]}"
-                        ) from atomic_results.incomplete_objectives[0][1]
+                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
                     logger.info(
                         f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
                         f"{len(atomic_results.completed_results)} results"
@@ -1247,6 +1264,8 @@ class Scenario(ABC):
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=str(e),
+                            error_type=type(e).__name__,
                         )
 
                     raise
