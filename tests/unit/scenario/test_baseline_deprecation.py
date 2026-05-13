@@ -17,7 +17,7 @@ import pytest
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselinePolicy, Scenario, ScenarioStrategy
-from pyrit.score import Scorer
+from pyrit.score import Scorer, TrueFalseScorer
 
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
 
@@ -39,7 +39,7 @@ class _LegacyScenario(Scenario):
     def __init__(self, **kwargs):
         kwargs.setdefault("strategy_class", _LegacyStrategy)
         if "objective_scorer" not in kwargs:
-            mock_scorer = MagicMock(spec=Scorer)
+            mock_scorer = MagicMock(spec=TrueFalseScorer)
             mock_scorer.get_identifier.return_value = _TEST_SCORER_ID
             mock_scorer.get_scorer_metrics.return_value = None
             kwargs["objective_scorer"] = mock_scorer
@@ -59,7 +59,12 @@ class _LegacyScenario(Scenario):
         return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
-        return []
+        atomic_attacks = []
+        if self._include_baseline:
+            groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+            all_seed_groups = [g for groups in groups_by_dataset.values() for g in groups]
+            atomic_attacks.append(self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
+        return atomic_attacks
 
 
 @pytest.fixture
@@ -158,3 +163,40 @@ class TestSubclassBaselineKwargDeprecation:
         assert len(deprecations) >= 1, f"{class_name} did not emit a DeprecationWarning naming the class"
         assert "v0.16.0" in str(deprecations[0].message)
         assert scenario._legacy_include_baseline is False
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLegacyAndRuntimePathsEquivalentUnderMaxDatasetSize:
+    """ADO 9012: the deprecated constructor path and the new initialize_async path must
+    produce the same baseline atomic attack under max_dataset_size."""
+
+    async def test_paths_produce_matching_objective_sets(self, mock_objective_target):
+        from pyrit.models import SeedGroup, SeedObjective
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+
+        # Both paths share the same patched sample, so each scenario's single
+        # resolution call returns ``stable_sample``.
+        stable_sample = seed_groups[:3]
+
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            return_value=stable_sample,
+        ):
+            config_legacy = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                legacy = _LegacyScenario(include_default_baseline=True)
+            await legacy.initialize_async(objective_target=mock_objective_target, dataset_config=config_legacy)
+
+            config_runtime = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+            runtime = _LegacyScenario()
+            await runtime.initialize_async(
+                objective_target=mock_objective_target,
+                dataset_config=config_runtime,
+                include_baseline=True,
+            )
+
+        assert legacy._atomic_attacks[0].atomic_attack_name == "baseline"
+        assert runtime._atomic_attacks[0].atomic_attack_name == "baseline"
+        assert set(legacy._atomic_attacks[0].objectives) == set(runtime._atomic_attacks[0].objectives)
