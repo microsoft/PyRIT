@@ -634,3 +634,50 @@ def test_identifier_differs_when_normalizer_overrides_differ():
     )
 
     assert a.get_identifier().hash != b.get_identifier().hash
+
+
+def test_apply_capabilities_replaces_capabilities_and_preserves_policy(patch_central_database):
+    initial_policy = CapabilityHandlingPolicy(
+        behaviors={
+            CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT,
+            CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+        }
+    )
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False),
+            policy=initial_policy,
+        ),
+    )
+
+    new_caps = TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True)
+    target.apply_capabilities(capabilities=new_caps)
+
+    assert target.capabilities == new_caps
+    # Policy is preserved by identity, not just by value.
+    assert target.configuration.policy is initial_policy
+
+
+def test_apply_capabilities_rebuilds_pipeline(patch_central_database):
+    adapt_policy = CapabilityHandlingPolicy(
+        behaviors={
+            CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT,
+            CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+        }
+    )
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=True),
+            policy=adapt_policy,
+        ),
+    )
+    assert target.configuration.pipeline._normalizers, "Expected ADAPT pipeline to be non-empty"
+
+    target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True))
+    assert not target.configuration.pipeline._normalizers, "Expected pipeline to be rebuilt as empty"
