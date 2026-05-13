@@ -188,6 +188,16 @@ class TestConfigurationLoader:
         config = ConfigurationLoader.from_dict(data)
         assert config.extensions == {"team": "red", "targets": [{"name": "x"}]}
 
+    def test_from_dict_explicit_extensions_wins_on_collision(self):
+        """When a key appears both as unknown top-level and inside extensions, extensions wins."""
+        data = {
+            "memory_db_type": "sqlite",
+            "extensions": {"targets": "from_extensions"},
+            "targets": "top_level_value",
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.extensions["targets"] == "from_extensions"
+
     def test_from_dict_rejects_non_dict_extensions(self):
         with pytest.raises(ValueError, match="extensions must be a dict"):
             ConfigurationLoader.from_dict({"extensions": ["not", "a", "dict"]})
