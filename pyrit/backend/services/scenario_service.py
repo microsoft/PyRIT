@@ -12,7 +12,11 @@ from functools import lru_cache
 from typing import Optional
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
+from pyrit.backend.models.scenarios import (
+    ListRegisteredScenariosResponse,
+    RegisteredScenario,
+    ScenarioParameterSummary,
+)
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
 
@@ -35,6 +39,16 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
         all_strategies=list(metadata.all_strategies),
         default_datasets=list(metadata.default_datasets),
         max_dataset_size=metadata.max_dataset_size,
+        supported_parameters=[
+            ScenarioParameterSummary(
+                name=p.name,
+                description=p.description,
+                default=repr(p.default) if p.default is not None else None,
+                param_type=p.param_type,
+                choices=p.choices,
+            )
+            for p in metadata.supported_parameters
+        ],
     )
 
 
