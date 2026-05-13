@@ -324,4 +324,7 @@ class Jailbreak(Scenario):
                     )
                     atomic_attacks.append(atomic_attack)
 
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
+
         return atomic_attacks

@@ -219,6 +219,7 @@ class TestScamAttackGeneration:
             objective_target=mock_objective_target,
             scenario_strategies=[single_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -237,6 +238,7 @@ class TestScamAttackGeneration:
             objective_target=mock_objective_target,
             scenario_strategies=[multi_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -303,6 +305,7 @@ class TestScamMaxTurnsParameter:
             objective_target=mock_objective_target,
             scenario_strategies=[multi_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -321,6 +324,7 @@ class TestScamMaxTurnsParameter:
             objective_target=mock_objective_target,
             scenario_strategies=[multi_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 

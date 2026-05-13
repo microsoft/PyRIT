@@ -433,7 +433,12 @@ class RedTeamAgent(Scenario):
         # Resolve seed groups now that initialize_async has been called
         self._seed_groups = self._resolve_seed_groups()
 
-        return [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
+        atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
+
+        return atomic_attacks
 
     def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
         """

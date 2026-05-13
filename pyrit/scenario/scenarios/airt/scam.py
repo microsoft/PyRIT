@@ -281,4 +281,9 @@ class Scam(Scenario):
 
         strategies = {s.value for s in self._scenario_strategies}
 
-        return [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]
+        atomic_attacks = [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
+
+        return atomic_attacks

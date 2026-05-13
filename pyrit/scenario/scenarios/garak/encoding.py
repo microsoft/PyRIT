@@ -240,7 +240,14 @@ class Encoding(Scenario):
         # Resolve seed prompts from deprecated parameter or dataset config
         self._resolved_seed_groups = self._resolve_seed_groups()
 
-        return self._get_converter_attacks()
+        atomic_attacks = self._get_converter_attacks()
+
+        if self._include_baseline:
+            atomic_attacks.insert(
+                0, self._build_baseline_atomic_attack(seed_groups=self._resolved_seed_groups or [])
+            )
+
+        return atomic_attacks
 
     # These are the same as Garak encoding attacks
     def _get_converter_attacks(self) -> list[AtomicAttack]:
