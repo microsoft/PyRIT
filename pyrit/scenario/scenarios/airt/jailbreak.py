@@ -23,7 +23,7 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario import BaselinePolicy, Scenario
+from pyrit.scenario.core.scenario import BaselineDefaultPolicy, Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import (
@@ -84,7 +84,7 @@ class Jailbreak(Scenario):
     #: Jailbreak runs many templates per objective, so the baseline atomic attack is rarely
     #: informative relative to the volume of jailbreak templates. Off by default; callers that
     #: want a comparison can pass ``include_baseline=True`` to ``initialize_async``.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.DEFAULT_OFF
+    BASELINE_DEFAULT_POLICY: ClassVar[BaselineDefaultPolicy] = BaselineDefaultPolicy.Disabled
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:

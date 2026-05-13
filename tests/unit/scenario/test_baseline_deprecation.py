@@ -16,7 +16,7 @@ import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.core import BaselinePolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import BaselineDefaultPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
@@ -34,7 +34,7 @@ class _LegacyStrategy(ScenarioStrategy):
 class _LegacyScenario(Scenario):
     """Minimal Scenario stand-in for exercising the deprecated baseline kwargs."""
 
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.DEFAULT_ON
+    BASELINE_DEFAULT_POLICY: ClassVar[BaselineDefaultPolicy] = BaselineDefaultPolicy.Enabled
 
     def __init__(self, **kwargs):
         kwargs.setdefault("strategy_class", _LegacyStrategy)
@@ -94,7 +94,7 @@ class TestScenarioBaseDeprecation:
         assert scenario._legacy_include_baseline is None
 
     async def test_legacy_value_drives_initialize_when_runtime_kwarg_omitted(self, mock_objective_target):
-        """Constructor-time False suppresses the baseline that BASELINE_POLICY.DEFAULT_ON would add."""
+        """Constructor-time False suppresses the baseline that BASELINE_DEFAULT_POLICY=Enabled would add."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             scenario = _LegacyScenario(include_default_baseline=False)
