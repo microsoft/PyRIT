@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers.attack_mappers import (
@@ -82,16 +82,16 @@ class AttackService:
     async def list_attacks_async(
         self,
         *,
-        attack_types: Optional[Sequence[str]] = None,
-        converter_types: Optional[Sequence[str]] = None,
+        attack_types: Sequence[str] | None = None,
+        converter_types: Sequence[str] | None = None,
         converter_types_match: Literal["any", "all"] = "all",
-        has_converters: Optional[bool] = None,
-        outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = None,
-        labels: Optional[dict[str, str | Sequence[str]]] = None,
-        min_turns: Optional[int] = None,
-        max_turns: Optional[int] = None,
+        has_converters: bool | None = None,
+        outcome: Literal["undetermined", "success", "failure", "error"] | None = None,
+        labels: dict[str, str | Sequence[str]] | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
         limit: int = 20,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
     ) -> AttackListResponse:
         """
         List attacks with optional filtering and pagination.
@@ -156,7 +156,7 @@ class AttackService:
         )
 
         # Paginate on the lightweight list first
-        page_results, has_more = self._paginate_attack_results(filtered, cursor, limit)
+        page_results, has_more = self._paginate_attack_results(items=filtered, cursor=cursor, limit=limit)
         next_cursor = page_results[-1].attack_result_id if has_more and page_results else None
 
         # Phase 2: Lightweight DB aggregation for the page only.
@@ -216,7 +216,7 @@ class AttackService:
         """
         return self._memory.get_unique_converter_class_names()
 
-    async def get_attack_async(self, *, attack_result_id: str) -> Optional[AttackSummary]:
+    async def get_attack_async(self, *, attack_result_id: str) -> AttackSummary | None:
         """
         Get attack details (high-level metadata, no messages).
 
@@ -239,7 +239,7 @@ class AttackService:
         *,
         attack_result_id: str,
         conversation_id: str,
-    ) -> Optional[ConversationMessagesResponse]:
+    ) -> ConversationMessagesResponse | None:
         """
         Get all messages for a conversation belonging to an attack.
 
@@ -350,9 +350,7 @@ class AttackService:
             created_at=now,
         )
 
-    async def update_attack_async(
-        self, *, attack_result_id: str, request: UpdateAttackRequest
-    ) -> Optional[AttackSummary]:
+    async def update_attack_async(self, *, attack_result_id: str, request: UpdateAttackRequest) -> AttackSummary | None:
         """
         Update an attack's outcome.
 
@@ -388,7 +386,7 @@ class AttackService:
 
         return await self.get_attack_async(attack_result_id=attack_result_id)
 
-    async def get_conversations_async(self, *, attack_result_id: str) -> Optional[AttackConversationsResponse]:
+    async def get_conversations_async(self, *, attack_result_id: str) -> AttackConversationsResponse | None:
         """
         Get all conversations belonging to an attack.
 
@@ -441,7 +439,7 @@ class AttackService:
 
     async def create_related_conversation_async(
         self, *, attack_result_id: str, request: CreateConversationRequest
-    ) -> Optional[CreateConversationResponse]:
+    ) -> CreateConversationResponse | None:
         """
         Create a new conversation within an existing attack.
 
@@ -497,7 +495,7 @@ class AttackService:
 
     async def update_main_conversation_async(
         self, *, attack_result_id: str, request: UpdateMainConversationRequest
-    ) -> Optional[UpdateMainConversationResponse]:
+    ) -> UpdateMainConversationResponse | None:
         """
         Change the main conversation by promoting a related conversation.
 
@@ -642,7 +640,7 @@ class AttackService:
         return AddMessageResponse(attack=attack_detail, messages=attack_messages)
 
     def _validate_target_match(
-        self, *, attack_identifier: Optional[ComponentIdentifier], request: AddMessageRequest
+        self, *, attack_identifier: ComponentIdentifier | None, request: AddMessageRequest
     ) -> None:
         """
         Validate that the request target matches the attack's stored target.
@@ -708,7 +706,7 @@ class AttackService:
         conversation_id: str,
         main_conversation_id: str,
         existing_pieces: Sequence[MessagePiece],
-        request_labels: Optional[dict[str, str]],
+        request_labels: dict[str, str] | None,
     ) -> dict[str, str]:
         """
         Resolve labels for a new message by inheriting from existing pieces.
@@ -719,7 +717,7 @@ class AttackService:
         Returns:
             dict[str, str]: Resolved labels for the new message.
         """
-        attack_labels: Optional[dict[str, str]] = next(
+        attack_labels: dict[str, str] | None = next(
             (p.labels for p in existing_pieces if p.labels and len(p.labels) > 0), None
         )
         if not attack_labels:
@@ -792,7 +790,7 @@ class AttackService:
     # ========================================================================
 
     def _paginate_attack_results(
-        self, items: list[AttackResult], cursor: Optional[str], limit: int
+        self, *, items: list[AttackResult], cursor: str | None, limit: int
     ) -> tuple[list[AttackResult], bool]:
         """
         Apply cursor-based pagination over AttackResult objects.
@@ -823,7 +821,7 @@ class AttackService:
         *,
         source_conversation_id: str,
         cutoff_index: int,
-        labels_override: Optional[dict[str, str]] = None,
+        labels_override: dict[str, str] | None = None,
         remap_assistant_to_simulated: bool = False,
     ) -> str:
         """
@@ -943,9 +941,10 @@ class AttackService:
 
     async def _store_prepended_messages(
         self,
+        *,
         conversation_id: str,
         prepended: list[Any],
-        labels: Optional[dict[str, str]] = None,  # deprecated
+        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """Store prepended conversation messages in memory."""
         for seq, msg in enumerate(prepended):
@@ -966,7 +965,7 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: Optional[dict[str, str]] = None,  # deprecated
+        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1002,7 +1001,7 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: Optional[dict[str, str]] = None,  # deprecated
+        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
