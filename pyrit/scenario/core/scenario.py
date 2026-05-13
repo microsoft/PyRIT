@@ -235,6 +235,10 @@ class Scenario(ABC):
         self.params: dict[str, Any] = {}
         self._declarations_validated: bool = False
 
+        # Resolved effective baseline inclusion for the current run. Set in initialize_async
+        # before _get_atomic_attacks_async is awaited so overrides can read it.
+        self._include_baseline: bool = False
+
         # Deprecated constructor-time baseline override. Will be removed in v0.16.0, along
         # with the include_default_baseline kwarg above and the legacy fallback branch in
         # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
@@ -664,6 +668,8 @@ class Scenario(ABC):
         elif include_baseline is None:
             include_baseline = self.BASELINE_DEFAULT_POLICY is BaselineDefaultPolicy.Enabled
 
+        self._include_baseline = include_baseline
+
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
@@ -676,7 +682,12 @@ class Scenario(ABC):
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
-        if include_baseline:
+        # Transitional guard (removed when _get_baseline / _get_baseline_data are deleted).
+        # Skip the legacy post-hoc insert when _get_atomic_attacks_async already emitted
+        # baseline at index 0 (the structural path); fall through to the old behavior for
+        # overrides not yet migrated.
+        already_emitted_baseline = bool(self._atomic_attacks) and self._atomic_attacks[0].atomic_attack_name == "baseline"
+        if include_baseline and not already_emitted_baseline:
             baseline_attack = self._get_baseline()
             self._atomic_attacks.insert(0, baseline_attack)
 
@@ -728,6 +739,45 @@ class Scenario(ABC):
         self._memory.add_scenario_results_to_memory(scenario_results=[result])
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
+
+    def _build_baseline_atomic_attack(self, *, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
+        """
+        Build the baseline AtomicAttack from pre-resolved seed groups.
+
+        The baseline sends each objective unmodified, providing a comparison point
+        against the scenario's strategy attacks. Pass the same ``seed_groups`` used
+        to build the strategy attacks so both populations match.
+
+        Args:
+            seed_groups: Seed groups to attack. Used as-is, no further sampling.
+
+        Returns:
+            AtomicAttack: The baseline atomic attack.
+
+        Raises:
+            ValueError: If ``initialize_async`` has not been called (no objective
+                target or scorer set).
+        """
+        if self._objective_target is None:
+            raise ValueError("Objective target is required to create baseline attack.")
+        if self._objective_scorer is None:
+            raise ValueError("Objective scorer is required to create baseline attack.")
+
+        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+
+        attack = PromptSendingAttack(
+            objective_target=self._objective_target,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=cast("TrueFalseScorer", self._objective_scorer)
+            ),
+        )
+
+        return AtomicAttack(
+            atomic_attack_name="baseline",
+            attack_technique=AttackTechnique(attack=attack),
+            seed_groups=seed_groups,
+            memory_labels=self._memory_labels,
+        )
 
     def _get_baseline(self) -> AtomicAttack:
         """
@@ -1041,6 +1091,10 @@ class Scenario(ABC):
                         display_group=display_group,
                     )
                 )
+
+        if self._include_baseline:
+            all_seed_groups = [g for groups in seed_groups_by_dataset.values() for g in groups]
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
 
         return atomic_attacks
 
