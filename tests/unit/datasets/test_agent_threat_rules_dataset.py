@@ -206,3 +206,50 @@ def test_invalid_detection_field_raises() -> None:
 def test_invalid_variation_type_raises() -> None:
     with pytest.raises(ValueError, match="Expected ATRVariationType"):
         _AgentThreatRulesDataset(variation_types=["original"])  # type: ignore[list-item]
+
+
+def test_empty_categories_raises() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        _AgentThreatRulesDataset(categories=[])
+
+
+def test_empty_techniques_raises() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        _AgentThreatRulesDataset(techniques=[])
+
+
+def test_empty_detection_fields_raises() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        _AgentThreatRulesDataset(detection_fields=[])
+
+
+def test_empty_variation_types_raises() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        _AgentThreatRulesDataset(variation_types=[])
+
+
+async def test_per_rule_description_reflects_category(mock_atr_data: list[dict[str, str]]) -> None:
+    loader = _AgentThreatRulesDataset()
+
+    with patch.object(loader, "_fetch_from_url", return_value=mock_atr_data):
+        dataset = await loader.fetch_dataset()
+
+    # Per-rule description should reference the seed's own category, not the
+    # whole corpus. Descriptions should differ across category families.
+    descriptions = {s.description for s in dataset.seeds}
+    assert len(descriptions) >= 2, "Descriptions should vary across rule categories"
+
+    # First seed is prompt-injection (ATR-2026-00001); description must say so.
+    first = dataset.seeds[0]
+    assert "prompt injection" in first.description.lower()
+    assert "ATR-2026-00001" in first.description
+
+
+def test_rule_id_mapping_uses_enum() -> None:
+    # Mapping must reference the enum directly so a typo on either side is a
+    # static error rather than a silent data-quality bug at SeedPrompt construction.
+    from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+        _RULE_ID_TO_CATEGORY,
+    )
+
+    assert all(isinstance(v, ATRCategory) for v in _RULE_ID_TO_CATEGORY.values())

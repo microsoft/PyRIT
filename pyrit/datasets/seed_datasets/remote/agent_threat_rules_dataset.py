@@ -13,25 +13,6 @@ from pyrit.models import SeedDataset, SeedPrompt
 logger = logging.getLogger(__name__)
 
 
-# Maps rule IDs in the autoresearch coverage to their ATR taxonomy category.
-# This dict reflects the rules currently represented in adversarial-samples.json.
-# When ATR extends autoresearch coverage to additional rules, add entries here.
-# Source of truth for the mapping is the rules/<category>/<rule-id>*.yaml layout
-# in the upstream ATR repository.
-_RULE_ID_TO_CATEGORY: dict[str, str] = {
-    "ATR-2026-00001": "prompt-injection",
-    "ATR-2026-00002": "prompt-injection",
-    "ATR-2026-00003": "prompt-injection",
-    "ATR-2026-00010": "tool-poisoning",
-    "ATR-2026-00020": "context-exfiltration",
-    "ATR-2026-00021": "context-exfiltration",
-    "ATR-2026-00030": "agent-manipulation",
-    "ATR-2026-00040": "privilege-escalation",
-    "ATR-2026-00060": "skill-compromise",
-    "ATR-2026-00064": "skill-compromise",
-}
-
-
 class ATRCategory(Enum):
     """
     ATR taxonomy categories.
@@ -83,6 +64,26 @@ class ATRVariationType(Enum):
     GENERATED = "generated"
 
 
+# Maps rule IDs in the autoresearch coverage to their ATR taxonomy category.
+# This dict reflects the rules currently represented in adversarial-samples.json.
+# When ATR extends autoresearch coverage to additional rules, add entries here.
+# The ATRCategory enum is the single source of truth for the category strings —
+# a typo in either side becomes a static error at import time rather than a
+# silent data-quality bug.
+_RULE_ID_TO_CATEGORY: dict[str, ATRCategory] = {
+    "ATR-2026-00001": ATRCategory.PROMPT_INJECTION,
+    "ATR-2026-00002": ATRCategory.PROMPT_INJECTION,
+    "ATR-2026-00003": ATRCategory.PROMPT_INJECTION,
+    "ATR-2026-00010": ATRCategory.TOOL_POISONING,
+    "ATR-2026-00020": ATRCategory.CONTEXT_EXFILTRATION,
+    "ATR-2026-00021": ATRCategory.CONTEXT_EXFILTRATION,
+    "ATR-2026-00030": ATRCategory.AGENT_MANIPULATION,
+    "ATR-2026-00040": ATRCategory.PRIVILEGE_ESCALATION,
+    "ATR-2026-00060": ATRCategory.SKILL_COMPROMISE,
+    "ATR-2026-00064": ATRCategory.SKILL_COMPROMISE,
+}
+
+
 # Default upstream URL pinned to a specific commit for reproducibility, mirroring
 # the HarmBench loader convention.
 _DEFAULT_SOURCE = (
@@ -121,6 +122,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
 
     The optional ``categories``, ``techniques``, ``detection_fields``, and
     ``variation_types`` arguments narrow the dataset client-side after fetch.
+    Passing an empty list is rejected — pass ``None`` to disable a filter.
     """
 
     # Class-attribute metadata picked up by SeedDatasetMetadata
@@ -155,28 +157,48 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 reproducibility; pass the raw URL on ``main`` or a different
                 tag to track upstream.
             source_type: ``"public_url"`` or ``"file"``.
-            categories: Optional list of ATRCategory values; if provided, only
-                payloads whose original rule maps to one of these categories
-                are returned.
-            techniques: Optional list of technique strings (free text, since
-                the upstream taxonomy of techniques is open-set); if provided,
-                only payloads with a matching technique are returned.
-            detection_fields: Optional list of ATRDetectionField values; if
-                provided, only payloads targeting one of these surfaces are
-                returned.
-            variation_types: Optional list of ATRVariationType values; if
-                provided, only payloads of those variation types are returned.
+            categories: Optional non-empty list of ATRCategory values; if
+                provided, only payloads whose original rule maps to one of
+                these categories are returned. Pass ``None`` (not ``[]``) to
+                include all categories.
+            techniques: Optional non-empty list of technique strings (free
+                text, since the upstream taxonomy of techniques is open-set);
+                if provided, only payloads with a matching technique are
+                returned. Pass ``None`` (not ``[]``) to include all techniques.
+            detection_fields: Optional non-empty list of ATRDetectionField
+                values; if provided, only payloads targeting one of these
+                surfaces are returned. Pass ``None`` (not ``[]``) to include
+                all surfaces.
+            variation_types: Optional non-empty list of ATRVariationType
+                values; if provided, only payloads of those variation types
+                are returned. Pass ``None`` (not ``[]``) to include all
+                variation types.
 
         Raises:
-            ValueError: If ``categories``, ``detection_fields``, or
-                ``variation_types`` contain values that are not instances of
-                their expected enum class.
+            ValueError: If any filter is an empty list (``[]``), or if
+                ``categories``, ``detection_fields``, or ``variation_types``
+                contain values that are not instances of their expected enum.
         """
+        # Reject empty-list filters — a silent empty filter that returns the
+        # full dataset is almost always a caller bug; force the caller to use
+        # ``None`` if they want all entries.
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, ATRCategory, "category")
+        if techniques is not None and not techniques:
+            raise ValueError("`techniques` must be a non-empty list (pass None to include all techniques)")
         if detection_fields is not None:
+            if not detection_fields:
+                raise ValueError(
+                    "`detection_fields` must be a non-empty list (pass None to include all detection fields)"
+                )
             self._validate_enums(detection_fields, ATRDetectionField, "detection_field")
         if variation_types is not None:
+            if not variation_types:
+                raise ValueError(
+                    "`variation_types` must be a non-empty list (pass None to include all variation types)"
+                )
             self._validate_enums(variation_types, ATRVariationType, "variation_type")
 
         self.source = source
@@ -220,12 +242,6 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        description = (
-            "Agent Threat Rules (ATR) adversarial payload corpus from the "
-            "autoresearch dataset. Attack payloads spanning prompt injection, "
-            "tool poisoning, context exfiltration, agent manipulation, "
-            "privilege escalation, and skill compromise."
-        )
         authors = ["ATR Community"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
 
@@ -246,7 +262,9 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 skipped_unknown_rule += 1
                 continue
 
-            if self._categories and category not in self._categories:
+            category_value = category.value
+
+            if self._categories and category_value not in self._categories:
                 continue
             if self._techniques and example["technique"] not in self._techniques:
                 continue
@@ -263,13 +281,21 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 "atr_id": example["id"],
             }
 
+            # Per-rule description so downstream consumers reading metadata see
+            # the category that actually applies to this seed (rather than a
+            # corpus-wide list that ignores the rule's specific family).
+            category_label = category_value.replace("-", " ")
+            description = (
+                f"Agent Threat Rules (ATR) adversarial payload in the {category_label} family. Rule {rule_id}."
+            )
+
             seeds.append(
                 SeedPrompt(
                     value=example["payload"],
                     data_type="text",
                     name=rule_id,
                     dataset_name=self.dataset_name,
-                    harm_categories=[category],
+                    harm_categories=[category_value],
                     description=description,
                     authors=authors,
                     source=source_url,
