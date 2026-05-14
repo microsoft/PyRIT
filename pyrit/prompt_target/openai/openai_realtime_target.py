@@ -6,7 +6,6 @@ import base64
 import logging
 import re
 import wave
-from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from openai import AsyncOpenAI
@@ -22,7 +21,11 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.realtime_common import ServerVadConfig
+from pyrit.prompt_target.common.realtime_audio import (
+    RealtimeTargetResult,
+    ServerVadConfig,
+    _RealtimeTurnState,
+)
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -34,29 +37,6 @@ logger = logging.getLogger(__name__)
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
 # For best quality, OpenAI recommends using "marin" or "cedar".
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
-
-
-@dataclass
-class RealtimeTargetResult:
-    """
-    Represents the result of a Realtime API request, containing audio data and transcripts.
-
-    Attributes:
-        audio_bytes: Raw audio data returned by the API
-        transcripts: List of text transcripts generated from the audio
-    """
-
-    audio_bytes: bytes = field(default_factory=lambda: b"")
-    transcripts: list[str] = field(default_factory=list)
-
-    def flatten_transcripts(self) -> str:
-        """
-        Flattens the list of transcripts into a single string.
-
-        Returns:
-            A single string containing all transcripts concatenated together.
-        """
-        return "".join(self.transcripts)
 
 
 class RealtimeTarget(OpenAITarget, PromptTarget):
@@ -539,6 +519,39 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         if commit:
             await connection.input_audio_buffer.commit()
+
+    async def _cancel_in_flight_response(
+        self,
+        *,
+        connection: Any,
+        state: _RealtimeTurnState,
+    ) -> None:
+        """
+        Cancel the in-flight response and truncate the assistant item to delivered bytes.
+
+        Sends ``response.cancel`` and ``conversation.item.truncate`` so the server stops
+        generating and prunes its conversation history to only what was actually delivered.
+        Marks ``state.interrupted = True`` even if either wire call fails so callers can
+        tell the turn was cut short. Resolving the completion future is the dispatcher's
+        responsibility, not this method's.
+
+        Args:
+            connection: Active Realtime API connection from ``self.connect()``.
+            state (_RealtimeTurnState): The turn whose response should be cancelled.
+        """
+        try:
+            if state.last_response_id is not None:
+                await connection.response.cancel(response_id=state.last_response_id)
+            if state.current_item_id is not None:
+                await connection.conversation.item.truncate(
+                    item_id=state.current_item_id,
+                    content_index=0,
+                    # PCM16 @ 24 kHz: 48 bytes per millisecond.
+                    audio_end_ms=len(state.delivered_audio) // 48,
+                )
+        except Exception as e:
+            logger.warning(f"Cancel/truncate failed for response {state.last_response_id}: {e}")
+        state.interrupted = True
 
     async def receive_events(self, conversation_id: str) -> RealtimeTargetResult:
         """

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,7 +10,7 @@ import pytest
 from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
-from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTargetResult
+from pyrit.prompt_target.common.realtime_audio import RealtimeTargetResult, _RealtimeTurnState
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -585,3 +586,53 @@ async def test_stream_pcm_appends_base64_encoded_chunks(target):
     second_audio = connection.input_audio_buffer.append.call_args_list[1].kwargs["audio"]
     assert base64.b64decode(first_audio) == b"\xaa" * 4800
     assert base64.b64decode(second_audio) == b"\xbb" * 4800
+
+
+def _turn_state(*, response_id: str | None = "resp_abc", item_id: str | None = "item_xyz") -> _RealtimeTurnState:
+    """Build a turn state with the named ids preset; completion future is unused by cancel tests."""
+    return _RealtimeTurnState(
+        completion=asyncio.get_event_loop().create_future(),
+        is_responding=True,
+        last_response_id=response_id,
+        current_item_id=item_id,
+    )
+
+
+async def test_cancel_calls_response_cancel_with_state_response_id(target):
+    """_cancel_in_flight_response must forward state.last_response_id to response.cancel."""
+    connection = AsyncMock()
+    state = _turn_state(response_id="resp_42")
+    state.delivered_audio.extend(b"\x00" * 4800)
+
+    await target._cancel_in_flight_response(connection=connection, state=state)
+
+    connection.response.cancel.assert_awaited_once_with(response_id="resp_42")
+
+
+async def test_cancel_truncates_to_delivered_audio_ms(target):
+    """Truncate must be called with audio_end_ms computed from delivered_audio length."""
+    connection = AsyncMock()
+    state = _turn_state(item_id="item_99")
+    # 4800 delivered bytes / 48 bytes-per-ms = 100ms
+    state.delivered_audio.extend(b"\x00" * 4800)
+
+    await target._cancel_in_flight_response(connection=connection, state=state)
+
+    connection.conversation.item.truncate.assert_awaited_once_with(
+        item_id="item_99",
+        content_index=0,
+        audio_end_ms=100,
+    )
+    assert state.interrupted is True
+
+
+async def test_cancel_marks_interrupted_even_when_wire_call_raises(target, caplog):
+    """A failed cancel must log a warning and still flip state.interrupted."""
+    connection = AsyncMock()
+    connection.response.cancel.side_effect = RuntimeError("boom")
+    state = _turn_state()
+
+    await target._cancel_in_flight_response(connection=connection, state=state)
+
+    assert state.interrupted is True
+    assert any("Cancel/truncate failed" in record.message for record in caplog.records)

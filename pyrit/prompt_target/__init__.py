@@ -19,7 +19,7 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
 )
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.realtime_common import ServerVadConfig
+from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
     CapabilityName,
