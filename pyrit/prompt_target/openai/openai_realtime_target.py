@@ -22,6 +22,7 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.realtime_common import ServerVadConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -98,6 +99,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         existing_convo: Optional[dict[str, Any]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
         custom_capabilities: Optional[TargetCapabilities] = None,
+        server_vad: bool | ServerVadConfig = False,
         **kwargs: Any,
     ) -> None:
         """
@@ -123,6 +125,11 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 this target instance. Defaults to None.
             custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
                 ``custom_configuration`` instead. Will be removed in v0.14.0.
+            server_vad (bool | ServerVadConfig): Server-side voice activity detection (VAD).
+                ``False`` (default) keeps the existing atomic send/receive behavior.
+                ``True`` enables VAD with default tuning.
+                Pass a ``ServerVadConfig`` to enable with custom tuning. Streaming/interruption plumbing
+                arrives in subsequent changes; this currently only affects the emitted session config.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -132,6 +139,13 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
         self._realtime_client: Optional[AsyncOpenAI] = None
+
+        if isinstance(server_vad, ServerVadConfig):
+            self._server_vad: Optional[ServerVadConfig] = server_vad
+        elif server_vad:
+            self._server_vad = ServerVadConfig()
+        else:
+            self._server_vad = None
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"
@@ -292,6 +306,16 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 },
             },
         }
+
+        if self._server_vad is not None:
+            session_config["audio"]["input"]["turn_detection"] = {  # type: ignore[ty:invalid-assignment]
+                "type": "server_vad",
+                "threshold": self._server_vad.threshold,
+                "prefix_padding_ms": self._server_vad.prefix_padding_ms,
+                "silence_duration_ms": self._server_vad.silence_duration_ms,
+                "create_response": True,
+                "interrupt_response": True,
+            }
 
         if self.voice:
             session_config["audio"]["output"]["voice"] = self.voice  # type: ignore[ty:invalid-assignment]

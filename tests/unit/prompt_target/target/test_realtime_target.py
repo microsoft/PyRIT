@@ -7,7 +7,7 @@ import pytest
 
 from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import RealtimeTarget
+from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
 from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTargetResult
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
@@ -430,3 +430,73 @@ async def test_receive_events_skips_stale_response_done(target):
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts == ["hello"]
+
+
+# ---------------------------------------------------------------------------
+# Chunk 1 — ServerVadConfig + session config
+# ---------------------------------------------------------------------------
+
+
+def test_session_config_omits_turn_detection_when_vad_disabled(target):
+    """Default construction must not emit a turn_detection block; pins atomic flow."""
+    config = target._set_system_prompt_and_config_vars(system_prompt="test prompt")
+
+    assert "turn_detection" not in config["audio"]["input"]
+    assert config["instructions"] == "test prompt"
+
+
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+def test_session_config_emits_server_vad_block_with_defaults(sqlite_instance):
+    """server_vad=True must emit defaults."""
+    vad_target = RealtimeTarget(
+        api_key="test_key",
+        endpoint="wss://test_url",
+        model_name="test",
+        server_vad=True,
+    )
+
+    config = vad_target._set_system_prompt_and_config_vars(system_prompt="test prompt")
+
+    turn_detection = config["audio"]["input"]["turn_detection"]
+    assert turn_detection == {
+        "type": "server_vad",
+        "threshold": 0.4,
+        "prefix_padding_ms": 200,
+        "silence_duration_ms": 1500,
+        "create_response": True,
+        "interrupt_response": True,
+    }
+
+
+@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
+def test_session_config_honors_custom_vad_tuning(sqlite_instance):
+    """Passing a ServerVadConfig must flow through to the emitted turn_detection block."""
+    vad_target = RealtimeTarget(
+        api_key="test_key",
+        endpoint="wss://test_url",
+        model_name="test",
+        server_vad=ServerVadConfig(threshold=0.7, prefix_padding_ms=350, silence_duration_ms=800),
+    )
+
+    turn_detection = vad_target._set_system_prompt_and_config_vars(system_prompt="x")["audio"]["input"][
+        "turn_detection"
+    ]
+
+    assert turn_detection["threshold"] == 0.7
+    assert turn_detection["prefix_padding_ms"] == 350
+    assert turn_detection["silence_duration_ms"] == 800
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"threshold": -0.1},
+        {"threshold": 1.5},
+        {"prefix_padding_ms": -1},
+        {"silence_duration_ms": -1},
+    ],
+)
+def test_server_vad_config_rejects_invalid_values(kwargs):
+    """ServerVadConfig must reject out-of-range tuning values at construction."""
+    with pytest.raises(ValueError):
+        ServerVadConfig(**kwargs)
