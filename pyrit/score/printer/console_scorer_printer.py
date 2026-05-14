@@ -3,11 +3,21 @@
 
 """
 Deprecated: Import from pyrit.printer.scorer.console instead.
+This re-export will be removed in 0.16.0.
 """
 
-from pyrit.printer.scorer.console import ConsoleScorerPrinter, ConsoleScorerPrinterBase
+import warnings as _warnings
 
-__all__ = [
-    "ConsoleScorerPrinter",
-    "ConsoleScorerPrinterBase",
-]
+
+def __getattr__(name: str):  # noqa: N807
+    if name == "ConsoleScorerPrinter":
+        _warnings.warn(
+            "Importing ConsoleScorerPrinter from pyrit.score.printer.console_scorer_printer is deprecated "
+            "and will be removed in 0.16.0. Import from pyrit.printer.scorer.console instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from pyrit.printer.scorer.console import ConsoleScorerPrinter
+
+        return ConsoleScorerPrinter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

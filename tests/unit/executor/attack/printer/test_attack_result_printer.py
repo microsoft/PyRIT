@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
+from pyrit.printer.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
 from pyrit.models import AttackOutcome
 
 

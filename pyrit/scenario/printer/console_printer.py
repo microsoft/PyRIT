@@ -3,11 +3,21 @@
 
 """
 Deprecated: Import from pyrit.printer.scenario_result.console instead.
+This re-export will be removed in 0.16.0.
 """
 
-from pyrit.printer.scenario_result.console import ConsoleScenarioPrinterBase, ConsoleScenarioResultPrinter
+import warnings as _warnings
 
-__all__ = [
-    "ConsoleScenarioPrinterBase",
-    "ConsoleScenarioResultPrinter",
-]
+
+def __getattr__(name: str):  # noqa: N807
+    if name == "ConsoleScenarioResultPrinter":
+        _warnings.warn(
+            "Importing ConsoleScenarioResultPrinter from pyrit.scenario.printer.console_printer is deprecated "
+            "and will be removed in 0.16.0. Import from pyrit.printer.scenario_result.console instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from pyrit.printer.scenario_result.console import ConsoleScenarioResultPrinter
+
+        return ConsoleScenarioResultPrinter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

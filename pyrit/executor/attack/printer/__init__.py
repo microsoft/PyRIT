@@ -5,15 +5,40 @@
 Deprecated: Import from pyrit.printer instead.
 
 Attack result printers have moved to pyrit.printer.attack_result.
-These re-exports are provided for backward compatibility.
+These re-exports will be removed in 0.16.0.
 """
 
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
-from pyrit.printer.attack_result.console import ConsoleAttackResultPrinter
+import warnings as _warnings
 
-# MarkdownAttackResultPrinter is not yet refactored, keep the old import
-from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
+
+def __getattr__(name: str):  # noqa: N807
+    _deprecated = {
+        "ConsoleAttackResultPrinter": "pyrit.printer.attack_result.console",
+        "AttackResultPrinter": "pyrit.printer.attack_result.base",
+        "MarkdownAttackResultPrinter": "pyrit.executor.attack.printer.markdown_printer",
+    }
+    if name in _deprecated:
+        new_module = _deprecated[name]
+        _warnings.warn(
+            f"Importing {name} from pyrit.executor.attack.printer is deprecated and will be removed in 0.16.0. "
+            f"Import from {new_module} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if name == "ConsoleAttackResultPrinter":
+            from pyrit.printer.attack_result.console import ConsoleAttackResultPrinter
+
+            return ConsoleAttackResultPrinter
+        if name == "AttackResultPrinter":
+            from pyrit.printer.attack_result.base import AttackResultPrinterBase
+
+            return AttackResultPrinterBase
+        if name == "MarkdownAttackResultPrinter":
+            from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
+
+            return MarkdownAttackResultPrinter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AttackResultPrinter",
