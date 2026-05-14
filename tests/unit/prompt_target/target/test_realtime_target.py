@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -500,3 +501,87 @@ def test_server_vad_config_rejects_invalid_values(kwargs):
     """ServerVadConfig must reject out-of-range tuning values at construction."""
     with pytest.raises(ValueError):
         ServerVadConfig(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Chunk 2 — _stream_pcm_async helper
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_connection():
+    """Return an AsyncMock connection with input_audio_buffer wired up."""
+    connection = AsyncMock()
+    connection.input_audio_buffer.append = AsyncMock()
+    connection.input_audio_buffer.commit = AsyncMock()
+    return connection
+
+
+async def test_stream_pcm_even_split_no_commit(target):
+    """A buffer that divides evenly into chunks emits N appends and no commit when commit=False."""
+    connection = _make_mock_connection()
+    # 100ms @ 24kHz @ 2 bytes/sample = 4800 bytes per chunk. 9600 bytes = 2 chunks.
+    pcm = b"\x00" * 9600
+
+    await target._stream_pcm_async(connection=connection, pcm_bytes=pcm, commit=False)
+
+    assert connection.input_audio_buffer.append.call_count == 2
+    connection.input_audio_buffer.commit.assert_not_called()
+
+
+async def test_stream_pcm_partial_final_chunk(target):
+    """A buffer not a clean multiple of chunk size sends the final partial chunk as-is."""
+    connection = _make_mock_connection()
+    # 5000 bytes => one full 4800-byte chunk + one 200-byte tail.
+    pcm = b"\x01" * 5000
+
+    await target._stream_pcm_async(connection=connection, pcm_bytes=pcm, commit=False)
+
+    assert connection.input_audio_buffer.append.call_count == 2
+    # Inspect the second call's chunk size by base64-decoding its audio kwarg.
+    second_call_audio_b64 = connection.input_audio_buffer.append.call_args_list[1].kwargs["audio"]
+    assert len(base64.b64decode(second_call_audio_b64)) == 200
+
+
+async def test_stream_pcm_empty_buffer(target):
+    """An empty buffer yields zero appends. commit=False produces no commit either."""
+    connection = _make_mock_connection()
+
+    await target._stream_pcm_async(connection=connection, pcm_bytes=b"", commit=False)
+
+    connection.input_audio_buffer.append.assert_not_called()
+    connection.input_audio_buffer.commit.assert_not_called()
+
+
+async def test_stream_pcm_commits_when_asked(target):
+    """commit=True triggers exactly one input_audio_buffer.commit after all appends."""
+    connection = _make_mock_connection()
+    pcm = b"\x02" * 4800
+
+    await target._stream_pcm_async(connection=connection, pcm_bytes=pcm, commit=True)
+
+    assert connection.input_audio_buffer.append.call_count == 1
+    connection.input_audio_buffer.commit.assert_awaited_once_with()
+
+
+async def test_stream_pcm_empty_buffer_still_commits_when_asked(target):
+    """commit=True with an empty buffer should still fire commit (e.g. to flush an existing buffer)."""
+    connection = _make_mock_connection()
+
+    await target._stream_pcm_async(connection=connection, pcm_bytes=b"", commit=True)
+
+    connection.input_audio_buffer.append.assert_not_called()
+    connection.input_audio_buffer.commit.assert_awaited_once_with()
+
+
+async def test_stream_pcm_appends_base64_encoded_chunks(target):
+    """Each append's audio kwarg must be the base64 encoding of the corresponding PCM chunk."""
+    connection = _make_mock_connection()
+    # Build a recognizable buffer: 4800 bytes of 0xAA then 4800 bytes of 0xBB.
+    pcm = (b"\xaa" * 4800) + (b"\xbb" * 4800)
+
+    await target._stream_pcm_async(connection=connection, pcm_bytes=pcm, commit=False)
+
+    first_audio = connection.input_audio_buffer.append.call_args_list[0].kwargs["audio"]
+    second_audio = connection.input_audio_buffer.append.call_args_list[1].kwargs["audio"]
+    assert base64.b64decode(first_audio) == b"\xaa" * 4800
+    assert base64.b64decode(second_audio) == b"\xbb" * 4800
