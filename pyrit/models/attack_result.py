@@ -224,6 +224,93 @@ class AttackResult(StrategyResult):
         """
         return f"AttackResult: {self.conversation_id}: {self.outcome.value}: {self.objective[:50]}..."
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serialize this attack result to a JSON-compatible dictionary.
+
+        Returns:
+            dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
+        """
+        from pyrit.models.conversation_reference import ConversationReference
+
+        return {
+            "conversation_id": self.conversation_id,
+            "objective": self.objective,
+            "attack_result_id": self.attack_result_id,
+            "atomic_attack_identifier": (
+                self.atomic_attack_identifier.to_dict() if self.atomic_attack_identifier else None
+            ),
+            "last_response": self.last_response.to_dict() if self.last_response else None,
+            "last_score": self.last_score.to_dict() if self.last_score else None,
+            "executed_turns": self.executed_turns,
+            "execution_time_ms": self.execution_time_ms,
+            "outcome": self.outcome.value,
+            "outcome_reason": self.outcome_reason,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "related_conversations": [
+                ref.to_dict() if isinstance(ref, ConversationReference) else ref
+                for ref in self.related_conversations
+            ],
+            "metadata": self.metadata,
+            "labels": self.labels,
+            "error_message": self.error_message,
+            "error_type": self.error_type,
+            "error_traceback": self.error_traceback,
+            "retry_events": [e.to_dict() for e in self.retry_events],
+            "total_retries": self.total_retries,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AttackResult:
+        """
+        Reconstruct an AttackResult from a dictionary.
+
+        Args:
+            data (dict[str, Any]): Dictionary as produced by to_dict().
+
+        Returns:
+            AttackResult: Reconstructed instance.
+        """
+        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.conversation_reference import ConversationReference
+        from pyrit.models.message_piece import MessagePiece
+        from pyrit.models.retry_event import RetryEvent
+        from pyrit.models.score import Score
+
+        return cls(
+            conversation_id=data["conversation_id"],
+            objective=data["objective"],
+            attack_result_id=data.get("attack_result_id", str(uuid.uuid4())),
+            atomic_attack_identifier=(
+                ComponentIdentifier.from_dict(data["atomic_attack_identifier"])
+                if data.get("atomic_attack_identifier")
+                else None
+            ),
+            last_response=(
+                MessagePiece.from_dict(data["last_response"]) if data.get("last_response") else None
+            ),
+            last_score=Score.from_dict(data["last_score"]) if data.get("last_score") else None,
+            executed_turns=data.get("executed_turns", 0),
+            execution_time_ms=data.get("execution_time_ms", 0),
+            outcome=AttackOutcome(data.get("outcome", "undetermined")),
+            outcome_reason=data.get("outcome_reason"),
+            timestamp=(
+                datetime.fromisoformat(data["timestamp"])
+                if data.get("timestamp")
+                else datetime.now(timezone.utc)
+            ),
+            related_conversations={
+                ConversationReference.from_dict(r) for r in data.get("related_conversations", [])
+            },
+            metadata=data.get("metadata", {}),
+            labels=data.get("labels", {}),
+            error_message=data.get("error_message"),
+            error_type=data.get("error_type"),
+            error_traceback=data.get("error_traceback"),
+            retry_events=[RetryEvent.from_dict(e) for e in data.get("retry_events", [])],
+            total_retries=data.get("total_retries", 0),
+        )
+
 
 def _add_attack_identifier_compat(cls: type) -> type:
     """

@@ -354,6 +354,67 @@ class MessagePiece:
 
     __repr__ = __str__
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> MessagePiece:
+        """
+        Reconstruct a MessagePiece from a dictionary.
+
+        Args:
+            data (dict[str, object]): Dictionary as produced by to_dict().
+
+        Returns:
+            MessagePiece: Reconstructed instance.
+        """
+        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.score import Score
+
+        return cls(
+            id=data.get("id"),
+            role=data.get("role", "user"),
+            conversation_id=data.get("conversation_id"),
+            sequence=data.get("sequence", -1),
+            timestamp=(
+                datetime.fromisoformat(str(data["timestamp"])) if data.get("timestamp") else None
+            ),
+            labels=data.get("labels"),
+            targeted_harm_categories=data.get("targeted_harm_categories"),
+            prompt_metadata=data.get("prompt_metadata"),
+            converter_identifiers=(
+                [ComponentIdentifier.from_dict(c) for c in data["converter_identifiers"]]
+                if data.get("converter_identifiers")
+                else None
+            ),
+            prompt_target_identifier=(
+                ComponentIdentifier.from_dict(data["prompt_target_identifier"])
+                if data.get("prompt_target_identifier")
+                else None
+            ),
+            attack_identifier=(
+                ComponentIdentifier.from_dict(data["attack_identifier"])
+                if data.get("attack_identifier")
+                else None
+            ),
+            scorer_identifier=(
+                ComponentIdentifier.from_dict(data["scorer_identifier"])
+                if data.get("scorer_identifier")
+                else None
+            ),
+            original_value_data_type=data.get("original_value_data_type", "text"),
+            original_value=data.get("original_value", ""),
+            original_value_sha256=data.get("original_value_sha256"),
+            converted_value_data_type=data.get("converted_value_data_type"),
+            converted_value=data.get("converted_value"),
+            converted_value_sha256=data.get("converted_value_sha256"),
+            response_error=data.get("response_error", "none"),
+            originator=data.get("originator", "undefined"),
+            original_prompt_id=(
+                uuid.UUID(str(data["original_prompt_id"])) if data.get("original_prompt_id") else None
+            ),
+            scores=(
+                [Score.from_dict(s) for s in data["scores"]] if data.get("scores") else None
+            ),
+        )
+
     def __eq__(self, other: object) -> bool:
         """
         Compare this message piece with another for semantic equality.

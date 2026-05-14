@@ -307,6 +307,44 @@ class Message:
             "converted_value_data_type": converted_value_data_type,
         }
 
+    def to_full_dict(self) -> dict[str, object]:
+        """
+        Convert the message to a full dictionary representation including all piece details.
+
+        Unlike to_dict() which flattens pieces into a single converted_value, this method
+        serializes each piece individually via MessagePiece.to_dict(). This is the format
+        expected by from_dict().
+
+        Returns:
+            dict[str, object]: Dictionary with 'role', 'is_simulated', 'conversation_id',
+                'sequence', and 'pieces' (list of MessagePiece.to_dict() dicts).
+        """
+        return {
+            "role": self.api_role,
+            "is_simulated": self.is_simulated,
+            "conversation_id": self.conversation_id,
+            "sequence": self.sequence,
+            "pieces": [piece.to_dict() for piece in self.message_pieces],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> Message:
+        """
+        Reconstruct a Message from a dictionary.
+
+        Expects the format produced by to_full_dict(), which includes a 'pieces' key
+        containing a list of MessagePiece dictionaries.
+
+        Args:
+            data (dict[str, object]): Dictionary as produced by to_full_dict().
+
+        Returns:
+            Message: Reconstructed instance.
+        """
+        pieces_data = data.get("pieces", [])
+        message_pieces = [MessagePiece.from_dict(p) for p in pieces_data]
+        return cls(message_pieces, skip_validation=True)
+
     @staticmethod
     def get_all_values(messages: Sequence[Message]) -> list[str]:
         """
