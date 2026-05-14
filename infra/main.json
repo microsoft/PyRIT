@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.41.2.15936",
-      "templateHash": "16381559389474872325"
+      "version": "0.42.1.51946",
+      "templateHash": "18109486080685095591"
     }
   },
   "parameters": {
@@ -81,11 +81,10 @@
         "description": "PyRIT initializer to run. Default \"target airt\" registers target configs + attack defaults."
       }
     },
-    "envSecretName": {
-      "type": "string",
-      "defaultValue": "env-global",
+    "envFileContents": {
+      "type": "securestring",
       "metadata": {
-        "description": "Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup."
+        "description": "Contents of the .env file (endpoints, models, API keys). Passed inline to the Container App as a secure secret. Marked @secure() so the value is stripped from deployment history."
       }
     },
     "cpuCores": {
@@ -429,8 +428,7 @@
           "secrets": [
             {
               "name": "env-file",
-              "keyVaultUrl": "[format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('envSecretName'))]",
-              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
+              "value": "[parameters('envFileContents')]"
             }
           ]
         },
@@ -487,6 +485,10 @@
                 {
                   "name": "AZURE_CLIENT_ID",
                   "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').clientId]"
+                },
+                {
+                  "name": "PYRIT_CORS_ORIGINS",
+                  "value": "[format('https://{0}.{1}', parameters('appName'), reference(resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName'))), '2024-10-02-preview').defaultDomain)]"
                 }
               ]
             }

@@ -139,6 +139,7 @@ async def register_initializer(
     "/{initializer_name}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
+        400: {"model": ProblemDetail, "description": "Cannot remove built-in initializer"},
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},
     },
@@ -148,9 +149,9 @@ async def unregister_initializer(
     initializer_name: str,
 ) -> None:
     """
-    Remove an initializer from the registry.
+    Remove a custom initializer from the registry.
 
-    Any initializer (built-in or custom) can be removed. Requires
+    Built-in initializers cannot be removed. Requires
     allow_custom_initializers to be enabled in pyrit_conf.
 
     Args:
@@ -162,6 +163,11 @@ async def unregister_initializer(
 
     try:
         await service.unregister_initializer_async(initializer_name=initializer_name)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
     except KeyError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

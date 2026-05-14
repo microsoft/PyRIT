@@ -10,8 +10,9 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   3. Entra security group (optional — can use existing)
   4. Azure SQL server + database
   5. Storage account + blob container (auto-injects container URL into .env)
-  6. Key Vault + populate .env secret (auto-injects SQL connection string)
-  7. Managed identity + RBAC role assignments (AcrPull, KV Secrets User, Storage Blob Data Contributor)
+  6. Key Vault + populate .env secret (auto-injects SQL connection string;
+     applies SFI network lockdown — backup/audit only, NOT read at runtime)
+  7. Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
   7b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
   8. Bicep deployment (Container App, networking, logging)
   9. Post-deploy: SPA redirect URI
@@ -620,7 +621,25 @@ def create_key_vault(
     tags: list[str] | None = None,
 ) -> str:
     """
-    Create a Key Vault and populate it with the .env secret.
+    Create a Key Vault, populate it with the .env secret as a backup/audit
+    snapshot, then apply the SFI network lockdown.
+
+    The Container App does NOT read this secret at runtime — the .env contents
+    are passed inline to the Container App via the Bicep `envFileContents`
+    @secure() parameter. Azure Container Apps is not on Key Vault's
+    "trusted services" list, so a locked-down KV would block runtime secret
+    references. By passing the secret inline, we keep the runtime path
+    independent of KV network access.
+
+    The vault still receives the .env content as `env-global` to:
+      - Provide a backup snapshot if the Container App is recreated.
+      - Preserve the audit trail for the deployed configuration.
+
+    The vault is created with public network access enabled so that the
+    deployer (running from a corp network or dev container) can write the
+    initial secret. After the secret is uploaded, the vault is locked down
+    to publicNetworkAccess=Disabled + defaultAction=Deny + bypass=AzureServices
+    to satisfy the S360 / NS221 Secure PaaS alert.
 
     Args:
         resource_group (str): The resource group name.
@@ -734,6 +753,28 @@ def create_key_vault(
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
 
+    # Apply SFI network lockdown after the backup secret is written. Safe
+    # because the Container App does NOT reference this KV at runtime
+    # (the .env is passed inline via Bicep's envFileContents @secure() param).
+    # Matches the team standard observed on existing AIRT vaults
+    # (e.g. airt-chatui-kv, AIRT-Blackhat-KV): publicNetworkAccess=Disabled,
+    # default-deny ACL, bypass for trusted Azure services.
+    logger.info("Applying SFI network lockdown to Key Vault: %s", vault_name)
+    run_az(
+        args=[
+            "keyvault",
+            "update",
+            "--name",
+            vault_name,
+            "--public-network-access",
+            "Disabled",
+            "--default-action",
+            "Deny",
+            "--bypass",
+            "AzureServices",
+        ]
+    )
+
     return kv_id
 
 
@@ -749,10 +790,17 @@ def deploy_bicep(
     sql_database_name: str,
     kv_resource_id: str,
     acr_name: str,
+    env_file_contents: str,
     owner_tag: str = "",
 ) -> dict:
     """
     Deploy the Bicep template.
+
+    The .env contents are passed via a temp parameters file (not inline
+    --parameters key=value) because the value is multi-line, contains '='
+    characters, and is marked @secure() in Bicep — passing it inline is
+    fragile and can leak the value into shell history. The temp file is
+    deleted after deployment.
 
     Args:
         resource_group (str): The resource group name.
@@ -763,42 +811,64 @@ def deploy_bicep(
         group_ids (str): Comma-separated group object IDs.
         sql_server_fqdn (str): The SQL server FQDN.
         sql_database_name (str): The SQL database name.
-        kv_resource_id (str): The Key Vault resource ID.
+        kv_resource_id (str): The Key Vault resource ID (kept for the
+            keyVaultName output; not referenced at container runtime).
         acr_name (str): The ACR name.
+        env_file_contents (str): The prepared .env content to inject as
+            the Container App's `env-file` secret.
         owner_tag (str): Value for the Owner tag on Bicep-managed resources.
 
     Returns:
         dict: The deployment outputs.
     """
     logger.info("Deploying Bicep template to resource group: %s", resource_group)
-    params = [
-        "deployment",
-        "group",
-        "create",
-        "--resource-group",
-        resource_group,
-        "--template-file",
-        str(BICEP_TEMPLATE),
-        "--parameters",
-        f"appName={app_name}",
-        f"containerImage={container_image}",
-        f"entraTenantId={tenant_id}",
-        f"entraClientId={client_id}",
-        f"allowedGroupObjectIds={group_ids}",
-        f"sqlServerFqdn={sql_server_fqdn}",
-        f"sqlDatabaseName={sql_database_name}",
-        f"keyVaultResourceId={kv_resource_id}",
-        f"acrName={acr_name}",
-        "enablePrivateEndpoint=false",
-    ]
+
+    parameters: dict = {
+        "appName": {"value": app_name},
+        "containerImage": {"value": container_image},
+        "entraTenantId": {"value": tenant_id},
+        "entraClientId": {"value": client_id},
+        "allowedGroupObjectIds": {"value": group_ids},
+        "sqlServerFqdn": {"value": sql_server_fqdn},
+        "sqlDatabaseName": {"value": sql_database_name},
+        "keyVaultResourceId": {"value": kv_resource_id},
+        "acrName": {"value": acr_name},
+        "enablePrivateEndpoint": {"value": False},
+        "envFileContents": {"value": env_file_contents},
+    }
     if owner_tag:
-        bicep_tags = {"Service": "pyrit-gui", "Owner": owner_tag}
-        params.append(f"tags={json.dumps(bicep_tags)}")
-    params += [
-        "--query",
-        "properties.outputs",
-    ]
-    return run_az_json(args=params)
+        parameters["tags"] = {"value": {"Service": "pyrit-gui", "Owner": owner_tag}}
+
+    parameters_doc = {
+        "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+        "contentVersion": "1.0.0.0",
+        "parameters": parameters,
+    }
+
+    params_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".parameters.json", delete=False, encoding="utf-8") as tmp:
+            params_path = tmp.name
+            json.dump(parameters_doc, tmp)
+
+        return run_az_json(
+            args=[
+                "deployment",
+                "group",
+                "create",
+                "--resource-group",
+                resource_group,
+                "--template-file",
+                str(BICEP_TEMPLATE),
+                "--parameters",
+                f"@{params_path}",
+                "--query",
+                "properties.outputs",
+            ]
+        )
+    finally:
+        if params_path:
+            Path(params_path).unlink(missing_ok=True)
 
 
 def post_deploy(
@@ -834,7 +904,6 @@ def create_managed_identity_and_grant_roles(
     resource_group: str,
     location: str,
     identity_name: str,
-    kv_resource_id: str,
     acr_name: str,
     storage_account_id: str,
     tags: list[str] | None = None,
@@ -842,12 +911,15 @@ def create_managed_identity_and_grant_roles(
     """
     Create a user-assigned managed identity and grant it pre-deploy RBAC roles.
 
-    The MI must have KV Secrets User, AcrPull, and Storage Blob Data Contributor
-    before the Bicep deployment can provision the container (it needs to pull
-    the image, read the KV secret, and access blob storage at startup).
-    Creating the MI here and granting roles before Bicep avoids the race
-    condition of Bicep creating the MI but the container needing roles that
-    don't exist yet.
+    The MI must have AcrPull and Storage Blob Data Contributor before the Bicep
+    deployment can provision the container (it needs to pull the image and
+    access blob storage at startup). Creating the MI here and granting roles
+    before Bicep avoids the race condition of Bicep creating the MI but the
+    container needing roles that don't exist yet.
+
+    Note: Key Vault Secrets User is intentionally NOT granted. The Container
+    App reads its .env contents from an inline secret passed via the Bicep
+    `envFileContents` parameter, not from a Key Vault secret reference.
 
     Bicep's MI resource declaration is idempotent — it will adopt the existing MI.
 
@@ -855,7 +927,6 @@ def create_managed_identity_and_grant_roles(
         resource_group (str): The resource group name.
         location (str): The Azure region.
         identity_name (str): The managed identity name.
-        kv_resource_id (str): The Key Vault resource ID for Secrets User role.
         acr_name (str): The ACR name for AcrPull role.
         storage_account_id (str): The storage account resource ID for Storage
             Blob Data Contributor role.
@@ -889,24 +960,6 @@ def create_managed_identity_and_grant_roles(
             resource_group,
             "--query",
             "principalId",
-        ]
-    )
-
-    # Grant KV Secrets User
-    logger.info("Granting Key Vault Secrets User to managed identity")
-    run_az(
-        args=[
-            "role",
-            "assignment",
-            "create",
-            "--assignee-object-id",
-            mi_principal_id,
-            "--assignee-principal-type",
-            "ServicePrincipal",
-            "--role",
-            "Key Vault Secrets User",
-            "--scope",
-            kv_resource_id,
         ]
     )
 
@@ -1225,7 +1278,7 @@ def main(args: list[str] | None = None) -> int:
             storage_container_url=storage["container_url"],
         )
 
-        # Step 7: Create Key Vault + upload .env
+        # Step 7: Create Key Vault + upload .env (backup snapshot) + apply SFI lockdown
         kv_id = create_key_vault(
             resource_group=rg_name,
             location=parsed.location,
@@ -1240,7 +1293,6 @@ def main(args: list[str] | None = None) -> int:
             resource_group=rg_name,
             location=parsed.location,
             identity_name=mi_name,
-            kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
             storage_account_id=storage["account_id"],
             tags=resource_tags,
@@ -1257,7 +1309,7 @@ def main(args: list[str] | None = None) -> int:
             )
             logger.info("Granted Cognitive Services OpenAI User on %d/%d AOAI resources", aoai_granted, len(aoai_names))
 
-        # Step 9: Deploy Bicep
+        # Step 9: Deploy Bicep (passes .env content inline as @secure() param)
         outputs = deploy_bicep(
             resource_group=rg_name,
             app_name=app_name,
@@ -1269,6 +1321,7 @@ def main(args: list[str] | None = None) -> int:
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
+            env_file_contents=env_content,
             owner_tag=parsed.owner_tag,
         )
 

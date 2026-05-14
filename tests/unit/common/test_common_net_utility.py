@@ -77,8 +77,14 @@ async def test_make_request_and_raise_if_error_retries():
 
 async def test_debug_is_false_by_default():
     with patch("pyrit.common.net_utility.get_httpx_client") as mock_get_httpx_client:
-        mock_client_instance = MagicMock()
-        mock_get_httpx_client.return_value = mock_client_instance
+        mock_client_context = MagicMock()
+        mock_client = MagicMock()
+        mock_client.request = AsyncMock(
+            return_value=httpx.Response(status_code=200, request=httpx.Request("GET", "http://example.com"))
+        )
+        mock_client_context.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_context.__aexit__ = AsyncMock(return_value=None)
+        mock_get_httpx_client.return_value = mock_client_context
 
         await make_request_and_raise_if_error_async(endpoint_uri="http://example.com", method="GET")
 

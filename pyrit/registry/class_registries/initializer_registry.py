@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.identifiers.class_name_utils import class_name_to_snake_case, validate_registry_name
 from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.class_registries.base_class_registry import (
     BaseClassRegistry,
@@ -82,7 +82,13 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         if self._discovery_path is None:
             raise ValueError("self._discovery_path is not initialized")
 
+        self._builtin_names: set[str] = set()
         super().__init__(lazy_discovery=lazy_discovery)
+
+    def is_builtin(self, name: str) -> bool:
+        """Return True if *name* was registered during built-in discovery."""
+        self._ensure_discovered()
+        return name in self._builtin_names
 
     def _discover(self) -> None:
         """Discover all initializers from the specified discovery path."""
@@ -97,7 +103,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
         if discovery_path.is_file():
-            self._process_file(file_path=discovery_path, base_class=PyRITInitializer)
+            self._process_file(file_path=discovery_path, base_class=PyRITInitializer, builtin=True)
         else:
             for _file_stem, _file_path, initializer_class in discover_in_directory(
                 directory=discovery_path,
@@ -106,15 +112,17 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
             ):
                 self._register_initializer(
                     initializer_class=initializer_class,
+                    builtin=True,
                 )
 
-    def _process_file(self, *, file_path: Path, base_class: type) -> None:
+    def _process_file(self, *, file_path: Path, base_class: type, builtin: bool = False) -> None:
         """
         Process a Python file to extract initializer subclasses.
 
         Args:
             file_path: Path to the Python file to process.
             base_class: The PyRITInitializer base class.
+            builtin: Whether discovered classes should be marked as built-in.
         """
         short_name = file_path.stem
 
@@ -136,6 +144,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
                 ):
                     self._register_initializer(
                         initializer_class=attr,
+                        builtin=builtin,
                     )
 
         except Exception as e:
@@ -145,12 +154,14 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         self,
         *,
         initializer_class: type[PyRITInitializer],
+        builtin: bool = False,
     ) -> None:
         """
         Register an initializer class.
 
         Args:
             initializer_class: The initializer class to register.
+            builtin: Whether this is a built-in initializer.
         """
         try:
             # Convert class name to snake_case for registry name
@@ -167,6 +178,8 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
             entry = ClassEntry(registered_class=initializer_class)
             self._class_entries[registry_name] = entry
+            if builtin:
+                self._builtin_names.add(registry_name)
             logger.debug(f"Registered initializer: {registry_name} ({initializer_class.__name__})")
 
         except Exception as e:
@@ -235,6 +248,9 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
         """
         self._ensure_discovered()
 
+        validate_registry_name(name)
+
+
         if name in self._class_entries:
             raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 
@@ -287,23 +303,22 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
     def unregister_and_cleanup(self, name: str) -> None:
         """
-        Unregister an initializer and clean up its script file if one exists.
+        Unregister a custom initializer and clean up its script file.
 
-        Works for both built-in and custom initializers. For custom
-        initializers added via ``register_from_content``, the saved
-        script file is also deleted.
-
-        Note:
-            Custom registrations are runtime-only and are not
-            rediscovered on restart.  Script files are persisted solely
-            as import artifacts for the current process.
+        Built-in initializers cannot be removed. For custom initializers
+        added via ``register_from_content``, the saved script file is
+        also deleted.
 
         Args:
             name: The registry name to remove.
 
         Raises:
             KeyError: If the name is not registered.
+            ValueError: If the name refers to a built-in initializer.
         """
+        self._ensure_discovered()
+        if name in self._builtin_names:
+            raise ValueError(f"Cannot remove built-in initializer '{name}'.")
         self.unregister(name)
 
         script_path = self._get_custom_scripts_dir() / f"{name}.py"

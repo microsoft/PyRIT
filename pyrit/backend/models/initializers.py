@@ -11,6 +11,7 @@ before scenario execution. These models represent initializer metadata.
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.identifiers.class_name_utils import REGISTRY_NAME_PATTERN
 
 
 class InitializerParameterSummary(BaseModel):
@@ -45,5 +46,9 @@ class ListRegisteredInitializersResponse(BaseModel):
 class RegisterInitializerRequest(BaseModel):
     """Request body for registering a custom initializer by uploading script content."""
 
-    name: str = Field(..., description="Registry name for the initializer (e.g., 'my_custom')")
+    name: str = Field(
+        ...,
+        pattern=REGISTRY_NAME_PATTERN,
+        description="Registry name for the initializer (e.g., 'my_custom')",
+    )
     script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")

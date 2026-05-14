@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common import Parameter, apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import (
     EXECUTOR_RED_TEAM_PATH,
     SCORER_SEED_PROMPT_PATH,
@@ -152,8 +153,8 @@ class Scam(Scenario):
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
         adversarial_chat: Optional[PromptTarget] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the ScamScenario.
@@ -163,11 +164,9 @@ class Scam(Scenario):
                 evaluation.
             adversarial_chat (Optional[PromptTarget]): Chat target used to rephrase the
                 objective into the role-play context (in single-turn strategies).
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
         """
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
@@ -181,9 +180,18 @@ class Scam(Scenario):
             version=self.VERSION,
             strategy_class=ScamStrategy,
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Scam(include_baseline=...)",
+                new_item="Scam.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
@@ -273,4 +281,9 @@ class Scam(Scenario):
 
         strategies = {s.value for s in self._scenario_strategies}
 
-        return [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]
+        atomic_attacks = [self._get_atomic_attack_from_strategy(strategy) for strategy in strategies]
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
+
+        return atomic_attacks
