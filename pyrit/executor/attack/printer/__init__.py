@@ -14,8 +14,8 @@ import warnings as _warnings
 def __getattr__(name: str):  # noqa: N807
     _deprecated = {
         "ConsoleAttackResultPrinter": "pyrit.printer.attack_result.console",
+        "MarkdownAttackResultPrinter": "pyrit.printer.attack_result.markdown",
         "AttackResultPrinter": "pyrit.printer.attack_result.base",
-        "MarkdownAttackResultPrinter": "pyrit.executor.attack.printer.markdown_printer",
     }
     if name in _deprecated:
         new_module = _deprecated[name]
@@ -34,9 +34,9 @@ def __getattr__(name: str):  # noqa: N807
 
             return AttackResultPrinterBase
         if name == "MarkdownAttackResultPrinter":
-            from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
+            from pyrit.printer.attack_result.markdown import MarkdownAttackMemoryPrinter
 
-            return MarkdownAttackResultPrinter
+            return MarkdownAttackMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
