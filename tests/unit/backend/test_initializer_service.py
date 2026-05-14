@@ -361,6 +361,16 @@ class TestInitializerServiceUnregister:
             with pytest.raises(KeyError):
                 await service.unregister_initializer_async(initializer_name="nonexistent")
 
+    async def test_unregister_initializer_propagates_value_error_for_builtin(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            mock_registry = MagicMock()
+            mock_registry.unregister_and_cleanup.side_effect = ValueError("Cannot remove built-in")
+            service._registry = mock_registry
+
+            with pytest.raises(ValueError, match="Cannot remove built-in"):
+                await service.unregister_initializer_async(initializer_name="simple")
+
 
 # ============================================================================
 # POST / DELETE Route Tests
@@ -375,6 +385,15 @@ class TestRegisterInitializerRoute:
         response = client.post("/api/initializers", json={"name": "test", "script_content": _SAMPLE_SCRIPT})
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "disabled" in response.json()["detail"].lower()
+
+    @pytest.mark.parametrize("bad_name", ["../traversal", "UPPER", "has space", "1digit", ""])
+    def test_post_returns_422_for_invalid_name(
+        self, client_with_custom_initializers_enabled: TestClient, bad_name: str
+    ) -> None:
+        response = client_with_custom_initializers_enabled.post(
+            "/api/initializers", json={"name": bad_name, "script_content": _SAMPLE_SCRIPT}
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     def test_post_returns_201_with_registered_initializer(
         self, client_with_custom_initializers_enabled: TestClient
@@ -470,3 +489,18 @@ class TestUnregisterInitializerRoute:
             response = client_with_custom_initializers_enabled.delete("/api/initializers/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_delete_returns_400_for_builtin_initializer(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.unregister_initializer_async = AsyncMock(
+                side_effect=ValueError("Cannot remove built-in initializer 'simple'.")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.delete("/api/initializers/simple")
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "built-in" in response.json()["detail"].lower()
