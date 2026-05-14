@@ -9,7 +9,7 @@ This re-export will be removed in 0.16.0.
 import warnings as _warnings
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> type:  # noqa: N807
     if name == "MarkdownAttackResultPrinter":
         _warnings.warn(
             "Importing MarkdownAttackResultPrinter from pyrit.executor.attack.printer.markdown_printer is deprecated "

@@ -9,7 +9,7 @@ This re-export will be removed in 0.16.0.
 import warnings as _warnings
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> type:  # noqa: N807
     if name == "ConsoleScorerPrinter":
         _warnings.warn(
             "Importing ConsoleScorerPrinter from pyrit.score.printer.console_scorer_printer is deprecated "

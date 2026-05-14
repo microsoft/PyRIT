@@ -41,7 +41,7 @@ class AttackResultPrinterBase(ABC):
             list[Score]: The scores associated with the given piece IDs.
         """
 
-    async def display_image_async(self, piece: object) -> None:
+    async def display_image_async(self, piece: object) -> None:  # noqa: B027
         """
         Display an image from a message piece. No-op by default.
 

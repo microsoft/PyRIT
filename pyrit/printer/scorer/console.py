@@ -27,6 +27,9 @@ class ConsoleScorerPrinterBase(ScorerPrinterBase):
         Args:
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
+
+        Raises:
+            ValueError: If indent_size is negative.
         """
         if indent_size < 0:
             raise ValueError("indent_size must be non-negative")
@@ -220,7 +223,12 @@ class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
     """
 
     def get_objective_metrics(self, *, eval_hash: str) -> Any:
-        """Fetch objective scorer evaluation metrics from the registry."""
+        """
+        Fetch objective scorer evaluation metrics from the registry.
+
+        Returns:
+            ObjectiveScorerMetrics or None: The metrics, or None if not found.
+        """
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
@@ -228,7 +236,12 @@ class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
 
     def get_harm_metrics(self, *, eval_hash: str, harm_category: str) -> Any:
-        """Fetch harm scorer evaluation metrics from the registry."""
+        """
+        Fetch harm scorer evaluation metrics from the registry.
+
+        Returns:
+            HarmScorerMetrics or None: The metrics, or None if not found.
+        """
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_harm_metrics_by_eval_hash,
         )

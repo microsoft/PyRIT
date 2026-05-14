@@ -9,7 +9,7 @@ This re-export will be removed in 0.16.0.
 import warnings as _warnings
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> type:  # noqa: N807
     if name == "ConsoleAttackResultPrinter":
         _warnings.warn(
             "Importing ConsoleAttackResultPrinter from pyrit.executor.attack.printer.console_printer is deprecated "

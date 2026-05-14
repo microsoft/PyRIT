@@ -11,7 +11,7 @@ These re-exports will be removed in 0.16.0.
 import warnings as _warnings
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
         "ConsoleAttackResultPrinter": "pyrit.printer.attack_result.console",
         "MarkdownAttackResultPrinter": "pyrit.printer.attack_result.markdown",

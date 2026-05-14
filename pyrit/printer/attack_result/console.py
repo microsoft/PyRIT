@@ -507,11 +507,21 @@ class ConsoleAttackMemoryPrinter(ConsoleAttackPrinterBase):
         self._memory = CentralMemory.get_memory_instance()
 
     async def get_conversation_async(self, conversation_id: str) -> list[Message]:
-        """Fetch conversation messages from CentralMemory."""
+        """
+        Fetch conversation messages from CentralMemory.
+
+        Returns:
+            list[Message]: The conversation messages.
+        """
         return list(self._memory.get_conversation(conversation_id=conversation_id))
 
     async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
-        """Fetch scores from CentralMemory."""
+        """
+        Fetch scores from CentralMemory.
+
+        Returns:
+            list[Score]: The scores.
+        """
         return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
 
     async def display_image_async(self, piece: object) -> None:

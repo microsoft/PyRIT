@@ -11,7 +11,7 @@ These re-exports will be removed in 0.16.0.
 import warnings as _warnings
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
         "ConsoleScenarioResultPrinter": "pyrit.printer.scenario_result.console",
         "ScenarioResultPrinter": "pyrit.printer.scenario_result.base",
