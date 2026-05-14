@@ -136,10 +136,6 @@ class InitializerService:
 
         Args:
             initializer_name: The registry name to remove.
-
-        Raises:
-            KeyError: If the initializer is not registered.
-            ValueError: If the initializer is built-in.
         """
         self._registry.unregister_and_cleanup(initializer_name)
         logger.info(f"Unregistered initializer: {initializer_name}")

@@ -3,7 +3,11 @@
 
 import pytest
 
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case, snake_case_to_class_name, validate_registry_name
+from pyrit.identifiers.class_name_utils import (
+    class_name_to_snake_case,
+    snake_case_to_class_name,
+    validate_registry_name,
+)
 
 # --- class_name_to_snake_case ---
 
@@ -110,15 +114,15 @@ def test_validate_registry_name_accepts_valid(name):
 @pytest.mark.parametrize(
     "name",
     [
-        "",               # empty
+        "",  # empty
         "1starts_digit",  # starts with digit
-        "_leading",       # starts with underscore
-        "UPPER",          # uppercase
-        "has-dash",       # dash
-        "has.dot",        # dot
-        "has space",      # space
-        "../traversal",   # path traversal
-        "x" * 65,         # too long
+        "_leading",  # starts with underscore
+        "UPPER",  # uppercase
+        "has-dash",  # dash
+        "has.dot",  # dot
+        "has space",  # space
+        "../traversal",  # path traversal
+        "x" * 65,  # too long
     ],
 )
 def test_validate_registry_name_rejects_invalid(name):
