@@ -36,7 +36,7 @@ within an instance. The trust boundary is Entra group membership.
 | User-Assigned Managed Identity | `copyrit-{instance-name}-identity` |
 | Azure SQL Server + Database | `copyrit-{instance-name}-sql` / `pyrit-{instance-name}` |
 | Storage Account + Blob Container | `copyrit{instance-name-no-hyphens}sa` / `dbdata` |
-| Key Vault | `copyrit-{instance-name}-kv` |
+| Key Vault (locked down; backup/audit only — NOT read at runtime) | `copyrit-{instance-name}-kv` |
 | Entra App Registration | `CoPyRIT GUI ({instance-name})` |
 | Log Analytics Workspace | `copyrit-{instance-name}-logs` |
 
@@ -225,37 +225,113 @@ Azure OpenAI or OpenAI endpoints — they don't need to match the AIRT instance.
 
 ## Updating Secrets
 
-To update the `.env` contents after deployment:
+The Container App reads its `.env` contents from an **inline secret** named
+`env-file`. To rotate it safely, use `az containerapp secret set` with the
+`@file` form (the file path is on the command line, not the secret value, so
+nothing leaks via `ps`).
 
-> **Important:** The deploy script auto-injects `AZURE_SQL_DB_CONNECTION_STRING`
-> and `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` into the `.env` during
-> initial deployment. When updating secrets manually, your `updated.env` file
-> **must include** both variables. If omitted, the container will fail to
-> connect to SQL or read blob results on restart. Check the current values with:
-> ```bash
-> az keyvault secret show --vault-name copyrit-{instance-name}-kv \
->     --name env-global --query value -o tsv | grep -E 'AZURE_SQL_DB|AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL'
-> ```
+> **`updated.env` is your local file** — same format as `infra/env.demo.template`
+> and the file you passed to `--env-file` during initial deployment, but with
+> the new values you want to deploy. The filename is just a convention; you
+> can name it anything.
+
+> ⚠️ **Verify the file exists before running `az`.** The Azure CLI's `@file`
+> expansion is silent: if the path doesn't exist or has a typo, `az` falls
+> back to the literal string `@./your-typo.env` and stores **that** as the
+> secret value. The container will then read garbage and chat will break with
+> no obvious error in the deploy step.
+
+**bash:**
 
 ```bash
-az keyvault secret set \
-    --vault-name copyrit-{instance-name}-kv \
-    --name env-global \
-    --file ./updated.env
+# Pre-flight: fail fast if the file is missing
+test -f ./updated.env || { echo "ERROR: ./updated.env not found"; exit 1; }
+
+az containerapp secret set \
+    -n copyrit-{instance-name} \
+    -g copyrit-{instance-name} \
+    --secrets "env-file=@./updated.env"
 ```
 
-Then force a new revision so the container picks up the updated secret:
+**PowerShell:**
+
+```powershell
+# Pre-flight: fail fast if the file is missing
+if (-not (Test-Path .\updated.env)) { throw 'ERROR: .\updated.env not found' }
+
+az containerapp secret set `
+    -n copyrit-{instance-name} `
+    -g copyrit-{instance-name} `
+    --secrets "env-file=@./updated.env"
+```
+
+> **Important — `.env` content requirements when rotating manually:**
+>
+> The deploy script auto-injects two values during the **initial** deployment
+> that you must include in `updated.env` if you rotate manually:
+> - `AZURE_SQL_DB_CONNECTION_STRING`
+> - `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`
+>
+> Without them the container will fail to connect to SQL or read blob storage
+> on the next restart. Use the values that the deploy script logged on initial
+> deploy (or look them up from the SQL/Storage resources). The KV
+> `env-global` backup is the authoritative copy of what was last deployed via
+> the script.
+
+After updating the secret, **force a new revision** so the running container
+picks up the new value. Per Microsoft Container Apps docs, secret updates do
+**not** auto-restart existing revisions — you must either deploy a new
+revision or restart an existing one:
 
 ```bash
+# bash
 az containerapp update \
     -n copyrit-{instance-name} \
     -g copyrit-{instance-name} \
     --set-env-vars "SECRET_UPDATED=$(date +%s)"
 ```
 
-> **Note:** Simple restarts may not refresh Key Vault–backed secrets. Creating a
-> new revision (via `az containerapp update`) is the most reliable way to force
-> the container to read the latest secret value.
+```powershell
+# PowerShell
+az containerapp update `
+    -n copyrit-{instance-name} `
+    -g copyrit-{instance-name} `
+    --set-env-vars "SECRET_UPDATED=$([DateTimeOffset]::Now.ToUnixTimeSeconds())"
+```
+
+> **Note: this rotation path updates the inline ACA secret, not the KV
+> `env-global` backup.** The KV copy will drift until the next full deploy.
+> If you want to keep KV in sync, also run:
+> ```bash
+> az keyvault secret set --vault-name copyrit-{instance-name}-kv \
+>     --name env-global --file ./updated.env
+> ```
+> The KV is locked down (`publicNetworkAccess=Disabled`); this command must
+> run from Azure Cloud Shell or with public access temporarily re-enabled.
+
+> **Anti-patterns to avoid:**
+>
+> - `az containerapp secret set --secrets "env-file=$ENV_CONTENT"` — exposes
+>   the value via process arguments (visible in `ps` while the command runs).
+>   The `@file` form above passes only the path, not the value.
+> - `az containerapp secret show --secret-name env-file` — returns the full
+>   plaintext to your terminal / shell history. Inspect the KV backup
+>   instead, or use `az containerapp secret list -o table` to confirm the
+>   secret exists without revealing its value.
+> - `python infra/deploy_instance.py ... --env-file ./updated.env` — the
+>   deploy script is **not** rotation-safe. It runs unconditional `create`
+>   operations on the Entra app, SQL server, Key Vault, and managed identity,
+>   most of which fail with "already exists" errors when re-run against an
+>   existing instance. The Entra app create succeeds and produces a
+>   duplicate registration, which is worse than a hard failure.
+
+> **Why inline instead of Key Vault reference?** Azure Container Apps is not on
+> Key Vault's "trusted services" allowlist, so a locked-down KV
+> (`publicNetworkAccess=Disabled`, required for SFI / NS221 compliance) blocks
+> ACA's runtime secret resolver. Passing the secret inline at deploy time
+> sidesteps the issue: the value is stored encrypted in the Container App's
+> own secrets store, and the Key Vault is locked down with no runtime
+> dependency.
 
 ## Adding or Removing Users
 
@@ -329,8 +405,13 @@ az containerapp revision list \
 Common causes:
 - **AcrPull role not propagated yet** — RBAC can take a few minutes. The
   container will retry automatically.
-- **Key Vault secret not accessible** — Check that the managed identity has
-  `Key Vault Secrets User` on the vault.
+- **Inline `env-file` secret missing or malformed** — The Container App reads
+  the `.env` from its own inline secret, not from Key Vault. Verify it exists:
+  ```bash
+  az containerapp secret list \
+      -n copyrit-{instance-name} \
+      -g copyrit-{instance-name} -o table
+  ```
 - **Missing `.pyrit_conf`** — Older container images (before the `.pyrit_conf`
   guard was added) crash on startup because the `airt` initializer
   unconditionally reads this file. Use an image built from current `main`.
@@ -349,8 +430,19 @@ Common causes:
 
 ### Targets not appearing in the GUI
 
-- Check that the `.env` file in Key Vault has the correct endpoint/model/key
-  variables for each target.
+- Confirm the inline `env-file` secret exists on the Container App:
+  ```bash
+  az containerapp secret list \
+      -n copyrit-{instance-name} \
+      -g copyrit-{instance-name} -o table
+  ```
+- If you suspect the env content is wrong, inspect the Key Vault backup
+  (`env-global`) instead of the inline secret. The Key Vault snapshot is
+  written by the deploy script alongside the Container App secret. Reading
+  from KV via `az keyvault secret show` requires either Cloud Shell or
+  temporarily re-opening KV public access (`--public-network-access Enabled`).
+  Avoid `az containerapp secret show --secret-name env-file` — it prints the
+  full plaintext to terminal/logs.
 - Check container logs for initializer errors:
   ```bash
   az containerapp logs show \
@@ -364,14 +456,12 @@ Common causes:
 - Verify the SQL contained user was created (step 3) with all three roles
   (`db_datareader`, `db_datawriter`, `db_ddladmin`).
 - The deploy script auto-injects `AZURE_SQL_DB_CONNECTION_STRING` into the
-  `.env` before uploading to Key Vault. If you see a connection string mismatch,
-  verify the Key Vault secret contents:
-  ```bash
-  az keyvault secret show \
-      --vault-name copyrit-{instance-name}-kv \
-      --name env-global \
-      --query value -o tsv | grep AZURE_SQL_DB
-  ```
+  `.env` before passing it to the Container App as an inline secret. If you
+  see a connection string mismatch, inspect the Key Vault backup
+  (`env-global`) — it holds the value that was last deployed via the script.
+  Reading from KV requires Cloud Shell or temporarily re-opening KV public
+  access. Avoid `az containerapp secret show` — it prints the full plaintext
+  to terminal/logs.
 - Verify the Azure SQL firewall allows Azure services (the script configures
   this, but verify with `az sql server firewall-rule list`).
 
@@ -393,14 +483,18 @@ writing to blob storage:
           -g copyrit-{instance-name} --query id -o tsv) \
       -o table
   ```
-- Verify the Key Vault secret has the correct
-  `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`:
+- Verify the deployed env content has the correct
+  `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`. The safest way to check is
+  to inspect the Key Vault backup snapshot (after temporarily re-enabling
+  public access on the KV or running from Cloud Shell):
   ```bash
-  az keyvault secret show \
-      --vault-name copyrit-{instance-name}-kv \
-      --name env-global \
-      --query value -o tsv | grep AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL
+  az keyvault secret show --vault-name copyrit-{instance-name}-kv \
+      --name env-global --query value -o tsv | \
+      grep AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL
   ```
+  Avoid `az containerapp secret show` — it prints the full plaintext to
+  terminal/logs. If the value is wrong, rotate the secret using the manual
+  procedure in [Updating Secrets](#updating-secrets).
 - RBAC propagation takes ~60 seconds after a fresh deployment; if the role was
   granted very recently, restart the container revision.
 

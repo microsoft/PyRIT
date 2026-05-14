@@ -6,11 +6,16 @@ from __future__ import annotations
 import dataclasses
 import logging  # noqa: TC003
 import time
+import traceback
+import uuid
 from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
 
 from pyrit.common.logger import logger
+from pyrit.exceptions.retry_collector import (
+    get_retry_collector,
+)
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.core import (
     Strategy,
@@ -64,6 +69,9 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _next_message_override: Optional[Message] = None
     _prepended_conversation_override: Optional[list[Message]] = None
     _memory_labels_override: Optional[dict[str, str]] = None
+
+    # Set by the ON_ERROR handler to link error AttackResults to ScenarioResults
+    _error_attack_result_id: str | None = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -134,6 +142,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._events = {
             StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute,
             StrategyEvent.ON_POST_EXECUTE: self._on_post_execute,
+            StrategyEvent.ON_ERROR: self._on_error_async,
         }
         self._memory = CentralMemory.get_memory_instance()
 
@@ -167,6 +176,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle pre-execution logic before the attack strategy runs.
 
+        Sets up execution timing and starts a RetryCollector to capture
+        retry events during execution.
+
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
                 context and result.
@@ -189,6 +201,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle post-execution logic after the attack strategy has run.
 
+        Attaches retry events to the result and persists it to memory.
+
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
                 context and result.
@@ -202,6 +216,12 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         end_time = time.perf_counter()
         execution_time_ms = int((end_time - event_data.context.start_time) * 1000)
         event_data.result.execution_time_ms = execution_time_ms
+
+        # Attach collected retry events to the result
+        collector = get_retry_collector()
+        if collector and collector.events:
+            event_data.result.retry_events = collector.events
+            event_data.result.total_retries = len(collector.events)
 
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
@@ -222,10 +242,65 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             message = f"{attack_name} achieved the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
+        elif result.outcome == AttackOutcome.ERROR:
+            message = f"{attack_name} failed with an error. {reason}"
         else:
             message = f"{attack_name} did not achieve the objective. {reason}"
 
         self._logger.info(message)
+
+    async def _on_error_async(
+        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
+    ) -> None:
+        """
+        Handle error during attack execution.
+
+        Creates an error AttackResult with error details and any retry events
+        collected during execution, then persists it to memory.
+
+        Args:
+            event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
+                context, result, and error.
+        """
+        error = event_data.error
+        context = event_data.context
+        if not error or not context:
+            return
+
+        # Clear any stale ID from a previous execution
+        context._error_attack_result_id = None
+
+        # Collect retry events (visible via inherited ContextVar copy)
+        collector = get_retry_collector()
+        retry_events = collector.events if collector else []
+
+        # Build a conversation_id — use context's if available, otherwise generate one
+        conversation_id = getattr(context, "conversation_id", None) or str(uuid.uuid4())
+
+        error_result = AttackResult(
+            conversation_id=conversation_id,
+            objective=context.objective,
+            outcome=AttackOutcome.ERROR,
+            outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
+            labels=context.memory_labels,
+            related_conversations=context.related_conversations,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            error_traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
+            retry_events=retry_events,
+            total_retries=len(retry_events),
+        )
+
+        end_time = time.perf_counter()
+        if context.start_time:
+            error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
+
+        # Persist first, then set the ID on the context so scenario-level code
+        # only sees the reference if the write succeeded.
+        self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        context._error_attack_result_id = error_result.attack_result_id
+
+        self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
 
 class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Identifiable, ABC):

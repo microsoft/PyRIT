@@ -1598,6 +1598,62 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
         assert result == "/path/to/saved/audio.wav"
 
 
+# ── _extract_partial_content tests ──────────────────────────────────────────
+
+
+class TestExtractPartialContentChatTarget:
+    def test_extracts_partial_content_from_content_filter_response(self, target: OpenAIChatTarget):
+        mock_response = create_mock_completion(
+            content="Partial harmful content before cutoff", finish_reason="content_filter"
+        )
+        result = target._extract_partial_content(mock_response)
+        assert result == "Partial harmful content before cutoff"
+
+    def test_returns_none_when_no_content(self, target: OpenAIChatTarget):
+        mock_response = create_mock_completion(content=None, finish_reason="content_filter")
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+    def test_returns_none_when_empty_content(self, target: OpenAIChatTarget):
+        mock_response = create_mock_completion(content="", finish_reason="content_filter")
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+    def test_returns_none_when_no_choices(self, target: OpenAIChatTarget):
+        mock_response = MagicMock(spec=ChatCompletion)
+        mock_response.choices = []
+        result = target._extract_partial_content(mock_response)
+        assert result is None
+
+
+class TestContentFilterPreservesPartialContent:
+    async def test_200_content_filter_attaches_partial_content_metadata(self, target: OpenAIChatTarget):
+        """Integration: 200 + content_filter response preserves partial content in metadata."""
+        message = Message(
+            message_pieces=[MessagePiece(role="user", conversation_id="test-convo", original_value="test prompt")]
+        )
+        mock_completion = create_mock_completion(content="Harmful partial content here", finish_reason="content_filter")
+        target._async_client.chat.completions.create = AsyncMock(return_value=mock_completion)  # type: ignore[method-assign]
+
+        response = await target.send_prompt_async(message=message)
+
+        assert response[0].message_pieces[0].response_error == "blocked"
+        assert response[0].message_pieces[0].prompt_metadata["partial_content"] == "Harmful partial content here"
+
+    async def test_200_content_filter_no_metadata_when_no_content(self, target: OpenAIChatTarget):
+        """200 + content_filter with no content doesn't attach metadata."""
+        message = Message(
+            message_pieces=[MessagePiece(role="user", conversation_id="test-convo", original_value="test prompt")]
+        )
+        mock_completion = create_mock_completion(content=None, finish_reason="content_filter")
+        target._async_client.chat.completions.create = AsyncMock(return_value=mock_completion)  # type: ignore[method-assign]
+
+        response = await target.send_prompt_async(message=message)
+
+        assert response[0].message_pieces[0].response_error == "blocked"
+        assert "partial_content" not in response[0].message_pieces[0].prompt_metadata
+
+
 async def test_save_audio_response_async_flac_format(patch_central_database):
     """Test saving audio response with flac format."""
     audio_config = OpenAIChatAudioConfig(voice="alloy", audio_format="flac")

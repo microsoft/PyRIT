@@ -72,6 +72,9 @@ def _make_db_scenario_result(
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
     sr.display_group_map = {}
+    sr.error_message = None
+    sr.error_type = None
+    sr.error_attack_result_ids = []
     return sr
 
 
@@ -294,6 +297,26 @@ class TestScenarioRunServiceGetRun:
         assert fetched.scenario_name == "foundry.red_team_agent"
         assert fetched.status == ScenarioRunStatus.IN_PROGRESS
 
+    def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
+        """Test that get_run extracts error from persisted error AttackResult when no active task."""
+        db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
+        db_result.error_attack_result_ids = ["err-ar-1"]
+
+        # Mock the error AttackResult lookup
+        error_ar = MagicMock()
+        error_ar.error_message = "Connection refused"
+        error_ar.error_type = "ConnectionError"
+        mock_memory.get_scenario_results.return_value = [db_result]
+        mock_memory.get_attack_results.return_value = [error_ar]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-fail")
+
+        assert fetched is not None
+        assert fetched.error == "Connection refused"
+        assert fetched.error_type == "ConnectionError"
+        mock_memory.get_attack_results.assert_called_once_with(attack_result_ids=["err-ar-1"])
+
 
 class TestScenarioRunServiceListRuns:
     """Tests for ScenarioRunService.list_runs."""
@@ -351,7 +374,10 @@ class TestScenarioRunServiceCancelRun:
         result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
-            scenario_result_id=response.scenario_result_id, scenario_run_state="CANCELLED"
+            scenario_result_id=response.scenario_result_id,
+            scenario_run_state="CANCELLED",
+            error_message="Run was cancelled by user",
+            error_type="CancelledError",
         )
         assert result is not None
         assert result.status == ScenarioRunStatus.CANCELLED
@@ -470,6 +496,11 @@ class TestScenarioRunServiceGetResults:
         mock_attack_result.executed_turns = 3
         mock_attack_result.execution_time_ms = 1500
         mock_attack_result.timestamp = None
+        mock_attack_result.error_message = None
+        mock_attack_result.error_type = None
+        mock_attack_result.error_traceback = None
+        mock_attack_result.total_retries = 0
+        mock_attack_result.retry_events = []
 
         db_result = _make_db_scenario_result(
             result_id="sr-123",
@@ -490,3 +521,84 @@ class TestScenarioRunServiceGetResults:
         assert detail.attacks[0].success_count == 1
         assert detail.attacks[0].results[0].objective == "Extract info"
         assert detail.attacks[0].results[0].outcome == "success"
+
+
+class TestScenarioRunServiceProgressReporting:
+    """Tests that in-progress runs expose partial attack counts."""
+
+    def test_in_progress_run_shows_partial_attack_counts(self, mock_memory) -> None:
+        """Test that polling an IN_PROGRESS run shows incremental results."""
+        from pyrit.models import AttackOutcome
+
+        mock_success = MagicMock()
+        mock_success.outcome = AttackOutcome.SUCCESS
+        mock_failure = MagicMock()
+        mock_failure.outcome = AttackOutcome.FAILURE
+        mock_undetermined = MagicMock()
+        mock_undetermined.outcome = AttackOutcome.UNDETERMINED
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-running",
+            run_state="IN_PROGRESS",
+            attack_results={
+                "attack_a": [mock_success, mock_failure],
+                "attack_b": [mock_undetermined],
+            },
+        )
+        db_result.get_strategies_used.return_value = ["attack_a", "attack_b"]
+        db_result.objective_achieved_rate.return_value = 33
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-running")
+
+        assert fetched is not None
+        assert fetched.status == ScenarioRunStatus.IN_PROGRESS
+        assert fetched.total_attacks == 3
+        assert fetched.completed_attacks == 3
+        assert fetched.strategies_used == ["attack_a", "attack_b"]
+        assert fetched.objective_achieved_rate == 33
+
+    def test_created_run_shows_zero_counts(self, mock_memory) -> None:
+        """Test that a CREATED run with no results shows zero counts."""
+        db_result = _make_db_scenario_result(
+            result_id="sr-new",
+            run_state="CREATED",
+            attack_results={},
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-new")
+
+        assert fetched is not None
+        assert fetched.status == ScenarioRunStatus.CREATED
+        assert fetched.total_attacks == 0
+        assert fetched.completed_attacks == 0
+        assert fetched.strategies_used == []
+
+    def test_completed_run_still_shows_full_counts(self, mock_memory) -> None:
+        """Test that COMPLETED runs still show accurate counts after the fix."""
+        from pyrit.models import AttackOutcome
+
+        mock_success = MagicMock()
+        mock_success.outcome = AttackOutcome.SUCCESS
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-done",
+            run_state="COMPLETED",
+            attack_results={"attack_a": [mock_success]},
+        )
+        db_result.get_strategies_used.return_value = ["attack_a"]
+        db_result.objective_achieved_rate.return_value = 100
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-done")
+
+        assert fetched is not None
+        assert fetched.status == ScenarioRunStatus.COMPLETED
+        assert fetched.total_attacks == 1
+        assert fetched.completed_attacks == 1
+        assert fetched.strategies_used == ["attack_a"]
+        assert fetched.objective_achieved_rate == 100

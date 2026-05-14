@@ -399,3 +399,36 @@ class TestEncodingDatasetConfigurationGetAllSeedAttackGroups:
 
         assert config._dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
         assert config.max_dataset_size == 5
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestEncodingBaselineUniformity:
+    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+
+    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
+        from unittest.mock import patch
+
+        from pyrit.models import SeedGroup, SeedObjective
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ) as mock_sample:
+            scenario = Encoding(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[EncodingStrategy.ALL],
+                dataset_config=config,
+                include_baseline=True,
+            )
+
+        assert mock_sample.call_count == 1
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+        baseline_objs = set(scenario._atomic_attacks[0].objectives)
+        for attack in scenario._atomic_attacks[1:]:
+            assert set(attack.objectives) == baseline_objs

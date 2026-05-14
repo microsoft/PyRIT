@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pyrit.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.conversation_reference import ConversationReference
     from pyrit.models.message_piece import MessagePiece
+    from pyrit.models.retry_event import RetryEvent
     from pyrit.models.score import Score
 
 from pyrit.models.conversation_reference import ConversationType
@@ -36,6 +37,9 @@ class AttackOutcome(str, Enum):
 
     # The attack failed to achieve its objective
     FAILURE = "failure"
+
+    # The attack failed due to an infrastructure error (exception), not a defensive refusal
+    ERROR = "error"
 
     # The outcome of the attack is unknown or could not be determined
     UNDETERMINED = "undetermined"
@@ -93,6 +97,15 @@ class AttackResult(StrategyResult):
 
     # labels associated with this attack result
     labels: dict[str, str] = field(default_factory=dict)
+
+    # Error information (populated when attack fails with exception)
+    error_message: str | None = None
+    error_type: str | None = None
+    error_traceback: str | None = None
+
+    # Retry tracking
+    retry_events: list[RetryEvent] = field(default_factory=list)
+    total_retries: int = 0
 
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:

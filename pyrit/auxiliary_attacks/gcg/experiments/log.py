@@ -3,10 +3,7 @@
 
 import logging
 import subprocess as sp
-import time
 from typing import Any, Optional
-
-import mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +23,7 @@ def log_params(
     param_keys: Optional[list[str]] = None,
 ) -> None:
     """
-    Log selected parameters to MLflow.
+    Log selected parameters via Python logging.
 
     Args:
         params (Any): A config object with a `to_dict()` method containing all parameters.
@@ -34,20 +31,18 @@ def log_params(
     """
     if param_keys is None:
         param_keys = _DEFAULT_PARAM_KEYS
-    mlflow_params = {key: params.to_dict()[key] for key in param_keys}
-    mlflow.log_params(mlflow_params)
+    logged_params = {key: params.to_dict()[key] for key in param_keys}
+    logger.info(f"Training parameters: {logged_params}")
 
 
 def log_train_goals(*, train_goals: list[str]) -> None:
     """
-    Log training goals as a text artifact to MLflow.
+    Log training goals via Python logging.
 
     Args:
         train_goals (list[str]): The list of training goal strings to log.
     """
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    train_goals_str = "\n".join(train_goals)
-    mlflow.log_text(train_goals_str, f"train_goals_{timestamp}.txt")
+    logger.info(f"Training goals ({len(train_goals)}): {train_goals}")
 
 
 def get_gpu_memory() -> dict[str, int]:
@@ -65,46 +60,40 @@ def get_gpu_memory() -> dict[str, int]:
     return memory_free_values
 
 
-def log_gpu_memory(*, step: int, synchronous: bool = False) -> None:
+def log_gpu_memory(*, step: int) -> None:
     """
-    Log free GPU memory metrics to MLflow.
+    Log free GPU memory via Python logging.
 
     Args:
         step (int): The current training step number.
-        synchronous (bool): Whether to log synchronously. Defaults to False.
     """
-    memory_values = get_gpu_memory()
-    for gpu, val in memory_values.items():
-        mlflow.log_metric(gpu, val, step=step, synchronous=synchronous)
+    try:
+        memory_values = get_gpu_memory()
+        logger.info(f"Step {step} GPU memory: {memory_values}")
+    except Exception:
+        logger.debug("Could not query GPU memory (nvidia-smi not available)")
 
 
-def log_loss(*, step: int, loss: float, synchronous: bool = False) -> None:
+def log_loss(*, step: int, loss: float) -> None:
     """
-    Log training loss to MLflow.
+    Log training loss via Python logging.
 
     Args:
         step (int): The current training step number.
         loss (float): The loss value to log.
-        synchronous (bool): Whether to log synchronously. Defaults to False.
     """
-    mlflow.log_metric("loss", loss, step=step, synchronous=synchronous)
+    logger.info(f"Step {step} loss: {loss}")
 
 
 def log_table_summary(*, losses: list[float], controls: list[str], n_steps: int) -> None:
     """
-    Log a summary table of losses and controls to MLflow.
+    Log a summary of losses and controls via Python logging.
 
     Args:
         losses (list[float]): Loss values for each step.
         controls (list[str]): Control strings for each step.
         n_steps (int): Total number of steps.
     """
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    mlflow.log_table(
-        {
-            "step": [i + 1 for i in range(n_steps)],
-            "loss": losses,
-            "control": controls,
-        },
-        artifact_file=f"gcg_results_{timestamp}.json",
-    )
+    logger.info(f"Training complete ({n_steps} steps). Final loss: {losses[-1] if losses else 'N/A'}")
+    if controls:
+        logger.info(f"Final control: {controls[-1]}")

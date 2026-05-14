@@ -2016,7 +2016,14 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to add attack results to scenario {scenario_result_id}: {str(e)}")
             raise
 
-    def update_scenario_run_state(self, *, scenario_result_id: str, scenario_run_state: str) -> bool:
+    def update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: str,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
         """
         Update the run state of an existing scenario result.
 
@@ -2024,41 +2031,67 @@ class MemoryInterface(abc.ABC):
             scenario_result_id (str): The ID of the scenario result to update.
             scenario_run_state (str): The new state for the scenario
                 (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
 
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Example:
-            >>> memory.update_scenario_run_state(
-            ...     scenario_result_id="123e4567-e89b-12d3-a456-426614174000",
-            ...     scenario_run_state="COMPLETED"
-            ... )
+        Raises:
+            ValueError: If the scenario result is not found.
         """
-        try:
-            # Retrieve current scenario result
-            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
 
-            if not scenario_results:
-                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
-                return False
+        if not scenario_results:
+            raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            scenario_result = scenario_results[0]
+        scenario_result = scenario_results[0]
 
-            # Update the scenario run state
-            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
+        # Update the scenario run state
+        scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
 
-            # Save updated result back to memory using update
-            entry = ScenarioResultEntry(entry=scenario_result)
-            self._update_entry(entry)
+        if error_message is not None:
+            scenario_result.error_message = error_message
+        if error_type is not None:
+            scenario_result.error_type = error_type
 
-            logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
-            return True
+        # Save updated result back to memory using update
+        entry = ScenarioResultEntry(entry=scenario_result)
+        self._update_entry(entry)
 
-        except Exception as e:
-            logger.exception(
-                f"Failed to update scenario {scenario_result_id} state to '{scenario_run_state}': {str(e)}"
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
+
+    def update_scenario_error_attacks(self, *, scenario_result_id: str, error_attack_result_ids: list[str]) -> None:
+        """
+        Update the error attack result IDs on an existing scenario result.
+
+        This links failed AttackResults to the ScenarioResult so the REST API
+        can quickly find error details without scanning all attacks.
+
+        Performs the read-modify-write within a single DB session to avoid
+        inter-session consistency issues.
+
+        Args:
+            scenario_result_id: The ID of the scenario result to update.
+            error_attack_result_ids: IDs of AttackResults that contain error information.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        import json
+
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+
+            existing: list[str] = (
+                json.loads(entry.error_attack_result_ids_json) if entry.error_attack_result_ids_json else []
             )
-            raise
+            merged = list(dict.fromkeys(existing + error_attack_result_ids))
+            entry.error_attack_result_ids_json = json.dumps(merged)
+
+            session.commit()
+
+        logger.info(f"Updated scenario {scenario_result_id} with {len(error_attack_result_ids)} error attack result(s)")
 
     def get_scenario_results(
         self,

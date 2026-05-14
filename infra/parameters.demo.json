@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
-  "_usage": "This template is for manual 'az deployment group create' runs. The deploy_instance.py script passes parameters directly via CLI args and does not use this file.",
+  "_usage": "This template is for manual 'az deployment group create' runs. The deploy_instance.py script generates its own temp parameters file at runtime and does not use this file.",
+  "_envFileContents_warning": "envFileContents is a @secure() parameter — do NOT commit a real .env value to this file. Pass it at deploy time via 'az deployment group create --parameters envFileContents=@./my.env' or via a CI/CD secure variable. The deploy_instance.py script handles this automatically by writing a temp parameters file. WARNING: Azure CLI silently falls back to the literal string if the @file path is wrong — always run 'test -f ./my.env' (bash) or 'Test-Path .\\my.env' (PowerShell) first.",
   "parameters": {
     "appName": {
       "value": "copyrit-INSTANCE_NAME"
@@ -30,8 +31,8 @@
     "pyritInitializer": {
       "value": "target airt"
     },
-    "envSecretName": {
-      "value": "env-global"
+    "envFileContents": {
+      "value": "PYRIT_REPLACE_ME=set-via-secure-channel"
     },
     "logRetentionDays": {
       "value": 90

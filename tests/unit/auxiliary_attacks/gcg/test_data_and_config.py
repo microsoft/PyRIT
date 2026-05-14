@@ -94,7 +94,6 @@ class TestRealConfigFiles:
         required_keys = {
             "tokenizer_paths",
             "model_paths",
-            "conversation_templates",
             "devices",
         }
         for path in config_files:

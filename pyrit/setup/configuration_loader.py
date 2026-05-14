@@ -133,6 +133,7 @@ class ConfigurationLoader(YamlLoadable):
     operation: Optional[str] = None
     scenario: Optional[Union[str, dict[str, Any]]] = None
     max_concurrent_scenario_runs: int = 3
+    extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
@@ -252,10 +253,21 @@ class ConfigurationLoader(YamlLoadable):
 
         Returns:
             A new ConfigurationLoader instance.
+
+        Raises:
+            ValueError: If ``extensions`` is present but not a dict.
         """
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
-        return cls(**filtered_data)
+        known_fields = set(cls.__dataclass_fields__.keys())
+        known_data = {k: v for k, v in filtered_data.items() if k in known_fields and k != "extensions"}
+        extra_data = {k: v for k, v in filtered_data.items() if k not in known_fields}
+        if "extensions" in filtered_data:
+            extensions = filtered_data["extensions"]
+            if not isinstance(extensions, dict):
+                raise ValueError(f"ConfigurationLoader.extensions must be a dict. Got: {type(extensions).__name__}")
+            extra_data = {**extra_data, **extensions}
+        return cls(**known_data, extensions=extra_data)
 
     @staticmethod
     def load_with_overrides(
