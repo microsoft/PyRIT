@@ -17,7 +17,7 @@ def __getattr__(name: str):  # noqa: N807
             DeprecationWarning,
             stacklevel=2,
         )
-        from pyrit.printer.scorer.console import ConsoleScorerPrinter
+        from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
 
-        return ConsoleScorerPrinter
+        return ConsoleScorerMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

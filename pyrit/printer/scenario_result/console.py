@@ -178,11 +178,11 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
         return str(Fore.GREEN)
 
 
-class ConsoleScenarioResultPrinter(ConsoleScenarioPrinterBase):
+class ConsoleScenarioMemoryPrinter(ConsoleScenarioPrinterBase):
     """
     Framework console printer for scenario results.
 
-    Provides the framework's ConsoleScorerPrinter for scorer information display.
+    Provides the framework's ConsoleScorerMemoryPrinter for scorer information display.
     All formatting logic lives in ConsoleScenarioPrinterBase.
     """
 
@@ -202,12 +202,12 @@ class ConsoleScenarioResultPrinter(ConsoleScenarioPrinterBase):
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             scorer_printer (Optional[ScorerPrinterBase]): Printer for scorer information.
-                If not provided, a ConsoleScorerPrinter with matching settings is created.
+                If not provided, a ConsoleScorerMemoryPrinter with matching settings is created.
         """
         if scorer_printer is None:
-            from pyrit.printer.scorer.console import ConsoleScorerPrinter
+            from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
 
-            scorer_printer = ConsoleScorerPrinter(indent_size=indent_size, enable_colors=enable_colors)
+            scorer_printer = ConsoleScorerMemoryPrinter(indent_size=indent_size, enable_colors=enable_colors)
         super().__init__(
             width=width,
             indent_size=indent_size,

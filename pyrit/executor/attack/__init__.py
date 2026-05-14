@@ -42,7 +42,7 @@ from pyrit.executor.attack.multi_turn import (
 # Import printer modules last to avoid circular dependencies
 from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
 from pyrit.printer.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
-from pyrit.printer.attack_result.console import ConsoleAttackResultPrinter
+from pyrit.printer.attack_result.console import ConsoleAttackMemoryPrinter as ConsoleAttackResultPrinter
 from pyrit.executor.attack.single_turn import (
     ContextComplianceAttack,
     FlipAttack,

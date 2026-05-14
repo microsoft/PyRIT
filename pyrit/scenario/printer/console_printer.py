@@ -17,7 +17,7 @@ def __getattr__(name: str):  # noqa: N807
             DeprecationWarning,
             stacklevel=2,
         )
-        from pyrit.printer.scenario_result.console import ConsoleScenarioResultPrinter
+        from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter
 
-        return ConsoleScenarioResultPrinter
+        return ConsoleScenarioMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

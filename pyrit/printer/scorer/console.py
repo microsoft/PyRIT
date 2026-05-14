@@ -74,53 +74,6 @@ class ConsoleScorerPrinterBase(ScorerPrinterBase):
             return str(Fore.RED)
         return str(Fore.CYAN)
 
-    def _compute_eval_hash(self, scorer_identifier: ComponentIdentifier) -> str:
-        """
-        Compute the evaluation hash for a scorer identifier.
-
-        Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier.
-
-        Returns:
-            str: The evaluation hash string.
-        """
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
-        return ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-
-    def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
-        """
-        Print objective scorer information.
-
-        Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
-        """
-        print()
-        self._print_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT)
-        self._print_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE)
-        self._print_scorer_info(scorer_identifier, indent_level=3)
-
-        eval_hash = self._compute_eval_hash(scorer_identifier)
-        metrics = self.get_objective_metrics(eval_hash=eval_hash)
-        self._print_objective_metrics(metrics)
-
-    def print_harm_scorer(self, scorer_identifier: ComponentIdentifier, *, harm_category: str) -> None:
-        """
-        Print harm scorer information.
-
-        Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
-            harm_category (str): The harm category for looking up metrics.
-        """
-        print()
-        self._print_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT)
-        self._print_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE)
-        self._print_scorer_info(scorer_identifier, indent_level=3)
-
-        eval_hash = self._compute_eval_hash(scorer_identifier)
-        metrics = self.get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
-        self._print_harm_metrics(metrics)
-
     def _print_scorer_info(self, scorer_identifier: ComponentIdentifier, *, indent_level: int = 2) -> None:
         """
         Print scorer information including nested sub-scorers.
@@ -258,7 +211,7 @@ class ConsoleScorerPrinterBase(ScorerPrinterBase):
             )
 
 
-class ConsoleScorerPrinter(ConsoleScorerPrinterBase):
+class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
     """
     Framework console printer for scorer information.
 
@@ -281,3 +234,40 @@ class ConsoleScorerPrinter(ConsoleScorerPrinterBase):
         )
 
         return find_harm_metrics_by_eval_hash(eval_hash=eval_hash, harm_category=harm_category)
+
+    def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
+        """
+        Print objective scorer information including type, nested scorers, and evaluation metrics.
+
+        Args:
+            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
+        """
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+
+        print()
+        self._print_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT)
+        self._print_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE)
+        self._print_scorer_info(scorer_identifier, indent_level=3)
+
+        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+        metrics = self.get_objective_metrics(eval_hash=eval_hash)
+        self._print_objective_metrics(metrics)
+
+    def print_harm_scorer(self, scorer_identifier: ComponentIdentifier, *, harm_category: str) -> None:
+        """
+        Print harm scorer information including type, nested scorers, and evaluation metrics.
+
+        Args:
+            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
+            harm_category (str): The harm category for looking up metrics.
+        """
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+
+        print()
+        self._print_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT)
+        self._print_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE)
+        self._print_scorer_info(scorer_identifier, indent_level=3)
+
+        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+        metrics = self.get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
+        self._print_harm_metrics(metrics)

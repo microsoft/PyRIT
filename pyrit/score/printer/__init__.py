@@ -25,9 +25,9 @@ def __getattr__(name: str):  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleScorerPrinter":
-            from pyrit.printer.scorer.console import ConsoleScorerPrinter
+            from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
 
-            return ConsoleScorerPrinter
+            return ConsoleScorerMemoryPrinter
         if name == "ScorerPrinter":
             from pyrit.printer.scorer.base import ScorerPrinterBase
 

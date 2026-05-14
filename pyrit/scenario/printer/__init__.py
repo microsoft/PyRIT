@@ -25,9 +25,9 @@ def __getattr__(name: str):  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleScenarioResultPrinter":
-            from pyrit.printer.scenario_result.console import ConsoleScenarioResultPrinter
+            from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter
 
-            return ConsoleScenarioResultPrinter
+            return ConsoleScenarioMemoryPrinter
         if name == "ScenarioResultPrinter":
             from pyrit.printer.scenario_result.base import ScenarioResultPrinterBase
 

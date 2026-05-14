@@ -26,9 +26,9 @@ def __getattr__(name: str):  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleAttackResultPrinter":
-            from pyrit.printer.attack_result.console import ConsoleAttackResultPrinter
+            from pyrit.printer.attack_result.console import ConsoleAttackMemoryPrinter
 
-            return ConsoleAttackResultPrinter
+            return ConsoleAttackMemoryPrinter
         if name == "AttackResultPrinter":
             from pyrit.printer.attack_result.base import AttackResultPrinterBase
 

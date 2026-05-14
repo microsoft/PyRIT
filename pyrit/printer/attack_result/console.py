@@ -484,7 +484,7 @@ class ConsoleAttackPrinterBase(AttackResultPrinterBase):
         )
 
 
-class ConsoleAttackResultPrinter(ConsoleAttackPrinterBase):
+class ConsoleAttackMemoryPrinter(ConsoleAttackPrinterBase):
     """
     Framework console printer for attack results.
 

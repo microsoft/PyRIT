@@ -41,7 +41,7 @@ from pyrit.cli._cli_args import validate_log_level as validate_log_level
 from pyrit.cli._cli_args import validate_log_level_argparse as validate_log_level_argparse
 from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.printer.scenario_result.console import ConsoleScenarioResultPrinter
+from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter as ConsoleScenarioResultPrinter
 from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
 from pyrit.setup.configuration_loader import _MEMORY_DB_TYPE_MAP
 
