@@ -30,7 +30,6 @@ from pyrit.backend.routes import (
     targets,
     version,
 )
-from pyrit.memory import CentralMemory
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -40,17 +39,61 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage application startup and shutdown lifecycle."""
-    # Initialization is handled by the pyrit_backend CLI before uvicorn starts.
-    # Running 'uvicorn pyrit.backend.main:app' directly is not supported;
-    # use 'pyrit_backend' instead.
-    try:
-        CentralMemory.get_memory_instance()
-    except ValueError:
-        logger.warning(
-            "CentralMemory is not initialized. "
-            "Start the server via 'pyrit_backend' CLI instead of running uvicorn directly."
-        )
+    """
+    Initialize PyRIT on startup using the config file, then yield.
+
+    Config resolution order:
+    1. ``PYRIT_CONFIG_FILE`` env var (if set)
+    2. ``~/.pyrit/.pyrit_conf`` (if it exists)
+    3. Built-in defaults (SQLite, no initializers)
+    """
+    from pyrit.registry import InitializerRegistry
+    from pyrit.setup import initialize_pyrit_async
+    from pyrit.setup.configuration_loader import ConfigurationLoader, _MEMORY_DB_TYPE_MAP
+
+    config_file_env = os.getenv("PYRIT_CONFIG_FILE")
+    config_file = Path(config_file_env) if config_file_env else None
+
+    config = ConfigurationLoader.load_with_overrides(config_file=config_file)
+
+    database = _MEMORY_DB_TYPE_MAP[config.memory_db_type]
+    resolved_env_files = config._resolve_env_files()
+    resolved_init_scripts = config._resolve_initialization_scripts()
+
+    # Resolve initializers up-front so we can pass everything in one call
+    initializer_instances = None
+    initializer_configs = config._initializer_configs if config._initializer_configs else None
+    if initializer_configs:
+        registry = InitializerRegistry()
+        logger.info("Running %d initializer(s)...", len(initializer_configs))
+        initializer_instances = []
+        for ic in initializer_configs:
+            initializer_class = registry.get_class(ic.name)
+            instance = initializer_class()
+            if ic.args:
+                instance.set_params_from_args(args=ic.args)
+            initializer_instances.append(instance)
+
+    await initialize_pyrit_async(
+        memory_db_type=database,
+        initialization_scripts=resolved_init_scripts,
+        initializers=initializer_instances,
+        env_files=resolved_env_files,
+    )
+
+    # Expose config values to route handlers via app.state
+    default_labels: dict[str, str] = {}
+    if config.operator:
+        default_labels["operator"] = config.operator
+    if config.operation:
+        default_labels["operation"] = config.operation
+    app.state.default_labels = default_labels
+    app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
+    app.state.allow_custom_initializers = config.allow_custom_initializers
+
+    if config.allow_custom_initializers:
+        logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
+
     yield
 
 

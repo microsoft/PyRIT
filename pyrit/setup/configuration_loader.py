@@ -55,6 +55,18 @@ class InitializerConfig:
 
 
 @dataclass
+class ServerConfig:
+    """
+    Configuration for connecting to (or launching) a PyRIT backend server.
+
+    Attributes:
+        url: Base URL of the backend (e.g. ``http://localhost:8000``).
+    """
+
+    url: str = "http://localhost:8000"
+
+
+@dataclass
 class ScenarioConfig:
     """
     Configuration for a scenario referenced by a config file.
@@ -134,6 +146,7 @@ class ConfigurationLoader(YamlLoadable):
     scenario: Optional[Union[str, dict[str, Any]]] = None
     max_concurrent_scenario_runs: int = 3
     allow_custom_initializers: bool = False
+    server: Optional[dict[str, Any]] = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -141,6 +154,7 @@ class ConfigurationLoader(YamlLoadable):
         self._normalize_memory_db_type()
         self._normalize_initializers()
         self._normalize_scenario()
+        self._normalize_server()
 
     def _normalize_memory_db_type(self) -> None:
         """
@@ -238,6 +252,30 @@ class ConfigurationLoader(YamlLoadable):
             return
 
         raise ValueError(f"Scenario entry must be a string or dict, got: {type(self.scenario).__name__}")
+
+    def _normalize_server(self) -> None:
+        """
+        Normalize the optional ``server`` block to a ``ServerConfig``.
+
+        Accepts ``None`` (no server configured) or ``{"url": "..."}`` form.
+        """
+        if self.server is None:
+            self._server_config: Optional[ServerConfig] = None
+            return
+
+        if isinstance(self.server, dict):
+            url = self.server.get("url", "http://localhost:8000")
+            if not isinstance(url, str):
+                raise ValueError(f"Server 'url' must be a string. Got: {type(url).__name__}")
+            self._server_config = ServerConfig(url=url.rstrip("/"))
+            return
+
+        raise ValueError(f"Server entry must be a dict, got: {type(self.server).__name__}")
+
+    @property
+    def server_config(self) -> Optional[ServerConfig]:
+        """The normalized ``server:`` block, or ``None`` when not configured."""
+        return self._server_config
 
     @property
     def scenario_config(self) -> Optional[ScenarioConfig]:
