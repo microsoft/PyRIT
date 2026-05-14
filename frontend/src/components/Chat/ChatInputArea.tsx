@@ -172,37 +172,63 @@ function TextInputRows({ input, convertedValue, convertedFileChip, disabled, tex
         </div>
       )}
       {!convertedValue && convertedFileChip && (
-        <div className={styles.convertedRow} data-testid="converted-file-chip">
-          <span className={styles.convertedBadge}>Converted</span>
-          <span aria-hidden="true">
-            {convertedFileChip.iconKind === 'image' && '🖼️'}
-            {convertedFileChip.iconKind === 'audio' && '🎵'}
-            {convertedFileChip.iconKind === 'video' && '🎥'}
-            {convertedFileChip.iconKind === 'file' && '📄'}
-          </span>
-          <Caption1 className={styles.convertedFilename} title={convertedFileChip.name}>
-            {convertedFileChip.name}
-          </Caption1>
-          <Tooltip content="Open in new tab" relationship="label">
-            <a
-              href={convertedFileChip.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={styles.openLink}
-              data-testid="converted-file-open"
-            >
-              <OpenRegular fontSize={14} />
-              <span>Open</span>
-            </a>
-          </Tooltip>
-          <Button
-            appearance="transparent"
-            size="small"
-            className={styles.dismissBtn}
-            icon={<DismissRegular />}
-            onClick={onClearConvertedFileChip}
-            data-testid="clear-converted-file-chip"
-          />
+        <div className={styles.convertedFileBlock} data-testid="converted-file-chip">
+          <div className={styles.convertedRow}>
+            <span className={styles.convertedBadge}>Converted</span>
+            <span aria-hidden="true">
+              {convertedFileChip.iconKind === 'image' && '🖼️'}
+              {convertedFileChip.iconKind === 'audio' && '🎵'}
+              {convertedFileChip.iconKind === 'video' && '🎥'}
+              {convertedFileChip.iconKind === 'file' && '📄'}
+            </span>
+            <Caption1 className={styles.convertedFilename} title={convertedFileChip.name}>
+              {convertedFileChip.name}
+            </Caption1>
+            <Tooltip content="Open in new tab" relationship="label">
+              <a
+                href={convertedFileChip.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.openLink}
+                data-testid="converted-file-open"
+              >
+                <OpenRegular fontSize={14} />
+                <span>Open</span>
+              </a>
+            </Tooltip>
+            <Button
+              appearance="transparent"
+              size="small"
+              className={styles.dismissBtn}
+              icon={<DismissRegular />}
+              onClick={onClearConvertedFileChip}
+              data-testid="clear-converted-file-chip"
+            />
+          </div>
+          {convertedFileChip.iconKind === 'image' && (
+            <img
+              src={convertedFileChip.url}
+              alt={convertedFileChip.name}
+              className={styles.convertedImagePreview}
+              data-testid="converted-file-preview-image"
+            />
+          )}
+          {convertedFileChip.iconKind === 'audio' && (
+            <audio
+              controls
+              src={convertedFileChip.url}
+              className={styles.convertedAudioPreview}
+              data-testid="converted-file-preview-audio"
+            />
+          )}
+          {convertedFileChip.iconKind === 'video' && (
+            <video
+              controls
+              src={convertedFileChip.url}
+              className={styles.convertedVideoPreview}
+              data-testid="converted-file-preview-video"
+            />
+          )}
         </div>
       )}
     </>
