@@ -512,10 +512,12 @@ class ConsoleAttackMemoryPrinter(ConsoleAttackPrinterBase):
 
     async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """Fetch scores from CentralMemory."""
-        return self._memory.get_prompt_scores(prompt_ids=prompt_ids)
+        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
 
     async def display_image_async(self, piece: object) -> None:
         """Display images using PIL/IPython in notebook environments."""
         from pyrit.common.display_response import display_image_response
+        from pyrit.models import MessagePiece
 
-        await display_image_response(piece)
+        if isinstance(piece, MessagePiece):
+            await display_image_response(piece)

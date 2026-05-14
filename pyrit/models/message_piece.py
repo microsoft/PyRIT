@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -355,12 +355,12 @@ class MessagePiece:
     __repr__ = __str__
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> MessagePiece:
+    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
         """
         Reconstruct a MessagePiece from a dictionary.
 
         Args:
-            data (dict[str, object]): Dictionary as produced by to_dict().
+            data (dict[str, Any]): Dictionary as produced by to_dict().
 
         Returns:
             MessagePiece: Reconstructed instance.
@@ -373,9 +373,7 @@ class MessagePiece:
             role=data.get("role", "user"),
             conversation_id=data.get("conversation_id"),
             sequence=data.get("sequence", -1),
-            timestamp=(
-                datetime.fromisoformat(str(data["timestamp"])) if data.get("timestamp") else None
-            ),
+            timestamp=(datetime.fromisoformat(str(data["timestamp"])) if data.get("timestamp") else None),
             labels=data.get("labels"),
             targeted_harm_categories=data.get("targeted_harm_categories"),
             prompt_metadata=data.get("prompt_metadata"),
@@ -390,14 +388,10 @@ class MessagePiece:
                 else None
             ),
             attack_identifier=(
-                ComponentIdentifier.from_dict(data["attack_identifier"])
-                if data.get("attack_identifier")
-                else None
+                ComponentIdentifier.from_dict(data["attack_identifier"]) if data.get("attack_identifier") else None
             ),
             scorer_identifier=(
-                ComponentIdentifier.from_dict(data["scorer_identifier"])
-                if data.get("scorer_identifier")
-                else None
+                ComponentIdentifier.from_dict(data["scorer_identifier"]) if data.get("scorer_identifier") else None
             ),
             original_value_data_type=data.get("original_value_data_type", "text"),
             original_value=data.get("original_value", ""),
@@ -407,12 +401,8 @@ class MessagePiece:
             converted_value_sha256=data.get("converted_value_sha256"),
             response_error=data.get("response_error", "none"),
             originator=data.get("originator", "undefined"),
-            original_prompt_id=(
-                uuid.UUID(str(data["original_prompt_id"])) if data.get("original_prompt_id") else None
-            ),
-            scores=(
-                [Score.from_dict(s) for s in data["scores"]] if data.get("scores") else None
-            ),
+            original_prompt_id=(uuid.UUID(str(data["original_prompt_id"])) if data.get("original_prompt_id") else None),
+            scores=([Score.from_dict(s) for s in data["scores"]] if data.get("scores") else None),
         )
 
     def __eq__(self, other: object) -> bool:

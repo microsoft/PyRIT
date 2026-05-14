@@ -3,8 +3,8 @@
 
 import pytest
 
-from pyrit.printer.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
 from pyrit.models import AttackOutcome
+from pyrit.printer.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
 
 
 class _ConcreteAttackResultPrinter(AttackResultPrinter):

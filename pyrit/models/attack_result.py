@@ -248,8 +248,7 @@ class AttackResult(StrategyResult):
             "outcome_reason": self.outcome_reason,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "related_conversations": [
-                ref.to_dict() if isinstance(ref, ConversationReference) else ref
-                for ref in self.related_conversations
+                ref.to_dict() if isinstance(ref, ConversationReference) else ref for ref in self.related_conversations
             ],
             "metadata": self.metadata,
             "labels": self.labels,
@@ -286,22 +285,16 @@ class AttackResult(StrategyResult):
                 if data.get("atomic_attack_identifier")
                 else None
             ),
-            last_response=(
-                MessagePiece.from_dict(data["last_response"]) if data.get("last_response") else None
-            ),
+            last_response=(MessagePiece.from_dict(data["last_response"]) if data.get("last_response") else None),
             last_score=Score.from_dict(data["last_score"]) if data.get("last_score") else None,
             executed_turns=data.get("executed_turns", 0),
             execution_time_ms=data.get("execution_time_ms", 0),
             outcome=AttackOutcome(data.get("outcome", "undetermined")),
             outcome_reason=data.get("outcome_reason"),
             timestamp=(
-                datetime.fromisoformat(data["timestamp"])
-                if data.get("timestamp")
-                else datetime.now(timezone.utc)
+                datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(timezone.utc)
             ),
-            related_conversations={
-                ConversationReference.from_dict(r) for r in data.get("related_conversations", [])
-            },
+            related_conversations={ConversationReference.from_dict(r) for r in data.get("related_conversations", [])},
             metadata=data.get("metadata", {}),
             labels=data.get("labels", {}),
             error_message=data.get("error_message"),

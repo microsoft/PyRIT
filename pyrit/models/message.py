@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.utils import combine_dict
 from pyrit.models.message_piece import MessagePiece
@@ -328,7 +328,7 @@ class Message:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> Message:
+    def from_dict(cls, data: dict[str, Any]) -> Message:
         """
         Reconstruct a Message from a dictionary.
 
@@ -336,7 +336,7 @@ class Message:
         containing a list of MessagePiece dictionaries.
 
         Args:
-            data (dict[str, object]): Dictionary as produced by to_full_dict().
+            data (dict[str, Any]): Dictionary as produced by to_full_dict().
 
         Returns:
             Message: Reconstructed instance.

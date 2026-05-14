@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 
-from pyrit.models import AttackOutcome, AttackResult, Message, Score
+from pyrit.models import AttackOutcome, Message, Score
 
 
 class AttackResultPrinterBase(ABC):

@@ -95,9 +95,9 @@ class ScenarioResult:
         self,
         *,
         scenario_identifier: ScenarioIdentifier,
-        objective_target_identifier: "ComponentIdentifier",
+        objective_target_identifier: ComponentIdentifier,
         attack_results: dict[str, list[AttackResult]],
-        objective_scorer_identifier: "ComponentIdentifier",
+        objective_scorer_identifier: ComponentIdentifier,
         scenario_run_state: ScenarioRunState = "CREATED",
         labels: dict[str, str] | None = None,
         creation_time: datetime | None = None,
@@ -276,7 +276,7 @@ class ScenarioResult:
         # Already PascalCase or other format, return as-is
         return scenario_name
 
-    def get_scorer_evaluation_metrics(self) -> "ScorerMetrics | None":
+    def get_scorer_evaluation_metrics(self) -> ScorerMetrics | None:
         """
         Get the evaluation metrics for the scenario's scorer from the scorer evaluation registry.
 
@@ -314,9 +314,7 @@ class ScenarioResult:
                 self.objective_scorer_identifier.to_dict() if self.objective_scorer_identifier else None
             ),
             "scenario_run_state": self.scenario_run_state,
-            "attack_results": {
-                name: [r.to_dict() for r in results] for name, results in self.attack_results.items()
-            },
+            "attack_results": {name: [r.to_dict() for r in results] for name, results in self.attack_results.items()},
             "display_group_map": self._display_group_map,
             "labels": self.labels,
             "creation_time": self.creation_time.isoformat() if self.creation_time else None,
@@ -360,12 +358,8 @@ class ScenarioResult:
             },
             display_group_map=data.get("display_group_map"),
             labels=data.get("labels"),
-            creation_time=(
-                datetime.fromisoformat(data["creation_time"]) if data.get("creation_time") else None
-            ),
-            completion_time=(
-                datetime.fromisoformat(data["completion_time"]) if data.get("completion_time") else None
-            ),
+            creation_time=(datetime.fromisoformat(data["creation_time"]) if data.get("creation_time") else None),
+            completion_time=(datetime.fromisoformat(data["completion_time"]) if data.get("completion_time") else None),
             number_tries=data.get("number_tries", 0),
             error_attack_result_ids=data.get("error_attack_result_ids"),
             error_message=data.get("error_message"),

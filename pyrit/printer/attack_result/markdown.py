@@ -579,4 +579,4 @@ class MarkdownAttackMemoryPrinter(MarkdownAttackPrinterBase):
 
     async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """Fetch scores from CentralMemory."""
-        return self._memory.get_prompt_scores(prompt_ids=prompt_ids)
+        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))

@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.printer.attack_result.console import ConsoleAttackMemoryPrinter as ConsoleAttackResultPrinter
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.models.conversation_reference import ConversationReference
+from pyrit.printer.attack_result.console import ConsoleAttackMemoryPrinter as ConsoleAttackResultPrinter
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
