@@ -33,3 +33,9 @@ def __getattr__(name: str):  # noqa: N807
 
             return ScenarioResultPrinterBase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "ConsoleScenarioResultPrinter",
+    "ScenarioResultPrinter",
+]
