@@ -299,3 +299,28 @@ class TestMessageSimulatedAssistantRole:
         for piece in message.message_pieces:
             assert piece._role == "user"
             assert piece.is_simulated is False
+
+
+def test_to_dict_from_dict_roundtrip():
+    from datetime import datetime, timezone
+
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="What is the capital of France?",
+            conversation_id="conv-rt",
+            sequence=0,
+            timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        ),
+        MessagePiece(
+            role="user",
+            original_value="image_link.png",
+            original_value_data_type="image_path",
+            conversation_id="conv-rt",
+            sequence=0,
+            timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    original = Message(message_pieces=pieces)
+    roundtripped = Message.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()

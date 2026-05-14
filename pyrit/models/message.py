@@ -285,34 +285,9 @@ class Message:
 
     def to_dict(self) -> dict[str, object]:
         """
-        Convert the message to a dictionary representation.
+        Convert the message to a dictionary representation including all piece details.
 
-        Returns:
-            dict: A dictionary with 'role', 'converted_value', 'conversation_id', 'sequence',
-                and 'converted_value_data_type' keys.
-
-        """
-        if len(self.message_pieces) == 1:
-            converted_value: str | list[str] = self.message_pieces[0].converted_value
-            converted_value_data_type: str | list[str] = self.message_pieces[0].converted_value_data_type
-        else:
-            converted_value = [piece.converted_value for piece in self.message_pieces]
-            converted_value_data_type = [piece.converted_value_data_type for piece in self.message_pieces]
-
-        return {
-            "role": self.api_role,
-            "converted_value": converted_value,
-            "conversation_id": self.conversation_id,
-            "sequence": self.sequence,
-            "converted_value_data_type": converted_value_data_type,
-        }
-
-    def to_full_dict(self) -> dict[str, object]:
-        """
-        Convert the message to a full dictionary representation including all piece details.
-
-        Unlike to_dict() which flattens pieces into a single converted_value, this method
-        serializes each piece individually via MessagePiece.to_dict(). This is the format
+        Serializes each piece individually via MessagePiece.to_dict(). This is the format
         expected by from_dict().
 
         Returns:
@@ -332,11 +307,11 @@ class Message:
         """
         Reconstruct a Message from a dictionary.
 
-        Expects the format produced by to_full_dict(), which includes a 'pieces' key
+        Expects the format produced by to_dict(), which includes a 'pieces' key
         containing a list of MessagePiece dictionaries.
 
         Args:
-            data (dict[str, Any]): Dictionary as produced by to_full_dict().
+            data (dict[str, Any]): Dictionary as produced by to_dict().
 
         Returns:
             Message: Reconstructed instance.
