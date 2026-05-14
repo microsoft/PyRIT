@@ -390,11 +390,11 @@ class ConversationManager:
         if config.non_chat_target_behavior == "raise":
             raise ValueError(
                 "prepended_conversation requires the objective target to support multi-turn "
-                "conversations with editable history. The current target does not. "
-                "Use PrependedConversationConfig with non_chat_target_behavior='normalize_first_turn' "
-                "to normalize the conversation into the first message instead."
+                "conversations with editable history. The current target does not. Note that "
+                "non_chat_target_behavior='raise' is deprecated and will be removed in v0.16.0; "
+                "non-chat targets will then always normalize the prepended conversation into the "
+                "first turn."
             )
-
         # Normalize conversation to string
         normalizer = config.get_message_normalizer()
         normalized_context = await normalizer.normalize_string_async(prepended_conversation)
