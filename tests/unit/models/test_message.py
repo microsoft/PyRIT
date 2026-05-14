@@ -227,10 +227,12 @@ def test_message_to_dict() -> None:
     result = message.to_dict()
 
     assert result["role"] == "user"
-    assert result["converted_value"] == "Hello world"
+    assert result["is_simulated"] is False
     assert "conversation_id" in result
     assert "sequence" in result
-    assert result["converted_value_data_type"] == "text"
+    assert len(result["pieces"]) == 1
+    assert result["pieces"][0]["converted_value"] == "Hello world"
+    assert result["pieces"][0]["converted_value_data_type"] == "text"
 
 
 class TestMessageSimulatedAssistantRole:

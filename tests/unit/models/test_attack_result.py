@@ -373,7 +373,7 @@ def test_to_dict_from_dict_roundtrip():
         class_module="pyrit.executor.attack",
     )
     last_response = MessagePiece(
-        id="resp-001",
+        id="12345678-aaaa-bbbb-cccc-123456789abc",
         role="assistant",
         original_value="Sure, here is the answer.",
         conversation_id="conv-1",
@@ -388,7 +388,7 @@ def test_to_dict_from_dict_roundtrip():
         score_type="true_false",
         score_rationale="objective clearly met",
         scorer_class_identifier=scorer_id,
-        message_piece_id="resp-001",
+        message_piece_id="12345678-aaaa-bbbb-cccc-123456789abc",
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
     )
     original = AttackResult(

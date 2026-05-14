@@ -1204,7 +1204,7 @@ def test_to_dict_from_dict_roundtrip():
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
     )
     original = MessagePiece(
-        id="piece-001",
+        id="12345678-aaaa-bbbb-cccc-000000000001",
         role="assistant",
         original_value="Hello world",
         original_value_sha256="abc123",
