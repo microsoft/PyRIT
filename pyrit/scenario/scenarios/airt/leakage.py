@@ -160,7 +160,6 @@ class Leakage(Scenario):
             version=self.VERSION,
             strategy_class=self.get_strategy_class(),
             objective_scorer=objective_scorer,
-            include_default_baseline=True,
             scenario_result_id=scenario_result_id,
         )
 

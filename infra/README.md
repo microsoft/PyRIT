@@ -83,8 +83,13 @@ Production is opt-in via `deployToProd: true`.
   Permissions-Policy, and Cache-Control (`no-store` on API routes). Swagger/OpenAPI
   disabled in production.
 - **Data**: Azure SQL with managed identity authentication (no passwords)
-- **Secrets**: Key Vault with RBAC (existing vault, secrets referenced via
-  [ACA](https://learn.microsoft.com/en-us/azure/container-apps/) secretRef)
+- **Secrets**: The `.env` file contents are passed inline to the Container App
+  as a `@secure()` Bicep parameter (`envFileContents`) and stored encrypted in
+  the Container App's secret store. Azure Container Apps is not on Key Vault's
+  "trusted services" list, so a locked-down KV would block runtime secret
+  resolution — passing inline avoids that. The Key Vault is still created and
+  populated with the `.env` content as `env-global` for backup/audit, then
+  fully locked down (`publicNetworkAccess=Disabled`).
 - **Images**: Unique tags or digests required — `:latest` is detected by a soft guardrail
 - **Supply chain**: [ACR](https://learn.microsoft.com/en-us/azure/container-registry/)
   pull via managed identity RBAC (must be granted manually; see Post-Deployment §2).
@@ -287,11 +292,15 @@ echo "containerImage: $ACR_NAME.azurecr.io/pyrit:$COMMIT_SHA"
 > **Note**: The CI/CD pipeline handles build + push automatically. Manual push is
 > only needed for the initial bootstrap or if deploying outside the pipeline.
 
-### 6. Key Vault (existing — required)
+### 6. Key Vault (existing — required for backup/audit only)
 
 Use an existing Key Vault to avoid soft-delete/purge-protection naming conflicts
-on redeployment. The managed identity must be granted `Key Vault Secrets User` on
-the vault manually (the Bicep template does **not** create RBAC role assignments).
+on redeployment. As of the inline-secret migration, the Container App does
+**not** read secrets from Key Vault at runtime — the `.env` content is passed
+inline via the `envFileContents` Bicep parameter. The vault is still required
+because the deploy script writes the `.env` content as `env-global` for
+backup/audit, but the managed identity does **not** need `Key Vault Secrets
+User` (was previously required, no longer is).
 
 ```bash
 # Create a vault (if your org doesn't provide one)
@@ -305,9 +314,11 @@ az keyvault create \
 az keyvault show --name <vault-name> --query id -o tsv
 ```
 
-> **Note**: The vault should have `enableRbacAuthorization: true` so the managed
-> identity can be granted access. Diagnostic settings (AuditEvent logs) should be
-> configured on the vault separately by the vault owner.
+> **Note**: The vault should have `enableRbacAuthorization: true`. Diagnostic
+> settings (AuditEvent logs) should be configured separately by the vault
+> owner. The deploy script applies `publicNetworkAccess=Disabled +
+> defaultAction=Deny + bypass=AzureServices` after writing the backup secret
+> (matches the team standard for SFI/NS221 compliance).
 
 ## Preview changes before deploying (recommended)
 
@@ -350,17 +361,19 @@ az deployment group create \
    ```
 
 2. **Grant managed identity RBAC** (required — the Bicep template does **not** create
-   role assignments; the app will fail to start without AcrPull and KV roles):
+   role assignments; the app will fail to start without AcrPull):
    ```bash
    MI_ID=$(az deployment group show -g <rg> -n main \
      --query properties.outputs.managedIdentityPrincipalId.value -o tsv)
 
-   # Required — app won't start without these
+   # Required — app won't start without AcrPull
    # To find acrResourceId: az acr show --name <acr-name> --query id -o tsv
    az role assignment create --assignee-object-id $MI_ID \
      --assignee-principal-type ServicePrincipal --role "AcrPull" --scope <acrResourceId>
-   az role assignment create --assignee-object-id $MI_ID \
-     --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope <keyVaultResourceId>
+
+   # Note: Key Vault Secrets User is NOT required — the Container App reads
+   # its .env contents from an inline secret (envFileContents), not via a
+   # Key Vault reference.
 
    # Grant based on which services you use (scope as narrowly as possible)
    az role assignment create --assignee-object-id $MI_ID \
@@ -410,20 +423,92 @@ needed in the container.
 | `operator` | — | Set per-user in the GUI | |
 | `operation` | — | Set per-user in the GUI | |
 
-### .env file → Key Vault secret
+### .env file → Container App inline secret
 
-The entire `.env` file is stored as a single Key Vault secret (`env-global` by
-default). The template references it via ACA secret and injects it as the
-`PYRIT_ENV_CONTENTS` env var. PyRIT parses this at startup to set all endpoint,
-model, and API key environment variables.
+The entire `.env` file is passed to the Bicep template as the `envFileContents`
+`@secure()` parameter and stored as an inline `env-file` secret on the
+Container App. The template injects it as the `PYRIT_ENV_CONTENTS` env var.
+PyRIT parses this at startup to set all endpoint, model, and API key
+environment variables. The Key Vault still receives the same content as
+`env-global` for backup/audit, but it is **not** read at runtime.
 
-To update the `.env` contents:
+To rotate the `.env` after deployment, the rotation path depends on which
+deploy path you used:
+
+**For instances deployed via `infra/deploy_instance.py`:**
+
+Use `az containerapp secret set` with the `@file` form (the file path is on
+the command line, not the secret value).
+
+> **`updated.env` is your local file** — same format as `infra/env.demo.template`
+> and the file you passed to `--env-file` during initial deployment, but with
+> the new values you want to deploy. The filename is just a convention; you
+> can name it anything.
+
+> ⚠️ **Verify the file exists before running `az`.** The CLI's `@file`
+> expansion is silent: if the path is wrong, `az` falls back to storing the
+> literal string `@./your-typo.env` as the secret value, with no error. The
+> container will then read garbage at startup.
+
 ```bash
-az keyvault secret set --vault-name <vault> --name env-global --file ~/.pyrit/.env
+# bash
+test -f ./updated.env || { echo "ERROR: ./updated.env not found"; exit 1; }
+az containerapp secret set \
+  -n copyrit-{instance-name} \
+  -g copyrit-{instance-name} \
+  --secrets "env-file=@./updated.env"
+
+# Force a new revision (per Microsoft docs, secret updates do NOT auto-restart
+# existing revisions — a revision-scoped change is required to pick them up)
+az containerapp update \
+  -n copyrit-{instance-name} \
+  -g copyrit-{instance-name} \
+  --set-env-vars "SECRET_UPDATED=$(date +%s)"
 ```
 
-> ⚠️ `PYRIT_ENV_CONTENTS` may contain API keys. Ensure application logging does
-> **not** dump environment variables or process state.
+The `updated.env` file must include the auto-injected
+`AZURE_SQL_DB_CONNECTION_STRING` and
+`AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL` values from initial deploy
+(check the KV `env-global` backup or the deploy script's log output).
+
+To keep the KV backup in sync, also run:
+```bash
+az keyvault secret set --vault-name copyrit-{instance-name}-kv \
+  --name env-global --file ./updated.env
+```
+(The KV is locked down — this needs Cloud Shell or temporary public access.)
+
+**For instances deployed via `gui-deploy.yml` (ADO pipeline):**
+
+Update the `envFileContents` SECURE variable in the relevant ADO library
+variable group (`copyrit-gui-test` or `copyrit-gui-prod`) with the new
+content, then re-run the pipeline.
+
+> ⚠️ The pipeline runs `az deployment group create`, which is incremental:
+> if only the secret value changed, no revision-scoped property changes, so
+> ACA will **not** automatically start a new revision. After the pipeline
+> succeeds, manually force a new revision so the running container picks up
+> the new secret:
+> ```bash
+> az containerapp update \
+>   -n <appName> -g <resourceGroup> \
+>   --set-env-vars "SECRET_UPDATED=$(date +%s)"
+> ```
+> Or fold this into a final pipeline step.
+
+> ⚠️ **Anti-patterns to avoid:**
+> - `az containerapp secret set --secrets "env-file=$ENV_CONTENT"` —
+>   passing the value as a literal CLI argument exposes it via `ps` while
+>   the command runs. Use the `@file` form above instead.
+> - `az containerapp secret show --secret-name env-file` — returns the full
+>   plaintext to your terminal / shell history.
+> - **Do not re-run `infra/deploy_instance.py` against an existing instance
+>   to rotate secrets.** The script's create steps (Entra app, SQL server,
+>   Key Vault, managed identity) are not idempotent and will either fail or
+>   produce duplicate Entra app registrations.
+
+> ⚠️ `PYRIT_ENV_CONTENTS` may contain API keys. Ensure application logging
+> does **not** dump environment variables or process state.
 
 Azure services (OpenAI, Content Safety, Speech) support managed identity — when
 API key env vars are not set, PyRIT auto-falls back to `DefaultAzureCredential`,
@@ -439,8 +524,10 @@ Platform, Groq, Google Gemini) require API keys in the `.env`.
 - **Log Analytics shared key**: `listKeys()` is the standard ACA pattern. The key is
   used during deployment only, not exposed to the application.
 - **Workload profiles**: Consumption tier. Defaults to 1 replica (no auto-scale).
-- **Key Vault**: Must be an existing vault. RBAC must be granted manually (see
-  Post-Deployment §2).
+- **Key Vault**: Must be an existing vault. Used for `.env` content backup/audit
+  only — the runtime secret comes from an inline ACA secret. RBAC for AcrPull is
+  still granted manually (see Post-Deployment §2); Key Vault Secrets User is no
+  longer required.
 - **OpenTelemetry**: When `enableOtel=true`, configure the agent post-deploy:
   ```bash
   AI_CONN=$(az deployment group show -g <rg> -n main \

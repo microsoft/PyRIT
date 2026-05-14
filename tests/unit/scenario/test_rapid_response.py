@@ -245,7 +245,7 @@ class TestRapidResponseAttackGeneration:
             scenario = RapidResponse(
                 objective_scorer=mock_objective_scorer,
             )
-            init_kwargs = {"objective_target": mock_objective_target}
+            init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
             await scenario.initialize_async(**init_kwargs)
@@ -392,6 +392,7 @@ class TestRapidResponseAttackGeneration:
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[_strategy_class().ALL],
+                include_baseline=False,
             )
             attacks = await scenario._get_atomic_attacks_async()
             # Only prompt_sending should have produced attacks

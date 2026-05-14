@@ -4,9 +4,14 @@
 // Deploys the CoPyRIT GUI as an Azure Container App with:
 // - Workload profiles environment with public ingress + optional IP restriction
 // - MSAL PKCE authentication (frontend) + FastAPI JWT middleware (backend)
-// - User-assigned managed identity for Azure SQL, ACR, Azure OpenAI, Key Vault
+// - User-assigned managed identity for Azure SQL, ACR, Azure OpenAI
 // - Azure SQL (existing) via managed identity — no passwords
-// - Key Vault for secrets (referenced via ACA secretRef, not embedded)
+// - .env contents passed inline via the @secure() envFileContents parameter
+//   and stored as the Container App's encrypted `env-file` secret. (Previously
+//   sourced from Key Vault via secretRef, but ACA isn't on Key Vault's
+//   "trusted services" list, so locking down KV broke runtime resolution.)
+// - Key Vault is still required (operator-supplied) and used by the deploy
+//   script as a backup/audit snapshot of the .env content; not read at runtime.
 // - Centralized logging via Log Analytics (configurable retention)
 // - No storage account keys, no embedded secrets, no :latest tags
 //
@@ -19,15 +24,7 @@
 //   az deployment group create \
 //     --resource-group <rg> \
 //     --template-file infra/main.bicep \
-//     --parameters appName=pyrit-gui \
-//                  containerImage=<acr>.azurecr.io/pyrit:<commit-sha> \
-//                  entraClientId=<app-registration-client-id> \
-//                  entraTenantId=<tenant-id> \
-//                  allowedGroupObjectIds=<comma-separated-entra-group-ids> \
-//                  allowedCidr='<your-corp-vpn-cidr>' \
-//                  sqlServerFqdn=<your-server>.database.windows.net \
-//                  sqlDatabaseName=<your-database> \
-//                  keyVaultResourceId=<key-vault-resource-id>
+//     --parameters @<parameters-file-with-envFileContents>
 // ============================================================================
 
 // --- Parameters ---
@@ -71,8 +68,9 @@ param sqlDatabaseName string
 @description('PyRIT initializer to run. Default "target airt" registers target configs + attack defaults.')
 param pyritInitializer string = 'target airt'
 
-@description('Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup.')
-param envSecretName string = 'env-global'
+@secure()
+@description('Contents of the .env file (endpoints, models, API keys). Passed inline to the Container App as a secure secret. Marked @secure() so the value is stripped from deployment history.')
+param envFileContents string
 
 @description('Container CPU cores')
 param cpuCores string = '1.0'
@@ -237,10 +235,19 @@ resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 }
 
 // ============================================================================
-// Key Vault (existing — avoids soft-delete/purge-protection redeployment issues)
-// All auth uses managed identity (Azure SQL, ACR, AOAI). The vault is for
-// downstream API keys or sensitive config added as ACA Key Vault secret
-// references. Ensure the vault has RBAC authorization enabled.
+// Key Vault (existing — created and locked down by deploy_instance.py).
+//
+// IMPORTANT: As of this template, the Container App does NOT reference the
+// Key Vault at runtime. The .env contents are passed inline via the
+// envFileContents @secure() parameter (see "secrets" block below). This
+// removes the runtime dependency on Key Vault, which lets the deploy script
+// fully lock down the vault (publicNetworkAccess=Disabled) without breaking
+// the Container App. Azure Container Apps is not on Key Vault's
+// "trusted services" list, so KV-backed secret references would otherwise
+// fail at container startup against a locked-down vault.
+//
+// The KV is still referenced here for the keyVaultName output (operator
+// convenience) and serves as a backup/audit copy of the .env content.
 // ============================================================================
 // Extract KV name and resource group from the resource ID.
 // keyVaultResourceId format: /subscriptions/.../resourceGroups/<rg>/providers/.../vaults/<name>
@@ -249,9 +256,9 @@ var keyVaultName = last(split(keyVaultResourceId, '/'))
 // ============================================================================
 // RBAC role assignments are NOT managed by this template.
 // Grant the following roles to the UAMI manually before first deployment:
-//   - Key Vault Secrets User  on the Key Vault
 //   - AcrPull                 on the ACR
 // See Post-Deployment in infra/README.md for commands.
+// (Key Vault Secrets User is no longer required — see the KV note above.)
 // ============================================================================
 
 // ============================================================================
@@ -370,8 +377,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       '${managedIdentity.id}': {}
     }
   }
-  // RBAC roles (AcrPull, KV Secrets User) must be granted manually before
-  // the first deployment — see infra/README.md Post-Deployment §2.
+  // AcrPull RBAC must be granted manually before the first deployment —
+  // see infra/README.md Post-Deployment §2. (Key Vault Secrets User is no
+  // longer required — the Container App reads its env content from an inline
+  // secret, not a Key Vault reference.)
   dependsOn: []
   properties: {
     managedEnvironmentId: acaEnvironment.id
@@ -404,12 +413,16 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
 
-      // Key Vault secret reference for the .env file contents
+      // Inline secret containing the .env file contents.
+      // Previously sourced from Key Vault via secretRef, but Azure Container
+      // Apps is not on Key Vault's "trusted services" list, so locking down
+      // the KV (publicNetworkAccess=Disabled) breaks runtime secret resolution.
+      // The value is passed at deploy time via the @secure() envFileContents
+      // parameter and stored encrypted in the Container App's secrets store.
       secrets: [
         {
           name: 'env-file'
-          keyVaultUrl: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
-          identity: managedIdentity.id
+          value: envFileContents
         }
       ]
     }
@@ -441,7 +454,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PYRIT_INITIALIZER'
               value: pyritInitializer
             }
-            // .env file contents from Key Vault — PyRIT parses this at startup
+            // .env file contents — PyRIT parses this at startup
             {
               name: 'PYRIT_ENV_CONTENTS'
               secretRef: 'env-file'

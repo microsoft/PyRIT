@@ -211,7 +211,7 @@ class TestCyberAttackGeneration:
         groups = seed_groups or {"malware": _make_seed_groups("malware")}
         with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
             scenario = Cyber(objective_scorer=mock_objective_scorer)
-            init_kwargs = {"objective_target": mock_objective_target}
+            init_kwargs = {"objective_target": mock_objective_target, "include_baseline": False}
             if strategies:
                 init_kwargs["scenario_strategies"] = strategies
             await scenario.initialize_async(**init_kwargs)
