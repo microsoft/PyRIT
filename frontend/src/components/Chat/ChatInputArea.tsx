@@ -475,23 +475,27 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           />
           <div className={styles.inputColumns}>
             <div className={styles.columnLeft}>
-              <Button
-                className={styles.iconButton}
-                appearance="subtle"
-                icon={<AttachRegular />}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={disabled}
-                title="Attach files"
-              />
-              <Button
-                className={styles.iconButton}
-                appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
-                icon={<ArrowShuffleRegular />}
-                onClick={onToggleConverterPanel}
-                disabled={disabled}
-                data-testid="toggle-converter-panel-btn"
-                title="Toggle converter panel"
-              />
+              <Tooltip content="Attach files" relationship="label">
+                <Button
+                  className={styles.iconButton}
+                  appearance="subtle"
+                  icon={<AttachRegular />}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                  aria-label="Attach files"
+                />
+              </Tooltip>
+              <Tooltip content="Toggle converter panel" relationship="label">
+                <Button
+                  className={styles.iconButton}
+                  appearance={isConverterPanelOpen ? 'primary' : 'subtle'}
+                  icon={<ArrowShuffleRegular />}
+                  onClick={onToggleConverterPanel}
+                  disabled={disabled}
+                  data-testid="toggle-converter-panel-btn"
+                  aria-label="Toggle converter panel"
+                />
+              </Tooltip>
             </div>
             <div className={styles.columnCenter}>
               <AttachmentList
@@ -547,15 +551,17 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   </span>
                 </Tooltip>
               )}
-              <Button
-                className={styles.sendButton}
-                appearance="primary"
-                icon={<SendRegular />}
-                onClick={handleSend}
-                disabled={disabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
-                title="Send message"
-                data-testid="send-message-btn"
-              />
+              <Tooltip content="Send message" relationship="label">
+                <Button
+                  className={styles.sendButton}
+                  appearance="primary"
+                  icon={<SendRegular />}
+                  onClick={handleSend}
+                  disabled={disabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
+                  aria-label="Send message"
+                  data-testid="send-message-btn"
+                />
+              </Tooltip>
               {convertedValue && (
                 <Tooltip content="Clear conversion" relationship="label">
                   <Button

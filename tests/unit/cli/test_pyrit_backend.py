@@ -55,3 +55,58 @@ class TestInitializeAndRun:
             mock_uvicorn_config.assert_called_once()
             mock_uvicorn_server.assert_called_once()
             mock_server.serve.assert_awaited_once()
+
+    async def test_startup_warning_when_custom_initializers_enabled(self, capsys) -> None:
+        """Should print a warning when allow_custom_initializers is True."""
+        parsed_args = pyrit_backend.parse_args(args=[])
+
+        with (
+            patch("pyrit.cli.pyrit_backend.frontend_core.FrontendCore") as mock_core_class,
+            patch("uvicorn.Config"),
+            patch("uvicorn.Server") as mock_uvicorn_server,
+        ):
+            mock_core = MagicMock()
+            mock_core.initialize_async = AsyncMock()
+            mock_core._initializer_configs = None
+            mock_core._allow_custom_initializers = True
+            mock_core._operator = None
+            mock_core._operation = None
+            mock_core._max_concurrent_scenario_runs = 3
+            mock_core_class.return_value = mock_core
+
+            mock_server = MagicMock()
+            mock_server.serve = AsyncMock()
+            mock_uvicorn_server.return_value = mock_server
+
+            await pyrit_backend.initialize_and_run_async(parsed_args=parsed_args)
+
+            captured = capsys.readouterr()
+            assert "WARNING" in captured.out
+            assert "allow_custom_initializers" in captured.out
+
+    async def test_no_startup_warning_when_custom_initializers_disabled(self, capsys) -> None:
+        """Should not print custom initializer warning when disabled."""
+        parsed_args = pyrit_backend.parse_args(args=[])
+
+        with (
+            patch("pyrit.cli.pyrit_backend.frontend_core.FrontendCore") as mock_core_class,
+            patch("uvicorn.Config"),
+            patch("uvicorn.Server") as mock_uvicorn_server,
+        ):
+            mock_core = MagicMock()
+            mock_core.initialize_async = AsyncMock()
+            mock_core._initializer_configs = None
+            mock_core._allow_custom_initializers = False
+            mock_core._operator = None
+            mock_core._operation = None
+            mock_core._max_concurrent_scenario_runs = 3
+            mock_core_class.return_value = mock_core
+
+            mock_server = MagicMock()
+            mock_server.serve = AsyncMock()
+            mock_uvicorn_server.return_value = mock_server
+
+            await pyrit_backend.initialize_and_run_async(parsed_args=parsed_args)
+
+            captured = capsys.readouterr()
+            assert "allow_custom_initializers" not in captured.out

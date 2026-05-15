@@ -1,6 +1,8 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
+  "_envFileContents_warning": "envFileContents is a @secure() parameter — do NOT commit a real .env value to this file. Pass it at deploy time via 'az deployment group create --parameters envFileContents=@./my.env' or via a CI/CD secure variable that writes a parameters file at runtime. WARNING: Azure CLI silently falls back to the literal string if the @file path is wrong — always run 'test -f ./my.env' (bash) or 'Test-Path .\\my.env' (PowerShell) first. A typo would store '@./typoed.env' as the secret value and the container would fail at startup.",
+  "_optional_params_note": "Below the required block, infrastructureSubnetId / acrName / acrResourceId / logAnalyticsWorkspaceId / logAnalyticsCustomerId / logAnalyticsSharedKey are optional — omit to let the template create resources.",
   "parameters": {
     "appName": {
       "value": "pyrit-gui"
@@ -29,8 +31,8 @@
     "pyritInitializer": {
       "value": "target airt"
     },
-    "envSecretName": {
-      "value": "env-global"
+    "envFileContents": {
+      "value": "PYRIT_REPLACE_ME=set-via-secure-channel"
     },
     "logRetentionDays": {
       "value": 90
@@ -45,8 +47,6 @@
         "DataClass": "<your-data-classification>"
       }
     },
-
-    "_comment_optional": "--- Below are optional: omit to let the template create resources ---",
 
     "infrastructureSubnetId": {
       "value": ""

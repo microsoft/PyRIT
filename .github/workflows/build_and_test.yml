@@ -33,6 +33,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Full history is required so pre-commit hooks (notably
+          # enforce_alembic_revision_immutability) can compute merge-bases and
+          # diff ranges against origin/main.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:

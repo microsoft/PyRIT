@@ -19,7 +19,7 @@ import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Literal, Union, get_args, get_origin
 from urllib.parse import parse_qs, urlparse
 
 from pyrit import prompt_converter
@@ -161,11 +161,11 @@ def _extract_parameters(converter_class: type) -> list[ConverterParameterSchema]
         is_sentinel = hasattr(p.default, "__class__") and "Sentinel" in type(p.default).__name__
         required = no_default or is_sentinel
 
-        default_value: Optional[str] = None
+        default_value: str | None = None
         if not required and p.default is not None:
             default_value = str(p.default)
 
-        choices: Optional[list[str]] = None
+        choices: list[str] | None = None
         if get_origin(p.annotation) is Literal:
             choices = [str(a) for a in get_args(p.annotation)]
 
@@ -292,7 +292,7 @@ class ConverterService:
 
         return ConverterCatalogResponse(items=items)
 
-    async def get_converter_async(self, *, converter_id: str) -> Optional[ConverterInstance]:
+    async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
         Get a converter instance by ID.
 
@@ -304,7 +304,7 @@ class ConverterService:
             return None
         return self._build_instance_from_object(converter_id=converter_id, converter_obj=obj)
 
-    def get_converter_object(self, *, converter_id: str) -> Optional[Any]:
+    def get_converter_object(self, *, converter_id: str) -> Any | None:
         """
         Get the actual converter object.
 

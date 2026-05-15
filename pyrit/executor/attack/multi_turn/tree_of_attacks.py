@@ -351,6 +351,11 @@ class _TreeOfAttacksNode:
                 corresponding score is assigned instead of invoking the scorer. This prevents
                 premature branch pruning when targets return blocked/filtered responses.
                 Defaults to {"blocked": 0.0}. Pass an empty dict to disable.
+
+                Note: This check runs before the scorer, so if ``score_blocked_content``
+                is set on the objective scorer, it will have no effect for error types
+                present in this map. To evaluate partial content from blocked responses,
+                pass ``error_score_map={}`` to disable the early-return.
         """
         # Store configuration
         self._objective_target = objective_target
@@ -1396,6 +1401,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 premature branch pruning when targets return blocked/filtered responses (e.g.,
                 content policy violations from image generation targets). Defaults to
                 {"blocked": 0.0}. Pass an empty dict to disable.
+
+                Note: This check runs before the scorer, so if ``score_blocked_content``
+                is set on the objective scorer, it will have no effect for error types
+                present in this map. To evaluate partial content from blocked responses,
+                pass ``error_score_map={}`` to disable the early-return.
 
         Raises:
             ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,

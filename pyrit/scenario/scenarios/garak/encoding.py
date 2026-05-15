@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Optional
 
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
@@ -173,8 +174,8 @@ class Encoding(Scenario):
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
         encoding_templates: Optional[Sequence[str]] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the Encoding Scenario.
@@ -185,11 +186,9 @@ class Encoding(Scenario):
                 category.
             encoding_templates (Optional[Sequence[str]]): Templates used to construct the decoding
                 prompts. Defaults to AskToDecodeConverter.garak_templates.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                encoding-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
@@ -200,9 +199,18 @@ class Encoding(Scenario):
             version=self.VERSION,
             strategy_class=EncodingStrategy,
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Encoding(include_baseline=...)",
+                new_item="Encoding.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
         self._resolved_seed_groups: Optional[list[SeedAttackGroup]] = None
@@ -232,7 +240,12 @@ class Encoding(Scenario):
         # Resolve seed prompts from deprecated parameter or dataset config
         self._resolved_seed_groups = self._resolve_seed_groups()
 
-        return self._get_converter_attacks()
+        atomic_attacks = self._get_converter_attacks()
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._resolved_seed_groups or []))
+
+        return atomic_attacks
 
     # These are the same as Garak encoding attacks
     def _get_converter_attacks(self) -> list[AtomicAttack]:

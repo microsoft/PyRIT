@@ -393,3 +393,36 @@ class TestPsychosocialHarmsStrategy:
     def test_strategy_values(self):
         """Test that strategy values are correct."""
         assert PsychosocialStrategy.ALL.value == "all"
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestPsychosocialBaselineUniformity:
+    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+
+    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
+        from pyrit.scenario import DatasetConfiguration
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with (
+            patch.object(Psychosocial, "_extract_harm_category_filter", return_value=None),
+            patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample",
+                side_effect=[first_sample, second_sample],
+            ) as mock_sample,
+        ):
+            scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                dataset_config=config,
+                include_baseline=True,
+            )
+
+        assert mock_sample.call_count == 1
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+        baseline_objs = set(scenario._atomic_attacks[0].objectives)
+        for attack in scenario._atomic_attacks[1:]:
+            assert set(attack.objectives) == baseline_objs

@@ -12,14 +12,11 @@ import time
 from copy import deepcopy
 from typing import Any, Optional
 
-import mlflow
 import numpy as np
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from fastchat.conversation import Conversation, SeparatorStyle
-from fastchat.model import get_conversation_template
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -134,7 +131,6 @@ class AttackPrompt:
         goal: str,
         target: str,
         tokenizer: Any,
-        conv_template: Conversation,
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
         test_prefixes: Optional[list[str]] = None,
     ) -> None:
@@ -147,9 +143,9 @@ class AttackPrompt:
             target (str):
                 The target of the attack
             tokenizer (Transformer Tokenizer):
-                The tokenizer used to convert text into tokens
-            conv_template (Template):
-                The conversation template used for the attack
+                The tokenizer used to convert text into tokens. Must have a configured chat template
+                (i.e., ``tokenizer.chat_template`` is not ``None``); ``apply_chat_template`` is used
+                to render the user/assistant exchange instead of model-specific fastchat templates.
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
             test_prefixes (list, optional):
@@ -161,10 +157,7 @@ class AttackPrompt:
         self.target = target
         self.control = control_init
         self.tokenizer = tokenizer
-        self.conv_template = conv_template
         self.test_prefixes = test_prefixes
-
-        self.conv_template.messages = []
 
         self.test_new_toks = len(self.tokenizer(self.target).input_ids) + 2  # buffer
         for prefix in self.test_prefixes:
@@ -173,103 +166,68 @@ class AttackPrompt:
         self._update_ids()
 
     def _update_ids(self) -> None:
-        self.conv_template.append_message(self.conv_template.roles[0], f"{self.goal} {self.control}")
-        self.conv_template.append_message(self.conv_template.roles[1], f"{self.target}")
-        prompt = self.conv_template.get_prompt()
+        # Render the goal+control as the user turn and the target as the assistant turn using the
+        # tokenizer's built-in chat template. This replaces fastchat's per-model Conversation logic
+        # and works for any HuggingFace chat-tuned model (issue #965).
+        messages = [
+            {"role": "user", "content": f"{self.goal} {self.control}"},
+            {"role": "assistant", "content": f"{self.target}"},
+        ]
+        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
 
         encoding = self.tokenizer(prompt)
         toks = encoding.input_ids
 
-        if self.conv_template.name == "llama-2" or self.conv_template.name == "llama-3":
-            self.conv_template.messages = []
+        # Locate goal/control/target substrings in the rendered prompt.
+        goal_start = prompt.find(self.goal)
+        control_start = prompt.find(self.control)
+        target_start = prompt.find(self.target)
+        if goal_start == -1 or control_start == -1 or target_start == -1:
+            raise ValueError(
+                "Could not locate goal/control/target in chat-templated prompt. "
+                f"prompt={prompt!r}, goal={self.goal!r}, "
+                f"control={self.control!r}, target={self.target!r}"
+            )
 
-            self.conv_template.append_message(self.conv_template.roles[0], None)
-            toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-            self._user_role_slice = slice(None, len(toks))
+        # ``char_to_token`` returns None when the character index has no
+        # corresponding token (e.g. when the substring ends exactly at the end
+        # of the prompt or lands on whitespace squashed into a neighbouring
+        # token). For end positions we clamp to ``len(toks)``; for start
+        # positions we walk forward to the next character that does map to a
+        # token. Both are necessary for the slice arithmetic to remain valid
+        # across tokenizers/templates.
+        def end_tok(char_pos: int) -> int:
+            tok = encoding.char_to_token(char_pos)
+            return len(toks) if tok is None else tok
 
-            self.conv_template.update_last_message(f"{self.goal}")
-            toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-            self._goal_slice = slice(self._user_role_slice.stop, max(self._user_role_slice.stop, len(toks)))
+        def start_tok(char_pos: int) -> int:
+            limit = len(prompt)
+            cur = char_pos
+            while cur < limit:
+                tok = encoding.char_to_token(cur)
+                if tok is not None:
+                    return tok
+                cur += 1
+            return len(toks)
 
-            separator = " " if self.goal else ""
-            self.conv_template.update_last_message(f"{self.goal}{separator}{self.control}")
-            toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-            self._control_slice = slice(self._goal_slice.stop, len(toks))
-
-            self.conv_template.append_message(self.conv_template.roles[1], None)
-            toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-            self._assistant_role_slice = slice(self._control_slice.stop, len(toks))
-
-            self.conv_template.update_last_message(f"{self.target}")
-            toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-            self._target_slice = slice(self._assistant_role_slice.stop, len(toks) - 2)
-            self._loss_slice = slice(self._assistant_role_slice.stop - 1, len(toks) - 3)
-
-        else:
-            python_tokenizer = False or self.conv_template.name == "oasst_pythia"
-            try:
-                encoding.char_to_token(len(prompt) - 1)
-            except Exception:
-                python_tokenizer = True
-            if python_tokenizer:
-                # This is specific to the vicuna and pythia tokenizer and conversation prompt.
-                # It will not work with other tokenizers or prompts.
-                self.conv_template.messages = []
-
-                self.conv_template.append_message(self.conv_template.roles[0], None)
-                toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-                self._user_role_slice = slice(None, len(toks))
-
-                self.conv_template.update_last_message(f"{self.goal}")
-                toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-                self._goal_slice = slice(self._user_role_slice.stop, max(self._user_role_slice.stop, len(toks) - 1))
-
-                separator = " " if self.goal else ""
-                self.conv_template.update_last_message(f"{self.goal}{separator}{self.control}")
-                toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-                self._control_slice = slice(self._goal_slice.stop, len(toks) - 1)
-
-                self.conv_template.append_message(self.conv_template.roles[1], None)
-                toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-                self._assistant_role_slice = slice(self._control_slice.stop, len(toks))
-
-                self.conv_template.update_last_message(f"{self.target}")
-                toks = self.tokenizer(self.conv_template.get_prompt()).input_ids
-                self._target_slice = slice(self._assistant_role_slice.stop, len(toks) - 1)
-                self._loss_slice = slice(self._assistant_role_slice.stop - 1, len(toks) - 2)
-            else:
-                self._system_slice = slice(None, encoding.char_to_token(len(self.conv_template.system)))
-                self._user_role_slice = slice(
-                    encoding.char_to_token(prompt.find(self.conv_template.roles[0])),
-                    encoding.char_to_token(
-                        prompt.find(self.conv_template.roles[0]) + len(self.conv_template.roles[0]) + 1
-                    ),
-                )
-                self._goal_slice = slice(
-                    encoding.char_to_token(prompt.find(self.goal)),
-                    encoding.char_to_token(prompt.find(self.goal) + len(self.goal)),
-                )
-                self._control_slice = slice(
-                    encoding.char_to_token(prompt.find(self.control)),
-                    encoding.char_to_token(prompt.find(self.control) + len(self.control)),
-                )
-                self._assistant_role_slice = slice(
-                    encoding.char_to_token(prompt.find(self.conv_template.roles[1])),
-                    encoding.char_to_token(
-                        prompt.find(self.conv_template.roles[1]) + len(self.conv_template.roles[1]) + 1
-                    ),
-                )
-                self._target_slice = slice(
-                    encoding.char_to_token(prompt.find(self.target)),
-                    encoding.char_to_token(prompt.find(self.target) + len(self.target)),
-                )
-                self._loss_slice = slice(
-                    encoding.char_to_token(prompt.find(self.target)) - 1,
-                    encoding.char_to_token(prompt.find(self.target) + len(self.target)) - 1,
-                )
+        self._goal_slice = slice(
+            start_tok(goal_start),
+            end_tok(goal_start + len(self.goal)),
+        )
+        self._control_slice = slice(
+            start_tok(control_start),
+            end_tok(control_start + len(self.control)),
+        )
+        target_start_tok = start_tok(target_start)
+        target_end_tok = end_tok(target_start + len(self.target))
+        self._target_slice = slice(target_start_tok, target_end_tok)
+        self._loss_slice = slice(target_start_tok - 1, target_end_tok - 1)
+        # Assistant role tokens are everything between the control end and the target start.
+        # This works for any chat template (e.g. llama-2 "[/INST]", phi-3 "<|assistant|>", etc.)
+        # without us needing to know the literal marker text.
+        self._assistant_role_slice = slice(self._control_slice.stop, self._target_slice.start)
 
         self.input_ids = torch.tensor(toks[: self._target_slice.stop], device="cpu")
-        self.conv_template.messages = []
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def generate(self, model: Any, gen_config: Any = None) -> torch.Tensor:
@@ -458,7 +416,6 @@ class PromptManager:
         goals: list[str],
         targets: list[str],
         tokenizer: Any,
-        conv_template: Conversation,
         control_init: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
         test_prefixes: Optional[list[str]] = None,
         managers: Optional[dict[str, type[AttackPrompt]]] = None,
@@ -472,9 +429,7 @@ class PromptManager:
             targets (List[str]):
                 The list of targets of the attack
             tokenizer (Transformer Tokenizer):
-                The tokenizer used to convert text into tokens
-            conv_template (Template):
-                The conversation template used for the attack
+                The tokenizer used to convert text into tokens. Must have a chat template configured.
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
             test_prefixes (list, optional):
@@ -492,8 +447,7 @@ class PromptManager:
         self.tokenizer = tokenizer
 
         self._prompts = [
-            managers["AP"](goal, target, tokenizer, conv_template, control_init, test_prefixes)
-            for goal, target in zip(goals, targets)
+            managers["AP"](goal, target, tokenizer, control_init, test_prefixes) for goal, target in zip(goals, targets)
         ]
 
         self._nonascii_toks = get_nonascii_toks(tokenizer, device="cpu")
@@ -635,9 +589,7 @@ class MultiPromptAttack:
         self.models = [worker.model for worker in workers]
         self.logfile = logfile
         self.prompts = [
-            managers["PM"](
-                goals, targets, worker.tokenizer, worker.conv_template, control_init, test_prefixes, managers
-            )
+            managers["PM"](goals, targets, worker.tokenizer, control_init, test_prefixes, managers)
             for worker in workers
         ]
         self.managers = managers
@@ -820,7 +772,6 @@ class MultiPromptAttack:
                 self.goals + self.test_goals,
                 self.targets + self.test_targets,
                 worker.tokenizer,
-                worker.conv_template,
                 self.control_str,
                 self.test_prefixes,
                 self.managers,
@@ -902,14 +853,13 @@ class MultiPromptAttack:
                 f"====================================================\n"
             )
 
-        # Log to mlflow
+        # Log loss and GPU memory
         log_loss(step=step_num, loss=loss)
         log_gpu_memory(step=step_num)
 
-        # Log results table to mlflow
+        # Log results table at end of training
         if step_num == n_steps:
             log_table_summary(losses=log["losses"], controls=log["controls"], n_steps=n_steps)
-            mlflow.end_run()
 
 
 class ProgressiveMultiPromptAttack:
@@ -999,7 +949,7 @@ class ProgressiveMultiPromptAttack:
                                 {
                                     "model_path": worker.model.name_or_path,
                                     "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "conv_template": worker.conv_template.name,
+                                    "chat_template": worker.tokenizer.chat_template,
                                 }
                                 for worker in self.workers
                             ],
@@ -1007,7 +957,7 @@ class ProgressiveMultiPromptAttack:
                                 {
                                     "model_path": worker.model.name_or_path,
                                     "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "conv_template": worker.conv_template.name,
+                                    "chat_template": worker.tokenizer.chat_template,
                                 }
                                 for worker in self.test_workers
                             ],
@@ -1113,7 +1063,6 @@ class ProgressiveMultiPromptAttack:
                 self.test_goals,
                 self.test_targets,
                 self.test_workers,
-                **self.mpa_kwargs,
             )
             if num_goals == len(self.goals) and num_workers == len(self.workers):
                 stop_inner_on_success = False
@@ -1239,7 +1188,7 @@ class IndividualPromptAttack:
                                 {
                                     "model_path": worker.model.name_or_path,
                                     "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "conv_template": worker.conv_template.name,
+                                    "chat_template": worker.tokenizer.chat_template,
                                 }
                                 for worker in self.workers
                             ],
@@ -1247,7 +1196,7 @@ class IndividualPromptAttack:
                                 {
                                     "model_path": worker.model.name_or_path,
                                     "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "conv_template": worker.conv_template.name,
+                                    "chat_template": worker.tokenizer.chat_template,
                                 }
                                 for worker in self.test_workers
                             ],
@@ -1351,7 +1300,6 @@ class IndividualPromptAttack:
                 self.test_goals,
                 self.test_targets,
                 self.test_workers,
-                **self.mpa_kwargs,
             )
             attack.run(
                 n_steps=n_steps,
@@ -1454,7 +1402,7 @@ class EvaluateAttack:
                                 {
                                     "model_path": worker.model.name_or_path,
                                     "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "conv_template": worker.conv_template.name,
+                                    "chat_template": worker.tokenizer.chat_template,
                                 }
                                 for worker in self.workers
                             ],
@@ -1462,7 +1410,7 @@ class EvaluateAttack:
                                 {
                                     "model_path": worker.model.name_or_path,
                                     "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "conv_template": worker.conv_template.name,
+                                    "chat_template": worker.tokenizer.chat_template,
                                 }
                                 for worker in self.test_workers
                             ],
@@ -1523,7 +1471,6 @@ class EvaluateAttack:
                         self.test_prefixes,
                         self.logfile,
                         self.managers,
-                        **self.mpa_kwargs,
                     )
                     all_inputs = [p.eval_str for p in attack.prompts[0]._prompts]
                     max_new_tokens = [p.test_new_toks for p in attack.prompts[0]._prompts]
@@ -1590,7 +1537,6 @@ class ModelWorker:
         token: str,
         model_kwargs: dict[str, Any],
         tokenizer: Any,
-        conv_template: Conversation,
         device: str,
     ) -> None:
         self.model = (
@@ -1601,7 +1547,6 @@ class ModelWorker:
             .eval()
         )
         self.tokenizer = tokenizer
-        self.conv_template = conv_template
         self.tasks: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.process: Optional[mp.Process] = None
@@ -1672,45 +1617,23 @@ def get_workers(params: Any, eval: bool = False) -> tuple[list[ModelWorker], lis
             tokenizer.padding_side = "left"
         if not tokenizer.pad_token:
             tokenizer.pad_token = tokenizer.eos_token
+        if tokenizer.chat_template is None:
+            raise ValueError(
+                f"Tokenizer {params.tokenizer_paths[i]!r} has no chat_template configured. GCG uses "
+                "tokenizer.apply_chat_template() to render prompts (see issue #965); without a chat "
+                "template the attack cannot be set up. Pick a chat-tuned model or set "
+                "tokenizer.chat_template explicitly."
+            )
         tokenizers.append(tokenizer)
 
     logger.info(f"Loaded {len(tokenizers)} tokenizers")
 
-    raw_conv_templates = []
-    for template in params.conversation_templates:
-        if template in ["llama-2", "mistral", "llama-3-8b", "vicuna"]:
-            raw_conv_templates.append(get_conversation_template(template))
-        elif template in ["phi-3-mini"]:
-            conv_template = Conversation(
-                name="phi-3-mini",
-                system_template="<|system|>\n{system_message}",
-                system_message="",
-                roles=("<|user|>", "<|assistant|>"),
-                sep_style=SeparatorStyle.CHATML,
-                sep="<|end|>",
-                stop_token_ids=[32000, 32001, 32007],
-            )
-            raw_conv_templates.append(conv_template)
-        else:
-            raise ValueError("Conversation template not recognized")
-
-    conv_templates = []
-    for conv in raw_conv_templates:
-        if conv.name == "zero_shot":
-            conv.roles = tuple("### " + r for r in conv.roles)
-            conv.sep = "\n"
-        elif conv.name == "llama-2":
-            conv.sep2 = conv.sep2.strip()
-        conv_templates.append(conv)
-
-    logger.info(f"Loaded {len(conv_templates)} conversation templates")
     workers = [
         ModelWorker(
             params.model_paths[i],
             params.token,
             params.model_kwargs[i],
             tokenizers[i],
-            conv_templates[i],
             params.devices[i],
         )
         for i in range(len(params.model_paths))

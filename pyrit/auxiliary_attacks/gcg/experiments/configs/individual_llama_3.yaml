@@ -14,7 +14,6 @@ tokenizer_paths: ["meta-llama/Meta-Llama-3-8B-Instruct"]
 tokenizer_kwargs: [{"use_fast": False}]
 model_paths: ["meta-llama/Meta-Llama-3-8B-Instruct"]
 model_kwargs: [{"low_cpu_mem_usage": True, "use_cache": False}]
-conversation_templates: ["llama-3-8b"]
 devices: ["cuda:0"]
 train_data: ""
 test_data: ""
@@ -28,4 +27,3 @@ learning_rate: 0.01
 topk: 256
 temp: 1
 filter_cand: True
-gbda_deterministic: True
