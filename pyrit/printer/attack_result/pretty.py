@@ -1,16 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
-import textwrap
 import warnings
 from datetime import datetime, timezone
 from typing import Any
 
 from colorama import Back, Fore, Style
 
-from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
+from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
 from pyrit.printer.attack_result.base import AttackResultPrinterBase
+from pyrit.printer.conversation.pretty import PrettyConversationPrinter
+from pyrit.printer.score.pretty import PrettyScorePrinter
 from pyrit.printer.sink import Sink
 
 
@@ -18,12 +18,19 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
     """
     Pretty printer for attack results with ANSI-colored formatting.
 
-    Contains all formatting logic. Subclasses implement get_conversation_async
-    and get_scores_async for data fetching.
+    Composes a conversation printer for message rendering and a score printer
+    for inline score display. Subclasses implement data-fetching methods.
     """
 
     def __init__(
-        self, *, sink: Sink | None = None, width: int = 100, indent_size: int = 2, enable_colors: bool = True
+        self,
+        *,
+        sink: Sink | None = None,
+        width: int = 100,
+        indent_size: int = 2,
+        enable_colors: bool = True,
+        conversation_printer: PrettyConversationPrinter | None = None,
+        score_printer: PrettyScorePrinter | None = None,
     ) -> None:
         """
         Initialize the pretty printer.
@@ -33,11 +40,22 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
+            conversation_printer (PrettyConversationPrinter | None): Conversation printer.
+                Defaults to a new PrettyConversationPrinter with matching settings.
+            score_printer (PrettyScorePrinter | None): Score printer.
+                Defaults to a new PrettyScorePrinter with matching settings.
         """
         super().__init__(sink=sink)
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
+        self._score_printer = score_printer or PrettyScorePrinter(
+            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
+        )
+        self._conversation_printer = conversation_printer or PrettyConversationPrinter(
+            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors,
+            score_printer=self._score_printer,
+        )
 
     def _format_colored(self, text: str, *colors: str) -> str:
         """
@@ -131,8 +149,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 f"{self._indent} No conversation found for ID: {result.conversation_id}", Fore.YELLOW
             )
 
-        return await self._render_messages_async(
-            messages=messages,
+        return await self._conversation_printer.render_async(
+            messages,
             include_scores=include_scores,
             include_reasoning_trace=include_reasoning_trace,
         )
@@ -149,113 +167,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         )
         await self._write_async(content)
 
-    async def _render_messages_async(
-        self,
-        messages: list[Message],
-        *,
-        include_scores: bool = False,
-        include_reasoning_trace: bool = False,
-    ) -> str:
-        """
-        Render a list of messages as a formatted string.
-
-        Args:
-            messages (list[Message]): List of Message objects to render.
-            include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include model reasoning trace. Defaults to False.
-
-        Returns:
-            str: The rendered messages text.
-        """
-        if not messages:
-            return self._format_colored(f"{self._indent} No messages to display.", Fore.YELLOW)
-
-        lines: list[str] = []
-        image_pieces: list[MessagePiece] = []
-        turn_number = 0
-        for message in messages:
-            if message.api_role == "user":
-                turn_number += 1
-                lines.append("\n")
-                lines.append(self._format_colored("─" * self._width, Fore.BLUE))
-                lines.append(self._format_colored(f"🔹 Turn {turn_number} - USER", Style.BRIGHT, Fore.BLUE))
-                lines.append(self._format_colored("─" * self._width, Fore.BLUE))
-            elif message.api_role == "system":
-                lines.append("\n")
-                lines.append(self._format_colored("─" * self._width, Fore.MAGENTA))
-                lines.append(self._format_colored("🔧 SYSTEM", Style.BRIGHT, Fore.MAGENTA))
-                lines.append(self._format_colored("─" * self._width, Fore.MAGENTA))
-            else:
-                lines.append("\n")
-                lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
-                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
-                lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
-                lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
-
-            for piece in message.message_pieces:
-                if piece.original_value_data_type == "reasoning":
-                    if include_reasoning_trace:
-                        summary_text = self._extract_reasoning_summary(piece.original_value)
-                        if summary_text:
-                            lines.append(self._format_colored(
-                                f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN
-                            ))
-                            lines.append(self._render_wrapped_text(summary_text, Fore.CYAN))
-                            lines.append("\n")
-                    continue
-
-                if piece.is_blocked():
-                    lines.append(self._format_colored(
-                        f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED
-                    ))
-                    partial_content = piece.prompt_metadata.get("partial_content")
-                    if partial_content:
-                        lines.append(self._format_colored(
-                            f"{self._indent}📝 Partial content (before filter triggered):",
-                            Style.DIM,
-                            Fore.CYAN,
-                        ))
-                        lines.append(self._render_wrapped_text(str(partial_content), Fore.YELLOW))
-                    else:
-                        lines.append(self._format_colored(
-                            f"{self._indent}Content was blocked by the target's content filter.",
-                            Style.DIM,
-                            Fore.RED,
-                        ))
-
-                elif piece.converted_value != piece.original_value:
-                    lines.append(self._format_colored(f"{self._indent} Original:", Fore.CYAN))
-                    lines.append(self._render_wrapped_text(piece.original_value, Fore.WHITE))
-                    lines.append("\n")
-                    lines.append(self._format_colored(f"{self._indent} Converted:", Fore.CYAN))
-                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.WHITE))
-                elif piece.api_role == "user":
-                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.BLUE))
-                elif piece.api_role == "system":
-                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.MAGENTA))
-                else:
-                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.YELLOW))
-
-                image_pieces.append(piece)
-
-                if include_scores:
-                    scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
-                    if scores:
-                        lines.append("\n")
-                        lines.append(self._format_colored(
-                            f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA
-                        ))
-                        for score in scores:
-                            lines.append(self._render_score(score))
-
-        lines.append("\n")
-        lines.append(self._format_colored("─" * self._width, Fore.BLUE))
-
-        for piece in image_pieces:
-            await self._display_image_async(piece)
-
-        return "".join(lines)
-
     async def print_messages_async(
         self,
         messages: list[Message],
@@ -263,36 +174,14 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_scores: bool = False,
         include_reasoning_trace: bool = False,
     ) -> None:
-        """Deprecated. Use write_async instead."""
+        """Deprecated. Use the conversation printer's write_async instead."""
         warnings.warn(
             "print_messages_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
         )
-        content = await self._render_messages_async(
-            messages=messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
+        content = await self._conversation_printer.render_async(
+            messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
         await self._write_async(content)
-
-    def _extract_reasoning_summary(self, reasoning_value: str) -> str:
-        """
-        Extract human-readable summary text from a reasoning piece's JSON value.
-
-        Args:
-            reasoning_value (str): The JSON string stored in the reasoning piece.
-
-        Returns:
-            str: The concatenated summary text, or empty string if no summary is present.
-        """
-        try:
-            data = json.loads(reasoning_value)
-        except (json.JSONDecodeError, TypeError):
-            return ""
-
-        summary = data.get("summary") if isinstance(data, dict) else None
-        if not summary or not isinstance(summary, list):
-            return ""
-
-        parts = [item.get("text", "") for item in summary if isinstance(item, dict) and item.get("text")]
-        return "\n".join(parts)
 
     async def _render_summary_async(self, result: AttackResult) -> str:
         """
@@ -343,7 +232,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         if result.last_score:
             lines.append("\n")
             lines.append(self._format_colored(f"{self._indent} Final Score", Style.BRIGHT))
-            lines.append(self._render_score(result.last_score, indent_level=2))
+            lines.append(self._score_printer._render_score(result.last_score, indent_level=2))
 
         return "".join(lines)
 
@@ -421,87 +310,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             lines.append(self._format_colored(f"{self._indent}• {key}: {value}", Fore.CYAN))
         return "".join(lines)
 
-    def _render_score(self, score: Score, indent_level: int = 3) -> str:
-        """
-        Render a score with proper formatting.
-
-        Args:
-            score (Score): Score object to be rendered.
-            indent_level (int): Number of indent units to apply. Defaults to 3.
-
-        Returns:
-            str: The rendered score text.
-        """
-        lines: list[str] = []
-        indent = self._indent * indent_level
-        scorer_name = score.scorer_class_identifier.class_name
-        lines.append(f"{indent}Scorer: {scorer_name}\n")
-        lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
-        lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))
-
-        if score.score_type == "true_false":
-            score_color = Fore.GREEN if score.get_value() else Fore.RED
-        else:
-            score_color = Fore.YELLOW
-
-        lines.append(self._format_colored(f"{indent}• Value: {score.score_value}", score_color))
-
-        if score.score_rationale:
-            lines.append(f"{indent}• Rationale:\n")
-            rationale_wrapper = textwrap.TextWrapper(
-                width=self._width - len(indent) - 2,
-                initial_indent=indent + "  ",
-                subsequent_indent=indent + "  ",
-                break_long_words=False,
-                break_on_hyphens=False,
-            )
-            rationale_lines = score.score_rationale.split("\n")
-            for line in rationale_lines:
-                if line.strip():
-                    wrapped_lines = rationale_wrapper.wrap(line)
-                    for wrapped_line in wrapped_lines:
-                        lines.append(self._format_colored(wrapped_line, Fore.WHITE))
-                else:
-                    lines.append(self._format_colored(f"{indent}  "))
-
-        return "".join(lines)
-
-    def _render_wrapped_text(self, text: str, color: str) -> str:
-        """
-        Render text with proper wrapping and indentation, preserving newlines.
-
-        Args:
-            text (str): The text to render.
-            color (str): Colorama color constant to apply.
-
-        Returns:
-            str: The rendered wrapped text.
-        """
-        lines: list[str] = []
-        text_wrapper = textwrap.TextWrapper(
-            width=self._width - len(self._indent),
-            initial_indent="",
-            subsequent_indent=self._indent,
-            break_long_words=True,
-            break_on_hyphens=True,
-            expand_tabs=False,
-            replace_whitespace=False,
-        )
-
-        text_lines = text.split("\n")
-        for line_num, line in enumerate(text_lines):
-            if line.strip():
-                wrapped_lines = text_wrapper.wrap(line)
-                for i, wrapped_line in enumerate(wrapped_lines):
-                    if line_num == 0 and i == 0:
-                        lines.append(self._format_colored(f"{self._indent}{wrapped_line}", color))
-                    else:
-                        lines.append(self._format_colored(f"{self._indent * 2}{wrapped_line}", color))
-            else:
-                lines.append(self._format_colored(f"{self._indent}", color))
-
-        return "".join(lines)
-
     async def _render_pruned_conversations_async(self, result: AttackResult) -> str:
         """
         Render pruned conversations showing only the last message and score for each.
@@ -544,14 +352,14 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             ))
 
             for piece in last_message.message_pieces:
-                lines.append(self._render_wrapped_text(piece.converted_value, Fore.WHITE))
+                lines.append(self._conversation_printer._render_wrapped_text(piece.converted_value, Fore.WHITE))
 
                 scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
                 if scores:
                     lines.append("\n")
                     lines.append(self._format_colored(f"{self._indent}📊 Score:", Style.DIM, Fore.MAGENTA))
                     for score in scores:
-                        lines.append(self._render_score(score))
+                        lines.append(self._score_printer._render_score(score))
 
         lines.append("\n")
         lines.append(self._format_colored("─" * self._width, Fore.RED))
@@ -597,7 +405,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 ))
                 continue
 
-            lines.append(await self._render_messages_async(messages=messages, include_scores=False))
+            lines.append(await self._conversation_printer.render_async(messages, include_scores=False))
 
         return "".join(lines)
 
@@ -618,12 +426,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 AttackOutcome.UNDETERMINED: Fore.YELLOW,
             }.get(outcome, Fore.WHITE)
         )
-
-    async def _display_image_async(self, piece: MessagePiece) -> None:
-        """Display images using PIL/IPython in notebook environments."""
-        from pyrit.common.display_response import display_image_response
-
-        await display_image_response(piece)
 
 
 class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
@@ -646,9 +448,20 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
-        super().__init__(sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors)
         from pyrit.memory import CentralMemory
+        from pyrit.printer.conversation.pretty import PrettyConversationMemoryPrinter
 
+        score_printer = PrettyScorePrinter(
+            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
+        )
+        conversation_printer = PrettyConversationMemoryPrinter(
+            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors,
+            score_printer=score_printer,
+        )
+        super().__init__(
+            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors,
+            conversation_printer=conversation_printer, score_printer=score_printer,
+        )
         self._memory = CentralMemory.get_memory_instance()
 
     async def _get_conversation_async(self, conversation_id: str) -> list[Message]:

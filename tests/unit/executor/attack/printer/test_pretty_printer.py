@@ -152,7 +152,7 @@ def test_render_metadata(printer):
 
 
 def test_render_score(printer, sample_score):
-    result = printer._render_score(sample_score)
+    result = printer._score_printer._render_score(sample_score)
     assert "MockScorer" in result
     assert "true_false" in result
     assert "true" in result
@@ -169,7 +169,7 @@ def test_render_score_with_rationale(printer):
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=_mock_scorer_id(),
     )
-    result = printer._render_score(score)
+    result = printer._score_printer._render_score(score)
     assert "Rationale" in result
 
 
@@ -177,26 +177,26 @@ def test_extract_reasoning_summary_valid_json(printer):
     import json
 
     data = {"summary": [{"text": "First"}, {"text": "Second"}]}
-    result = printer._extract_reasoning_summary(json.dumps(data))
+    result = printer._conversation_printer._extract_reasoning_summary(json.dumps(data))
     assert result == "First\nSecond"
 
 
 def test_extract_reasoning_summary_invalid_json(printer):
-    result = printer._extract_reasoning_summary("not json")
+    result = printer._conversation_printer._extract_reasoning_summary("not json")
     assert result == ""
 
 
 def test_extract_reasoning_summary_no_summary_key(printer):
     import json
 
-    result = printer._extract_reasoning_summary(json.dumps({"other": "data"}))
+    result = printer._conversation_printer._extract_reasoning_summary(json.dumps({"other": "data"}))
     assert result == ""
 
 
 def test_extract_reasoning_summary_summary_not_list(printer):
     import json
 
-    result = printer._extract_reasoning_summary(json.dumps({"summary": "not a list"}))
+    result = printer._conversation_printer._extract_reasoning_summary(json.dumps({"summary": "not a list"}))
     assert result == ""
 
 
@@ -214,13 +214,13 @@ async def test_render_conversation_async_no_messages(printer, mock_memory):
 
 
 async def test_render_messages_async_empty_list(printer):
-    content = await printer._render_messages_async(messages=[])
+    content = await printer._conversation_printer.render_async(messages=[])
     assert "No messages to display" in content
 
 
 @patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
 async def test_render_messages_async_user_message(mock_display, printer, sample_message):
-    content = await printer._render_messages_async(messages=[sample_message])
+    content = await printer._conversation_printer.render_async(messages=[sample_message])
     assert "Turn 1" in content
     assert "USER" in content
     assert "Hello world" in content
@@ -235,7 +235,7 @@ async def test_render_messages_async_assistant_message(mock_display, printer):
         converted_value_data_type="text",
     )
     msg = Message(message_pieces=[piece])
-    content = await printer._render_messages_async(messages=[msg])
+    content = await printer._conversation_printer.render_async(messages=[msg])
     assert "Response" in content
 
 
@@ -248,7 +248,7 @@ async def test_render_messages_async_converted_differs(mock_display, printer):
         converted_value_data_type="text",
     )
     msg = Message(message_pieces=[piece])
-    content = await printer._render_messages_async(messages=[msg])
+    content = await printer._conversation_printer.render_async(messages=[msg])
     assert "Original" in content
     assert "Converted" in content
 
@@ -318,12 +318,12 @@ async def test_render_adversarial_conversation_no_refs(printer):
 
 
 def test_render_wrapped_text(printer):
-    result = printer._render_wrapped_text("Short text", "")
+    result = printer._conversation_printer._render_wrapped_text("Short text", "")
     assert "Short text" in result
 
 
 def test_render_wrapped_text_with_newlines(printer):
-    result = printer._render_wrapped_text("Line one\nLine two\n\nLine four", "")
+    result = printer._conversation_printer._render_wrapped_text("Line one\nLine two\n\nLine four", "")
     assert "Line one" in result
     assert "Line two" in result
     assert "Line four" in result
@@ -338,7 +338,7 @@ async def test_render_messages_async_blocked_without_partial_content(mock_displa
         response_error="blocked",
     )
     msg = Message(message_pieces=[piece])
-    content = await printer._render_messages_async(messages=[msg])
+    content = await printer._conversation_printer.render_async(messages=[msg])
     assert "BLOCKED BY TARGET" in content
     assert "content filter" in content
     # Should NOT print the raw error JSON as the message body
@@ -355,7 +355,7 @@ async def test_render_messages_async_blocked_with_partial_content(mock_display, 
         prompt_metadata={"partial_content": "The model started to say something before being cut off"},
     )
     msg = Message(message_pieces=[piece])
-    content = await printer._render_messages_async(messages=[msg])
+    content = await printer._conversation_printer.render_async(messages=[msg])
     assert "BLOCKED BY TARGET" in content
     assert "Partial content" in content
     assert "before filter triggered" in content
