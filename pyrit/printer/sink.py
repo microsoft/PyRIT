@@ -3,6 +3,9 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Literal
+
+OutputFormat = Literal["pretty", "markdown"]
 
 
 class Sink(ABC):
@@ -71,3 +74,23 @@ class FileSink(Sink):
         """
         with open(self._path, self._mode, encoding="utf-8") as f:
             f.write(data)
+
+
+def resolve_sink(to: Path | str | Sink | None) -> Sink:
+    """
+    Resolve a destination argument to a Sink instance.
+
+    Args:
+        to (Path | str | Sink | None): The destination.
+            None → StdoutSink.
+            Path or str → FileSink.
+            Sink instance → used as-is.
+
+    Returns:
+        Sink: The resolved sink.
+    """
+    if to is None:
+        return StdoutSink()
+    if isinstance(to, Sink):
+        return to
+    return FileSink(path=Path(to))

@@ -7,37 +7,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.printer import (
-    OutputFormat,
-    _resolve_sink,
-    print_attack_result_async,
-    print_scenario_result_async,
-    print_scorer_async,
-)
-from pyrit.printer.sink import FileSink, StdoutSink
+from pyrit.printer.attack_result import print_attack_result_async
+from pyrit.printer.scenario_result import print_scenario_result_async
+from pyrit.printer.scorer import print_scorer_async
+from pyrit.printer.sink import FileSink, OutputFormat, StdoutSink, resolve_sink
 
 
 # --- _resolve_sink tests ---
 
 
 def test_resolve_sink_none_returns_stdout():
-    sink = _resolve_sink(None)
+    sink = resolve_sink(None)
     assert isinstance(sink, StdoutSink)
 
 
 def test_resolve_sink_path_returns_file_sink():
-    sink = _resolve_sink(Path("output.txt"))
+    sink = resolve_sink(Path("output.txt"))
     assert isinstance(sink, FileSink)
 
 
 def test_resolve_sink_str_returns_file_sink():
-    sink = _resolve_sink("output.txt")
+    sink = resolve_sink("output.txt")
     assert isinstance(sink, FileSink)
 
 
 def test_resolve_sink_sink_instance_passthrough():
     original = StdoutSink()
-    sink = _resolve_sink(original)
+    sink = resolve_sink(original)
     assert sink is original
 
 
