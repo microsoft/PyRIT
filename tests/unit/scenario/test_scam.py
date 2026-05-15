@@ -219,6 +219,7 @@ class TestScamAttackGeneration:
             objective_target=mock_objective_target,
             scenario_strategies=[single_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -237,6 +238,7 @@ class TestScamAttackGeneration:
             objective_target=mock_objective_target,
             scenario_strategies=[multi_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -303,6 +305,7 @@ class TestScamMaxTurnsParameter:
             objective_target=mock_objective_target,
             scenario_strategies=[multi_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -321,6 +324,7 @@ class TestScamMaxTurnsParameter:
             objective_target=mock_objective_target,
             scenario_strategies=[multi_turn_strategy],
             dataset_config=mock_dataset_config,
+            include_baseline=False,
         )
         atomic_attacks = await scenario._get_atomic_attacks_async()
 
@@ -400,3 +404,36 @@ class TestScamProperties:
             assert objective_target != scorer_target
             assert objective_target != adversarial_target
             assert scorer_target != adversarial_target
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestScamBaselineUniformity:
+    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+
+    async def test_one_resolution_call_baseline_matches_strategies(
+        self, mock_objective_target, mock_objective_scorer, single_turn_strategy
+    ):
+        from pyrit.models import SeedGroup, SeedObjective
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ) as mock_sample:
+            scenario = Scam(objective_scorer=mock_objective_scorer)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[single_turn_strategy],
+                dataset_config=config,
+                include_baseline=True,
+            )
+
+        assert mock_sample.call_count == 1
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+        baseline_objs = set(scenario._atomic_attacks[0].objectives)
+        for attack in scenario._atomic_attacks[1:]:
+            assert set(attack.objectives) == baseline_objs

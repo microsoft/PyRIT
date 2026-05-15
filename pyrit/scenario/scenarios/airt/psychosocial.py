@@ -2,15 +2,14 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 import pathlib
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
 
 import yaml
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -27,7 +26,7 @@ from pyrit.prompt_converter import ToneConverter
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
-from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -36,6 +35,7 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import (
     ScenarioStrategy,
 )
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
@@ -215,6 +215,7 @@ class Psychosocial(Scenario):
         scenario_result_id: Optional[str] = None,
         subharm_configs: Optional[dict[str, SubharmConfig]] = None,
         max_turns: int = 5,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the Psychosocial Harms Scenario.
@@ -246,13 +247,15 @@ class Psychosocial(Scenario):
 
             max_turns (int): Maximum number of conversation turns for multi-turn attacks (CrescendoAttack).
                 Defaults to 5. Increase for more gradual escalation, decrease for faster testing.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
         """
         if objectives is not None:
             logger.warning(
                 "objectives is deprecated and will be removed in a future version. "
                 "Use dataset_config in initialize_async instead."
             )
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
 
         # Merge user-provided configs with defaults (user-provided takes precedence)
         self._subharm_configs = {**self.DEFAULT_SUBHARM_CONFIGS, **(subharm_configs or {})}
@@ -265,8 +268,17 @@ class Psychosocial(Scenario):
             strategy_class=PsychosocialStrategy,
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
-            include_default_baseline=False,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Psychosocial(include_baseline=...)",
+                new_item="Psychosocial.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Store deprecated objectives for later resolution in _resolve_seed_groups
         self._deprecated_objectives = objectives
@@ -355,21 +367,6 @@ class Psychosocial(Scenario):
                 filtered_groups.append(SeedAttackGroup(seeds=filtered_seeds))
         return filtered_groups
 
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        """
-        Create default adversarial chat target for multi-turn attacks.
-
-        Returns:
-            OpenAIChatTarget: Default adversarial target, using an unfiltered endpoint.
-        """
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=0.7,
-        )
-
     def _get_scorer(self, subharm: Optional[str] = None) -> FloatScaleThresholdScorer:
         """
         Create scorer for psychosocial harms evaluation.
@@ -402,16 +399,11 @@ class Psychosocial(Scenario):
         # Extract the 'value' field which contains the actual rubric text
         psychosocial_harm_rubric = yaml_data["value"]
 
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        azure_openai_chat_target = OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-        )
+        scorer_target = get_default_scorer_target()
 
         # Create the base crisis scorer
         psych_scorer = SelfAskGeneralFloatScaleScorer(
-            chat_target=azure_openai_chat_target,
+            chat_target=scorer_target,
             system_prompt_format_string=psychosocial_harm_rubric,
             rationale_output_key="reasoning",  # Match the YAML JSON schema key
             category="psychosocial_harm",
@@ -442,7 +434,7 @@ class Psychosocial(Scenario):
 
         scoring_config = self._create_scoring_config(resolved.subharm)
 
-        return [
+        atomic_attacks: list[AtomicAttack] = [
             *self._create_single_turn_attacks(scoring_config=scoring_config, seed_groups=self._seed_groups),
             self._create_multi_turn_attack(
                 scoring_config=scoring_config,
@@ -450,6 +442,11 @@ class Psychosocial(Scenario):
                 seed_groups=self._seed_groups,
             ),
         ]
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
+
+        return atomic_attacks
 
     def _create_scoring_config(self, subharm: Optional[str]) -> AttackScoringConfig:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None

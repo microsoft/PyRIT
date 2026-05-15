@@ -559,6 +559,10 @@ class OpenAITarget(PromptTarget):
         """
         Handle content filter errors by creating a proper error Message.
 
+        If the subclass provides partial content via ``_extract_partial_content``,
+        it is attached to each response piece as ``prompt_metadata["partial_content"]``
+        so that scorers with ``score_blocked_content=True`` can evaluate it.
+
         Args:
             response: The response object from OpenAI SDK.
             request: The original request message piece.
@@ -567,12 +571,36 @@ class OpenAITarget(PromptTarget):
             Message object with error type indicating content was filtered.
         """
         logger.warning("Output content filtered by content policy.")
-        return handle_bad_request_exception(
+
+        partial_content = self._extract_partial_content(response)
+
+        error_message = handle_bad_request_exception(
             response_text=response.model_dump_json(),
             request=request,
             error_code=200,
             is_content_filter=True,
         )
+
+        if partial_content:
+            for piece in error_message.message_pieces:
+                piece.prompt_metadata["partial_content"] = partial_content
+
+        return error_message
+
+    def _extract_partial_content(self, response: Any) -> Optional[str]:
+        """
+        Extract any partial content the model generated before the content filter triggered.
+
+        Override this in subclasses to extract partial content from API-specific response
+        structures. The base implementation returns None (no partial content).
+
+        Args:
+            response: The response object from OpenAI SDK.
+
+        Returns:
+            The partial text content, or None if no content was generated.
+        """
+        return None
 
     def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
         """

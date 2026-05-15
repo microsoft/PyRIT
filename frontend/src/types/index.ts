@@ -140,7 +140,7 @@ export interface AttackSummary {
   attack_specific_params?: Record<string, unknown> | null
   target?: TargetInfo | null
   converters: string[]
-  outcome?: 'undetermined' | 'success' | 'failure' | null
+  outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
   last_message_preview?: string | null
   message_count: number
   related_conversation_ids: string[]

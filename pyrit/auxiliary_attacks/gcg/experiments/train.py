@@ -5,7 +5,6 @@ import logging
 import time
 from typing import Any, Optional, Union
 
-import mlflow
 import numpy as np
 import torch.multiprocessing as mp
 from ml_collections import config_dict
@@ -42,7 +41,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         tokenizer_paths: Optional[list[str]] = None,
         model_name: str = "",
         model_paths: Optional[list[str]] = None,
-        conversation_templates: Optional[list[str]] = None,
         result_prefix: str = "",
         train_data: str = "",
         control_init: str = _DEFAULT_CONTROL_INIT,
@@ -82,7 +80,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             tokenizer_paths (Optional[list[str]]): Paths to tokenizer models.
             model_name (str): Name identifier for the model.
             model_paths (Optional[list[str]]): Paths to model weights.
-            conversation_templates (Optional[list[str]]): Conversation template names.
             result_prefix (str): Prefix for result file paths.
             train_data (str): URL or path to training data CSV.
             control_init (str): Initial control string for optimization.
@@ -110,7 +107,7 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             topk (int): Number of top candidates to consider. Defaults to 256.
             temp (int): Temperature for sampling. Defaults to 1.
             filter_cand (bool): Whether to filter invalid candidates. Defaults to True.
-            gbda_deterministic (bool): Whether to use deterministic mode. Defaults to True.
+            gbda_deterministic (bool): Unused, kept for config compatibility. Defaults to True.
             logfile (str): Path to log file. Defaults to "".
             random_seed (int): Random seed for reproducibility. Defaults to 42.
         """
@@ -118,8 +115,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             tokenizer_paths = []
         if model_paths is None:
             model_paths = []
-        if conversation_templates is None:
-            conversation_templates = []
         if devices is None:
             devices = ["cuda:0"]
         if model_kwargs is None:
@@ -132,7 +127,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             tokenizer_paths=tokenizer_paths,
             model_name=model_name,
             model_paths=model_paths,
-            conversation_templates=conversation_templates,
             result_prefix=result_prefix,
             train_data=train_data,
             control_init=control_init,
@@ -166,8 +160,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         )
         logger.info(f"Parameters: {params}")
 
-        # Start mlflow logging
-        mlflow.start_run()
         log_gpu_memory(step=0)
         log_params(params=params)
 
@@ -300,7 +292,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
                 test_goals=test_goals,
                 test_targets=test_targets,
                 test_workers=test_workers,
-                mpa_deterministic=params.gbda_deterministic,
                 mpa_lr=params.learning_rate,
                 mpa_batch_size=params.batch_size,
                 mpa_n_steps=params.n_steps,
@@ -315,7 +306,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             test_goals=getattr(params, "test_goals", []),
             test_targets=getattr(params, "test_targets", []),
             test_workers=test_workers,
-            mpa_deterministic=params.gbda_deterministic,
             mpa_lr=params.learning_rate,
             mpa_batch_size=params.batch_size,
             mpa_n_steps=params.n_steps,

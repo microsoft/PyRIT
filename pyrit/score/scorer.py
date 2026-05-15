@@ -69,6 +69,15 @@ class Scorer(Identifiable, abc.ABC):
 
     _identifier: Optional[ComponentIdentifier] = None
 
+    #: When True, blocked responses that contain partial content
+    #: (in prompt_metadata["partial_content"]) will be scored using that content
+    #: instead of being filtered out or short-circuited.
+    #: Set this on scorer instances before use. Defaults to False.
+    #:
+    #: Note: Partial content extraction is supported for ``OpenAIChatTarget``
+    #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
+    score_blocked_content: bool = False
+
     def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
         """
         Initialize the Scorer.
@@ -186,7 +195,9 @@ class Scorer(Identifiable, abc.ABC):
             role_filter (Optional[ChatMessageRole]): Only score messages with this exact stored role.
                 Use "assistant" to score only real assistant responses, or "simulated_assistant"
                 to score only simulated responses. Defaults to None (no filtering).
-            skip_on_error_result (bool): If True, skip scoring if the message contains an error. Defaults to False.
+            skip_on_error_result (bool): If True, skip scoring if the message contains an error.
+                When self.score_blocked_content is also True, blocked responses with partial content
+                will still be scored instead of skipping. Defaults to False.
             infer_objective_from_request (bool): If True, infer the objective from the message's previous request
                 when objective is not provided. Defaults to False.
 
@@ -204,15 +215,25 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         if skip_on_error_result and message.is_error():
-            logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
-            return []
+            # When score_blocked_content is enabled and the message has partial content,
+            # don't skip — let _score_async handle the substitution.
+            has_partial = any(
+                p.prompt_metadata.get("partial_content") for p in message.message_pieces if p.is_blocked()
+            )
+            if not (self.score_blocked_content and has_partial):
+                logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
+                return []
 
         if infer_objective_from_request and (not objective):
             objective = self._extract_objective_from_response(message)
 
+        # When score_blocked_content is enabled, create a modified message where blocked pieces
+        # with partial content are replaced with text-type substitutes (response_error="none").
+        scoring_message = self._apply_blocked_content_substitution(message) if self.score_blocked_content else message
+
         try:
             scores = await self._score_async(
-                message,
+                scoring_message,
                 objective=objective,
             )
         except PyritException as e:
@@ -264,6 +285,74 @@ class Scorer(Identifiable, abc.ABC):
     @abstractmethod
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         raise NotImplementedError
+
+    @staticmethod
+    def _create_text_piece_from_blocked(piece: MessagePiece) -> Optional[MessagePiece]:
+        """
+        Create a text-typed copy of a blocked MessagePiece using its partial content.
+
+        The substitute preserves the original piece's id (so scores link back correctly),
+        sets converted_value to the partial content with converted_value_data_type="text",
+        and sets response_error="none" so scorer short-circuits (e.g., refusal scorer's
+        blocked check) do not fire.
+
+        Args:
+            piece: A blocked MessagePiece with prompt_metadata["partial_content"].
+
+        Returns:
+            MessagePiece with text content, or None if partial content is empty.
+        """
+        partial_content = str(piece.prompt_metadata.get("partial_content", ""))
+        if not partial_content:
+            return None
+
+        return MessagePiece(
+            id=piece.id,
+            role=piece.api_role,
+            original_value=piece.original_value,
+            converted_value=partial_content,
+            original_value_data_type=piece.original_value_data_type,
+            converted_value_data_type="text",
+            conversation_id=piece.conversation_id,
+            sequence=piece.sequence,
+            labels=piece.labels,
+            prompt_metadata=piece.prompt_metadata,
+            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+            prompt_target_identifier=piece.prompt_target_identifier,
+            attack_identifier=piece.attack_identifier,
+            response_error="none",
+            timestamp=piece.timestamp,
+        )
+
+    def _apply_blocked_content_substitution(self, message: Message) -> Message:
+        """
+        Create a copy of the message where blocked pieces with partial content are substituted.
+
+        Each blocked piece that has prompt_metadata["partial_content"] is replaced with a
+        text-typed copy (response_error="none", converted_value=partial_content). Non-blocked
+        pieces and blocked pieces without partial content are kept as-is.
+
+        Args:
+            message: The original message potentially containing blocked pieces.
+
+        Returns:
+            A new Message with substituted pieces, or the original if no substitution was needed.
+        """
+        substituted = False
+        new_pieces: list[MessagePiece] = []
+        for piece in message.message_pieces:
+            if piece.is_blocked() and "partial_content" in piece.prompt_metadata:
+                substitute = self._create_text_piece_from_blocked(piece)
+                if substitute:
+                    new_pieces.append(substitute)
+                    substituted = True
+                    continue
+            new_pieces.append(piece)
+
+        if not substituted:
+            return message
+
+        return Message(message_pieces=new_pieces)
 
     def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
         """

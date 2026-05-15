@@ -581,6 +581,7 @@ export default function ChatWindow({
                 onClick={() => setIsPanelOpen(!isPanelOpen)}
                 disabled={!attackResultId}
                 data-testid="toggle-panel-btn"
+                aria-label="Toggle conversations panel"
               />
             </Tooltip>
             <Button
