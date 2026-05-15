@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.printer.attack_result import print_attack_result_async
-from pyrit.printer.scenario_result import print_scenario_result_async
-from pyrit.printer.scorer import print_scorer_async
+from pyrit.printer.helpers import (
+    print_attack_result_async,
+    print_scenario_result_async,
+    print_scorer_async,
+)
 from pyrit.printer.sink import FileSink, OutputFormat, StdoutSink, resolve_sink
 
 
