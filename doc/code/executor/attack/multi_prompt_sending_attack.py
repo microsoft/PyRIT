@@ -20,9 +20,9 @@
 # This simple demo showcases how to use the attack to send prompts, and how it is scored with a refusal scorer.
 
 # %%
-from pyrit.output import print_attack_result_async
 from pyrit.memory import CentralMemory
 from pyrit.models import Message
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

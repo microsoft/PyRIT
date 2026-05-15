@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
 # ---
-
 # %% [markdown]
 # # Role Play Attack (Single-Turn) - optional
 #
@@ -17,7 +15,6 @@ from pyrit.output import print_attack_result_async
 #
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
-
 # %%
 import os
 
@@ -30,6 +27,7 @@ from pyrit.executor.attack import (
     RolePlayAttack,
     RolePlayPaths,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import CharSwapConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget

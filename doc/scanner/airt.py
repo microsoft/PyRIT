@@ -19,9 +19,9 @@
 # ## Setup
 
 # %%
+from pyrit.output import print_scenario_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.output import print_scenario_result_async
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, ScorerInitializer, TargetInitializer
 

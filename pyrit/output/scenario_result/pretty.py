@@ -137,6 +137,10 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         Returns:
             str: The rendered scenario result text.
+
+        Raises:
+            ValueError: If the result has an ``objective_scorer_identifier`` but no scorer printer
+                is configured.
         """
         parts: list[str] = []
 
@@ -145,15 +149,17 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         lines.append(self._render_section_header("Scenario Information"))
         lines.append(self._format_colored(f"{self._indent}📋 Scenario Details", Style.BRIGHT))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Name: {result.scenario_identifier.name}", Fore.CYAN
-        ))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Scenario Version: {result.scenario_identifier.version}", Fore.CYAN
-        ))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• PyRIT Version: {result.scenario_identifier.pyrit_version}", Fore.CYAN
-        ))
+        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_identifier.name}", Fore.CYAN))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Scenario Version: {result.scenario_identifier.version}", Fore.CYAN
+            )
+        )
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• PyRIT Version: {result.scenario_identifier.pyrit_version}", Fore.CYAN
+            )
+        )
 
         if result.scenario_identifier.description:
             lines.append(self._format_colored(f"{self._indent * 2}• Description:", Fore.CYAN))
@@ -162,8 +168,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             wrapped_lines = textwrap.wrap(
                 result.scenario_identifier.description, width=available_width, break_long_words=False
             )
-            for line in wrapped_lines:
-                lines.append(self._format_colored(f"{desc_indent}{line}", Fore.CYAN))
+            lines.extend(self._format_colored(f"{desc_indent}{line}", Fore.CYAN) for line in wrapped_lines)
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
@@ -192,9 +197,11 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Strategies: {total_strategies}", Fore.GREEN))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attack Results: {total_results}", Fore.GREEN))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
-        ))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
+            )
+        )
 
         objectives = result.get_objectives()
         lines.append(self._format_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN))
@@ -212,12 +219,12 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
             lines.append("\n")
             lines.append(self._format_colored(f"{self._indent}🔸 Group: {group_name}", Style.BRIGHT))
-            lines.append(self._format_colored(
-                f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW
-            ))
-            lines.append(self._format_colored(
-                f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate)
-            ))
+            lines.append(self._format_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate)
+                )
+            )
 
         lines.append(self._render_footer())
         parts.append("".join(lines))
@@ -226,7 +233,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
     async def print_summary_async(self, result: ScenarioResult) -> None:
         """
-        Deprecated. Use write_async instead.
+        Use ``write_async`` instead. This method is deprecated.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.

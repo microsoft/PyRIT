@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 10.1 Generic Playwright Target
 #
@@ -25,7 +23,6 @@ from pyrit.output import print_attack_result_async
 # To run the Flask app, you also must [download](https://ollama.com/download) and run Ollama, making sure the flask is using a correct model. For example, `ollama run llama3.2:1b` runs the Llama 3.2 1B model.
 #
 # Additionally, you need to install playwright by executing `playwright install`.
-
 # %% [markdown]
 # ## Example: Interacting with a Web Application using `PlaywrightTarget`
 #
@@ -43,6 +40,8 @@ import sys
 import time
 from urllib.error import URLError
 from urllib.request import urlopen
+
+from pyrit.output import print_attack_result_async
 
 
 def start_flask_app() -> subprocess.Popen:

@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 5. Memory Labels and Advanced Memory Queries
 #
@@ -35,7 +33,6 @@ from pyrit.output import print_attack_result_async
 # 1. Send prompts to a text target using `PromptSendingAttack`, passing in `memory_labels` to the execution function.
 # 2. Retrieve these prompts by querying for the corresponding memory label(s).
 # 3. Resend the retrieved prompts.
-
 # %%
 import uuid
 
@@ -43,6 +40,7 @@ from pyrit.executor.attack import (
     AttackExecutor,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

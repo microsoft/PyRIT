@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 6. Creating Custom Targets
 #
@@ -41,7 +39,6 @@ from pyrit.output import print_attack_result_async
 # **Step 6.** If the password was leaked in the response, the conversation is completed. Otherwise, the Red Team Attack continues from Step 1 with the knowledge of the previous iteration. <br>
 #
 # <img src="../../../assets/gandalf-home-level-1.png" alt="Gandalf demo level 1" height="400"/>
-
 # %%
 import textwrap
 
@@ -50,6 +47,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     RedTeamingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import GandalfLevel, GandalfTarget, OpenAIChatTarget
 from pyrit.score import GandalfScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,10 +8,8 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Converters
-
 # %% [markdown]
 # Converters are used to transform prompts before sending them to the target.
 #
@@ -25,10 +22,10 @@ from pyrit.output import print_attack_result_async
 # ## Converter Modality Reference Table
 #
 # The following table shows all available converters organized by their input and output modalities:
-
 # %%
 import pandas as pd
 
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import get_converter_modalities
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

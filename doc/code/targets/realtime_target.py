@@ -1,4 +1,5 @@
 from pyrit.output import print_attack_result_async
+
 # ---
 # jupyter:
 #   jupytext:
@@ -8,17 +9,14 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Realtime Target - optional
 #
 # This notebooks shows how to interact with the Realtime Target to send text or audio prompts and receive back an audio output and the text transcript of that audio.
 #
 # Note: because this target needs an active websocket connection for multiturn conversations, it does not have a "conversation_history" that you can backtrack and alter, so not all attacks will work with this target (ie Crescendo will not work)
-
 # %% [markdown]
 # ## Target Initialization
-
 # %%
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

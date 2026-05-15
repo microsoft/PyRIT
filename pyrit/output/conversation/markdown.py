@@ -68,9 +68,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
                 markdown_lines.extend(self._format_system_message(message))
             elif message_role == "user":
                 turn_number += 1
-                markdown_lines.extend(
-                    await self._format_user_message_async(message=message, turn_number=turn_number)
-                )
+                markdown_lines.extend(await self._format_user_message_async(message=message, turn_number=turn_number))
             else:
                 markdown_lines.extend(await self._format_assistant_message_async(message=message))
 

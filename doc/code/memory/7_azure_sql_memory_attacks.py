@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 7. PromptSendingAttack with Azure SQL Memory
 #
@@ -20,7 +18,6 @@ from pyrit.output import print_attack_result_async
 #  - Ensure that you have proper access to the Azure SQL resource by running this [6_azure_sql_memory.ipynb](./6_azure_sql_memory.ipynb).
 #
 # The first example is as simple as it gets.
-
 # %%
 import time
 
@@ -28,6 +25,7 @@ from pyrit.executor.attack import (
     AttackExecutor,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import AZURE_SQL, initialize_pyrit_async
 

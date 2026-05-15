@@ -99,31 +99,33 @@ class PrettyConversationPrinter(ConversationPrinterBase):
                     if include_reasoning_trace:
                         summary_text = self._extract_reasoning_summary(piece.original_value)
                         if summary_text:
-                            lines.append(self._format_colored(
-                                f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN
-                            ))
+                            lines.append(
+                                self._format_colored(f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN)
+                            )
                             lines.append(self._render_wrapped_text(summary_text, Fore.CYAN))
                             lines.append("\n")
                     continue
 
                 if piece.is_blocked():
-                    lines.append(self._format_colored(
-                        f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED
-                    ))
+                    lines.append(self._format_colored(f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED))
                     partial_content = piece.prompt_metadata.get("partial_content")
                     if partial_content:
-                        lines.append(self._format_colored(
-                            f"{self._indent}📝 Partial content (before filter triggered):",
-                            Style.DIM,
-                            Fore.CYAN,
-                        ))
+                        lines.append(
+                            self._format_colored(
+                                f"{self._indent}📝 Partial content (before filter triggered):",
+                                Style.DIM,
+                                Fore.CYAN,
+                            )
+                        )
                         lines.append(self._render_wrapped_text(str(partial_content), Fore.YELLOW))
                     else:
-                        lines.append(self._format_colored(
-                            f"{self._indent}Content was blocked by the target's content filter.",
-                            Style.DIM,
-                            Fore.RED,
-                        ))
+                        lines.append(
+                            self._format_colored(
+                                f"{self._indent}Content was blocked by the target's content filter.",
+                                Style.DIM,
+                                Fore.RED,
+                            )
+                        )
 
                 elif piece.converted_value != piece.original_value:
                     lines.append(self._format_colored(f"{self._indent} Original:", Fore.CYAN))
@@ -144,11 +146,8 @@ class PrettyConversationPrinter(ConversationPrinterBase):
                     scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
                     if scores:
                         lines.append("\n")
-                        lines.append(self._format_colored(
-                            f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA
-                        ))
-                        for score in scores:
-                            lines.append(self._score_printer._render_score(score))
+                        lines.append(self._format_colored(f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA))
+                        lines.extend(self._score_printer._render_score(score) for score in scores)
 
         lines.append("\n")
         lines.append(self._format_colored("─" * self._width, Fore.BLUE))

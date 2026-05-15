@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 8. Azure Blob Storage Targets
 #
@@ -25,11 +23,11 @@ from pyrit.output import print_attack_result_async
 # For more details, https://learn.microsoft.com/en-us/rest/api/storageservices/create-user-delegation-sas
 #
 #
-
 # %%
 import os
 
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import AzureBlobStorageTarget
 from pyrit.setup import AZURE_SQL, initialize_pyrit_async
 

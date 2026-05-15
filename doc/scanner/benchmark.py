@@ -18,8 +18,8 @@
 # The adversarial benchmarking scenario (`AdversarialBenchmark`) compares the effectiveness of different adversarial models in successfully executing attacks against a target model.
 
 # %%
-from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.output import print_scenario_result_async
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets

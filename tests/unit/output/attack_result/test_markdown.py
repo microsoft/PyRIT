@@ -3,75 +3,55 @@
 
 import os
 import uuid
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, Message, MessagePiece, Score
+from pyrit.memory import MemoryInterface
+from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
+from pyrit.models.conversation_reference import ConversationReference
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
 
-def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
-    """Helper to create ComponentIdentifier for tests."""
-    return ComponentIdentifier(
-        class_name=name,
-        class_module="test_module",
+def _scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    return ComponentIdentifier(class_name=name, class_module="test_module")
+
+
+def _attack_id(name: str = "TestAttack") -> ComponentIdentifier:
+    return ComponentIdentifier(class_name=name, class_module="test_module")
+
+
+def _seed_messages(memory: MemoryInterface, conversation_id: str, pieces: list[MessagePiece]) -> None:
+    for piece in pieces:
+        piece.conversation_id = conversation_id
+        memory.add_message_to_memory(request=Message(message_pieces=[piece]))
+
+
+def _make_score(*, piece_id: str, value: str = "true", score_type: str = "true_false") -> Score:
+    return Score(
+        score_type=score_type,
+        score_value=value,
+        score_category=["test"],
+        score_value_description="desc",
+        score_rationale="rationale",
+        score_metadata={},
+        message_piece_id=piece_id,
+        scorer_class_identifier=_scorer_id(),
     )
 
 
 @pytest.fixture
-def mock_memory():
-    memory = MagicMock(spec=CentralMemory)
-    with patch("pyrit.memory.CentralMemory") as mock_central_memory:
-        mock_central_memory.get_memory_instance.return_value = memory
-        mock_central_memory.get_conversation.return_value = []
-        yield memory
-
-
-@pytest.fixture
-def markdown_printer(patch_central_database):
+def printer(patch_central_database):
     return MarkdownAttackResultMemoryPrinter(display_inline=False)
 
 
 @pytest.fixture
-def sample_boolean_score():
-    return Score(
-        score_type="true_false",
-        score_value="true",
-        score_category=["test"],
-        score_value_description="Test true score",
-        score_rationale="Line 1\nLine 2\nLine 3",
-        score_metadata={},
-        message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier=_mock_scorer_id("MockScorer"),
-    )
-
-
-@pytest.fixture
-def sample_float_score():
-    return Score(
-        score_type="float_scale",
-        score_value="0.5",
-        score_category=["other"],
-        score_value_description="Other score",
-        score_rationale="Other rationale",
-        score_metadata={},
-        message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier=_mock_scorer_id("OtherScorer"),
-    )
-
-
-@pytest.fixture
-def sample_attack_result():
+def attack_result():
     return AttackResult(
         objective="Test objective",
-        atomic_attack_identifier=build_atomic_attack_identifier(
-            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
-        ),
-        conversation_id="test-conv-123",
+        atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=_attack_id()),
+        conversation_id="conv-main",
         executed_turns=3,
         execution_time_ms=1500,
         outcome=AttackOutcome.SUCCESS,
@@ -80,175 +60,331 @@ def sample_attack_result():
             score_type="float_scale",
             score_value="0.5",
             score_category=["other"],
-            score_value_description="Other score",
-            score_rationale="Other rationale",
+            score_value_description="Other",
+            score_rationale="Multi\nline\nrationale",
             score_metadata={},
             message_piece_id=str(uuid.uuid4()),
-            scorer_class_identifier=_mock_scorer_id("OtherScorer"),
+            scorer_class_identifier=_scorer_id(),
         ),
     )
 
 
-@pytest.fixture
-def sample_message_piece():
-    return MessagePiece(
-        role="user", original_value="Original text", converted_value="Converted text", converted_value_data_type="text"
-    )
+# --- __init__ ---
 
 
-@pytest.fixture
-def sample_message(sample_message_piece):
-    return Message(message_pieces=[sample_message_piece])
-
-
-def test_init(mock_memory):
-    """Test MarkdownAttackResultMemoryPrinter initialization."""
+def test_init(patch_central_database):
     printer = MarkdownAttackResultMemoryPrinter(display_inline=True)
     assert printer._display_inline is True
-    assert printer._memory is mock_memory
+    assert printer._memory is patch_central_database.return_value
 
 
-def test_format_score_bool(markdown_printer, sample_boolean_score):
-    """Test score formatting with boolean value."""
-    formatted = markdown_printer._score_printer._format_score(sample_boolean_score)
-    assert "**Value:** True" in formatted
-    assert "**Score Type:** true_false" in formatted
-    assert "**Category:** test" in formatted
-    # Empty metadata dict is not printed
-    assert "**Metadata:**" not in formatted
+# --- write_async (summary, outcomes, metadata) ---
 
 
-def test_format_score_float(markdown_printer, sample_float_score):
-    """Test score formatting with float value."""
-    formatted = markdown_printer._score_printer._format_score(sample_float_score)
-    assert "0.5" in formatted
-    assert "**Score Type:** float_scale" in formatted
-    assert "**Category:** other" in formatted
+async def test_write_async_renders_full_summary(printer, attack_result, capsys):
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "Attack Result: SUCCESS" in out
+    assert "## Attack Summary" in out
+    assert "### Basic Information" in out
+    assert "### Execution Metrics" in out
+    assert "### Outcome" in out
+    assert "**Reason:** Test successful" in out
+    assert "### Final Score" in out
+    assert "Multi" in out  # multi-line rationale rendered
+    assert "## Conversation History" in out
+    assert "Report generated at" in out
 
 
-def test_format_score_multiline_rationale(markdown_printer, sample_boolean_score):
-    """Test score formatting with multi-line rationale."""
-    formatted = markdown_printer._score_printer._format_score(sample_boolean_score)
-    assert "Line 1" in formatted
-    assert "Line 2" in formatted
-    assert "Line 3" in formatted
+async def test_write_async_renders_failure_outcome(printer, capsys):
+    await printer.write_async(AttackResult(objective="o", conversation_id="c", outcome=AttackOutcome.FAILURE))
+    assert "Attack Result: FAILURE" in capsys.readouterr().out
 
 
-def test_get_audio_mime_type(markdown_printer):
-    """Test audio MIME type detection."""
-    conv = markdown_printer._conversation_printer
-    assert conv._get_audio_mime_type(audio_path="test.wav") == "audio/wav"
-    assert conv._get_audio_mime_type(audio_path="test.ogg") == "audio/ogg"
-    assert conv._get_audio_mime_type(audio_path="test.m4a") == "audio/mp4"
-    assert conv._get_audio_mime_type(audio_path="test.mp3") == "audio/mpeg"
+async def test_write_async_renders_undetermined_outcome(printer, capsys):
+    await printer.write_async(AttackResult(objective="o", conversation_id="c", outcome=AttackOutcome.UNDETERMINED))
+    assert "Attack Result: UNDETERMINED" in capsys.readouterr().out
 
 
-def test_format_image_content(markdown_printer):
-    """Test image content formatting."""
+async def test_write_async_renders_metadata(printer, capsys):
+    result = AttackResult(
+        objective="o",
+        conversation_id="c",
+        outcome=AttackOutcome.SUCCESS,
+        metadata={"note": "extra"},
+    )
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+    assert "## Additional Metadata" in out
+    assert "**note:** extra" in out
+
+
+# --- conversation rendering ---
+
+
+async def test_write_async_no_conversation_id(printer, capsys):
+    result = AttackResult(objective="o", conversation_id="", outcome=AttackOutcome.SUCCESS)
+    await printer.write_async(result)
+    assert "*No conversation ID available*" in capsys.readouterr().out
+
+
+async def test_write_async_no_messages(printer, attack_result, capsys):
+    await printer.write_async(attack_result)
+    assert "*No conversation found for ID: conv-main*" in capsys.readouterr().out
+
+
+async def test_write_async_renders_user_and_assistant_messages(printer, attack_result, sqlite_instance, capsys):
+    user_piece = MessagePiece(role="user", original_value="Hello", converted_value="Hello")
+    assistant_piece = MessagePiece(role="assistant", original_value="Hi back", converted_value="Hi back")
+    _seed_messages(sqlite_instance, "conv-main", [user_piece, assistant_piece])
+
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "### Turn 1" in out
+    assert "#### User" in out
+    assert "Hello" in out
+    assert "#### Assistant" in out
+    assert "Hi back" in out
+
+
+async def test_write_async_renders_system_message(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(role="system", original_value="sys", converted_value="sys")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "### System Message" in out
+    assert "sys" in out
+
+
+async def test_write_async_renders_original_and_converted_when_different(
+    printer, attack_result, sqlite_instance, capsys
+):
+    piece = MessagePiece(role="user", original_value="Original text", converted_value="Converted text")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "**Original:**" in out
+    assert "Original text" in out
+    assert "**Converted:**" in out
+    assert "Converted text" in out
+
+
+async def test_write_async_renders_image_message(printer, attack_result, sqlite_instance, capsys):
     image_path = os.path.join("test", "path", "image.png")
-    formatted = markdown_printer._conversation_printer._format_image_content(image_path=image_path)
-    assert formatted[0].startswith("![Image]")
-    assert "image.png" in formatted[0]
-
-
-def test_format_audio_content(markdown_printer):
-    """Test audio content formatting."""
-    audio_path = "test.wav"
-    formatted = markdown_printer._conversation_printer._format_audio_content(audio_path=audio_path)
-    assert "<audio controls>" in formatted
-    assert 'type="audio/wav"' in "\n".join(formatted)
-    assert "Your browser does not support the audio element." in formatted
-
-
-def test_format_error_content(markdown_printer, sample_message_piece):
-    """Test error content formatting."""
-    sample_message_piece.response_error = "TestError"
-    formatted = markdown_printer._conversation_printer._format_error_content(piece=sample_message_piece)
-    assert "**Error Response:**\n" in formatted
-    assert "*Error Type: TestError*\n" in formatted
-    assert "```json" in formatted
-
-
-def test_format_text_content_with_conversion(markdown_printer, sample_message_piece):
-    """Test text content formatting when original and converted values differ."""
-    formatted = markdown_printer._conversation_printer._format_text_content(
-        piece=sample_message_piece, show_original=True
+    piece = MessagePiece(
+        role="assistant",
+        original_value=image_path,
+        converted_value=image_path,
+        original_value_data_type="image_path",
+        converted_value_data_type="image_path",
     )
-    assert "**Original:**\n" in formatted
-    assert "Original text\n" in formatted
-    assert "\n**Converted:**\n" in formatted
-    assert "Converted text\n" in formatted
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "![Image]" in out
+    assert "image.png" in out
 
 
-def test_format_text_content_without_conversion(markdown_printer, sample_message_piece):
-    """Test text content formatting when values are the same."""
-    sample_message_piece.converted_value = sample_message_piece.original_value
-    formatted = markdown_printer._conversation_printer._format_text_content(
-        piece=sample_message_piece, show_original=True
+@pytest.mark.parametrize(
+    "audio_filename,expected_mime",
+    [
+        ("clip.wav", "audio/wav"),
+        ("clip.ogg", "audio/ogg"),
+        ("clip.m4a", "audio/mp4"),
+        ("clip.mp3", "audio/mpeg"),
+    ],
+)
+async def test_write_async_renders_audio_message_with_mime_type(
+    printer, attack_result, sqlite_instance, capsys, audio_filename, expected_mime
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=audio_filename,
+        converted_value=audio_filename,
+        original_value_data_type="audio_path",
+        converted_value_data_type="audio_path",
     )
-    assert "**Original:**" not in formatted
-    assert sample_message_piece.original_value + "\n" in formatted
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "<audio controls>" in out
+    assert f'type="{expected_mime}"' in out
+    assert "Your browser does not support the audio element." in out
 
 
-async def test_format_piece_content_image(markdown_printer, sample_message_piece):
-    """Test piece content formatting for images."""
-    sample_message_piece.converted_value_data_type = "image_path"
-    sample_message_piece.converted_value = "test.png"
-    formatted = await markdown_printer._conversation_printer._format_piece_content_async(
-        piece=sample_message_piece, show_original=False
+async def test_write_async_renders_error_message(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 500}',
+        converted_value='{"status_code": 500}',
+        converted_value_data_type="error",
+        response_error="processing",
     )
-    assert any("![Image]" in line for line in formatted)
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "**Error Response:**" in out
+    assert "*Error Type: processing*" in out
+    assert "```json" in out
 
 
-async def test_format_piece_content_audio(markdown_printer, sample_message_piece):
-    """Test piece content formatting for audio."""
-    sample_message_piece.converted_value_data_type = "audio_path"
-    sample_message_piece.converted_value = "test.wav"
-    formatted = await markdown_printer._conversation_printer._format_piece_content_async(
-        piece=sample_message_piece, show_original=False
+# --- auxiliary scores ---
+
+
+async def test_write_async_with_auxiliary_scores(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(role="assistant", original_value="response", converted_value="response")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    sqlite_instance.add_scores_to_memory(
+        scores=[_make_score(piece_id=str(piece.id), value="0.42", score_type="float_scale")]
     )
-    assert any("<audio controls>" in line for line in formatted)
+
+    await printer.write_async(attack_result, include_auxiliary_scores=True)
+    out = capsys.readouterr().out
+    assert "##### Scores" in out
+    assert "**0.42**" in out
+    assert "**Score Type:** float_scale" in out
 
 
-async def test_format_piece_content_error(markdown_printer, sample_message_piece):
-    """Test piece content formatting for errors."""
-    sample_message_piece.response_error = "TestError"
-    formatted = await markdown_printer._conversation_printer._format_piece_content_async(
-        piece=sample_message_piece, show_original=False
+# --- pruned conversations ---
+
+
+async def test_write_async_pruned_with_messages_and_scores(printer, attack_result, sqlite_instance, capsys):
+    pruned_piece = MessagePiece(
+        role="assistant", original_value="short pruned line", converted_value="short pruned line"
     )
-    assert any("**Error Response:**" in line for line in formatted)
+    _seed_messages(sqlite_instance, "pruned-conv", [pruned_piece])
+    sqlite_instance.add_scores_to_memory(scores=[_make_score(piece_id=str(pruned_piece.id))])
+
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="pruned-conv", conversation_type=ConversationType.PRUNED, description="branch one"
+        )
+    )
+
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "## Pruned Conversations" in out
+    assert "branch one" in out
+    assert "short pruned line" in out
+    assert "**Score:**" in out
 
 
-async def test_print_result_async(markdown_printer, sample_attack_result, mock_memory, capsys):
-    """Test full attack result printing."""
+async def test_write_async_pruned_with_multiline_content_uses_code_block(
+    printer, attack_result, sqlite_instance, capsys
+):
+    multiline = "line one\nline two"
+    pruned_piece = MessagePiece(role="assistant", original_value=multiline, converted_value=multiline)
+    _seed_messages(sqlite_instance, "pruned-conv", [pruned_piece])
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="pruned-conv", conversation_type=ConversationType.PRUNED)
+    )
 
-    await markdown_printer.print_result_async(sample_attack_result)
-    captured = capsys.readouterr()
-
-    # Check for main sections
-    assert "Attack Result: SUCCESS" in captured.out
-    assert "## Attack Summary" in captured.out
-    assert "### Basic Information" in captured.out
-    assert "### Execution Metrics" in captured.out
-    assert "### Outcome" in captured.out
-    assert "### Final Score" in captured.out
-    assert "## Conversation History" in captured.out
-
-
-async def test_print_conversation_async(markdown_printer, sample_attack_result, mock_memory, capsys):
-    """Test conversation history printing."""
-    await markdown_printer.print_conversation_async(sample_attack_result)
-    captured = capsys.readouterr()
-
-    assert "*No conversation found for ID: test-conv-123*" in captured.out
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "```" in out
+    assert "line one" in out
 
 
-async def test_print_summary_async(markdown_printer, sample_attack_result, capsys):
-    """Test attack summary printing."""
-    await markdown_printer.print_summary_async(sample_attack_result)
-    captured = capsys.readouterr()
+async def test_write_async_pruned_with_no_messages(printer, attack_result, capsys):
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="empty-pruned", conversation_type=ConversationType.PRUNED)
+    )
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "*No messages found for conversation: `empty-pruned`*" in out
 
-    assert "## Attack Summary" in captured.out
-    assert "Test objective" in captured.out
-    assert "TestAttack" in captured.out
-    assert "test-conv-123" in captured.out
+
+async def test_write_async_include_pruned_with_no_pruned_refs(printer, attack_result, capsys):
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    assert "## Pruned Conversations" not in capsys.readouterr().out
+
+
+# --- adversarial conversation ---
+
+
+async def test_write_async_adversarial_with_messages_and_description(printer, attack_result, sqlite_instance, capsys):
+    adv_user = MessagePiece(role="user", original_value="adv prompt", converted_value="adv prompt")
+    adv_assist = MessagePiece(role="assistant", original_value="adv reply", converted_value="adv reply")
+    _seed_messages(sqlite_instance, "adv-conv", [adv_user, adv_assist])
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="adv-conv", conversation_type=ConversationType.ADVERSARIAL, description="red team chain"
+        )
+    )
+
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    out = capsys.readouterr().out
+    assert "## Adversarial Conversation" in out
+    assert "red team chain" in out
+    assert "adv prompt" in out
+    assert "adv reply" in out
+
+
+async def test_write_async_adversarial_filters_to_best_branch(patch_central_database, sqlite_instance, capsys):
+    short = MessagePiece(role="user", original_value="best short", converted_value="best short")
+    long_text = "x" * 250  # > 200 chars triggers code block branch in adversarial rendering
+    long_piece = MessagePiece(role="user", original_value=long_text, converted_value=long_text)
+    _seed_messages(sqlite_instance, "adv-best", [short, long_piece])
+    _seed_messages(
+        sqlite_instance,
+        "adv-other",
+        [MessagePiece(role="user", original_value="other", converted_value="other")],
+    )
+
+    result = AttackResult(
+        objective="o",
+        conversation_id="conv-main",
+        outcome=AttackOutcome.SUCCESS,
+        metadata={"best_adversarial_conversation_id": "adv-best"},
+        related_conversations={
+            ConversationReference(conversation_id="adv-best", conversation_type=ConversationType.ADVERSARIAL),
+            ConversationReference(conversation_id="adv-other", conversation_type=ConversationType.ADVERSARIAL),
+        },
+    )
+
+    await MarkdownAttackResultMemoryPrinter(display_inline=False).write_async(
+        result, include_adversarial_conversation=True
+    )
+    out = capsys.readouterr().out
+    assert "best-scoring branch" in out
+    assert "best short" in out
+    assert "x" * 50 in out
+    assert "other" not in out
+    # Long content (>200 chars) is wrapped in a fenced code block.
+    assert "```" in out
+
+
+async def test_write_async_adversarial_with_no_messages(printer, attack_result, capsys):
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="adv-empty", conversation_type=ConversationType.ADVERSARIAL)
+    )
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    out = capsys.readouterr().out
+    assert "## Adversarial Conversation" in out
+    assert "*No messages found for conversation: `adv-empty`*" in out
+
+
+async def test_write_async_include_adversarial_with_no_refs(printer, attack_result, capsys):
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    assert "## Adversarial Conversation" not in capsys.readouterr().out
+
+
+# --- deprecated aliases ---
+
+
+async def test_print_result_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_result_async"):
+        await printer.print_result_async(attack_result)
+    assert "Attack Result: SUCCESS" in capsys.readouterr().out
+
+
+async def test_print_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_conversation_async"):
+        await printer.print_conversation_async(attack_result)
+    assert "*No conversation found for ID: conv-main*" in capsys.readouterr().out
+
+
+async def test_print_summary_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_summary_async"):
+        await printer.print_summary_async(attack_result)
+    assert "## Attack Summary" in capsys.readouterr().out

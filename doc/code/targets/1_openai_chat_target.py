@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
 # ---
-
 # %% [markdown]
 # # 1. OpenAI Chat Target
 #
@@ -16,13 +14,13 @@ from pyrit.output import print_attack_result_async
 #
 # For this example, we will use the Jailbreak `SeedPrompt`. Although you can interact with the target directly using `Message` objects, it is almost always better to use an attack. The simplest attack is the `PromptSendingAttack`, which provides parallelization, access to converters and scoring, simpler calling methods, and error resiliency.
 #
-
 # %%
 import os
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

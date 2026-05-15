@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # Prompt Shield Scorer - optional
 # ## 0 TL;DR
@@ -41,6 +39,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.memory import CentralMemory
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget, PromptShieldTarget
 from pyrit.score import BatchScorer, PromptShieldScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

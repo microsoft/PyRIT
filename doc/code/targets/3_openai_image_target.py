@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,19 +7,16 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 3. OpenAI Image Target
 #
 # `OpenAIImageTarget` supports two different modes:
 # - Generating a brand new image from a text prompt.
 # - Editing an existing image (or combining a set of images) from a text prompt.
-
 # %% [markdown]
 # ## Generating Images (Text --> Image)
 #
 # This example shows how to use the image target to create an image from a text prompt.
-
 # %%
 import os
 
@@ -30,6 +26,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

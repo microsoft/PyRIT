@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # Conversation History Scorer - optional
 # ## Persuasion and Deception Example with RedTeamingAttack
@@ -21,7 +19,6 @@ from pyrit.output import print_attack_result_async
 # Upon completion of the interaction, the entire conversation is evaluated by the ConversationScorer. This tool assesses the effectiveness of the persuasion and deception tactics by analyzing behavior changes throughout the conversation.
 #
 #
-
 # %%
 from pathlib import Path
 
@@ -33,6 +30,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SubStringScorer, create_conversation_scorer
 from pyrit.score.float_scale.self_ask_likert_scorer import SelfAskLikertScorer

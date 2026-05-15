@@ -22,9 +22,9 @@
 # %%
 from pathlib import Path
 
+from pyrit.output import print_scenario_result_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.output import print_scenario_result_async
 from pyrit.scenario.scenarios.foundry import FoundryStrategy, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 

@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # Many-Shot Jailbreak Attack (Single-Turn) - optional
 #
@@ -23,13 +21,12 @@ from pyrit.output import print_attack_result_async
 # The dataset sources can be found at:
 # - Original: https://github.com/centerforaisafety/HarmBench
 # - Replicated: https://github.com/KutalVolkan/many-shot-jailbreaking-dataset
-
 # %%
-
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ManyShotJailbreakAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

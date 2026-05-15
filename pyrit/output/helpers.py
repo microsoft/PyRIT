@@ -3,13 +3,16 @@
 
 """Convenience functions for one-line printing of attack results, scenario results, and scorer info."""
 
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import AttackResult, Message, Score
+from pyrit.models.scenario_result import ScenarioResult
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
 async def print_attack_result_async(
-    result: "AttackResult",  # noqa: F821
+    result: AttackResult,
     *,
-    format: OutputFormat = "pretty",
+    format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
     include_auxiliary_scores: bool = False,
     include_pruned_conversations: bool = False,
@@ -46,9 +49,9 @@ async def print_attack_result_async(
 
 
 async def print_scenario_result_async(
-    result: "ScenarioResult",  # noqa: F821
+    result: ScenarioResult,
     *,
-    format: OutputFormat = "pretty",
+    format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
     """
@@ -58,6 +61,9 @@ async def print_scenario_result_async(
         result (ScenarioResult): The scenario result to print.
         format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
     if format == "pretty":
         from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
@@ -71,9 +77,9 @@ async def print_scenario_result_async(
 
 async def print_scorer_async(
     *,
-    scorer_identifier: "ComponentIdentifier",  # noqa: F821
+    scorer_identifier: ComponentIdentifier,
     harm_category: str | None = None,
-    format: OutputFormat = "pretty",
+    format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
     """
@@ -87,6 +93,9 @@ async def print_scorer_async(
         harm_category (str | None): The harm category. None for objective scorers.
         format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
     if format == "pretty":
         from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
@@ -99,9 +108,9 @@ async def print_scorer_async(
 
 
 async def print_conversation_async(
-    messages: "list[Message]",  # noqa: F821
+    messages: list[Message],
     *,
-    format: OutputFormat = "pretty",
+    format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
     include_scores: bool = False,
     include_reasoning_trace: bool = False,
@@ -116,6 +125,9 @@ async def print_conversation_async(
             for "markdown".
         include_scores (bool): Whether to include scores. Defaults to False.
         include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
     if format == "pretty":
         from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
@@ -132,9 +144,9 @@ async def print_conversation_async(
 
 
 async def print_score_async(
-    scores: "list[Score]",  # noqa: F821
+    scores: list[Score],
     *,
-    format: OutputFormat = "pretty",
+    format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
 ) -> None:
     """
@@ -144,6 +156,9 @@ async def print_score_async(
         scores (list[Score]): The scores to print.
         format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
     if format == "pretty":
         from pyrit.output.score.pretty import PrettyScorePrinter

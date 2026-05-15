@@ -111,8 +111,9 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         sub_scorers = scorer_identifier.get_child_list("sub_scorers")
         if sub_scorers:
             lines.append(self._format_colored(f"{indent}  └─ Composite of {len(sub_scorers)} scorer(s):", Fore.CYAN))
-            for sub_scorer_id in sub_scorers:
-                lines.append(self._render_scorer_info(sub_scorer_id, indent_level=indent_level + 3))
+            lines.extend(
+                self._render_scorer_info(sub_scorer_id, indent_level=indent_level + 3) for sub_scorer_id in sub_scorers
+            )
 
         return "".join(lines)
 
@@ -131,10 +132,12 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         if metrics is None:
             lines.append("\n")
             lines.append(self._format_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE))
-            lines.append(self._format_colored(
-                f"{self._indent * 3}Official evaluation has not been run yet for this specific configuration",
-                Fore.YELLOW,
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}Official evaluation has not been run yet for this specific configuration",
+                    Fore.YELLOW,
+                )
+            )
             return "".join(lines)
 
         lines.append("\n")
@@ -146,9 +149,11 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         lines.append(self._format_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color))
 
         if metrics.accuracy_standard_error is not None:
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• Accuracy Std Error: ±{metrics.accuracy_standard_error:.4f}", Fore.CYAN
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Accuracy Std Error: ±{metrics.accuracy_standard_error:.4f}", Fore.CYAN
+                )
+            )
 
         if metrics.f1_score is not None:
             f1_color = self._get_quality_color(
@@ -160,9 +165,9 @@ class PrettyScorerPrinter(ScorerPrinterBase):
             precision_color = self._get_quality_color(
                 metrics.precision, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
             )
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• Precision: {metrics.precision:.4f}", precision_color
-            ))
+            lines.append(
+                self._format_colored(f"{self._indent * 3}• Precision: {metrics.precision:.4f}", precision_color)
+            )
 
         if metrics.recall is not None:
             recall_color = self._get_quality_color(
@@ -174,9 +179,11 @@ class PrettyScorerPrinter(ScorerPrinterBase):
             time_color = self._get_quality_color(
                 metrics.average_score_time_seconds, higher_is_better=False, good_threshold=0.5, bad_threshold=3.0
             )
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
+                )
+            )
 
         return "".join(lines)
 
@@ -195,10 +202,12 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         if metrics is None:
             lines.append("\n")
             lines.append(self._format_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE))
-            lines.append(self._format_colored(
-                f"{self._indent * 3}Official evaluation has not been run yet for this specific configuration",
-                Fore.YELLOW,
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}Official evaluation has not been run yet for this specific configuration",
+                    Fore.YELLOW,
+                )
+            )
             return "".join(lines)
 
         lines.append("\n")
@@ -207,46 +216,52 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         mae_color = self._get_quality_color(
             metrics.mean_absolute_error, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25
         )
-        lines.append(self._format_colored(
-            f"{self._indent * 3}• Mean Absolute Error: {metrics.mean_absolute_error:.4f}", mae_color
-        ))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 3}• Mean Absolute Error: {metrics.mean_absolute_error:.4f}", mae_color
+            )
+        )
 
         if metrics.mae_standard_error is not None:
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN
-            ))
+            lines.append(
+                self._format_colored(f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN)
+            )
 
         if metrics.krippendorff_alpha_combined is not None:
             alpha_color = self._get_quality_color(
                 metrics.krippendorff_alpha_combined, higher_is_better=True, good_threshold=0.8, bad_threshold=0.6
             )
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• Krippendorff Alpha (Combined): {metrics.krippendorff_alpha_combined:.4f}",
-                alpha_color,
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Krippendorff Alpha (Combined): {metrics.krippendorff_alpha_combined:.4f}",
+                    alpha_color,
+                )
+            )
 
         if metrics.krippendorff_alpha_model is not None:
             alpha_model_color = self._get_quality_color(
                 metrics.krippendorff_alpha_model, higher_is_better=True, good_threshold=0.8, bad_threshold=0.6
             )
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• Krippendorff Alpha (Model): {metrics.krippendorff_alpha_model:.4f}",
-                alpha_model_color,
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Krippendorff Alpha (Model): {metrics.krippendorff_alpha_model:.4f}",
+                    alpha_model_color,
+                )
+            )
 
         if metrics.average_score_time_seconds is not None:
             time_color = self._get_quality_color(
                 metrics.average_score_time_seconds, higher_is_better=False, good_threshold=1.0, bad_threshold=3.0
             )
-            lines.append(self._format_colored(
-                f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
-            ))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
+                )
+            )
 
         return "".join(lines)
 
-    async def render_async(
-        self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
-    ) -> str:
+    async def render_async(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> str:
         """
         Render scorer information and return it as a string.
 
@@ -284,9 +299,7 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
     All formatting logic lives in PrettyScorerPrinter.
     """
 
-    async def render_async(
-        self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
-    ) -> str:
+    async def render_async(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> str:
         """
         Render scorer information and return it as a string.
 

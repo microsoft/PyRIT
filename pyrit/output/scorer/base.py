@@ -43,9 +43,7 @@ class ScorerPrinterBase(PrinterBase):
         """
 
     @abstractmethod
-    async def render_async(
-        self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
-    ) -> str:
+    async def render_async(self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None) -> str:
         """
         Render scorer information and return it as a string.
 
@@ -62,19 +60,17 @@ class ScorerPrinterBase(PrinterBase):
 
     async def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
         """
-        Deprecated. Use write_async instead.
+        Use ``write_async`` instead. This method is deprecated.
 
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
         """
-        warnings.warn(
-            "print_objective_scorer is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
-        )
+        warnings.warn("print_objective_scorer is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(scorer_identifier=scorer_identifier)
 
     async def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
         """
-        Deprecated. Use write_async instead.
+        Use ``write_async`` instead. This method is deprecated.
 
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.

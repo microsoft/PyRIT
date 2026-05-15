@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
 # ---
-
 # %% [markdown]
 # # 10.3 WebSocket Copilot Target
 #
@@ -19,15 +17,14 @@ from pyrit.output import print_attack_result_async
 # - Playwright installed: `pip install playwright && playwright install chromium`
 #
 # Some environments are not suited for automated authentication (e.g. they have security policies with retrieving tokens or have MFA). See the [Alternative Authentication](#alternative-authentication-with-manualcopilotauthenticator) section below.
-
 # %% [markdown]
 # ## Basic Usage with `PromptSendingAttack`
 #
 # The simplest way to interact with the `WebSocketCopilotTarget` is through the `PromptSendingAttack` class.
-
 # %%
 # type: ignore
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,15 +8,14 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # OpenAI Completions - optional
 #
 #
 # Once you are configured, then you will be able to get completions for your text.
-
 # %%
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAICompletionTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

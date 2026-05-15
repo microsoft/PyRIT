@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,12 +7,10 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 1. Q&A Benchmark
 #
 # The `QuestionAnsweringBenchmark` can process Q&A datasets and evaluate how good a target is at answering the questions.
-
 # %%
 from pyrit.datasets.executors.question_answer.wmdp_dataset import fetch_wmdp_dataset
 from pyrit.executor.attack import AttackScoringConfig
@@ -22,6 +19,7 @@ from pyrit.models import (
     QuestionAnsweringEntry,
     QuestionChoice,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskQuestionAnswerScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

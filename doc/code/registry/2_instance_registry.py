@@ -63,6 +63,7 @@ if names:
 
 # %%
 from pyrit.output import print_scorer_async
+
 # Get metadata for all registered scorers
 metadata = registry.list_metadata()
 for item in metadata:

@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # HuggingFace Chat Target - optional
 #
@@ -38,7 +36,6 @@ from pyrit.output import print_attack_result_async
 #      - `stabilityai/stablelm-2-zephyr-1_6b`: 5.31 seconds
 #      - `stabilityai/stablelm-zephyr-3b`: 8.37 seconds
 #
-
 # %%
 import time
 
@@ -46,6 +43,7 @@ from pyrit.executor.attack import (
     AttackExecutor,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import HuggingFaceChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # 2. Bias & Fairness Benchmark
 #
@@ -29,7 +27,6 @@ from pyrit.output import print_attack_result_async
 # For Q&A benchmarking with external datasets like WMDP, see [Q&A Benchmark](./1_qa_benchmark.ipynb).
 #
 # ## Setup
-
 # %%
 from collections import Counter
 from pathlib import Path
@@ -39,6 +36,7 @@ from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.benchmark import FairnessBiasBenchmark, QuestionAnsweringBenchmark
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, QuestionAnsweringEntry, QuestionChoice, SeedDataset
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskCategoryScorer, SelfAskQuestionAnswerScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

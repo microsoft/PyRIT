@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 10.2 Playwright Copilot Target - optional
 #
@@ -35,6 +33,7 @@ from pyrit.executor.attack import (
     SingleTurnAttackContext,
 )
 from pyrit.models import SeedGroup, SeedPrompt
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import CopilotType, OpenAIChatTarget, PlaywrightCopilotTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup.initialization import IN_MEMORY, initialize_pyrit_async

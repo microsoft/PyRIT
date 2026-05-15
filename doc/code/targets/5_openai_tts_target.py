@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,17 +7,16 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 5. OpenAI TTS Target
 #
 # This example shows how to use the TTS (audio) target to convert text to speech.
-
 # %%
 from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import TranslationConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget

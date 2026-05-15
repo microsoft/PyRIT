@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,16 +7,13 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 10. HTTP Target
 # This notebook shows how to interact with the HTTP Target:
 #
 #
-
 # %% [markdown]
 # ## AOAI Example
-
 # %%
 import os
 
@@ -29,6 +25,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     RedTeamingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import JsonStringConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import (

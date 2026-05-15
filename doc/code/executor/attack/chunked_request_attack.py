@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,17 +7,16 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Chunked Request Attack
 #
 # This attack extracts information across multiple turns. This technique bypasses length-based filters or output truncation by asking for specific character ranges of a secret value.
-
 # %%
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ChunkedRequestAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

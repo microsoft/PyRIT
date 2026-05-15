@@ -16,7 +16,6 @@ def test_printer_base_is_abstract():
 
 
 def test_printer_base_defaults_to_stdout_sink():
-
     class ConcretePrinter(PrinterBase):
         async def render_async(self) -> str:
             return ""
@@ -40,7 +39,6 @@ def test_printer_base_accepts_custom_sink():
 
 
 async def test_printer_base_write_async_delegates_to_sink(capsys):
-
     class ConcretePrinter(PrinterBase):
         async def render_async(self) -> str:
             return "test output"
@@ -52,7 +50,6 @@ async def test_printer_base_write_async_delegates_to_sink(capsys):
 
 
 async def test_printer_base_render_async_returns_string():
-
     class ConcretePrinter(PrinterBase):
         async def render_async(self) -> str:
             return "rendered content"

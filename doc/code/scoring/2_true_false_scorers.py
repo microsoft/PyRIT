@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 2. True False Scoring
 #
@@ -18,15 +16,14 @@ from pyrit.output import print_attack_result_async
 # - The default true/false scorer assesses whether the model completed the task (or objective) successfully.
 # - The built-in true/false templates cover more advanced questions, such as whether the answer is grounded or a prompt injection was successful.
 # - Users can create custom true/false scorers (see [here](generic_scorers.ipynb)).
-
 # %% [markdown]
 # The following example uses the default true/false scorer to assess whether the model fulfilled a simple task.
-
 # %%
 from pyrit.executor.attack import (
     AttackScoringConfig,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

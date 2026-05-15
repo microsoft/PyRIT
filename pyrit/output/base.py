@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from pyrit.output.sink import Sink, StdoutSink
 
@@ -25,7 +26,7 @@ class PrinterBase(ABC):
         self._sink = sink or StdoutSink()
 
     @abstractmethod
-    async def render_async(self, *args, **kwargs) -> str:
+    async def render_async(self, *args: Any, **kwargs: Any) -> str:
         """
         Render output and return it as a string.
 
@@ -33,7 +34,7 @@ class PrinterBase(ABC):
         result, messages, etc.).
         """
 
-    async def write_async(self, *args, **kwargs) -> None:
+    async def write_async(self, *args: Any, **kwargs: Any) -> None:
         """
         Render output and write it to the configured sink.
 

@@ -43,7 +43,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         self._display_inline = display_inline
         self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
         self._conversation_printer = conversation_printer or MarkdownConversationPrinter(
-            sink=sink, score_printer=self._score_printer,
+            sink=sink,
+            score_printer=self._score_printer,
         )
 
     async def render_async(
@@ -116,7 +117,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
     ) -> None:
-        """Deprecated. Use write_async instead."""
+        """Use ``write_async`` instead. This method is deprecated."""
         warnings.warn("print_result_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(
             result,
@@ -126,7 +127,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         )
 
     async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
-        """Deprecated. Use write_async instead."""
+        """Use ``write_async`` instead. This method is deprecated."""
         warnings.warn(
             "print_conversation_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
         )
@@ -134,7 +135,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         await self._write_async("\n".join(lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
-        """Deprecated. Use write_async instead."""
+        """Use ``write_async`` instead. This method is deprecated."""
         warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         markdown_lines = await self._get_summary_markdown_async(result)
         await self._write_async("\n".join(markdown_lines))
@@ -254,9 +255,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
                 if scores:
                     markdown_lines.append("\n**Score:**\n")
-                    markdown_lines.extend(
-                        self._score_printer._format_score(score, indent="") for score in scores
-                    )
+                    markdown_lines.extend(self._score_printer._format_score(score, indent="") for score in scores)
 
         return markdown_lines
 
@@ -340,8 +339,10 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
         score_printer = MarkdownScorePrinter(sink=sink)
         conversation_printer = MarkdownConversationMemoryPrinter(sink=sink, score_printer=score_printer)
         super().__init__(
-            sink=sink, display_inline=display_inline,
-            conversation_printer=conversation_printer, score_printer=score_printer,
+            sink=sink,
+            display_inline=display_inline,
+            conversation_printer=conversation_printer,
+            score_printer=score_printer,
         )
         self._memory = CentralMemory.get_memory_instance()
 

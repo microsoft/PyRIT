@@ -6,10 +6,6 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
-#   kernelspec:
-#     display_name: pyrit (3.12.12)
-#     language: python
-#     name: python3
 # ---
 
 # %% [markdown]
@@ -27,6 +23,7 @@
 # %%
 from pyrit.memory import CentralMemory
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
 # get the conversation from memory
 memory = CentralMemory.get_memory_instance()
 
@@ -99,7 +96,7 @@ from pyrit.output import print_conversation_async
 conversation = memory.get_conversation(conversation_id=attack_result.conversation_id)
 
 # print the conversation using the print conversation helper
-await print_conversation_async(messages=conversation) #type: ignore
+await print_conversation_async(messages=conversation)  # type: ignore
 
 # %% [markdown]
 # ## Printing Scores
@@ -159,15 +156,13 @@ output_path.unlink()
 # and compose sub-printers.
 
 # %%
+from pyrit.output import StdoutSink
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
-from pyrit.output import StdoutSink
 
 # Create a custom-configured conversation printer
 # Note: use the *MemoryPrinter leaf classes, not the abstract format-layer classes
-score_printer = PrettyScorePrinter(
-    sink=StdoutSink(), width=80, indent_size=4, enable_colors=True
-)
+score_printer = PrettyScorePrinter(sink=StdoutSink(), width=80, indent_size=4, enable_colors=True)
 conversation_printer = PrettyConversationMemoryPrinter(
     sink=StdoutSink(), width=80, indent_size=4, enable_colors=True, score_printer=score_printer
 )

@@ -53,8 +53,8 @@ from pyrit.executor.attack.single_turn import (
 # Backward-compatibility aliases — import from pyrit.output.attack_result directly.
 # TODO: Remove these re-exports in two releases (target removal: 0.16.0).
 from pyrit.output.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
-from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter as ConsoleAttackResultPrinter
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter as MarkdownAttackResultPrinter
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter as ConsoleAttackResultPrinter
 
 __all__ = [
     "AttackStrategy",

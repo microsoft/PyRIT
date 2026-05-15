@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.2
 # ---
-
 # %% [markdown]
 # # 4. OpenAI Video Target
 #
@@ -18,18 +16,17 @@ from pyrit.output import print_attack_result_async
 # - **Text+Image-to-video**: Use an image as the first frame of the generated video.
 #
 # Note that the video scorer requires `opencv`, which is not a default PyRIT dependency. You need to install it manually or using `pip install pyrit[opencv]`.
-
 # %% [markdown]
 # ## Text-to-Video
 #
 # This example shows the simplest mode: generating video from text prompts, with scoring.
-
 # %%
 from pyrit.executor.attack import (
     AttackExecutor,
     AttackScoringConfig,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIVideoTarget
 from pyrit.score import (
     AudioTrueFalseScorer,

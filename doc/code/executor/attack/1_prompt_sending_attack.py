@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # 1. Prompt Sending Attack (Single-Turn)
 #
@@ -25,9 +23,9 @@ from pyrit.output import print_attack_result_async
 # >
 # > It is required to manually set the memory instance using `initialize_pyrit_async`. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 #
-
 # %%
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

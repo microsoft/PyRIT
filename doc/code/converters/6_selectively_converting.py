@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +7,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 6. Selectively Converting
 #
@@ -18,7 +16,6 @@ from pyrit.output import print_attack_result_async
 #
 # 1. **Using tokens in your prompt** (simplest) - Just add ⟪ and ⟫ around text you want converted
 # 2. **Using SelectiveTextConverter** (more flexible) - Programmatically select what to convert based on patterns, positions, etc.
-
 # %%
 import os
 
@@ -26,6 +23,7 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import (
     Base64Converter,
     EmojiConverter,

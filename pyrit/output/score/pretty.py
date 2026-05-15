@@ -90,8 +90,7 @@ class PrettyScorePrinter(PrinterBase):
             for line in rationale_lines:
                 if line.strip():
                     wrapped_lines = rationale_wrapper.wrap(line)
-                    for wrapped_line in wrapped_lines:
-                        lines.append(self._format_colored(wrapped_line, Fore.WHITE))
+                    lines.extend(self._format_colored(wrapped_line, Fore.WHITE) for wrapped_line in wrapped_lines)
                 else:
                     lines.append(self._format_colored(f"{indent}  "))
 

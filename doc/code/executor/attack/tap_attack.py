@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Tree of Attacks with Pruning (Multi-Turn) - optional
 #
@@ -36,7 +34,6 @@ from pyrit.output import print_attack_result_async
 # decision-making process.
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
-
 # %%
 import os
 
@@ -45,6 +42,7 @@ from pyrit.executor.attack import (
     AttackAdversarialConfig,
     TAPAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -72,9 +70,9 @@ tap_attack = TAPAttack(
 )
 
 result = await tap_attack.execute_async(objective=conversation_objective)  # type: ignore
-await print_attack_result_async().print_result_async(
-    result=result, include_adversarial_conversation=True, include_pruned_conversations=True
-)  # type: ignore
+await print_attack_result_async(  # type: ignore
+    result, include_adversarial_conversation=True, include_pruned_conversations=True
+)
 
 # %% [markdown]
 # ## Tree of Attacks with Image Generation Targets

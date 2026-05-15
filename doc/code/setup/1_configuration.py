@@ -1,4 +1,5 @@
 from pyrit.output import print_attack_result_async
+
 # ---
 # jupyter:
 #   jupytext:
@@ -8,7 +9,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # 1. Configuration
 #
@@ -21,11 +21,9 @@ from pyrit.output import print_attack_result_async
 # 3. Set initialization scripts and defaults (recommended)
 #
 # Alternatively, you can write a config file (`~/.pyrit/.pyrit_conf`) to parameterize this for you.
-
 # %% [markdown]
 # ## From a Config File
 # If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
-
 # %%
 # You can specify your own path for the config file using config_path
 from pyrit.setup.configuration_loader import initialize_from_config_async

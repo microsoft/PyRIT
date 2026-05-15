@@ -37,8 +37,8 @@ from pathlib import Path
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import generate_simulated_conversation_async
-from pyrit.output import print_attack_result_async
 from pyrit.models import SeedGroup
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskRefusalScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async

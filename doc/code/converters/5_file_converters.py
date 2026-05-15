@@ -1,4 +1,3 @@
-from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -9,7 +8,6 @@ from pyrit.output import print_attack_result_async
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 5. File Converters
 #
@@ -21,7 +19,6 @@ from pyrit.output import print_attack_result_async
 #
 # - **PDFConverter**: Convert text to PDF documents with templates or direct generation
 # - **WordDocConverter**: Convert text to Word (.docx) documents with optional placeholder injection
-
 # %% [markdown]
 # ## PDFConverter
 #
@@ -30,12 +27,10 @@ from pyrit.output import print_attack_result_async
 # 1. **Template-Based PDF Generation**: Use YAML templates to render dynamic content into PDFs
 # 2. **Direct Prompt PDF Generation**: Convert plain text strings into PDFs without templates
 # 3. **Modify Existing PDFs**: Inject text into existing PDF documents
-
 # %% [markdown]
 # ### Template-Based PDF Generation
 #
 # This mode populates placeholders in a YAML-based template and converts the rendered content into a PDF.
-
 # %%
 import pathlib
 
@@ -45,6 +40,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.models import SeedPrompt
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import PDFConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import TextTarget

@@ -2,58 +2,56 @@
 # Licensed under the MIT license.
 
 import uuid
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.memory import MemoryInterface
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.models.conversation_reference import ConversationReference
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
 
-def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+def _scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test_module")
 
 
-@pytest.fixture
-def mock_memory():
-    memory = MagicMock()
-    memory.get_conversation.return_value = []
-    memory.get_prompt_scores.return_value = []
-    with patch("pyrit.memory.CentralMemory") as mock_cm:
-        mock_cm.get_memory_instance.return_value = memory
-        yield memory
+def _attack_id(name: str = "TestAttack") -> ComponentIdentifier:
+    return ComponentIdentifier(class_name=name, class_module="test_module")
 
 
-@pytest.fixture
-def printer(mock_memory):
-    return PrettyAttackResultMemoryPrinter(width=80, indent_size=2, enable_colors=False)
+def _seed_messages(memory: MemoryInterface, conversation_id: str, pieces: list[MessagePiece]) -> None:
+    # Each piece becomes its own Message so add_message_to_memory can auto-assign sequence.
+    for piece in pieces:
+        piece.conversation_id = conversation_id
+        memory.add_message_to_memory(request=Message(message_pieces=[piece]))
 
 
-@pytest.fixture
-def sample_score():
+def _make_score(*, piece_id: str, value: str = "true", score_type: str = "true_false") -> Score:
     return Score(
-        score_type="true_false",
-        score_value="true",
+        score_type=score_type,
+        score_value=value,
         score_category=["test"],
-        score_value_description="Test score",
-        score_rationale="Test rationale",
+        score_value_description="desc",
+        score_rationale="rationale",
         score_metadata={},
-        message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier=_mock_scorer_id(),
+        message_piece_id=piece_id,
+        scorer_class_identifier=_scorer_id(),
     )
 
 
 @pytest.fixture
-def sample_attack_result():
+def printer(patch_central_database):
+    return PrettyAttackResultMemoryPrinter(width=80, indent_size=2, enable_colors=False)
+
+
+@pytest.fixture
+def attack_result():
     return AttackResult(
         objective="Test objective",
-        atomic_attack_identifier=build_atomic_attack_identifier(
-            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
-        ),
-        conversation_id="test-conv-123",
+        atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=_attack_id()),
+        conversation_id="conv-main",
         executed_turns=3,
         execution_time_ms=1500,
         outcome=AttackOutcome.SUCCESS,
@@ -66,292 +64,352 @@ def sample_attack_result():
             score_rationale="Rationale",
             score_metadata={},
             message_piece_id=str(uuid.uuid4()),
-            scorer_class_identifier=_mock_scorer_id(),
+            scorer_class_identifier=_scorer_id(),
         ),
     )
 
 
-@pytest.fixture
-def sample_message_piece():
-    return MessagePiece(
-        role="user",
-        original_value="Hello world",
-        converted_value="Hello world",
-        converted_value_data_type="text",
-    )
+# --- __init__ tests ---
 
 
-@pytest.fixture
-def sample_message(sample_message_piece):
-    return Message(message_pieces=[sample_message_piece])
-
-
-def test_init_stores_width_and_indent(mock_memory):
+def test_init_stores_width_and_indent(patch_central_database):
     p = PrettyAttackResultMemoryPrinter(width=120, indent_size=4, enable_colors=False)
     assert p._width == 120
     assert p._indent == "    "
     assert p._enable_colors is False
 
 
-def test_init_default_colors_enabled(mock_memory):
-    p = PrettyAttackResultMemoryPrinter()
-    assert p._enable_colors is True
+def test_init_default_colors_enabled(patch_central_database):
+    assert PrettyAttackResultMemoryPrinter()._enable_colors is True
 
 
-def test_format_colored_no_colors(printer):
-    result = printer._format_colored("hello")
-    assert "hello" in result
-    assert result.endswith("\n")
+# --- write_async tests (success, failure, metadata) ---
 
 
-def test_format_colored_with_colors_disabled(printer):
-    printer._enable_colors = False
-    result = printer._format_colored("test text", "SOME_COLOR")
-    assert "test text" in result
-    assert result.endswith("\n")
+async def test_write_async_renders_success_header_summary_and_footer(printer, attack_result, capsys):
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "ATTACK RESULT" in out
+    assert "SUCCESS" in out
+    assert "Test objective" in out
+    assert "TestAttack" in out
+    assert "conv-main" in out
+    assert "Test successful" in out
+    assert "Final Score" in out
+    assert "Report generated at" in out
 
 
-def test_get_outcome_color_success(printer):
-    color = printer._get_outcome_color(AttackOutcome.SUCCESS)
-    assert isinstance(color, str)
-
-
-def test_get_outcome_color_failure(printer):
-    color = printer._get_outcome_color(AttackOutcome.FAILURE)
-    assert isinstance(color, str)
-
-
-def test_get_outcome_color_undetermined(printer):
-    color = printer._get_outcome_color(AttackOutcome.UNDETERMINED)
-    assert isinstance(color, str)
-
-
-def test_render_header(printer, sample_attack_result):
-    result = printer._render_header(sample_attack_result)
-    assert "ATTACK RESULT" in result
-    assert "SUCCESS" in result
-
-
-def test_render_footer(printer):
-    result = printer._render_footer()
-    assert "Report generated at" in result
-
-
-def test_render_section_header(printer):
-    result = printer._render_section_header("Test Section")
-    assert "Test Section" in result
-
-
-def test_render_metadata(printer):
-    metadata = {"key1": "value1", "key2": 42}
-    result = printer._render_metadata(metadata)
-    assert "key1" in result
-    assert "value1" in result
-    assert "key2" in result
-    assert "42" in result
-
-
-def test_render_score(printer, sample_score):
-    result = printer._score_printer._render_score(sample_score)
-    assert "MockScorer" in result
-    assert "true_false" in result
-    assert "true" in result
-
-
-def test_render_score_with_rationale(printer):
-    score = Score(
-        score_type="float_scale",
-        score_value="0.8",
-        score_category=["harm"],
-        score_value_description="desc",
-        score_rationale="Multi\nline\nrationale",
-        score_metadata={},
-        message_piece_id=str(uuid.uuid4()),
-        scorer_class_identifier=_mock_scorer_id(),
-    )
-    result = printer._score_printer._render_score(score)
-    assert "Rationale" in result
-
-
-def test_extract_reasoning_summary_valid_json(printer):
-    import json
-
-    data = {"summary": [{"text": "First"}, {"text": "Second"}]}
-    result = printer._conversation_printer._extract_reasoning_summary(json.dumps(data))
-    assert result == "First\nSecond"
-
-
-def test_extract_reasoning_summary_invalid_json(printer):
-    result = printer._conversation_printer._extract_reasoning_summary("not json")
-    assert result == ""
-
-
-def test_extract_reasoning_summary_no_summary_key(printer):
-    import json
-
-    result = printer._conversation_printer._extract_reasoning_summary(json.dumps({"other": "data"}))
-    assert result == ""
-
-
-def test_extract_reasoning_summary_summary_not_list(printer):
-    import json
-
-    result = printer._conversation_printer._extract_reasoning_summary(json.dumps({"summary": "not a list"}))
-    assert result == ""
-
-
-async def test_render_conversation_async_no_conversation_id(printer):
-    result = AttackResult(objective="test", conversation_id="")
-    content = await printer._render_conversation_async(result)
-    assert "No conversation ID" in content
-
-
-async def test_render_conversation_async_no_messages(printer, mock_memory):
-    mock_memory.get_conversation.return_value = []
-    result = AttackResult(objective="test", conversation_id="conv-123")
-    content = await printer._render_conversation_async(result)
-    assert "No conversation found" in content
-
-
-async def test_render_messages_async_empty_list(printer):
-    content = await printer._conversation_printer.render_async(messages=[])
-    assert "No messages to display" in content
-
-
-async def test_render_messages_async_user_message(printer, sample_message):
-    content = await printer._conversation_printer.render_async(messages=[sample_message])
-    assert "Turn 1" in content
-    assert "USER" in content
-    assert "Hello world" in content
-
-
-async def test_render_messages_async_assistant_message(printer):
-    piece = MessagePiece(
-        role="assistant",
-        original_value="Response",
-        converted_value="Response",
-        converted_value_data_type="text",
-    )
-    msg = Message(message_pieces=[piece])
-    content = await printer._conversation_printer.render_async(messages=[msg])
-    assert "Response" in content
-
-
-async def test_render_messages_async_converted_differs(printer):
-    piece = MessagePiece(
-        role="user",
-        original_value="Original",
-        converted_value="Converted",
-        converted_value_data_type="text",
-    )
-    msg = Message(message_pieces=[piece])
-    content = await printer._conversation_printer.render_async(messages=[msg])
-    assert "Original" in content
-    assert "Converted" in content
-
-
-async def test_render_summary_async(printer, sample_attack_result):
-    content = await printer._render_summary_async(sample_attack_result)
-    assert "Test objective" in content
-    assert "TestAttack" in content
-    assert "test-conv-123" in content
-    assert "SUCCESS" in content
-    assert "Test successful" in content
-
-
-async def test_write_async_basic(printer, sample_attack_result, mock_memory, capsys):
-    mock_memory.get_conversation.return_value = []
-    await printer.write_async(sample_attack_result)
-    captured = capsys.readouterr()
-    assert "ATTACK RESULT" in captured.out
-    assert "Report generated at" in captured.out
-
-
-async def test_write_async_with_metadata(printer, mock_memory, capsys):
-    result = AttackResult(
-        objective="test",
-        conversation_id="conv-1",
-        outcome=AttackOutcome.FAILURE,
-        metadata={"note": "extra info"},
-    )
-    mock_memory.get_conversation.return_value = []
+async def test_write_async_renders_failure_outcome(printer, capsys):
+    result = AttackResult(objective="o", conversation_id="c", outcome=AttackOutcome.FAILURE)
     await printer.write_async(result)
-    captured = capsys.readouterr()
-    assert "note" in captured.out
-    assert "extra info" in captured.out
+    out = capsys.readouterr().out
+    assert "FAILURE" in out
 
 
-async def test_render_pruned_conversations_no_pruned(printer):
-    result = AttackResult(objective="test", conversation_id="conv-1")
-    content = await printer._render_pruned_conversations_async(result)
-    assert content == ""
+async def test_write_async_renders_undetermined_outcome(printer, capsys):
+    result = AttackResult(objective="o", conversation_id="c", outcome=AttackOutcome.UNDETERMINED)
+    await printer.write_async(result)
+    assert "UNDETERMINED" in capsys.readouterr().out
 
 
-async def test_render_pruned_conversations_with_messages(printer, mock_memory):
+async def test_write_async_renders_metadata(printer, capsys):
+    result = AttackResult(objective="o", conversation_id="c", outcome=AttackOutcome.SUCCESS, metadata={"note": "extra"})
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+    assert "note" in out
+    assert "extra" in out
+
+
+# --- conversation rendering paths ---
+
+
+async def test_write_async_no_conversation_id_shown(printer, capsys):
+    result = AttackResult(objective="o", conversation_id="", outcome=AttackOutcome.SUCCESS)
+    await printer.write_async(result)
+    assert "No conversation ID" in capsys.readouterr().out
+
+
+async def test_write_async_no_messages_for_conversation(printer, attack_result, capsys):
+    # No messages have been seeded for conv-main.
+    await printer.write_async(attack_result)
+    assert "No conversation found for ID: conv-main" in capsys.readouterr().out
+
+
+async def test_write_async_renders_user_and_assistant_messages(printer, attack_result, sqlite_instance, capsys):
+    user_piece = MessagePiece(role="user", original_value="Hello", converted_value="Hello")
+    assistant_piece = MessagePiece(role="assistant", original_value="Hi back", converted_value="Hi back")
+    _seed_messages(sqlite_instance, "conv-main", [user_piece, assistant_piece])
+
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "Turn 1" in out
+    assert "USER" in out
+    assert "Hello" in out
+    assert "Hi back" in out
+
+
+async def test_write_async_renders_original_and_converted_when_different(
+    printer, attack_result, sqlite_instance, capsys
+):
+    piece = MessagePiece(role="user", original_value="Original", converted_value="Converted")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "Original" in out
+    assert "Converted" in out
+
+
+async def test_write_async_renders_system_message(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(role="system", original_value="sys-prompt", converted_value="sys-prompt")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+
+    await printer.write_async(attack_result)
+    assert "SYSTEM" in capsys.readouterr().out
+
+
+# --- blocked-content paths ---
+
+
+async def test_write_async_blocked_message_without_partial_content(printer, attack_result, sqlite_instance, capsys):
     piece = MessagePiece(
         role="assistant",
-        original_value="Pruned response",
-        converted_value="Pruned response",
-        converted_value_data_type="text",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value_data_type="error",
+        response_error="blocked",
     )
-    mock_memory.get_conversation.return_value = [Message(message_pieces=[piece])]
-    mock_memory.get_prompt_scores.return_value = []
+    _seed_messages(sqlite_instance, "conv-main", [piece])
 
-    ref = ConversationReference(conversation_id="pruned-conv", conversation_type=ConversationType.PRUNED)
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "BLOCKED BY TARGET" in out
+    assert "content filter" in out
+    # The raw error JSON should not be rendered as the message body.
+    assert "status_code" not in out
+
+
+async def test_write_async_blocked_message_with_partial_content(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value_data_type="error",
+        response_error="blocked",
+        prompt_metadata={"partial_content": "before cutoff"},
+    )
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+
+    await printer.write_async(attack_result)
+    out = capsys.readouterr().out
+    assert "BLOCKED BY TARGET" in out
+    assert "Partial content" in out
+    assert "before cutoff" in out
+
+
+# --- auxiliary scores path ---
+
+
+async def test_write_async_with_auxiliary_scores(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(role="assistant", original_value="response", converted_value="response")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    sqlite_instance.add_scores_to_memory(scores=[_make_score(piece_id=str(piece.id), value="true")])
+
+    await printer.write_async(attack_result, include_auxiliary_scores=True)
+    out = capsys.readouterr().out
+    assert "Scores" in out
+    assert "MockScorer" in out
+
+
+# --- pruned conversations paths ---
+
+
+async def test_write_async_pruned_conversations_with_messages_and_scores(
+    printer, attack_result, sqlite_instance, capsys
+):
+    pruned_piece = MessagePiece(role="assistant", original_value="pruned response", converted_value="pruned response")
+    _seed_messages(sqlite_instance, "pruned-conv", [pruned_piece])
+    sqlite_instance.add_scores_to_memory(scores=[_make_score(piece_id=str(pruned_piece.id))])
+
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="pruned-conv", conversation_type=ConversationType.PRUNED, description="branch one"
+        )
+    )
+
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "PRUNED" in out
+    assert "branch one" in out
+    assert "pruned response" in out
+    assert "Score" in out
+
+
+async def test_write_async_pruned_conversation_with_no_messages(printer, attack_result, capsys):
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="empty-pruned", conversation_type=ConversationType.PRUNED)
+    )
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "PRUNED" in out
+    assert "No messages found for conversation: empty-pruned" in out
+
+
+# --- adversarial conversation paths ---
+
+
+async def test_write_async_adversarial_conversation_with_messages(printer, attack_result, sqlite_instance, capsys):
+    adv_user = MessagePiece(role="user", original_value="adv prompt", converted_value="adv prompt")
+    adv_assist = MessagePiece(role="assistant", original_value="adv reply", converted_value="adv reply")
+    _seed_messages(sqlite_instance, "adv-conv", [adv_user, adv_assist])
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="adv-conv", conversation_type=ConversationType.ADVERSARIAL, description="red team chain"
+        )
+    )
+
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    out = capsys.readouterr().out
+    assert "Adversarial Conversation" in out
+    assert "red team chain" in out
+    assert "adv prompt" in out
+    assert "adv reply" in out
+
+
+async def test_write_async_adversarial_filters_to_best_branch(printer, sqlite_instance, capsys):
+    best_piece = MessagePiece(role="user", original_value="best-branch-prompt", converted_value="best-branch-prompt")
+    other_piece = MessagePiece(role="user", original_value="other-branch-prompt", converted_value="other-branch-prompt")
+    _seed_messages(sqlite_instance, "adv-best", [best_piece])
+    _seed_messages(sqlite_instance, "adv-other", [other_piece])
+
     result = AttackResult(
-        objective="test",
-        conversation_id="conv-1",
-        related_conversations={ref},
+        objective="o",
+        conversation_id="conv-main",
+        outcome=AttackOutcome.SUCCESS,
+        metadata={"best_adversarial_conversation_id": "adv-best"},
+        related_conversations={
+            ConversationReference(conversation_id="adv-best", conversation_type=ConversationType.ADVERSARIAL),
+            ConversationReference(conversation_id="adv-other", conversation_type=ConversationType.ADVERSARIAL),
+        },
     )
-    content = await printer._render_pruned_conversations_async(result)
-    assert "PRUNED" in content
-    assert "Pruned response" in content
+
+    await PrettyAttackResultMemoryPrinter(enable_colors=False).write_async(
+        result, include_adversarial_conversation=True
+    )
+    out = capsys.readouterr().out
+    assert "best-scoring branch" in out
+    assert "best-branch-prompt" in out
+    assert "other-branch-prompt" not in out
 
 
-async def test_render_adversarial_conversation_no_refs(printer):
-    result = AttackResult(objective="test", conversation_id="conv-1")
-    content = await printer._render_adversarial_conversation_async(result)
-    assert content == ""
+async def test_write_async_adversarial_with_no_messages(printer, attack_result, capsys):
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="adv-empty", conversation_type=ConversationType.ADVERSARIAL)
+    )
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    out = capsys.readouterr().out
+    assert "Adversarial Conversation" in out
+    assert "No messages found for conversation: adv-empty" in out
 
 
-def test_render_wrapped_text(printer):
-    result = printer._conversation_printer._render_wrapped_text("Short text", "")
-    assert "Short text" in result
+# --- reasoning trace path ---
 
 
-def test_render_wrapped_text_with_newlines(printer):
-    result = printer._conversation_printer._render_wrapped_text("Line one\nLine two\n\nLine four", "")
-    assert "Line one" in result
-    assert "Line two" in result
-    assert "Line four" in result
-
-
-async def test_render_messages_async_blocked_without_partial_content(printer):
+async def test_write_async_renders_reasoning_summary_when_requested(printer, attack_result, sqlite_instance, capsys):
+    reasoning_value = '{"summary": [{"text": "step one"}, {"text": "step two"}]}'
     piece = MessagePiece(
         role="assistant",
-        original_value='{"status_code": 200, "message": "content_filter"}',
-        converted_value_data_type="error",
-        response_error="blocked",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
     )
-    msg = Message(message_pieces=[piece])
-    content = await printer._conversation_printer.render_async(messages=[msg])
-    assert "BLOCKED BY TARGET" in content
-    assert "content filter" in content
-    # Should NOT print the raw error JSON as the message body
-    assert "status_code" not in content
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+
+    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
+    assert "Reasoning Summary" in content
+    assert "step one" in content
+    assert "step two" in content
 
 
-async def test_render_messages_async_blocked_with_partial_content(printer):
+# --- deprecated aliases (smoke check that they still forward to write_async) ---
+
+
+async def test_print_result_async_emits_deprecation_warning_and_still_writes(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_result_async"):
+        await printer.print_result_async(attack_result)
+    assert "ATTACK RESULT" in capsys.readouterr().out
+
+
+async def test_print_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_conversation_async"):
+        await printer.print_conversation_async(attack_result)
+    assert "No conversation found" in capsys.readouterr().out
+
+
+async def test_print_summary_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_summary_async"):
+        await printer.print_summary_async(attack_result)
+    assert "Test objective" in capsys.readouterr().out
+
+
+async def test_print_messages_async_emits_deprecation_warning(printer, capsys):
+    with pytest.warns(DeprecationWarning, match="print_messages_async"):
+        await printer.print_messages_async([])
+    assert "No messages to display" in capsys.readouterr().out
+
+
+# --- early-return branches: include flags but no related refs ---
+
+
+async def test_write_async_include_pruned_with_no_pruned_refs(printer, attack_result, capsys):
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    assert "Pruned Conversations" not in capsys.readouterr().out
+
+
+async def test_write_async_include_adversarial_with_no_refs(printer, attack_result, capsys):
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    assert "Adversarial Conversation" not in capsys.readouterr().out
+
+
+# --- colors-enabled smoke test ---
+
+
+async def test_write_async_with_colors_enabled_emits_ansi_codes(
+    patch_central_database, attack_result, sqlite_instance, capsys
+):
+    p = PrettyAttackResultMemoryPrinter(width=80, indent_size=2, enable_colors=True)
+    # Seed a message with newlines + an empty line so the wrap helper exercises both branches.
+    piece = MessagePiece(role="assistant", original_value="line1\n\nline3", converted_value="line1\n\nline3")
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    await p.write_async(attack_result)
+    assert "\x1b[" in capsys.readouterr().out
+
+
+async def test_write_async_invalid_reasoning_summary_is_silently_skipped(
+    printer, attack_result, sqlite_instance, capsys
+):
+    # Reasoning piece with non-JSON value should not blow up, just produce no summary section.
     piece = MessagePiece(
         role="assistant",
-        original_value='{"status_code": 200, "message": "content_filter"}',
-        converted_value_data_type="error",
-        response_error="blocked",
-        prompt_metadata={"partial_content": "The model started to say something before being cut off"},
+        original_value="not-json",
+        converted_value="not-json",
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
     )
-    msg = Message(message_pieces=[piece])
-    content = await printer._conversation_printer.render_async(messages=[msg])
-    assert "BLOCKED BY TARGET" in content
-    assert "Partial content" in content
-    assert "before filter triggered" in content
-    assert "The model started to say something before being cut off" in content
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
+    assert "Reasoning Summary" not in content
+
+
+async def test_write_async_reasoning_summary_without_summary_key_is_silently_skipped(
+    printer, attack_result, sqlite_instance
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value='{"other": "data"}',
+        converted_value='{"other": "data"}',
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+    )
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
+    assert "Reasoning Summary" not in content

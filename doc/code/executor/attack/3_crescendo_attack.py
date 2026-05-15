@@ -30,11 +30,11 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     CrescendoAttack,
 )
+from pyrit.output import print_attack_result_async
 from pyrit.prompt_converter import EmojiConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.output import print_attack_result_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
@@ -76,6 +76,6 @@ attack = CrescendoAttack(
 result = await attack.execute_async(objective=conversation_objective)  # type: ignore
 
 # For seven turns this can take a few minutes depending on LLM latency
-await print_attack_result_async().print_result_async(  # type: ignore
-    result=result, include_pruned_conversations=True, include_adversarial_conversation=True
+await print_attack_result_async(  # type: ignore
+    result, include_pruned_conversations=True, include_adversarial_conversation=True
 )

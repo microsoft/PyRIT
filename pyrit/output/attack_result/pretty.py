@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.common.deprecation import print_deprecation_message
 from datetime import datetime, timezone
 from typing import Any
 
 from colorama import Back, Fore, Style
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
 from pyrit.output.attack_result.base import AttackResultPrinterBase
 from pyrit.output.conversation.pretty import PrettyConversationPrinter
@@ -53,7 +53,10 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
         )
         self._conversation_printer = conversation_printer or PrettyConversationPrinter(
-            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors,
+            sink=sink,
+            width=width,
+            indent_size=indent_size,
+            enable_colors=enable_colors,
             score_printer=self._score_printer,
         )
 
@@ -116,7 +119,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
     ) -> None:
-        """Deprecated. Use write_async instead."""
+        """Use ``write_async`` instead. This method is deprecated."""
         print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="2.0")
         await self.write_async(
             result,
@@ -158,10 +161,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
     async def print_conversation_async(
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> None:
-        """Deprecated. Use write_async instead."""
-        print_deprecation_message(
-            old_item="print_conversation_async", new_item="write_async", removed_in="2.0"
-        )
+        """Use ``write_async`` instead. This method is deprecated."""
+        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="2.0")
         content = await self._render_conversation_async(
             result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -174,10 +175,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_scores: bool = False,
         include_reasoning_trace: bool = False,
     ) -> None:
-        """Deprecated. Use the conversation printer's write_async instead."""
-        print_deprecation_message(
-            old_item="print_messages_async", new_item="write_async", removed_in="2.0"
-        )
+        """Use the conversation printer's ``write_async`` instead. This method is deprecated."""
+        print_deprecation_message(old_item="print_messages_async", new_item="write_async", removed_in="2.0")
         content = await self._conversation_printer.render_async(
             messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -205,26 +204,26 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             attack_type = attack_strategy_id.class_name
 
         lines.append(self._format_colored(f"{self._indent * 2}• Attack Type: {attack_type}", Fore.CYAN))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN
-        ))
+        lines.append(self._format_colored(f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN))
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}⚡ Execution Metrics", Style.BRIGHT))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Turns Executed: {result.executed_turns}", Fore.GREEN
-        ))
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Execution Time: {self._format_time(result.execution_time_ms)}", Fore.GREEN
-        ))
+        lines.append(self._format_colored(f"{self._indent * 2}• Turns Executed: {result.executed_turns}", Fore.GREEN))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Execution Time: {self._format_time(result.execution_time_ms)}", Fore.GREEN
+            )
+        )
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Outcome", Style.BRIGHT))
         outcome_icon = self._get_outcome_icon(result.outcome)
         outcome_color = self._get_outcome_color(result.outcome)
-        lines.append(self._format_colored(
-            f"{self._indent * 2}• Status: {outcome_icon} {result.outcome.value.upper()}", outcome_color
-        ))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Status: {outcome_icon} {result.outcome.value.upper()}", outcome_color
+            )
+        )
 
         if result.outcome_reason:
             lines.append(self._format_colored(f"{self._indent * 2}• Reason: {result.outcome_reason}", Fore.WHITE))
@@ -237,7 +236,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         return "".join(lines)
 
     async def print_summary_async(self, result: AttackResult) -> None:
-        """Deprecated. Use write_async instead."""
+        """Use ``write_async`` instead. This method is deprecated."""
         print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
         content = await self._render_summary_async(result)
         await self._write_async(content)
@@ -340,16 +339,16 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             messages = await self._get_conversation_async(ref.conversation_id)
 
             if not messages:
-                lines.append(self._format_colored(
-                    f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
-                ))
+                lines.append(
+                    self._format_colored(
+                        f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
+                    )
+                )
                 continue
 
             last_message = messages[-1]
             role_label = last_message.api_role.upper()
-            lines.append(self._format_colored(
-                f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE
-            ))
+            lines.append(self._format_colored(f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE))
 
             for piece in last_message.message_pieces:
                 lines.append(self._conversation_printer._render_wrapped_text(piece.converted_value, Fore.WHITE))
@@ -358,8 +357,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 if scores:
                     lines.append("\n")
                     lines.append(self._format_colored(f"{self._indent}📊 Score:", Style.DIM, Fore.MAGENTA))
-                    for score in scores:
-                        lines.append(self._score_printer._render_score(score))
+                    lines.extend(self._score_printer._render_score(score) for score in scores)
 
         lines.append("\n")
         lines.append(self._format_colored("─" * self._width, Fore.RED))
@@ -387,11 +385,13 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         if best_adversarial_id:
             adversarial_refs = [ref for ref in adversarial_refs if ref.conversation_id == best_adversarial_id]
             if adversarial_refs:
-                lines.append(self._format_colored(
-                    f"{self._indent}📌 Showing best-scoring branch's adversarial conversation",
-                    Style.DIM,
-                    Fore.CYAN,
-                ))
+                lines.append(
+                    self._format_colored(
+                        f"{self._indent}📌 Showing best-scoring branch's adversarial conversation",
+                        Style.DIM,
+                        Fore.CYAN,
+                    )
+                )
 
         for ref in adversarial_refs:
             if ref.description:
@@ -400,9 +400,11 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             messages = await self._get_conversation_async(ref.conversation_id)
 
             if not messages:
-                lines.append(self._format_colored(
-                    f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
-                ))
+                lines.append(
+                    self._format_colored(
+                        f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
+                    )
+                )
                 continue
 
             lines.append(await self._conversation_printer.render_async(messages, include_scores=False))
@@ -451,16 +453,21 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
         from pyrit.memory import CentralMemory
         from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 
-        score_printer = PrettyScorePrinter(
-            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
-        )
+        score_printer = PrettyScorePrinter(sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors)
         conversation_printer = PrettyConversationMemoryPrinter(
-            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors,
+            sink=sink,
+            width=width,
+            indent_size=indent_size,
+            enable_colors=enable_colors,
             score_printer=score_printer,
         )
         super().__init__(
-            sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors,
-            conversation_printer=conversation_printer, score_printer=score_printer,
+            sink=sink,
+            width=width,
+            indent_size=indent_size,
+            enable_colors=enable_colors,
+            conversation_printer=conversation_printer,
+            score_printer=score_printer,
         )
         self._memory = CentralMemory.get_memory_instance()
 

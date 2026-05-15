@@ -30,7 +30,7 @@ class ScenarioResultPrinterBase(PrinterBase):
 
     async def print_summary_async(self, result: ScenarioResult) -> None:
         """
-        Deprecated. Use write_async instead.
+        Use ``write_async`` instead. This method is deprecated.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
