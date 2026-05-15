@@ -3,6 +3,7 @@
 
 import argparse
 import os
+from pathlib import Path
 from typing import Any, Union
 
 import yaml
@@ -10,7 +11,7 @@ import yaml
 from pyrit.auxiliary_attacks.gcg.experiments.train import GreedyCoordinateGradientAdversarialSuffixGenerator
 from pyrit.setup.initialization import _load_environment_files
 
-_MODEL_NAMES: list[str] = ["mistral", "llama_2", "llama_3", "vicuna", "phi_3_mini"]
+_MODEL_NAMES: list[str] = ["mistral", "llama_2", "llama_3", "vicuna", "phi_3_mini", "phi_4"]
 _ALL_MODELS: str = "all_models"
 
 
@@ -29,7 +30,9 @@ def _load_yaml_to_dict(config_path: str) -> dict[str, Any]:
     return data
 
 
-def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parameters: Any) -> None:
+def run_trainer(
+    *, model_name: str, setup: str = "single", output_dir: str = "outputs", **extra_config_parameters: Any
+) -> None:
     """
     Trains and generates adversarial suffix - single model single prompt.
 
@@ -39,6 +42,10 @@ def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parame
         setup (str): Identifier for the setup, currently supports
             - "single": one prompt one model
             - "multiple": multiple prompts one model or multiple prompts multiple models
+        output_dir (str): Directory (created if missing) to write the result JSON file to.
+            Defaults to "outputs". For Azure ML jobs, pass the path AML provides for the
+            named output (typically expanded from ``${{outputs.<name>}}``) so the result
+            is uploaded to the job's artifact store.
         **extra_config_parameters: Additional parameters to override config values.
 
     Raises:
@@ -56,7 +63,7 @@ def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parame
         "train_data": (
             "https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv"
         ),
-        "result_prefix": f"results/individual_behaviors_{model_name}_gcg",
+        "result_prefix": f"{output_dir}/individual_behaviors_{model_name}_gcg",
         "token": hf_token,
     }
     if setup != "single":
@@ -73,8 +80,8 @@ def run_trainer(*, model_name: str, setup: str = "single", **extra_config_parame
     config["model_name"] = model_name
 
     trainer = GreedyCoordinateGradientAdversarialSuffixGenerator()
-    if not os.path.exists("results"):
-        os.makedirs("results")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     trainer.generate_suffix(**config)
 
@@ -100,11 +107,28 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("--n_steps", type=int, default=100, help="Number of steps")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--random_seed", type=int, default=None, help="Random seed")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="outputs",
+        help=(
+            "Directory to write the result JSON to. Pass the path Azure ML "
+            "expands ${{outputs.<name>}} to so the result is uploaded as a "
+            "named output artifact."
+        ),
+    )
 
     return parser.parse_args()
 
 
 if __name__ == "__main__":
+    # Resolve relative paths (configs/) against this file's directory so the
+    # script works regardless of where it is invoked from -- including
+    # `python -m pyrit.auxiliary_attacks.gcg.experiments.run` from any cwd.
+    # output_dir is left untouched so callers can point it at an absolute path
+    # (e.g. AML's ${{outputs.results}} expansion).
+    os.chdir(Path(__file__).resolve().parent)
+
     args = _parse_arguments()
     run_trainer(
         model_name=args.model_name,
@@ -116,4 +140,5 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         test_steps=1,
         random_seed=args.random_seed,
+        output_dir=args.output_dir,
     )

@@ -406,6 +406,29 @@ class PromptTarget(Identifiable):
         """
         return self._configuration.capabilities
 
+    def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
+        """
+        Replace this target's capabilities, preserving the existing handling policy.
+        The normalization pipeline is rebuilt from the input capabilities and the
+        current policy.
+
+        Policy is preserved because it expresses user intent (ADAPT vs RAISE),
+        independent of what the probe found. To change policy or normalizer
+        overrides, build a new :class:`TargetConfiguration` and pass it via
+        ``custom_configuration`` at construction time instead.
+
+        Note:
+            This mutates the target's identifier (derived from the configuration).
+
+        Args:
+            capabilities (TargetCapabilities): The capabilities to install on
+                this instance.
+        """
+        self._configuration = TargetConfiguration(
+            capabilities=capabilities,
+            policy=self._configuration.policy,
+        )
+
     @classmethod
     def get_default_configuration(cls, underlying_model: str | None = None) -> TargetConfiguration:
         """

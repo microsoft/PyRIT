@@ -17,12 +17,25 @@ from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 from pyrit.common import default_values
 from pyrit.common.logger import logger
 from pyrit.exceptions import clear_execution_context, get_execution_context
+from pyrit.exceptions.retry_collector import (
+    RetryCollector,
+    clear_retry_collector,
+    set_retry_collector,
+)
 from pyrit.models import StrategyResultT
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, MutableMapping
 
 StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
+
+
+class _StrategyRuntimeError(RuntimeError):
+    """RuntimeError subclass that carries an optional error_attack_result_id."""
+
+    def __init__(self, message: str, *, error_attack_result_id: str | None = None) -> None:
+        super().__init__(message)
+        self.error_attack_result_id = error_attack_result_id
 
 
 @dataclass
@@ -328,12 +341,24 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         try:
             async with self._execution_context(context):
                 await self._handle_event(event=StrategyEvent.ON_PRE_EXECUTE, context=context)
+
+                # Set up RetryCollector in the parent task so it is visible to
+                # Tenacity callbacks that fire during _perform_async.  Event
+                # handlers run in child tasks (asyncio.create_task) which
+                # inherit a *copy* of the parent's ContextVar — setting the
+                # collector here ensures both the execution path and the event
+                # handlers can see it.
+                collector = RetryCollector()
+                set_retry_collector(collector)
+
                 result = await self._perform_async(context=context)
                 await self._handle_event(event=StrategyEvent.ON_POST_EXECUTE, context=context, result=result)
+                clear_retry_collector()
                 return result
         except Exception as e:
             # Notify error event
             await self._handle_event(event=StrategyEvent.ON_ERROR, context=context, error=e)
+            clear_retry_collector()
 
             # Build enhanced error message with execution context if available
             # Note: The context is preserved on exception by ExecutionContextManager
@@ -361,7 +386,10 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             else:
                 error_message = f"Strategy execution failed for {self.__class__.__name__}: {str(e)}"
 
-            raise RuntimeError(error_message) from e
+            # Attach the error attack result ID if the ON_ERROR handler created one
+            error_attack_result_id = getattr(context, "_error_attack_result_id", None)
+            runtime_error = _StrategyRuntimeError(error_message, error_attack_result_id=error_attack_result_id)
+            raise runtime_error from e
 
     async def execute_async(self, **kwargs: Any) -> StrategyResultT:
         """

@@ -105,8 +105,8 @@ scenario_strategies = [
 # ## Baseline Execution
 #
 # The baseline sends each objective directly to the target without any converters or multi-turn
-# strategies. It is included automatically when `include_baseline=True` (the default). This is
-# useful for:
+# strategies. It is included automatically when `initialize_async` is called with
+# `include_baseline=True` (the default for scenarios that support a baseline). This is useful for:
 #
 # - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
 # - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
@@ -124,13 +124,14 @@ await printer.print_summary_async(baseline_result)  # type: ignore
 
 # %% [markdown]
 # To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
-# comparison), set `include_baseline=False` in the constructor:
+# comparison), pass `include_baseline=False` to `initialize_async`:
 #
 # ```python
-# scenario = RedTeamAgent(include_baseline=False)
+# scenario = RedTeamAgent()
 # await scenario.initialize_async(
 #     objective_target=objective_target,
 #     scenario_strategies=[FoundryStrategy.Base64],
+#     include_baseline=False,
 # )
 # ```
 

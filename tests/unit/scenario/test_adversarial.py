@@ -23,7 +23,7 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import AtomicAttack
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
@@ -428,19 +428,42 @@ class TestBenchmarkRuntime:
         for a in attacks:
             assert len(a.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_baseline_excluded(self, mock_objective_target, single_adversarial_model):
         """AdversarialBenchmark must opt out of the parent's default baseline.
 
-        Verifies both the configuration toggle (``_include_baseline is False``) and
-        the observable property (no atomic attack is named ``"baseline"``).
+        Verifies both the class-level capability flag and the observable property
+        (no atomic attack is named ``"baseline"``).
         """
-        scenario, attacks = await self._init_and_get_attacks(
+        scenario, _ = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
         )
-        assert scenario._include_baseline is False
-        assert not any(a.atomic_attack_name == "baseline" for a in attacks)
+        assert type(scenario).BASELINE_POLICY is BaselinePolicy.Forbidden
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
+
+    async def test_baseline_explicit_true_raises(self, mock_objective_target, single_adversarial_model):
+        """Explicitly passing include_baseline=True to a forbidden scenario raises ValueError."""
+        scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
+        with pytest.raises(ValueError, match="does not support a default baseline"):
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                include_baseline=True,
+            )
+
+    async def test_baseline_explicit_false_succeeds(self, mock_objective_target, single_adversarial_model):
+        """Explicit include_baseline=False on a forbidden scenario is accepted (matches the default)."""
+        groups = {"harmbench": _make_seed_groups("harmbench")}
+        with (
+            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
+        ):
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                include_baseline=False,
+            )
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
 
 # ===========================================================================

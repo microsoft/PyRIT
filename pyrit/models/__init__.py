@@ -33,6 +33,7 @@ from pyrit.models.message import (
 )
 from pyrit.models.message_piece import MessagePiece, sort_message_pieces
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
+from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
@@ -115,4 +116,5 @@ __all__ = [
     "TextDataTypeSerializer",
     "UnvalidatedScore",
     "VideoPathDataTypeSerializer",
+    "RetryEvent",
 ]

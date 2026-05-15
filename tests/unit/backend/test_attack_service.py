@@ -887,6 +887,19 @@ class TestUpdateAttack:
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "undetermined"
 
+    async def test_update_attack_updates_outcome_error(self, attack_service, mock_memory) -> None:
+        """Test that update_attack maps 'error' to AttackOutcome.ERROR."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation.return_value = []
+
+        await attack_service.update_attack_async(
+            attack_result_id="test-id", request=UpdateAttackRequest(outcome="error")
+        )
+
+        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        assert call_kwargs["update_fields"]["outcome"] == "error"
+
     async def test_update_attack_refreshes_updated_at(self, attack_service, mock_memory) -> None:
         """Test that update_attack refreshes the updated_at metadata."""
         old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)

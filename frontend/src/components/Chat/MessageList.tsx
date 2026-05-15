@@ -8,6 +8,7 @@ import {
   Button,
   Tooltip,
   Spinner,
+  mergeClasses,
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
@@ -80,6 +81,30 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls onError={handleError} data-testid="audio-player" />
 }
 
+/**
+ * If the trimmed text is a JSON object or array, return a 2-space pretty-printed
+ * version of it; otherwise return null. Used to render structured assistant
+ * responses (e.g. PromptShield verdicts) as readable JSON instead of a single
+ * line of compact text.
+ */
+function tryFormatJson(text: string): string | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const first = trimmed[0]
+  const last = trimmed[trimmed.length - 1]
+  // Cheap pre-check: only attempt parsing for object- or array-shaped content
+  // so things like "1" or "true" (which are valid JSON) are still rendered as
+  // plain text.
+  if (!((first === '{' && last === '}') || (first === '[' && last === ']'))) {
+    return null
+  }
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return null
+  }
+}
+
 export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -138,13 +163,16 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
         return (
           <div
             key={index}
-            className={`${styles.message} ${isUser ? styles.userMessage : ''}`}
+            className={mergeClasses(styles.message, isUser && styles.userMessage)}
           >
             <Avatar
               name={avatarName}
               color={isUser ? 'colorful' : isSimulated ? 'steel' : 'brand'}
             />
-            <div className={`${styles.messageContent} ${isUser ? styles.userMessageContent : ''}`}>
+            <div
+              className={mergeClasses(styles.messageContent, isUser && styles.userMessageContent)}
+              data-testid={`message-bubble-${index}`}
+            >
               {/* Error rendering */}
               {message.error && (
                 <div className={styles.errorContainer}>
@@ -204,11 +232,32 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               )}
 
               {/* Text content (converted / primary) */}
-              {message.content && (
-                <Text className={message.isLoading ? styles.loadingEllipsis : styles.messageText}>
-                  {message.content}
-                </Text>
-              )}
+              {message.content && (() => {
+                if (message.isLoading) {
+                  return (
+                    <Text className={styles.loadingEllipsis}>
+                      {message.content}
+                    </Text>
+                  )
+                }
+                // For assistant / simulated_assistant messages, detect
+                // structured JSON responses (e.g. PromptShield verdicts) and
+                // render them pretty-printed inside a <pre> so the user can
+                // actually read them. User-typed JSON is left as-is.
+                const formatted = !isUser ? tryFormatJson(message.content) : null
+                if (formatted !== null) {
+                  return (
+                    <pre className={styles.messageJsonBlock} data-testid={`message-json-${index}`}>
+                      {formatted}
+                    </pre>
+                  )
+                }
+                return (
+                  <Text className={styles.messageText}>
+                    {message.content}
+                  </Text>
+                )
+              })()}
 
               {/* Attachments (images, audio, video, files) */}
               {message.attachments && message.attachments.length > 0 && (
@@ -248,13 +297,13 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {onCopyToInput && (() => {
                     const disabled = Boolean(noTargetSelected || isSingleTurn || isOperatorLocked || isCrossTarget)
                     const tip = noTargetSelected
-                      ? 'Cannot copy — no target selected'
+                      ? 'Cannot copy to this conversation — no target selected'
                       : isSingleTurn
-                        ? 'Cannot copy — target is single-turn'
+                        ? 'Cannot copy to this conversation — target is single-turn'
                         : isOperatorLocked
-                          ? 'Cannot copy — you are not the operator of this attack'
+                          ? 'Cannot copy to this conversation — you are not the operator of this attack'
                           : isCrossTarget
-                            ? 'Cannot copy — conversation used a different target'
+                            ? 'Cannot copy to this conversation — it used a different target'
                             : 'Copy to input box in this conversation'
                     return (
                       <Tooltip content={tip} relationship="label">
@@ -275,11 +324,11 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {onCopyToNewConversation && (() => {
                     const disabled = Boolean(noTargetSelected || isOperatorLocked || isCrossTarget)
                     const tip = noTargetSelected
-                      ? 'Cannot copy — no target selected'
+                      ? 'Cannot copy to a new conversation — no target selected'
                       : isOperatorLocked
-                        ? 'Cannot add to this attack — you are not the operator'
+                        ? 'Cannot copy to a new conversation — you are not the operator of this attack'
                         : isCrossTarget
-                          ? 'Cannot add to this attack — conversation used a different target'
+                          ? 'Cannot copy to a new conversation — this attack used a different target'
                           : 'Copy to input box in a new conversation'
                     return (
                       <Tooltip content={tip} relationship="label">
@@ -300,13 +349,13 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {onBranchConversation && (() => {
                     const disabled = Boolean(noTargetSelected || isSingleTurn || isOperatorLocked || isCrossTarget)
                     const tip = noTargetSelected
-                      ? 'Cannot branch — no target selected'
+                      ? 'Cannot branch into new conversation — no target selected'
                       : isSingleTurn
-                        ? 'Cannot branch — target is single-turn'
+                        ? 'Cannot branch into new conversation — target is single-turn'
                         : isOperatorLocked
-                          ? 'Cannot add to this attack — you are not the operator'
+                          ? 'Cannot branch into new conversation — you are not the operator of this attack'
                           : isCrossTarget
-                            ? 'Cannot add to this attack — conversation used a different target'
+                            ? 'Cannot branch into new conversation — this attack used a different target'
                             : 'Branch into new conversation'
                     return (
                       <Tooltip content={tip} relationship="label">
@@ -342,9 +391,9 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     }
                     // Show disabled button with reason
                     const tip = noTargetSelected
-                      ? 'Cannot branch — no target selected'
+                      ? 'Cannot branch into new attack — no target selected'
                       : singleTurnBlock
-                        ? 'Cannot branch — target is single-turn'
+                        ? 'Cannot branch into new attack — target is single-turn'
                         : undefined
                     if (!tip) return null
                     return (

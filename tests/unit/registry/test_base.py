@@ -3,8 +3,10 @@
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from pyrit.registry.base import ClassRegistryEntry, _matches_filters
-from pyrit.registry.class_registries.base_class_registry import ClassEntry
+from pyrit.registry.class_registries.base_class_registry import BaseClassRegistry, ClassEntry
 
 
 @dataclass(frozen=True)
@@ -12,6 +14,21 @@ class MetadataWithTags(ClassRegistryEntry):
     """Test metadata with a tags field for list filtering tests."""
 
     tags: tuple[str, ...] = field(kw_only=True)
+
+
+class _TestRegistry(BaseClassRegistry[object, ClassRegistryEntry]):
+    """Minimal concrete registry for testing BaseClassRegistry methods."""
+
+    def _discover(self) -> None:
+        pass
+
+    def _build_metadata(self, name: str, entry: ClassEntry[object]) -> ClassRegistryEntry:
+        return ClassRegistryEntry(
+            class_name=entry.registered_class.__name__,
+            class_module=entry.registered_class.__module__,
+            class_description=entry.get_description(fallback=""),
+            registry_name=name,
+        )
 
 
 class TestDescriptionFromDocstring:
@@ -209,3 +226,97 @@ class TestMatchesFilters:
             )
             is False
         )
+
+
+# ============================================================================
+# BaseClassRegistry.unregister Tests
+# ============================================================================
+
+
+class _DummyClass:
+    """A dummy class for registry testing."""
+
+
+class _AnotherClass:
+    """Another dummy class."""
+
+
+def test_unregister_removes_entry():
+    """Test that unregister removes a registered entry."""
+    registry = _TestRegistry(lazy_discovery=True)
+    registry.register(_DummyClass, name="dummy")
+    assert "dummy" in registry
+
+    registry.unregister("dummy")
+    assert "dummy" not in registry
+    assert len(registry) == 0
+
+
+def test_unregister_raises_key_error_for_missing():
+    """Test that unregister raises KeyError when name is not registered."""
+    registry = _TestRegistry(lazy_discovery=True)
+
+    with pytest.raises(KeyError, match="not_here"):
+        registry.unregister("not_here")
+
+
+def test_unregister_key_error_lists_available_names():
+    """Test that the KeyError message includes available names."""
+    registry = _TestRegistry(lazy_discovery=True)
+    registry.register(_DummyClass, name="alpha")
+    registry.register(_AnotherClass, name="beta")
+
+    with pytest.raises(KeyError, match="alpha"):
+        registry.unregister("missing")
+
+
+def test_unregister_invalidates_metadata_cache():
+    """Test that unregister clears the metadata cache."""
+    registry = _TestRegistry(lazy_discovery=True)
+    registry.register(_DummyClass, name="cached")
+
+    registry.list_metadata()
+    assert registry._metadata_cache is not None
+
+    registry.unregister("cached")
+    assert registry._metadata_cache is None
+
+
+def test_unregister_does_not_affect_other_entries():
+    """Test that unregistering one entry leaves others intact."""
+    registry = _TestRegistry(lazy_discovery=True)
+    registry.register(_DummyClass, name="keep")
+    registry.register(_AnotherClass, name="remove")
+
+    registry.unregister("remove")
+
+    assert "keep" in registry
+    assert "remove" not in registry
+    assert registry.get_class("keep") is _DummyClass
+
+
+def test_unregister_then_re_register():
+    """Test that an entry can be re-registered after being unregistered."""
+    registry = _TestRegistry(lazy_discovery=True)
+    registry.register(_DummyClass, name="reuse")
+
+    registry.unregister("reuse")
+    assert "reuse" not in registry
+
+    registry.register(_AnotherClass, name="reuse")
+    assert registry.get_class("reuse") is _AnotherClass
+
+
+def test_unregister_makes_metadata_reflect_removal():
+    """Test that list_metadata no longer includes the unregistered entry."""
+    registry = _TestRegistry(lazy_discovery=True)
+    registry.register(_DummyClass, name="alpha")
+    registry.register(_AnotherClass, name="beta")
+
+    assert len(registry.list_metadata()) == 2
+
+    registry.unregister("alpha")
+    metadata = registry.list_metadata()
+
+    assert len(metadata) == 1
+    assert metadata[0].registry_name == "beta"

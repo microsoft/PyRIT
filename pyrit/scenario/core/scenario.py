@@ -16,12 +16,14 @@ import textwrap
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -47,11 +49,31 @@ from pyrit.score import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
+
+
+class BaselinePolicy(Enum):
+    """
+    Declares how a scenario type treats the default baseline atomic attack.
+
+    The baseline is a plain ``PromptSendingAttack`` that sends each objective unmodified,
+    used as a comparison point against the scenario's strategies. Each scenario class
+    declares its policy via ``Scenario.BASELINE_POLICY``; callers can still override
+    at runtime via ``initialize_async(include_baseline=...)`` for the ``Enabled`` and
+    ``Disabled`` states.
+    """
+
+    #: Supported and prepended automatically. Caller can opt out at runtime.
+    Enabled = "enabled"
+
+    #: Supported but only included when the caller explicitly requests it.
+    Disabled = "disabled"
+
+    #: Not supported. Explicit ``include_baseline=True`` at runtime raises ``ValueError``.
+    Forbidden = "forbidden"
 
 
 def _assert_json_serializable(*, params: dict[str, Any]) -> None:
@@ -117,6 +139,14 @@ class Scenario(ABC):
     #: what the scenario needs. Validated in ``initialize_async`` once the target is supplied.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
+    #: How this scenario type treats the default baseline atomic attack. Subclasses override
+    #: when their semantics call for a different default (``Disabled``) or when a baseline
+    #: is meaningless for the comparison the scenario performs (``Forbidden``). Resolved in
+    #: ``initialize_async`` and overridable per run via ``include_baseline`` for the
+    #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
+    #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
+
     @classmethod
     def _get_additional_scoring_questions(cls) -> Sequence[Path]:
         """
@@ -136,8 +166,8 @@ class Scenario(ABC):
         version: int,
         strategy_class: type[ScenarioStrategy],
         objective_scorer: Scorer,
-        include_default_baseline: bool = True,
         scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
+        include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a scenario.
@@ -147,14 +177,14 @@ class Scenario(ABC):
             version (int): Version number of the scenario.
             strategy_class (Type[ScenarioStrategy]): The strategy enum class for this scenario.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
-            include_default_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Most scenarios should have some kind of baseline so users can understand
-                the impact of strategies, but subclasses can optionally write their own custom baselines.
-                Defaults to True.
             scenario_result_id (Optional[Union[uuid.UUID, str]]): Optional ID of an existing scenario result to resume.
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
+            include_default_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0.
+                Pass ``include_baseline`` to ``initialize_async`` instead. When set, the value is
+                used as the effective ``include_baseline`` for the next ``initialize_async`` call
+                unless that call passes its own ``include_baseline``.
 
         Note:
             Attack runs are populated by calling initialize_async(), which invokes the
@@ -190,8 +220,6 @@ class Scenario(ABC):
         self._scenario_result_id: Optional[str] = str(scenario_result_id) if scenario_result_id else None
         self._result_lock = asyncio.Lock()
 
-        self._include_baseline = include_default_baseline
-
         # Store prepared strategies for use in _get_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
 
@@ -205,6 +233,22 @@ class Scenario(ABC):
         # Custom parameters: declared via supported_parameters(), populated via set_params_from_args().
         self.params: dict[str, Any] = {}
         self._declarations_validated: bool = False
+
+        # Resolved effective baseline inclusion for the current run. Set in initialize_async
+        # before _get_atomic_attacks_async is awaited so overrides can read it.
+        self._include_baseline: bool = False
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along
+        # with the include_default_baseline kwarg above and the legacy fallback branch in
+        # initialize_async. Subclass shims set this attribute directly to avoid double-warning.
+        self._legacy_include_baseline: bool | None = None
+        if include_default_baseline is not None:
+            print_deprecation_message(
+                old_item="Scenario(include_default_baseline=...)",
+                new_item="Scenario.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_default_baseline
 
     @property
     def name(self) -> str:
@@ -546,6 +590,7 @@ class Scenario(ABC):
         max_concurrency: int = 10,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
+        include_baseline: bool | None = None,
     ) -> None:
         """
         Initialize the scenario by populating self._atomic_attacks and creating the ScenarioResult.
@@ -573,9 +618,17 @@ class Scenario(ABC):
                 For example, max_retries=3 allows up to 4 total attempts (1 initial + 3 retries).
             memory_labels (Optional[Dict[str, str]]): Additional labels to apply to all
                 attack runs in the scenario. These help track and categorize the scenario.
+            include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
+                all objectives without modifications, allowing comparison between unmodified prompts
+                and the scenario's strategies. If None (the default), the scenario type's
+                ``BASELINE_POLICY`` class attribute decides: ``Enabled`` includes it,
+                ``Disabled`` omits it, and ``Forbidden`` always omits it (and rejects an
+                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_POLICY``
+                is ``Forbidden`` raises ``ValueError``.
 
         Raises:
-            ValueError: If no objective_target is provided.
+            ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed
+                to a scenario whose ``BASELINE_POLICY`` is ``Forbidden``.
         """
         # Validate required parameters
         if objective_target is None:
@@ -594,6 +647,28 @@ class Scenario(ABC):
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
 
+        # Deprecated. Will be removed in 0.16.0. Honor the legacy constructor-time
+        # include_default_baseline (or subclass include_baseline) only when the caller did
+        # not supply a runtime value.
+        if include_baseline is None and self._legacy_include_baseline is not None:
+            include_baseline = self._legacy_include_baseline
+
+        # Resolve the effective include_baseline. Forbidden is checked first so a forbidden
+        # scenario type never silently inherits a True default; explicit-True on a forbidden
+        # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
+        # a None runtime value defers to the policy.
+        if self.BASELINE_POLICY is BaselinePolicy.Forbidden:
+            if include_baseline is True:
+                raise ValueError(
+                    f"{type(self).__name__} does not support a default baseline "
+                    f"(BASELINE_POLICY = Forbidden); pass include_baseline=False or omit the argument."
+                )
+            include_baseline = False
+        elif include_baseline is None:
+            include_baseline = self.BASELINE_POLICY is BaselinePolicy.Enabled
+
+        self._include_baseline = include_baseline
+
         # Prepare scenario strategies using the stored configuration
         self._scenario_strategies = self._prepare_strategies(scenario_strategies)
 
@@ -606,9 +681,23 @@ class Scenario(ABC):
 
         self._atomic_attacks = await self._get_atomic_attacks_async()
 
-        if self._include_baseline:
-            baseline_attack = self._get_baseline()
-            self._atomic_attacks.insert(0, baseline_attack)
+        # Deprecation rescue. Will be removed in 0.16.0. If the override didn't emit baseline,
+        # warn and inject. Migrated overrides emit baseline themselves and bypass this branch.
+        # Reuse seeds from the first existing attack rather than re-resolving from
+        # dataset_config; re-resolution under max_dataset_size would draw a fresh sample
+        # (the very ADO 9012 bug this PR fixes). When no atomic attacks exist yet the
+        # rescue falls back to the dataset_config one-time resolution.
+        if include_baseline and (not self._atomic_attacks or self._atomic_attacks[0].atomic_attack_name != "baseline"):
+            print_deprecation_message(
+                old_item=f"Implicit baseline injection for {type(self).__name__}._get_atomic_attacks_async()",
+                new_item="explicit emission via self._build_baseline_atomic_attack(seed_groups=...) in the override",
+                removed_in="0.16.0",
+            )
+            if self._atomic_attacks:
+                seed_groups = self._atomic_attacks[0].seed_groups
+            else:
+                seed_groups = self._dataset_config.get_all_seed_attack_groups()
+            self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
         # Store original objectives for each atomic attack (before any mutations during execution)
         self._original_objectives_map = {
@@ -659,26 +748,34 @@ class Scenario(ABC):
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
 
-    def _get_baseline(self) -> AtomicAttack:
+    def _build_baseline_atomic_attack(self, *, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
         """
-        Get a baseline AtomicAttack, which simply sends all the objectives without any modifications.
+        Build the baseline AtomicAttack from pre-resolved seed groups.
 
-        If other atomic attacks exist, derives baseline data from the first attack.
-        Otherwise, creates a standalone baseline from the dataset configuration and scenario settings.
+        The baseline sends each objective unmodified, providing a comparison point
+        against the scenario's strategy attacks. Pass the same ``seed_groups`` used
+        to build the strategy attacks so both populations match.
+
+        Args:
+            seed_groups: Seed groups to attack. Used as-is, no further sampling.
 
         Returns:
-            AtomicAttack: The baseline AtomicAttack instance.
+            AtomicAttack: The baseline atomic attack.
 
         Raises:
-            ValueError: If required data (seed_groups, objective_target, attack_scoring_config)
-                       is not available.
+            ValueError: If ``initialize_async`` has not been called (no objective
+                target or scorer set).
         """
-        seed_groups, attack_scoring_config, objective_target = self._get_baseline_data()
+        if self._objective_target is None:
+            raise ValueError("Objective target is required to create baseline attack.")
+        if self._objective_scorer is None:
+            raise ValueError("Objective scorer is required to create baseline attack.")
 
-        # Create baseline attack with no converters
+        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+
         attack = PromptSendingAttack(
-            objective_target=objective_target,
-            attack_scoring_config=attack_scoring_config,
+            objective_target=self._objective_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer)),
         )
 
         return AtomicAttack(
@@ -687,40 +784,6 @@ class Scenario(ABC):
             seed_groups=seed_groups,
             memory_labels=self._memory_labels,
         )
-
-    def _get_baseline_data(self) -> tuple[list["SeedAttackGroup"], "AttackScoringConfig", PromptTarget]:
-        """
-        Get the data needed to create a baseline attack.
-
-        Returns the scenario-level data
-
-        Returns:
-            Tuple containing (seed_groups, attack_scoring_config, objective_target)
-
-        Raises:
-            ValueError: If required data is not available.
-        """
-        # Create from scenario-level settings
-        if not self._objective_target:
-            raise ValueError("Objective target is required to create baseline attack.")
-        if not self._dataset_config:
-            raise ValueError("Dataset config is required to create baseline attack.")
-        if not self._objective_scorer:
-            raise ValueError("Objective scorer is required to create baseline attack.")
-
-        seed_groups = self._dataset_config.get_all_seed_attack_groups()
-        if not seed_groups or len(seed_groups) == 0:
-            raise ValueError("Seed groups are required to create baseline attack.")
-
-        # Import here to avoid circular imports
-        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-
-        attack_scoring_config = AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer))
-
-        if not attack_scoring_config:
-            raise ValueError("Attack scoring config is required to create baseline attack.")
-
-        return seed_groups, attack_scoring_config, self._objective_target
 
     def _raise_dataset_exception(self) -> None:
         error_msg = textwrap.dedent(
@@ -902,7 +965,9 @@ class Scenario(ABC):
         ``_build_display_group()``.
 
         Subclasses that do **not** use the factory/registry pattern should
-        override this method entirely.
+        override this method entirely. Overrides that want baseline support
+        must call ``self._build_baseline_atomic_attack`` with the strategy
+        seeds.
 
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
@@ -971,6 +1036,10 @@ class Scenario(ABC):
                         display_group=display_group,
                     )
                 )
+
+        if self._include_baseline:
+            all_seed_groups = [g for groups in seed_groups_by_dataset.values() for g in groups]
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
 
         return atomic_attacks
 
@@ -1155,18 +1224,35 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
+                        # Collect error attack result IDs from the exceptions
+                        error_ids = []
+                        for _, exc in atomic_results.incomplete_objectives:
+                            error_id = getattr(exc, "error_attack_result_id", None)
+                            if error_id:
+                                error_ids.append(error_id)
+
+                        # Link error attack results to the scenario result
+                        if error_ids:
+                            self._memory.update_scenario_error_attacks(
+                                scenario_result_id=scenario_result_id,
+                                error_attack_result_ids=error_ids,
+                            )
+
                         # Mark scenario as failed
+                        error_msg = (
+                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
+                            f"See attack results for details."
+                        )
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=error_msg,
+                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
                         )
 
                         # Raise exception with detailed information
-                        raise ValueError(
-                            f"Failed to execute atomic attack {i} ('{atomic_attack.atomic_attack_name}') "
-                            f"in scenario '{self._name}': {incomplete_count} of {incomplete_count + completed_count} "
-                            f"objectives incomplete. First failure: {atomic_results.incomplete_objectives[0][1]}"
-                        ) from atomic_results.incomplete_objectives[0][1]
+                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
                     logger.info(
                         f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
                         f"{len(atomic_results.completed_results)} results"
@@ -1185,6 +1271,8 @@ class Scenario(ABC):
                         self._memory.update_scenario_run_state(
                             scenario_result_id=scenario_result_id,
                             scenario_run_state="FAILED",
+                            error_message=str(e),
+                            error_type=type(e).__name__,
                         )
 
                     raise

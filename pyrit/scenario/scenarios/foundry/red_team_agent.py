@@ -16,6 +16,7 @@ from inspect import signature
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
     CrescendoAttack,
@@ -245,8 +246,8 @@ class RedTeamAgent(Scenario):
         *,
         adversarial_chat: Optional[PromptTarget] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a Foundry Scenario with the specified attack strategies.
@@ -258,11 +259,9 @@ class RedTeamAgent(Scenario):
             attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                attack-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
             ValueError: If attack_strategies is empty or contains unsupported strategies.
@@ -284,9 +283,19 @@ class RedTeamAgent(Scenario):
             version=self.VERSION,
             strategy_class=FoundryStrategy,
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="RedTeamAgent(include_baseline=...)",
+                new_item="RedTeamAgent.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
+
         self._scenario_composites: list[FoundryComposite] = []
 
     @apply_defaults
@@ -301,6 +310,7 @@ class RedTeamAgent(Scenario):
         max_concurrency: int = 10,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
+        include_baseline: bool | None = None,
     ) -> None:
         """
         Initialize the scenario.
@@ -316,6 +326,7 @@ class RedTeamAgent(Scenario):
             max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 10.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
+            include_baseline (bool | None): See ``Scenario.initialize_async``.
         """
         # This override exists purely for type-widening: FoundryComposite is a dataclass,
         # not a ScenarioStrategy enum member, so the base class signature would reject it.
@@ -327,6 +338,7 @@ class RedTeamAgent(Scenario):
             max_concurrency=max_concurrency,
             max_retries=max_retries,
             memory_labels=memory_labels,
+            include_baseline=include_baseline,
         )
 
     def _prepare_strategies(  # type: ignore[ty:invalid-method-override]
@@ -421,7 +433,12 @@ class RedTeamAgent(Scenario):
         # Resolve seed groups now that initialize_async has been called
         self._seed_groups = self._resolve_seed_groups()
 
-        return [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
+        atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
+
+        return atomic_attacks
 
     def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
         """
