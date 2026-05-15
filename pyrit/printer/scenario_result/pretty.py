@@ -260,3 +260,15 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         self._scorer_printer = PrettyScorerMemoryPrinter(
             sink=self._sink, indent_size=indent_size, enable_colors=enable_colors
         )
+
+    async def render_async(self, result: ScenarioResult) -> str:
+        """
+        Render the scenario result summary and return it as a string.
+
+        Args:
+            result (ScenarioResult): The scenario result to summarize.
+
+        Returns:
+            str: The rendered scenario result text.
+        """
+        return await super().render_async(result)

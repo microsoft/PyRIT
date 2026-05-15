@@ -287,6 +287,21 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
     All formatting logic lives in PrettyScorerPrinter.
     """
 
+    async def render_async(
+        self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
+    ) -> str:
+        """
+        Render scorer information and return it as a string.
+
+        Args:
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
+            harm_category (str | None): The harm category. None for objective scorers.
+
+        Returns:
+            str: The rendered scorer information text.
+        """
+        return await super().render_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
+
     def _get_objective_metrics(self, *, eval_hash: str) -> Any:
         """
         Fetch objective scorer evaluation metrics from the registry.

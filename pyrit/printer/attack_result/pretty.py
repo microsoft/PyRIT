@@ -464,6 +464,34 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
         )
         self._memory = CentralMemory.get_memory_instance()
 
+    async def render_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> str:
+        """
+        Render the complete attack result and return it as a string.
+
+        Args:
+            result (AttackResult): The attack result to render.
+            include_auxiliary_scores (bool): Whether to include auxiliary scores. Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial conversation.
+                Defaults to False.
+
+        Returns:
+            str: The rendered attack result text.
+        """
+        return await super().render_async(
+            result,
+            include_auxiliary_scores=include_auxiliary_scores,
+            include_pruned_conversations=include_pruned_conversations,
+            include_adversarial_conversation=include_adversarial_conversation,
+        )
+
     async def _get_conversation_async(self, conversation_id: str) -> list[Message]:
         """
         Fetch conversation messages from CentralMemory.
