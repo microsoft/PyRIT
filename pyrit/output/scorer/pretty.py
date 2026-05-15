@@ -6,8 +6,8 @@ from typing import Any
 from colorama import Fore, Style
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.printer.scorer.base import ScorerPrinterBase
-from pyrit.printer.sink import Sink
+from pyrit.output.scorer.base import ScorerPrinterBase
+from pyrit.output.sink import Sink
 
 
 class PrettyScorerPrinter(ScorerPrinterBase):

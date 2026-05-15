@@ -4,7 +4,7 @@
 from abc import abstractmethod
 
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.printer.base import PrinterBase
+from pyrit.output.base import PrinterBase
 
 
 class ConversationPrinterBase(PrinterBase):

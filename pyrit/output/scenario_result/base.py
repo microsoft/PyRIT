@@ -5,7 +5,7 @@ import warnings
 from abc import abstractmethod
 
 from pyrit.models.scenario_result import ScenarioResult
-from pyrit.printer.base import PrinterBase
+from pyrit.output.base import PrinterBase
 
 
 class ScenarioResultPrinterBase(PrinterBase):

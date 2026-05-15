@@ -9,9 +9,9 @@
 # ---
 
 # %% [markdown]
-# # Printer Module
+# # Output Module
 #
-# The printer module renders attack results, scenario results, conversation histories,
+# The output module renders attack results, scenario results, conversation histories,
 # scores, and scorer information. It separates **what** the output looks like (format)
 # from **where** it goes (sink) and **where data comes from** (abstract methods).
 #
@@ -100,7 +100,7 @@ print(f"Created AttackResult: outcome={attack_result.outcome.value}, turns={atta
 # and sink routing. By default it uses "pretty" format with ANSI colors to stdout.
 
 # %%
-from pyrit.printer.helpers import print_attack_result_async
+from pyrit.output.helpers import print_attack_result_async
 
 await print_attack_result_async(attack_result)
 
@@ -120,7 +120,7 @@ await print_attack_result_async(attack_result, format="markdown")
 # `AttackResult` wrapper using `print_conversation_async`.
 
 # %%
-from pyrit.printer.helpers import print_conversation_async
+from pyrit.output.helpers import print_conversation_async
 
 # Build a multi-turn conversation
 turn2_user = MessagePiece(
@@ -153,7 +153,7 @@ await print_conversation_async(multi_turn_messages)
 # Use `print_score_async` to render a list of `Score` objects.
 
 # %%
-from pyrit.printer.helpers import print_score_async
+from pyrit.output.helpers import print_score_async
 
 await print_score_async([sample_score])
 
@@ -169,7 +169,7 @@ await print_score_async([sample_score])
 import tempfile
 from pathlib import Path
 
-from pyrit.printer.sink import FileSink
+from pyrit.output.sink import FileSink
 
 # Write attack result to a temporary file (no ANSI colors for clean text)
 with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w") as f:
@@ -205,9 +205,9 @@ output_path.unlink()
 # and compose sub-printers.
 
 # %%
-from pyrit.printer.conversation.pretty import PrettyConversationMemoryPrinter
-from pyrit.printer.score.pretty import PrettyScorePrinter
-from pyrit.printer.sink import StdoutSink
+from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
+from pyrit.output.score.pretty import PrettyScorePrinter
+from pyrit.output.sink import StdoutSink
 
 # Create a custom-configured conversation printer
 # Note: use the *MemoryPrinter leaf classes, not the abstract format-layer classes
@@ -263,7 +263,7 @@ await conversation_printer.write_async(multi_turn_messages)
 # ### Module Layout
 #
 # ```
-# pyrit/printer/
+# pyrit/output/
 # ├── base.py                    # PrinterBase — render_async (abstract) + write_async (concrete)
 # ├── sink.py                    # Sink, StdoutSink, FileSink, IPythonMarkdownSink
 # ├── helpers.py                 # Convenience functions (print_attack_result_async, etc.)
@@ -280,9 +280,9 @@ await conversation_printer.write_async(multi_turn_messages)
 # swap in custom sub-printers for different rendering behavior:
 #
 # ```python
-# from pyrit.printer.attack_result.pretty import PrettyAttackResultPrinter
-# from pyrit.printer.conversation.pretty import PrettyConversationPrinter
-# from pyrit.printer.score.pretty import PrettyScorePrinter
+# from pyrit.output.attack_result.pretty import PrettyAttackResultPrinter
+# from pyrit.output.conversation.pretty import PrettyConversationPrinter
+# from pyrit.output.score.pretty import PrettyScorePrinter
 #
 # custom_printer = PrettyAttackResultPrinter(
 #     conversation_printer=PrettyConversationPrinter(width=120),
@@ -293,7 +293,7 @@ await conversation_printer.write_async(multi_turn_messages)
 # %% [markdown]
 # ## Convenience Functions Reference
 #
-# All convenience functions live in `pyrit.printer.helpers`:
+# All convenience functions live in `pyrit.output.helpers`:
 #
 # | Function | Domain | Formats |
 # |----------|--------|---------|
@@ -324,7 +324,7 @@ await conversation_printer.write_async(multi_turn_messages)
 #
 # ### Adding a New Domain Printer
 #
-# 1. Create `pyrit/printer/<domain>/base.py` with abstract data methods + abstract `render_async`
+# 1. Create `pyrit/output/<domain>/base.py` with abstract data methods + abstract `render_async`
 # 2. Create format files (`pretty.py`, etc.) with `render_async` implementation
 # 3. Add Memory leaf classes with forwarding `render_async` + data methods
 # 4. Add a convenience function in `helpers.py`

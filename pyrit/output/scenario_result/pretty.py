@@ -8,9 +8,9 @@ from colorama import Fore, Style
 
 from pyrit.models import AttackOutcome
 from pyrit.models.scenario_result import ScenarioResult
-from pyrit.printer.scenario_result.base import ScenarioResultPrinterBase
-from pyrit.printer.scorer.base import ScorerPrinterBase
-from pyrit.printer.sink import Sink
+from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
+from pyrit.output.scorer.base import ScorerPrinterBase
+from pyrit.output.sink import Sink
 
 
 class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
@@ -261,7 +261,7 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
         super().__init__(sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors)
-        from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
+        from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 
         scorer_printer = PrettyScorerMemoryPrinter(
             sink=self._sink, indent_size=indent_size, enable_colors=enable_colors

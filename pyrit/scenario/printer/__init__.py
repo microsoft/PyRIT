@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 """
-Deprecated: Import from pyrit.printer instead.
+Deprecated: Import from pyrit.output instead.
 
-Scenario result printers have moved to pyrit.printer.scenario_result.
+Scenario result printers have moved to pyrit.output.scenario_result.
 These re-exports will be removed in 0.16.0.
 """
 
@@ -13,8 +13,8 @@ import warnings as _warnings
 
 def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
-        "ConsoleScenarioResultPrinter": "pyrit.printer.scenario_result.pretty",
-        "ScenarioResultPrinter": "pyrit.printer.scenario_result.base",
+        "ConsoleScenarioResultPrinter": "pyrit.output.scenario_result.pretty",
+        "ScenarioResultPrinter": "pyrit.output.scenario_result.base",
     }
     if name in _deprecated:
         new_module = _deprecated[name]
@@ -25,11 +25,11 @@ def __getattr__(name: str) -> type:  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleScenarioResultPrinter":
-            from pyrit.printer.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+            from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
             return PrettyScenarioResultMemoryPrinter
         if name == "ScenarioResultPrinter":
-            from pyrit.printer.scenario_result.base import ScenarioResultPrinterBase
+            from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 
             return ScenarioResultPrinterBase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

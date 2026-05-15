@@ -3,8 +3,8 @@
 
 import pytest
 
-from pyrit.printer.base import PrinterBase
-from pyrit.printer.sink import StdoutSink
+from pyrit.output.base import PrinterBase
+from pyrit.output.sink import StdoutSink
 
 
 def test_printer_base_is_abstract():
@@ -28,7 +28,7 @@ def test_printer_base_defaults_to_stdout_sink():
 def test_printer_base_accepts_custom_sink():
     from pathlib import Path
 
-    from pyrit.printer.sink import FileSink
+    from pyrit.output.sink import FileSink
 
     class ConcretePrinter(PrinterBase):
         async def render_async(self) -> str:

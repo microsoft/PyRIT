@@ -3,7 +3,7 @@
 
 """Convenience functions for one-line printing of attack results, scenario results, and scorer info."""
 
-from pyrit.printer.sink import OutputFormat, Sink, StdoutSink, get_default_sink
+from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
 async def print_attack_result_async(
@@ -29,11 +29,11 @@ async def print_attack_result_async(
             Defaults to False.
     """
     if format == "markdown":
-        from pyrit.printer.attack_result.markdown import MarkdownAttackResultMemoryPrinter
+        from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
         printer = MarkdownAttackResultMemoryPrinter(sink=sink or get_default_sink())
     else:
-        from pyrit.printer.attack_result.pretty import PrettyAttackResultMemoryPrinter
+        from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
         printer = PrettyAttackResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
 
@@ -60,7 +60,7 @@ async def print_scenario_result_async(
         sink (Sink | None): Output sink. Defaults to StdoutSink.
     """
     if format == "pretty":
-        from pyrit.printer.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+        from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
         printer = PrettyScenarioResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     else:
@@ -89,7 +89,7 @@ async def print_scorer_async(
         sink (Sink | None): Output sink. Defaults to StdoutSink.
     """
     if format == "pretty":
-        from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
+        from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 
         printer = PrettyScorerMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     else:
@@ -118,7 +118,7 @@ async def print_conversation_async(
         include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
     """
     if format == "pretty":
-        from pyrit.printer.conversation.pretty import PrettyConversationMemoryPrinter
+        from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 
         printer = PrettyConversationMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     else:
@@ -146,7 +146,7 @@ async def print_score_async(
         sink (Sink | None): Output sink. Defaults to StdoutSink.
     """
     if format == "pretty":
-        from pyrit.printer.score.pretty import PrettyScorePrinter
+        from pyrit.output.score.pretty import PrettyScorePrinter
 
         printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
     else:

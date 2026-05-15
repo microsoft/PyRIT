@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 
-from pyrit.printer.sink import Sink, StdoutSink
+from pyrit.output.sink import Sink, StdoutSink
 
 
 class PrinterBase(ABC):

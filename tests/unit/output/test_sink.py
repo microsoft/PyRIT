@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.printer.sink import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
+from pyrit.output.sink import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
 
 
 def test_sink_is_abstract():

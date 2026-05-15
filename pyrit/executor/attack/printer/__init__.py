@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 """
-Deprecated: Import from pyrit.printer instead.
+Deprecated: Import from pyrit.output instead.
 
-Attack result printers have moved to pyrit.printer.attack_result.
+Attack result printers have moved to pyrit.output.attack_result.
 These re-exports will be removed in 0.16.0.
 """
 
@@ -13,9 +13,9 @@ import warnings as _warnings
 
 def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
-        "ConsoleAttackResultPrinter": "pyrit.printer.attack_result.pretty",
-        "MarkdownAttackResultPrinter": "pyrit.printer.attack_result.markdown",
-        "AttackResultPrinter": "pyrit.printer.attack_result.base",
+        "ConsoleAttackResultPrinter": "pyrit.output.attack_result.pretty",
+        "MarkdownAttackResultPrinter": "pyrit.output.attack_result.markdown",
+        "AttackResultPrinter": "pyrit.output.attack_result.base",
     }
     if name in _deprecated:
         new_module = _deprecated[name]
@@ -26,15 +26,15 @@ def __getattr__(name: str) -> type:  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleAttackResultPrinter":
-            from pyrit.printer.attack_result.pretty import PrettyAttackResultMemoryPrinter
+            from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
             return PrettyAttackResultMemoryPrinter
         if name == "AttackResultPrinter":
-            from pyrit.printer.attack_result.base import AttackResultPrinterBase
+            from pyrit.output.attack_result.base import AttackResultPrinterBase
 
             return AttackResultPrinterBase
         if name == "MarkdownAttackResultPrinter":
-            from pyrit.printer.attack_result.markdown import MarkdownAttackResultMemoryPrinter
+            from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
             return MarkdownAttackResultMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

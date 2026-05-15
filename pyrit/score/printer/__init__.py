@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 """
-Deprecated: Import from pyrit.printer instead.
+Deprecated: Import from pyrit.output instead.
 
-Scorer printers have moved to pyrit.printer.scorer.
+Scorer printers have moved to pyrit.output.scorer.
 These re-exports will be removed in 0.16.0.
 """
 
@@ -13,8 +13,8 @@ import warnings as _warnings
 
 def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
-        "ConsoleScorerPrinter": "pyrit.printer.scorer.pretty",
-        "ScorerPrinter": "pyrit.printer.scorer.base",
+        "ConsoleScorerPrinter": "pyrit.output.scorer.pretty",
+        "ScorerPrinter": "pyrit.output.scorer.base",
     }
     if name in _deprecated:
         new_module = _deprecated[name]
@@ -25,11 +25,11 @@ def __getattr__(name: str) -> type:  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleScorerPrinter":
-            from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
+            from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 
             return PrettyScorerMemoryPrinter
         if name == "ScorerPrinter":
-            from pyrit.printer.scorer.base import ScorerPrinterBase
+            from pyrit.output.scorer.base import ScorerPrinterBase
 
             return ScorerPrinterBase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

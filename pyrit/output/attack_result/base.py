@@ -4,7 +4,7 @@
 from abc import abstractmethod
 
 from pyrit.models import AttackOutcome, Message, Score
-from pyrit.printer.base import PrinterBase
+from pyrit.output.base import PrinterBase
 
 
 class AttackResultPrinterBase(PrinterBase):

@@ -1,18 +1,18 @@
 ---
-applyTo: "pyrit/printer/**"
+applyTo: "pyrit/output/**"
 ---
 
-# PyRIT Printer Module — Coding & Review Guidelines
+# PyRIT Output Module — Coding & Review Guidelines
 
-For full architecture documentation, usage examples, and extension guides, see [doc/code/printer/0_printer.py](../../../doc/code/printer/0_printer.py).
+For full architecture documentation, usage examples, and extension guides, see [doc/code/output/0_output.py](../../../doc/code/output/0_output.py).
 
-This file covers the rules for **writing and reviewing** code in `pyrit/printer/`.
+This file covers the rules for **writing and reviewing** code in `pyrit/output/`.
 
 ## Critical Rules
 
 ### Output goes through the sink — never call `print()` directly
 
-All rendering methods return `str`. The inherited `write_async` calls `render_async` then `_write_async(content)`. No bare `print()` calls anywhere in the printer module except inside `StdoutSink`.
+All rendering methods return `str`. The inherited `write_async` calls `render_async` then `_write_async(content)`. No bare `print()` calls anywhere in the output module except inside `StdoutSink`.
 
 When reviewing: reject any `print()` call outside `StdoutSink`.
 
@@ -58,7 +58,7 @@ Pass `sink=` to redirect output. Pass sub-printers only to override defaults.
 Every new domain printer **must** have a corresponding convenience function added to `helpers.py`. This is the primary entry point most callers use.
 
 ```python
-from pyrit.printer.helpers import print_attack_result_async
+from pyrit.output.helpers import print_attack_result_async
 await print_attack_result_async(result, format="pretty")
 ```
 

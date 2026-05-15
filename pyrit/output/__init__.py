@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Printer module for displaying attack, scenario, and scorer results.
+Output module for displaying attack, scenario, and scorer results.
 
 This module provides:
 - **Sink** classes that define where output goes (stdout, file, etc.)

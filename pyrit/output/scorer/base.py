@@ -6,7 +6,7 @@ from abc import abstractmethod
 from typing import Any
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.printer.base import PrinterBase
+from pyrit.output.base import PrinterBase
 
 
 class ScorerPrinterBase(PrinterBase):

@@ -2,8 +2,8 @@
 # Licensed under the MIT license.
 
 from pyrit.models import Score
-from pyrit.printer.base import PrinterBase
-from pyrit.printer.sink import Sink
+from pyrit.output.base import PrinterBase
+from pyrit.output.sink import Sink
 
 
 class MarkdownScorePrinter(PrinterBase):

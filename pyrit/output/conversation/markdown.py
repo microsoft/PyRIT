@@ -4,9 +4,9 @@
 import os
 
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.printer.conversation.base import ConversationPrinterBase
-from pyrit.printer.score.markdown import MarkdownScorePrinter
-from pyrit.printer.sink import Sink
+from pyrit.output.conversation.base import ConversationPrinterBase
+from pyrit.output.score.markdown import MarkdownScorePrinter
+from pyrit.output.sink import Sink
 
 
 class MarkdownConversationPrinter(ConversationPrinterBase):

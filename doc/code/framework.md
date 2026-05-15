@@ -51,7 +51,7 @@ Register and discover targets, scorers, and converters via class and instance re
 ::::
 
 ::::{card} 🖨️ Printer
-:link: ./printer/0_printer
+:link: ./output/0_output
 Render attack results, scenario results, conversations, and scores to terminal, files, or Jupyter.
 ::::
 

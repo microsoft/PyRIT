@@ -8,10 +8,10 @@ from typing import Any
 from colorama import Back, Fore, Style
 
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
-from pyrit.printer.attack_result.base import AttackResultPrinterBase
-from pyrit.printer.conversation.pretty import PrettyConversationPrinter
-from pyrit.printer.score.pretty import PrettyScorePrinter
-from pyrit.printer.sink import Sink
+from pyrit.output.attack_result.base import AttackResultPrinterBase
+from pyrit.output.conversation.pretty import PrettyConversationPrinter
+from pyrit.output.score.pretty import PrettyScorePrinter
+from pyrit.output.sink import Sink
 
 
 class PrettyAttackResultPrinter(AttackResultPrinterBase):
@@ -449,7 +449,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
         from pyrit.memory import CentralMemory
-        from pyrit.printer.conversation.pretty import PrettyConversationMemoryPrinter
+        from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 
         score_printer = PrettyScorePrinter(
             sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors

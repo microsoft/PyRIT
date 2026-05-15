@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.printer.helpers import (
+from pyrit.output.helpers import (
     print_attack_result_async,
     print_conversation_async,
     print_score_async,
     print_scenario_result_async,
     print_scorer_async,
 )
-from pyrit.printer.sink import IPythonMarkdownSink, OutputFormat, Sink, StdoutSink, get_default_sink
+from pyrit.output.sink import IPythonMarkdownSink, OutputFormat, Sink, StdoutSink, get_default_sink
 
 
 # --- get_default_sink tests ---
@@ -42,7 +42,7 @@ def test_get_default_sink_auto_detects_notebook(_mock):
 # --- print_attack_result_async tests ---
 
 
-@patch("pyrit.printer.attack_result.pretty.PrettyAttackResultMemoryPrinter")
+@patch("pyrit.output.attack_result.pretty.PrettyAttackResultMemoryPrinter")
 async def test_print_attack_result_async_pretty_default(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -57,7 +57,7 @@ async def test_print_attack_result_async_pretty_default(mock_cls):
     mock_printer.write_async.assert_called_once()
 
 
-@patch("pyrit.printer.attack_result.markdown.MarkdownAttackResultMemoryPrinter")
+@patch("pyrit.output.attack_result.markdown.MarkdownAttackResultMemoryPrinter")
 async def test_print_attack_result_async_markdown_auto_detects_sink(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -73,7 +73,7 @@ async def test_print_attack_result_async_markdown_auto_detects_sink(mock_cls):
     mock_printer.write_async.assert_called_once()
 
 
-@patch("pyrit.printer.attack_result.pretty.PrettyAttackResultMemoryPrinter")
+@patch("pyrit.output.attack_result.pretty.PrettyAttackResultMemoryPrinter")
 async def test_print_attack_result_async_explicit_sink(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -90,7 +90,7 @@ async def test_print_attack_result_async_explicit_sink(mock_cls):
 # --- print_scenario_result_async tests ---
 
 
-@patch("pyrit.printer.scenario_result.pretty.PrettyScenarioResultMemoryPrinter")
+@patch("pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter")
 async def test_print_scenario_result_async_pretty(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -111,7 +111,7 @@ async def test_print_scenario_result_async_unsupported_format():
 # --- print_scorer_async tests ---
 
 
-@patch("pyrit.printer.scorer.pretty.PrettyScorerMemoryPrinter")
+@patch("pyrit.output.scorer.pretty.PrettyScorerMemoryPrinter")
 async def test_print_scorer_async_pretty(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -124,7 +124,7 @@ async def test_print_scorer_async_pretty(mock_cls):
     mock_printer.write_async.assert_called_once_with(scorer_identifier=scorer_id, harm_category=None)
 
 
-@patch("pyrit.printer.scorer.pretty.PrettyScorerMemoryPrinter")
+@patch("pyrit.output.scorer.pretty.PrettyScorerMemoryPrinter")
 async def test_print_scorer_async_with_harm_category(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -144,7 +144,7 @@ async def test_print_scorer_async_unsupported_format():
 # --- print_conversation_async tests ---
 
 
-@patch("pyrit.printer.conversation.pretty.PrettyConversationMemoryPrinter")
+@patch("pyrit.output.conversation.pretty.PrettyConversationMemoryPrinter")
 async def test_print_conversation_async_pretty_default(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -159,7 +159,7 @@ async def test_print_conversation_async_pretty_default(mock_cls):
     mock_printer.write_async.assert_called_once()
 
 
-@patch("pyrit.printer.conversation.pretty.PrettyConversationMemoryPrinter")
+@patch("pyrit.output.conversation.pretty.PrettyConversationMemoryPrinter")
 async def test_print_conversation_async_with_scores(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
@@ -181,7 +181,7 @@ async def test_print_conversation_async_unsupported_format():
 # --- print_score_async tests ---
 
 
-@patch("pyrit.printer.score.pretty.PrettyScorePrinter")
+@patch("pyrit.output.score.pretty.PrettyScorePrinter")
 async def test_print_score_async_pretty_default(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()

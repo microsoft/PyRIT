@@ -5,10 +5,10 @@ import warnings
 from datetime import datetime, timezone
 
 from pyrit.models import AttackResult, ConversationType, Message, Score
-from pyrit.printer.attack_result.base import AttackResultPrinterBase
-from pyrit.printer.conversation.markdown import MarkdownConversationPrinter
-from pyrit.printer.score.markdown import MarkdownScorePrinter
-from pyrit.printer.sink import Sink
+from pyrit.output.attack_result.base import AttackResultPrinterBase
+from pyrit.output.conversation.markdown import MarkdownConversationPrinter
+from pyrit.output.score.markdown import MarkdownScorePrinter
+from pyrit.output.sink import Sink
 
 
 class MarkdownAttackResultPrinter(AttackResultPrinterBase):
@@ -335,7 +335,7 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
                 All output is routed through the sink. Defaults to True.
         """
         from pyrit.memory import CentralMemory
-        from pyrit.printer.conversation.markdown import MarkdownConversationMemoryPrinter
+        from pyrit.output.conversation.markdown import MarkdownConversationMemoryPrinter
 
         score_printer = MarkdownScorePrinter(sink=sink)
         conversation_printer = MarkdownConversationMemoryPrinter(sink=sink, score_printer=score_printer)

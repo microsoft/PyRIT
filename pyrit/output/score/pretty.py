@@ -6,8 +6,8 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.models import Score
-from pyrit.printer.base import PrinterBase
-from pyrit.printer.sink import Sink
+from pyrit.output.base import PrinterBase
+from pyrit.output.sink import Sink
 
 
 class PrettyScorePrinter(PrinterBase):

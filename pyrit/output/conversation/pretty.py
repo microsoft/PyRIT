@@ -8,9 +8,9 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.printer.conversation.base import ConversationPrinterBase
-from pyrit.printer.score.pretty import PrettyScorePrinter
-from pyrit.printer.sink import Sink
+from pyrit.output.conversation.base import ConversationPrinterBase
+from pyrit.output.score.pretty import PrettyScorePrinter
+from pyrit.output.sink import Sink
 
 logger = logging.getLogger(__name__)
 

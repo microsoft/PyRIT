@@ -4,7 +4,7 @@
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.printer.scorer.base import ScorerPrinterBase as ScorerPrinter
+from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
 
 
 def test_scorer_printer_cannot_be_instantiated():
