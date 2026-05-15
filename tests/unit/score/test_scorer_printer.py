@@ -4,7 +4,7 @@
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.score.printer.scorer_printer import ScorerPrinter
+from pyrit.printer.scorer.base import ScorerPrinterBase as ScorerPrinter
 
 
 def test_scorer_printer_cannot_be_instantiated():
@@ -37,6 +37,12 @@ def test_scorer_printer_complete_subclass_can_be_instantiated():
 
         def print_harm_scorer(self, scorer_identifier: ComponentIdentifier, *, harm_category: str) -> None:
             pass
+
+        def get_objective_metrics(self, *, eval_hash: str):
+            return None
+
+        def get_harm_metrics(self, *, eval_hash: str, harm_category: str):
+            return None
 
     printer = CompletePrinter()
     assert isinstance(printer, ScorerPrinter)

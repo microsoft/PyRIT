@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack.printer.markdown_printer import MarkdownAttackResultPrinter
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, Message, MessagePiece, Score
+from pyrit.printer.attack_result.markdown import MarkdownAttackMemoryPrinter as MarkdownAttackResultPrinter
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -25,7 +25,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
 @pytest.fixture
 def mock_memory():
     memory = MagicMock(spec=CentralMemory)
-    with patch("pyrit.executor.attack.printer.markdown_printer.CentralMemory") as mock_central_memory:
+    with patch("pyrit.memory.CentralMemory") as mock_central_memory:
         mock_central_memory.get_memory_instance.return_value = memory
         mock_central_memory.get_conversation.return_value = []
         yield memory

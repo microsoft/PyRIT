@@ -36,6 +36,36 @@ class ConversationReference:
         """
         return hash(self.conversation_id)
 
+    def to_dict(self) -> dict[str, str | None]:
+        """
+        Serialize to a JSON-compatible dictionary.
+
+        Returns:
+            dict[str, str | None]: Dictionary with conversation_id, conversation_type, and description.
+        """
+        return {
+            "conversation_id": self.conversation_id,
+            "conversation_type": self.conversation_type.value,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, str | None]) -> ConversationReference:
+        """
+        Reconstruct a ConversationReference from a dictionary.
+
+        Args:
+            data (dict[str, str | None]): Dictionary as produced by to_dict().
+
+        Returns:
+            ConversationReference: Reconstructed instance.
+        """
+        return cls(
+            conversation_id=str(data["conversation_id"]),
+            conversation_type=ConversationType(data["conversation_type"]),
+            description=data.get("description"),
+        )
+
     def __eq__(self, other: object) -> bool:
         """
         Compare two references by conversation ID.

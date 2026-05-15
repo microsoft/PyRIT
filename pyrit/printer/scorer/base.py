@@ -6,24 +6,17 @@ from abc import ABC, abstractmethod
 from pyrit.identifiers import ComponentIdentifier
 
 
-class ScorerPrinter(ABC):
+class ScorerPrinterBase(ABC):
     """
     Abstract base class for printing scorer information.
 
-    This interface defines the contract for printing scorer details including
-    type information, nested sub-scorers, and evaluation metrics from the registry.
-    Implementations can render output to console, logs, files, or other outputs.
+    Subclasses must implement print_objective_scorer and print_harm_scorer.
     """
 
     @abstractmethod
     def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
         """
         Print objective scorer information including type, nested scorers, and evaluation metrics.
-
-        This method displays:
-        - Scorer type and identity information
-        - Nested sub-scorers (for composite scorers)
-        - Objective evaluation metrics (accuracy, precision, recall, F1) from the registry
 
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
@@ -34,12 +27,7 @@ class ScorerPrinter(ABC):
         """
         Print harm scorer information including type, nested scorers, and evaluation metrics.
 
-        This method displays:
-        - Scorer type and identity information
-        - Nested sub-scorers (for composite scorers)
-        - Harm evaluation metrics (MAE, Krippendorff alpha) from the registry
-
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
-            harm_category (str): The harm category for looking up metrics (e.g., "hate_speech", "violence").
+            harm_category (str): The harm category for looking up metrics.
         """
