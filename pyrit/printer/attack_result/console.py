@@ -8,7 +8,7 @@ from typing import Any
 
 from colorama import Back, Fore, Style
 
-from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
+from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.printer.attack_result.base import AttackResultPrinterBase
 
 
@@ -111,7 +111,7 @@ class ConsoleAttackPrinterBase(AttackResultPrinterBase):
 
     async def print_messages_async(
         self,
-        messages: list[Any],
+        messages: list[Message],
         *,
         include_scores: bool = False,
         include_reasoning_trace: bool = False,
@@ -483,6 +483,12 @@ class ConsoleAttackPrinterBase(AttackResultPrinterBase):
             }.get(outcome, Fore.WHITE)
         )
 
+    async def display_image_async(self, piece: MessagePiece) -> None:
+        """Display images using PIL/IPython in notebook environments."""
+        from pyrit.common.display_response import display_image_response
+
+        await display_image_response(piece)
+
 
 class ConsoleAttackMemoryPrinter(ConsoleAttackPrinterBase):
     """
@@ -523,11 +529,3 @@ class ConsoleAttackMemoryPrinter(ConsoleAttackPrinterBase):
             list[Score]: The scores.
         """
         return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
-
-    async def display_image_async(self, piece: object) -> None:
-        """Display images using PIL/IPython in notebook environments."""
-        from pyrit.common.display_response import display_image_response
-        from pyrit.models import MessagePiece
-
-        if isinstance(piece, MessagePiece):
-            await display_image_response(piece)
