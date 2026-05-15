@@ -504,6 +504,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
                 request["scenario_params"] = scenario_params
 
             # Start the run
+            total_strategies = len(request.get("strategies") or scenario_meta.get("all_strategies") or [])
             print(f"\nRunning scenario: {scenario_name}")
             sys.stdout.flush()
 
@@ -521,7 +522,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
                     run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
                     status = run.get("status", "UNKNOWN")
 
-                    _output.print_scenario_run_progress(run=run)
+                    _output.print_scenario_run_progress(run=run, total_strategies=total_strategies)
 
                     if status in _TERMINAL_STATUSES:
                         break

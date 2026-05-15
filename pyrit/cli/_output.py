@@ -193,27 +193,40 @@ def print_target_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_run_progress(*, run: dict[str, Any]) -> None:
+def print_scenario_run_progress(*, run: dict[str, Any], total_strategies: int = 0) -> None:
     """
     Print a single-line progress update (overwrites the current line).
 
     Args:
         run: ScenarioRunSummary dict from ``GET /api/scenarios/runs/{id}``.
+        total_strategies: Total number of strategies expected (0 if unknown).
     """
-    status = run.get("status", "UNKNOWN")
+    run_status = run.get("status", "UNKNOWN")
     total = run.get("total_attacks", 0)
     completed = run.get("completed_attacks", 0)
     rate = run.get("objective_achieved_rate", 0)
+    strategies_done = len(run.get("strategies_used") or [])
+
+    parts: list[str] = []
+
+    if total_strategies > 0:
+        parts.append(f"strategies: {strategies_done}/{total_strategies}")
+    elif strategies_done > 0:
+        parts.append(f"strategies: {strategies_done}")
 
     if total > 0:
-        pct = int((completed / total) * 100) if total else 0
+        pct = int((completed / total) * 100)
         bar_width = 30
         filled = int(bar_width * completed / total)
         bar = "█" * filled + "░" * (bar_width - filled)
-        line = f"\r  [{bar}] {completed}/{total} attacks ({pct}%) | success rate: {rate}% | {status}"
+        parts.append(f"[{bar}] {completed}/{total} attacks ({pct}%)")
     else:
-        line = f"\r  Status: {status} | attacks: {completed} | success rate: {rate}%"
+        parts.append(f"attacks: {completed}")
 
+    parts.append(f"success rate: {rate}%")
+    parts.append(run_status)
+
+    line = "\r  " + " | ".join(parts)
     sys.stdout.write(line)
     sys.stdout.flush()
 

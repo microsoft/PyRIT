@@ -284,6 +284,7 @@ class PyRITShell(cmd.Cmd):
             request["labels"] = args["memory_labels"]
 
         # Start run
+        total_strategies = len(request.get("strategies") or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
@@ -300,7 +301,7 @@ class PyRITShell(cmd.Cmd):
             while True:
                 run = asyncio.run(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
                 status = run.get("status", "UNKNOWN")
-                print_scenario_run_progress(run=run)
+                print_scenario_run_progress(run=run, total_strategies=total_strategies)
                 if status in self._TERMINAL_STATUSES:
                     break
                 import time
