@@ -53,7 +53,7 @@ class SeedDatasetProvider(ABC):
             warnings.warn(
                 f"{cls.__name__} overrides the deprecated fetch_dataset method. "
                 "Rename the override to fetch_dataset_async; fetch_dataset will be "
-                "removed in a future release.",
+                "removed in v0.16.0.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -96,7 +96,8 @@ class SeedDatasetProvider(ABC):
         if cls.fetch_dataset is SeedDatasetProvider.fetch_dataset:
             raise NotImplementedError(f"{cls.__name__} must implement fetch_dataset_async.")
         warnings.warn(
-            f"{cls.__name__}.fetch_dataset is deprecated; rename the override to fetch_dataset_async.",
+            f"{cls.__name__}.fetch_dataset is deprecated and will be removed in v0.16.0; "
+            "rename the override to fetch_dataset_async.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -116,7 +117,8 @@ class SeedDatasetProvider(ABC):
             SeedDataset: The fetched dataset with prompts.
         """
         warnings.warn(
-            "SeedDatasetProvider.fetch_dataset is deprecated; use fetch_dataset_async instead.",
+            "SeedDatasetProvider.fetch_dataset is deprecated and will be removed in v0.16.0; "
+            "use fetch_dataset_async instead.",
             DeprecationWarning,
             stacklevel=2,
         )
