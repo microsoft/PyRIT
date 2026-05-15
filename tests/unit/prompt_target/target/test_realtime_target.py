@@ -11,6 +11,7 @@ from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
 from pyrit.prompt_target.common.realtime_audio import RealtimeTargetResult, _RealtimeTurnState
+from pyrit.prompt_target.openai.openai_realtime_target import _OpenAIRealtimeDispatcher
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -598,25 +599,32 @@ def _turn_state(*, response_id: str | None = "resp_abc", item_id: str | None = "
     )
 
 
-async def test_cancel_calls_response_cancel_with_state_response_id(target):
-    """_cancel_in_flight_response must forward state.last_response_id to response.cancel."""
+def _make_dispatcher(connection):
+    """Build an _OpenAIRealtimeDispatcher around the given mock connection."""
+    return _OpenAIRealtimeDispatcher(connection=connection)
+
+
+async def test_cancel_calls_response_cancel_with_state_response_id():
+    """_cancel must forward state.last_response_id to response.cancel."""
     connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
     state = _turn_state(response_id="resp_42")
     state.delivered_audio.extend(b"\x00" * 4800)
 
-    await target._cancel_in_flight_response(connection=connection, state=state)
+    await dispatcher._cancel(state=state)
 
     connection.response.cancel.assert_awaited_once_with(response_id="resp_42")
 
 
-async def test_cancel_truncates_to_delivered_audio_ms(target):
+async def test_cancel_truncates_to_delivered_audio_ms():
     """Truncate must be called with audio_end_ms computed from delivered_audio length."""
     connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
     state = _turn_state(item_id="item_99")
     # 4800 delivered bytes / 48 bytes-per-ms = 100ms
     state.delivered_audio.extend(b"\x00" * 4800)
 
-    await target._cancel_in_flight_response(connection=connection, state=state)
+    await dispatcher._cancel(state=state)
 
     connection.conversation.item.truncate.assert_awaited_once_with(
         item_id="item_99",
@@ -626,13 +634,134 @@ async def test_cancel_truncates_to_delivered_audio_ms(target):
     assert state.interrupted is True
 
 
-async def test_cancel_marks_interrupted_even_when_wire_call_raises(target, caplog):
-    """A failed cancel must log a warning and still flip state.interrupted."""
+async def test_cancel_marks_interrupted_even_when_response_cancel_raises(caplog):
+    """A failed response.cancel must log at debug (likely server-side cancelled) and still flip state.interrupted."""
     connection = AsyncMock()
     connection.response.cancel.side_effect = RuntimeError("boom")
+    dispatcher = _make_dispatcher(connection)
     state = _turn_state()
 
-    await target._cancel_in_flight_response(connection=connection, state=state)
+    with caplog.at_level("DEBUG"):
+        await dispatcher._cancel(state=state)
 
     assert state.interrupted is True
-    assert any("Cancel/truncate failed" in record.message for record in caplog.records)
+    # Truncate must still have been attempted despite the cancel failure.
+    connection.conversation.item.truncate.assert_awaited_once()
+    assert any("response.cancel raised" in record.message and record.levelname == "DEBUG" for record in caplog.records)
+
+
+async def test_cancel_marks_interrupted_when_truncate_raises(caplog):
+    """A failed conversation.item.truncate must log a warning and still flip state.interrupted."""
+    connection = AsyncMock()
+    connection.conversation.item.truncate.side_effect = RuntimeError("boom")
+    dispatcher = _make_dispatcher(connection)
+    state = _turn_state()
+
+    await dispatcher._cancel(state=state)
+
+    assert state.interrupted is True
+    assert any(
+        "conversation.item.truncate failed" in record.message and record.levelname == "WARNING"
+        for record in caplog.records
+    )
+
+
+def _scripted_event(event_type, **fields):
+    """Build a MagicMock event with the named type plus any extra attribute paths."""
+    event = MagicMock()
+    event.type = event_type
+    for path, value in fields.items():
+        # Allow dotted attribute paths like "response.id" by walking nested MagicMocks.
+        parts = path.split(".")
+        target_attr = event
+        for part in parts[:-1]:
+            target_attr = getattr(target_attr, part)
+        setattr(target_attr, parts[-1], value)
+    return event
+
+
+async def test_route_event_happy_path_resolves_completion_with_assembled_result():
+    """response.created -> output_item.added -> audio.delta -> transcript.delta -> response.done."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
+    await dispatcher._route_event(event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state)
+    await dispatcher._route_event(
+        event=_scripted_event("response.audio.delta", delta=base64.b64encode(b"\xaa" * 4800).decode("ascii")),
+        state=state,
+    )
+    await dispatcher._route_event(event=_scripted_event("response.audio_transcript.delta", delta="hello "), state=state)
+    await dispatcher._route_event(event=_scripted_event("response.audio_transcript.delta", delta="world"), state=state)
+    await dispatcher._route_event(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
+
+    assert state.completion.done()
+    result = state.completion.result()
+    assert result.audio_bytes == b"\xaa" * 4800
+    assert result.transcripts == ["hello ", "world"]
+    assert state.interrupted is False
+
+
+async def test_route_event_speech_started_while_responding_cancels_and_resolves_interrupted():
+    """speech_started during a response triggers cancel and resolves with interrupted=True."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
+    await dispatcher._route_event(event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state)
+    await dispatcher._route_event(
+        event=_scripted_event("response.audio.delta", delta=base64.b64encode(b"\xbb" * 2400).decode("ascii")),
+        state=state,
+    )
+    await dispatcher._route_event(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
+
+    connection.response.cancel.assert_awaited_once_with(response_id="r1")
+    connection.conversation.item.truncate.assert_awaited_once_with(
+        item_id="i1",
+        content_index=0,
+        audio_end_ms=50,  # 2400 / 48
+    )
+    result = state.completion.result()
+    assert result.audio_bytes == b"\xbb" * 2400
+    assert state.interrupted is True
+
+
+async def test_route_event_stale_response_done_after_cancel_is_dropped():
+    """A response.done with a stale response_id must not re-resolve a completed future."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    # Pretend a turn just resolved as interrupted on response_id r1.
+    state.last_response_id = "r1"
+    state.completion.set_result(RealtimeTargetResult())
+
+    # Late response.done for r1 arrives; router must not raise InvalidStateError.
+    await dispatcher._route_event(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
+
+
+async def test_route_event_error_resolves_with_exception():
+    """error events resolve the completion future via set_exception."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event(event=_scripted_event("error", **{"error.message": "rate limited"}), state=state)
+
+    with pytest.raises(RuntimeError, match="rate limited"):
+        state.completion.result()
+
+
+async def test_route_event_speech_started_without_responding_is_noop():
+    """speech_started before a response is in flight does not call cancel or resolve."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
+
+    connection.response.cancel.assert_not_awaited()
+    connection.conversation.item.truncate.assert_not_awaited()
+    assert not state.completion.done()
+    assert state.interrupted is False

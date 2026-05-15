@@ -24,6 +24,7 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,
+    _RealtimeEventDispatcher,
     _RealtimeTurnState,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -520,39 +521,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         if commit:
             await connection.input_audio_buffer.commit()
 
-    async def _cancel_in_flight_response(
-        self,
-        *,
-        connection: Any,
-        state: _RealtimeTurnState,
-    ) -> None:
-        """
-        Cancel the in-flight response and truncate the assistant item to delivered bytes.
-
-        Sends ``response.cancel`` and ``conversation.item.truncate`` so the server stops
-        generating and prunes its conversation history to only what was actually delivered.
-        Marks ``state.interrupted = True`` even if either wire call fails so callers can
-        tell the turn was cut short. Resolving the completion future is the dispatcher's
-        responsibility, not this method's.
-
-        Args:
-            connection: Active Realtime API connection from ``self.connect()``.
-            state (_RealtimeTurnState): The turn whose response should be cancelled.
-        """
-        try:
-            if state.last_response_id is not None:
-                await connection.response.cancel(response_id=state.last_response_id)
-            if state.current_item_id is not None:
-                await connection.conversation.item.truncate(
-                    item_id=state.current_item_id,
-                    content_index=0,
-                    # PCM16 @ 24 kHz: 48 bytes per millisecond.
-                    audio_end_ms=len(state.delivered_audio) // 48,
-                )
-        except Exception as e:
-            logger.warning(f"Cancel/truncate failed for response {state.last_response_id}: {e}")
-        state.interrupted = True
-
     async def receive_events(self, conversation_id: str) -> RealtimeTargetResult:
         """
         Continuously receive events from the OpenAI Realtime API connection.
@@ -883,3 +851,107 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         This implementation exists to satisfy the abstract base class requirement.
         """
         raise NotImplementedError("RealtimeTarget uses receive_events for message construction")
+
+
+class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
+    """
+    Concrete ``_RealtimeEventDispatcher`` for the OpenAI Realtime API.
+
+    Routes OpenAI server events into the active ``_RealtimeTurnState`` and issues
+    ``response.cancel`` plus ``conversation.item.truncate`` when interrupted.
+    """
+
+    async def _route_event(self, *, event: Any, state: _RealtimeTurnState) -> None:
+        """Update state and resolve completion based on OpenAI Realtime events."""
+        if state.completion.done():
+            return
+
+        event_type = getattr(event, "type", "")
+
+        if event_type == "response.created":
+            state.is_responding = True
+            response = getattr(event, "response", None)
+            if response is not None:
+                state.last_response_id = getattr(response, "id", None)
+            return
+
+        if event_type in ("response.output_item.added", "response.output_item.created"):
+            item = getattr(event, "item", None)
+            if item is not None:
+                state.current_item_id = getattr(item, "id", None)
+            return
+
+        if event_type in ("response.audio.delta", "response.output_audio.delta"):
+            delta = getattr(event, "delta", "")
+            if delta:
+                state.delivered_audio.extend(base64.b64decode(delta))
+            return
+
+        if event_type in ("response.audio_transcript.delta", "response.output_audio_transcript.delta"):
+            delta = getattr(event, "delta", "")
+            if delta:
+                state.delivered_transcripts.append(delta)
+            return
+
+        if event_type == "response.done":
+            response = getattr(event, "response", None)
+            done_response_id = getattr(response, "id", None) if response is not None else None
+            if state.last_response_id is not None and done_response_id != state.last_response_id:
+                # Stale event from a cancelled response; drop without resolving.
+                return
+            state.is_responding = False
+            state.completion.set_result(
+                RealtimeTargetResult(
+                    audio_bytes=bytes(state.delivered_audio),
+                    transcripts=list(state.delivered_transcripts),
+                )
+            )
+            return
+
+        if event_type == "input_audio_buffer.speech_started" and state.is_responding:
+            await self._cancel(state=state)
+            state.is_responding = False
+            state.completion.set_result(
+                RealtimeTargetResult(
+                    audio_bytes=bytes(state.delivered_audio),
+                    transcripts=list(state.delivered_transcripts),
+                )
+            )
+            return
+
+        if event_type == "error":
+            error = getattr(event, "error", None)
+            message = getattr(error, "message", "unknown") if error is not None else "unknown"
+            state.completion.set_exception(RuntimeError(f"Realtime API error: {message}"))
+            return
+
+    async def _cancel(self, *, state: _RealtimeTurnState) -> None:
+        """
+        Send ``response.cancel`` + ``conversation.item.truncate`` for the in-flight response.
+
+        Marks ``state.interrupted = True`` even when either wire call fails.
+        Does not resolve ``state.completion``; the caller (``_route_event``) does that.
+
+        Args:
+            state (_RealtimeTurnState): The turn whose response should be cancelled.
+        """
+        if state.last_response_id is not None:
+            try:
+                await self._connection.response.cancel(response_id=state.last_response_id)
+            except Exception as e:
+                logger.debug(f"response.cancel raised for {state.last_response_id} (likely cancelled server-side): {e}")
+        if state.current_item_id is not None:
+            # PCM16 @ 24 kHz: 48 bytes per millisecond.
+            audio_end_ms = len(state.delivered_audio) // 48
+            try:
+                await self._connection.conversation.item.truncate(
+                    item_id=state.current_item_id,
+                    content_index=0,
+                    audio_end_ms=audio_end_ms,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"conversation.item.truncate failed for item {state.current_item_id} "
+                    f"(audio_end_ms={audio_end_ms}): {e}"
+                )
+        state.interrupted = True
