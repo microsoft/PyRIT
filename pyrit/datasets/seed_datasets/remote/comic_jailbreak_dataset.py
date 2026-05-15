@@ -137,7 +137,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "comic_jailbreak"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch ComicJailbreak dataset and return as SeedDataset of image+text pairs.
 

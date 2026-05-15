@@ -41,7 +41,7 @@ async def test_fetch_dataset(mock_harmbench_mm_data):
         patch.object(loader, "_fetch_from_url", return_value=mock_harmbench_mm_data),
         patch.object(loader, "_fetch_and_save_image_async", new=AsyncMock(return_value="/path/to/image.png")),
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     # Only multimodal entry => 2 prompts (image + text)
@@ -80,7 +80,7 @@ async def test_fetch_dataset_skips_failed_images():
             new=AsyncMock(side_effect=[Exception("download failed"), "/path/to/image.png"]),
         ),
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     # First image failed, second succeeded => 2 prompts (image + text for second)
     assert len(dataset.seeds) == 2
@@ -109,7 +109,7 @@ async def test_fetch_dataset_filters_by_category():
         patch.object(loader, "_fetch_from_url", return_value=data),
         patch.object(loader, "_fetch_and_save_image_async", new=AsyncMock(return_value="/path/to/image.png")),
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     # Only "illegal" category matched => 2 prompts (image + text)
     assert len(dataset.seeds) == 2
@@ -122,7 +122,7 @@ async def test_fetch_dataset_missing_keys_raises():
 
     with patch.object(loader, "_fetch_from_url", return_value=bad_data):
         with pytest.raises(ValueError, match="Missing keys"):
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
 
 def test_dataset_name():

@@ -39,11 +39,11 @@ class TestBabelscapeAlertDataset:
     """Test the Babelscape ALERT dataset loader."""
 
     async def test_fetch_dataset_returns_seed_dataset(self, mock_alert_data):
-        """Test that fetch_dataset returns a SeedDataset with correct prompts."""
+        """Test that fetch_dataset_async returns a SeedDataset with correct prompts."""
         loader = _BabelscapeAlertDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_alert_data)):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -54,7 +54,7 @@ class TestBabelscapeAlertDataset:
         loader = _BabelscapeAlertDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_alert_data)):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             first_prompt = dataset.seeds[0]
             assert first_prompt.harm_categories == ["crime_injury"]

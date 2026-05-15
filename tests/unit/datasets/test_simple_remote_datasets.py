@@ -138,7 +138,7 @@ async def test_fetch_dataset(loader_class):
         mock_kwargs["new_callable"] = AsyncMock
 
     with patch.object(loader, config["fetch_method"], **mock_kwargs):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     assert len(dataset.seeds) == 2

@@ -52,7 +52,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "cbt_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CBT-Bench dataset from HuggingFace and return as SeedDataset.
 

@@ -49,7 +49,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     - HuggingFace Hub
 
     Subclasses must implement:
-    - fetch_dataset(): Fetch and return the dataset as a SeedDataset
+    - fetch_dataset_async(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
     """
 

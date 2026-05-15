@@ -73,7 +73,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "medsafetybench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MedSafetyBench dataset and return as SeedDataset.
 
