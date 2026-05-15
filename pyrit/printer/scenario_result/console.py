@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import textwrap
-from typing import Optional
+from abc import abstractmethod
 
 from colorama import Fore, Style
 
@@ -16,8 +16,8 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
     """
     Console printer base for scenario results with enhanced formatting.
 
-    Contains all formatting logic. Accepts a ScorerPrinterBase for printing
-    scorer information. Subclasses can provide a concrete scorer printer.
+    Contains all formatting logic. Subclasses must provide a scorer_printer
+    via the abstract property.
     """
 
     def __init__(
@@ -26,7 +26,6 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
         width: int = 100,
         indent_size: int = 2,
         enable_colors: bool = True,
-        scorer_printer: Optional[ScorerPrinterBase] = None,
     ) -> None:
         """
         Initialize the console printer.
@@ -35,12 +34,15 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
-            scorer_printer (Optional[ScorerPrinterBase]): Printer for scorer information.
         """
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
-        self._scorer_printer = scorer_printer
+
+    @property
+    @abstractmethod
+    def scorer_printer(self) -> ScorerPrinterBase:
+        """Return the scorer printer instance."""
 
     def _print_colored(self, text: str, *colors: str) -> None:
         """
@@ -104,8 +106,8 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
         self._print_colored(f"{self._indent * 2}• Target Endpoint: {target_endpoint}", Fore.CYAN)
 
         scorer_identifier = result.objective_scorer_identifier
-        if scorer_identifier and self._scorer_printer:
-            self._scorer_printer.print_objective_scorer(scorer_identifier=scorer_identifier)
+        if scorer_identifier:
+            self.scorer_printer.print_objective_scorer(scorer_identifier=scorer_identifier)
 
         self._print_section_header("Overall Statistics")
         total_results = sum(len(results) for results in result.attack_results.values())
@@ -192,7 +194,6 @@ class ConsoleScenarioMemoryPrinter(ConsoleScenarioPrinterBase):
         width: int = 100,
         indent_size: int = 2,
         enable_colors: bool = True,
-        scorer_printer: Optional[ScorerPrinterBase] = None,
     ) -> None:
         """
         Initialize the console printer.
@@ -201,16 +202,13 @@ class ConsoleScenarioMemoryPrinter(ConsoleScenarioPrinterBase):
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
-            scorer_printer (Optional[ScorerPrinterBase]): Printer for scorer information.
-                If not provided, a ConsoleScorerMemoryPrinter with matching settings is created.
         """
-        if scorer_printer is None:
-            from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
+        super().__init__(width=width, indent_size=indent_size, enable_colors=enable_colors)
+        from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
 
-            scorer_printer = ConsoleScorerMemoryPrinter(indent_size=indent_size, enable_colors=enable_colors)
-        super().__init__(
-            width=width,
-            indent_size=indent_size,
-            enable_colors=enable_colors,
-            scorer_printer=scorer_printer,
-        )
+        self._scorer_printer = ConsoleScorerMemoryPrinter(indent_size=indent_size, enable_colors=enable_colors)
+
+    @property
+    def scorer_printer(self) -> ScorerPrinterBase:
+        """Return the scorer printer instance."""
+        return self._scorer_printer

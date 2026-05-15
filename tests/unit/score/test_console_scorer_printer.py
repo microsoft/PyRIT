@@ -341,7 +341,7 @@ def test_print_harm_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys):
     mock_eval_id_cls.return_value = mock_eval_instance
     mock_find.return_value = metrics
 
-    printer.print_harm_scorer(identifier, harm_category="hate_speech")
+    printer.print_harm_scorer(scorer_identifier=identifier, harm_category="hate_speech")
     output = capsys.readouterr().out
 
     assert "Scorer Information" in output
@@ -361,6 +361,6 @@ def test_print_harm_scorer_no_metrics(mock_eval_id_cls, mock_find, capsys):
     mock_eval_id_cls.return_value = mock_eval_instance
     mock_find.return_value = None
 
-    printer.print_harm_scorer(identifier, harm_category="violence")
+    printer.print_harm_scorer(scorer_identifier=identifier, harm_category="violence")
     output = capsys.readouterr().out
     assert "Official evaluation has not been run yet" in output

@@ -247,9 +247,13 @@ class AttackResult(StrategyResult):
             "outcome": self.outcome.value,
             "outcome_reason": self.outcome_reason,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "related_conversations": [
-                ref.to_dict() if isinstance(ref, ConversationReference) else ref for ref in self.related_conversations
-            ],
+            "related_conversations": sorted(
+                [
+                    ref.to_dict() if isinstance(ref, ConversationReference) else ref
+                    for ref in self.related_conversations
+                ],
+                key=lambda r: r["conversation_id"] if isinstance(r, dict) else "",
+            ),
             "metadata": self.metadata,
             "labels": self.labels,
             "error_message": self.error_message,

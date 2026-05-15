@@ -213,41 +213,6 @@ class ConsoleScorerPrinterBase(ScorerPrinterBase):
                 f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
             )
 
-
-class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
-    """
-    Framework console printer for scorer information.
-
-    Implements metrics fetching via the scorer evaluation registry (deferred import).
-    All formatting logic lives in ConsoleScorerPrinterBase.
-    """
-
-    def get_objective_metrics(self, *, eval_hash: str) -> Any:
-        """
-        Fetch objective scorer evaluation metrics from the registry.
-
-        Returns:
-            ObjectiveScorerMetrics or None: The metrics, or None if not found.
-        """
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_eval_hash,
-        )
-
-        return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
-
-    def get_harm_metrics(self, *, eval_hash: str, harm_category: str) -> Any:
-        """
-        Fetch harm scorer evaluation metrics from the registry.
-
-        Returns:
-            HarmScorerMetrics or None: The metrics, or None if not found.
-        """
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_harm_metrics_by_eval_hash,
-        )
-
-        return find_harm_metrics_by_eval_hash(eval_hash=eval_hash, harm_category=harm_category)
-
     def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
         """
         Print objective scorer information including type, nested scorers, and evaluation metrics.
@@ -263,10 +228,10 @@ class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
         self._print_scorer_info(scorer_identifier, indent_level=3)
 
         eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-        metrics = self.get_objective_metrics(eval_hash=eval_hash)
+        metrics = self._get_objective_metrics(eval_hash=eval_hash)
         self._print_objective_metrics(metrics)
 
-    def print_harm_scorer(self, scorer_identifier: ComponentIdentifier, *, harm_category: str) -> None:
+    def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
         """
         Print harm scorer information including type, nested scorers, and evaluation metrics.
 
@@ -282,5 +247,40 @@ class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
         self._print_scorer_info(scorer_identifier, indent_level=3)
 
         eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-        metrics = self.get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
+        metrics = self._get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
         self._print_harm_metrics(metrics)
+
+
+class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
+    """
+    Framework console printer for scorer information.
+
+    Implements metrics fetching via the scorer evaluation registry (deferred import).
+    All formatting logic lives in ConsoleScorerPrinterBase.
+    """
+
+    def _get_objective_metrics(self, *, eval_hash: str) -> Any:
+        """
+        Fetch objective scorer evaluation metrics from the registry.
+
+        Returns:
+            ObjectiveScorerMetrics or None: The metrics, or None if not found.
+        """
+        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+            find_objective_metrics_by_eval_hash,
+        )
+
+        return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
+
+    def _get_harm_metrics(self, *, eval_hash: str, harm_category: str) -> Any:
+        """
+        Fetch harm scorer evaluation metrics from the registry.
+
+        Returns:
+            HarmScorerMetrics or None: The metrics, or None if not found.
+        """
+        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+            find_harm_metrics_by_eval_hash,
+        )
+
+        return find_harm_metrics_by_eval_hash(eval_hash=eval_hash, harm_category=harm_category)
