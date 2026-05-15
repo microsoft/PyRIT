@@ -10,6 +10,31 @@ This module provides functions for converting between different naming conventio
 
 import re
 
+# Valid registry names: lowercase letter followed by up to 63 lowercase
+# letters, digits, or underscores.  This matches the output of
+# class_name_to_snake_case and is safe for use as filesystem components.
+REGISTRY_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+
+_REGISTRY_NAME_RE = re.compile(REGISTRY_NAME_PATTERN)
+
+
+def validate_registry_name(name: str) -> None:
+    """
+    Validate that *name* is a legal registry name.
+
+    Args:
+        name: The name to validate.
+
+    Raises:
+        ValueError: If *name* does not match the required pattern.
+    """
+    if not _REGISTRY_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid registry name '{name}'. "
+            f"Names must match {REGISTRY_NAME_PATTERN} "
+            "(lowercase ASCII, digits, underscores; 1-64 chars; must start with a letter)."
+        )
+
 
 def class_name_to_snake_case(class_name: str, *, suffix: str = "") -> str:
     """

@@ -8,11 +8,10 @@ Initializers configure the PyRIT environment (targets, datasets, env vars)
 before scenario execution. These models represent initializer metadata.
 """
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.identifiers.class_name_utils import REGISTRY_NAME_PATTERN
 
 
 class InitializerParameterSummary(BaseModel):
@@ -20,7 +19,7 @@ class InitializerParameterSummary(BaseModel):
 
     name: str = Field(..., description="Parameter name")
     description: str = Field(..., description="Human-readable description of the parameter")
-    default: Optional[list[str]] = Field(None, description="Default value(s), or None if required")
+    default: list[str] | None = Field(None, description="Default value(s), or None if required")
 
 
 class RegisteredInitializer(BaseModel):
@@ -42,3 +41,14 @@ class ListRegisteredInitializersResponse(BaseModel):
 
     items: list[RegisteredInitializer] = Field(..., description="List of initializer summaries")
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class RegisterInitializerRequest(BaseModel):
+    """Request body for registering a custom initializer by uploading script content."""
+
+    name: str = Field(
+        ...,
+        pattern=REGISTRY_NAME_PATTERN,
+        description="Registry name for the initializer (e.g., 'my_custom')",
+    )
+    script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")

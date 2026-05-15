@@ -310,6 +310,23 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         self._class_entries[name] = entry
         self._metadata_cache = None
 
+    def unregister(self, name: str) -> None:
+        """
+        Remove a registered class from the registry.
+
+        Args:
+            name: The registry name of the class to remove.
+
+        Raises:
+            KeyError: If the name is not registered.
+        """
+        self._ensure_discovered()
+        if name not in self._class_entries:
+            available = ", ".join(self.get_names())
+            raise KeyError(f"'{name}' not found in registry. Available: {available}")
+        del self._class_entries[name]
+        self._metadata_cache = None
+
     def create_instance(self, name: str, **kwargs: object) -> T:
         """
         Create an instance of a registered class.
