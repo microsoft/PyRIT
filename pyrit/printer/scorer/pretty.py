@@ -7,11 +7,12 @@ from colorama import Fore, Style
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.printer.scorer.base import ScorerPrinterBase
+from pyrit.printer.sink import Sink
 
 
-class ConsoleScorerPrinterBase(ScorerPrinterBase):
+class PrettyScorerPrinter(ScorerPrinterBase):
     """
-    Console printer base for scorer information with enhanced formatting.
+    Pretty printer for scorer information with ANSI-colored formatting.
 
     Contains all formatting logic. Subclasses implement get_objective_metrics
     and get_harm_metrics for data fetching.
@@ -20,17 +21,19 @@ class ConsoleScorerPrinterBase(ScorerPrinterBase):
     _SCORER_DISPLAY_PARAMS = frozenset({"scorer_type", "score_aggregator"})
     _TARGET_DISPLAY_PARAMS = frozenset({"model_name", "temperature"})
 
-    def __init__(self, *, indent_size: int = 2, enable_colors: bool = True) -> None:
+    def __init__(self, *, sink: Sink | None = None, indent_size: int = 2, enable_colors: bool = True) -> None:
         """
-        Initialize the console scorer printer.
+        Initialize the pretty scorer printer.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
 
         Raises:
             ValueError: If indent_size is negative.
         """
+        super().__init__(sink=sink)
         if indent_size < 0:
             raise ValueError("indent_size must be non-negative")
         self._indent = " " * indent_size
@@ -251,12 +254,12 @@ class ConsoleScorerPrinterBase(ScorerPrinterBase):
         self._print_harm_metrics(metrics)
 
 
-class ConsoleScorerMemoryPrinter(ConsoleScorerPrinterBase):
+class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
     """
-    Framework console printer for scorer information.
+    Framework pretty printer for scorer information.
 
     Implements metrics fetching via the scorer evaluation registry (deferred import).
-    All formatting logic lives in ConsoleScorerPrinterBase.
+    All formatting logic lives in PrettyScorerPrinter.
     """
 
     def _get_objective_metrics(self, *, eval_hash: str) -> Any:

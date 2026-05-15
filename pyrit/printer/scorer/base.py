@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any
 
 from pyrit.identifiers import ComponentIdentifier
+from pyrit.printer.base import PrinterBase
 
 
-class ScorerPrinterBase(ABC):
+class ScorerPrinterBase(PrinterBase):
     """
     Abstract base class for printing scorer information.
 

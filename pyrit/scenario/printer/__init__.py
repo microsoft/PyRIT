@@ -13,7 +13,7 @@ import warnings as _warnings
 
 def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
-        "ConsoleScenarioResultPrinter": "pyrit.printer.scenario_result.console",
+        "ConsoleScenarioResultPrinter": "pyrit.printer.scenario_result.pretty",
         "ScenarioResultPrinter": "pyrit.printer.scenario_result.base",
     }
     if name in _deprecated:
@@ -25,9 +25,9 @@ def __getattr__(name: str) -> type:  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleScenarioResultPrinter":
-            from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter
+            from pyrit.printer.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
-            return ConsoleScenarioMemoryPrinter
+            return PrettyScenarioResultMemoryPrinter
         if name == "ScenarioResultPrinter":
             from pyrit.printer.scenario_result.base import ScenarioResultPrinterBase
 

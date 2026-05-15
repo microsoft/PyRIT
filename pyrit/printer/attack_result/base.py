@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 from pyrit.models import AttackOutcome, Message, MessagePiece, Score
+from pyrit.printer.base import PrinterBase
 
 
-class AttackResultPrinterBase(ABC):
+class AttackResultPrinterBase(PrinterBase):
     """
     Abstract base class for printing attack results.
 

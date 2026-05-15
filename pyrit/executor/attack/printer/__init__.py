@@ -13,7 +13,7 @@ import warnings as _warnings
 
 def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
-        "ConsoleAttackResultPrinter": "pyrit.printer.attack_result.console",
+        "ConsoleAttackResultPrinter": "pyrit.printer.attack_result.pretty",
         "MarkdownAttackResultPrinter": "pyrit.printer.attack_result.markdown",
         "AttackResultPrinter": "pyrit.printer.attack_result.base",
     }
@@ -26,17 +26,17 @@ def __getattr__(name: str) -> type:  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleAttackResultPrinter":
-            from pyrit.printer.attack_result.console import ConsoleAttackMemoryPrinter
+            from pyrit.printer.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
-            return ConsoleAttackMemoryPrinter
+            return PrettyAttackResultMemoryPrinter
         if name == "AttackResultPrinter":
             from pyrit.printer.attack_result.base import AttackResultPrinterBase
 
             return AttackResultPrinterBase
         if name == "MarkdownAttackResultPrinter":
-            from pyrit.printer.attack_result.markdown import MarkdownAttackMemoryPrinter
+            from pyrit.printer.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
-            return MarkdownAttackMemoryPrinter
+            return MarkdownAttackResultMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

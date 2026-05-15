@@ -13,7 +13,7 @@ import warnings as _warnings
 
 def __getattr__(name: str) -> type:  # noqa: N807
     _deprecated = {
-        "ConsoleScorerPrinter": "pyrit.printer.scorer.console",
+        "ConsoleScorerPrinter": "pyrit.printer.scorer.pretty",
         "ScorerPrinter": "pyrit.printer.scorer.base",
     }
     if name in _deprecated:
@@ -25,9 +25,9 @@ def __getattr__(name: str) -> type:  # noqa: N807
             stacklevel=2,
         )
         if name == "ConsoleScorerPrinter":
-            from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
+            from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
 
-            return ConsoleScorerMemoryPrinter
+            return PrettyScorerMemoryPrinter
         if name == "ScorerPrinter":
             from pyrit.printer.scorer.base import ScorerPrinterBase
 

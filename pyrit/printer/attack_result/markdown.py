@@ -6,25 +6,28 @@ from datetime import datetime, timezone
 
 from pyrit.models import AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.printer.attack_result.base import AttackResultPrinterBase
+from pyrit.printer.sink import Sink
 
 
-class MarkdownAttackPrinterBase(AttackResultPrinterBase):
+class MarkdownAttackResultPrinter(AttackResultPrinterBase):
     """
-    Markdown printer base for attack results optimized for Jupyter notebooks.
+    Markdown printer for attack results optimized for Jupyter notebooks.
 
     Contains all formatting logic. Subclasses implement get_conversation_async
     and get_scores_async for data fetching.
     """
 
-    def __init__(self, *, display_inline: bool = True) -> None:
+    def __init__(self, *, sink: Sink | None = None, display_inline: bool = True) -> None:
         """
         Initialize the markdown printer.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             display_inline (bool): If True, uses IPython.display to render markdown
                 inline in Jupyter notebooks. If False, prints markdown strings.
                 Defaults to True.
         """
+        super().__init__(sink=sink)
         self._display_inline = display_inline
 
     def _render_markdown(self, markdown_lines: list[str]) -> None:
@@ -551,24 +554,25 @@ class MarkdownAttackPrinterBase(AttackResultPrinterBase):
         return markdown_lines
 
 
-class MarkdownAttackMemoryPrinter(MarkdownAttackPrinterBase):
+class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
     """
     Framework markdown printer for attack results.
 
     Implements data-fetching via CentralMemory (deferred import).
-    All formatting logic lives in MarkdownAttackPrinterBase.
+    All formatting logic lives in MarkdownAttackResultPrinter.
     """
 
-    def __init__(self, *, display_inline: bool = True) -> None:
+    def __init__(self, *, sink: Sink | None = None, display_inline: bool = True) -> None:
         """
-        Initialize the markdown printer.
+        Initialize the markdown printer with CentralMemory data source.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             display_inline (bool): If True, uses IPython.display to render markdown
                 inline in Jupyter notebooks. If False, prints markdown strings.
                 Defaults to True.
         """
-        super().__init__(display_inline=display_inline)
+        super().__init__(sink=sink, display_inline=display_inline)
         from pyrit.memory import CentralMemory
 
         self._memory = CentralMemory.get_memory_instance()

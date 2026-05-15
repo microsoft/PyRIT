@@ -7,7 +7,7 @@ import pytest
 from colorama import Fore, Style
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter as ConsoleScorerPrinter
+from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter as ConsoleScorerPrinter
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,

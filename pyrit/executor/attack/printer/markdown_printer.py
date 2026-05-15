@@ -17,7 +17,7 @@ def __getattr__(name: str) -> type:  # noqa: N807
             DeprecationWarning,
             stacklevel=2,
         )
-        from pyrit.printer.attack_result.markdown import MarkdownAttackMemoryPrinter
+        from pyrit.printer.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
-        return MarkdownAttackMemoryPrinter
+        return MarkdownAttackResultMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

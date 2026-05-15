@@ -10,11 +10,12 @@ from pyrit.models import AttackOutcome
 from pyrit.models.scenario_result import ScenarioResult
 from pyrit.printer.scenario_result.base import ScenarioResultPrinterBase
 from pyrit.printer.scorer.base import ScorerPrinterBase
+from pyrit.printer.sink import Sink
 
 
-class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
+class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
     """
-    Console printer base for scenario results with enhanced formatting.
+    Pretty printer for scenario results with ANSI-colored formatting.
 
     Contains all formatting logic. Subclasses must provide a scorer_printer
     via the abstract property.
@@ -23,18 +24,21 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
     def __init__(
         self,
         *,
+        sink: Sink | None = None,
         width: int = 100,
         indent_size: int = 2,
         enable_colors: bool = True,
     ) -> None:
         """
-        Initialize the console printer.
+        Initialize the pretty scenario printer.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
+        super().__init__(sink=sink)
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
@@ -180,33 +184,37 @@ class ConsoleScenarioPrinterBase(ScenarioResultPrinterBase):
         return str(Fore.GREEN)
 
 
-class ConsoleScenarioMemoryPrinter(ConsoleScenarioPrinterBase):
+class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
     """
-    Framework console printer for scenario results.
+    Framework pretty printer for scenario results.
 
-    Provides the framework's ConsoleScorerMemoryPrinter for scorer information display.
-    All formatting logic lives in ConsoleScenarioPrinterBase.
+    Provides the framework's PrettyScorerMemoryPrinter for scorer information display.
+    All formatting logic lives in PrettyScenarioResultPrinter.
     """
 
     def __init__(
         self,
         *,
+        sink: Sink | None = None,
         width: int = 100,
         indent_size: int = 2,
         enable_colors: bool = True,
     ) -> None:
         """
-        Initialize the console printer.
+        Initialize the pretty scenario printer with CentralMemory data source.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
-        super().__init__(width=width, indent_size=indent_size, enable_colors=enable_colors)
-        from pyrit.printer.scorer.console import ConsoleScorerMemoryPrinter
+        super().__init__(sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors)
+        from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
 
-        self._scorer_printer = ConsoleScorerMemoryPrinter(indent_size=indent_size, enable_colors=enable_colors)
+        self._scorer_printer = PrettyScorerMemoryPrinter(
+            sink=self._sink, indent_size=indent_size, enable_colors=enable_colors
+        )
 
     @property
     def scorer_printer(self) -> ScorerPrinterBase:

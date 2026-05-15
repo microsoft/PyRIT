@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 from pyrit.models.scenario_result import ScenarioResult
+from pyrit.printer.base import PrinterBase
 
 
-class ScenarioResultPrinterBase(ABC):
+class ScenarioResultPrinterBase(PrinterBase):
     """
     Abstract base class for printing scenario results.
 

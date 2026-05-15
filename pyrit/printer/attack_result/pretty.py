@@ -10,25 +10,30 @@ from colorama import Back, Fore, Style
 
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.printer.attack_result.base import AttackResultPrinterBase
+from pyrit.printer.sink import Sink
 
 
-class ConsoleAttackPrinterBase(AttackResultPrinterBase):
+class PrettyAttackResultPrinter(AttackResultPrinterBase):
     """
-    Console printer base for attack results with enhanced formatting.
+    Pretty printer for attack results with ANSI-colored formatting.
 
     Contains all formatting logic. Subclasses implement get_conversation_async
     and get_scores_async for data fetching.
     """
 
-    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True) -> None:
+    def __init__(
+        self, *, sink: Sink | None = None, width: int = 100, indent_size: int = 2, enable_colors: bool = True
+    ) -> None:
         """
-        Initialize the console printer.
+        Initialize the pretty printer.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
+        super().__init__(sink=sink)
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
@@ -490,24 +495,27 @@ class ConsoleAttackPrinterBase(AttackResultPrinterBase):
         await display_image_response(piece)
 
 
-class ConsoleAttackMemoryPrinter(ConsoleAttackPrinterBase):
+class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
     """
-    Framework console printer for attack results.
+    Framework pretty printer for attack results.
 
     Implements data-fetching via CentralMemory (deferred import).
-    All formatting logic lives in ConsoleAttackPrinterBase.
+    All formatting logic lives in PrettyAttackResultPrinter.
     """
 
-    def __init__(self, *, width: int = 100, indent_size: int = 2, enable_colors: bool = True) -> None:
+    def __init__(
+        self, *, sink: Sink | None = None, width: int = 100, indent_size: int = 2, enable_colors: bool = True
+    ) -> None:
         """
-        Initialize the console printer.
+        Initialize the pretty printer with CentralMemory data source.
 
         Args:
+            sink (Sink | None): Output sink. Defaults to StdoutSink().
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
         """
-        super().__init__(width=width, indent_size=indent_size, enable_colors=enable_colors)
+        super().__init__(sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors)
         from pyrit.memory import CentralMemory
 
         self._memory = CentralMemory.get_memory_instance()

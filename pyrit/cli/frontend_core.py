@@ -39,7 +39,7 @@ from pyrit.cli._cli_args import validate_database_argparse as validate_database_
 from pyrit.cli._cli_args import validate_integer as validate_integer
 from pyrit.cli._cli_args import validate_log_level as validate_log_level
 from pyrit.cli._cli_args import validate_log_level_argparse as validate_log_level_argparse
-from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter as ConsoleScenarioResultPrinter
+from pyrit.printer.scenario_result.pretty import PrettyScenarioResultMemoryPrinter as ConsoleScenarioResultPrinter
 from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetConfiguration
 from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
