@@ -194,15 +194,11 @@ class PromptMemoryEntry(Base):
     attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
 
-    original_value_data_type: Mapped[Literal["text", "image_path", "audio_path", "url", "error"]] = mapped_column(
-        String, nullable=False
-    )
+    original_value_data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     original_value = mapped_column(Unicode, nullable=False)
     original_value_sha256 = mapped_column(String)
 
-    converted_value_data_type: Mapped[Literal["text", "image_path", "audio_path", "url", "error"]] = mapped_column(
-        String, nullable=False
-    )
+    converted_value_data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     converted_value = mapped_column(Unicode)
     converted_value_sha256 = mapped_column(String)
 
@@ -376,7 +372,7 @@ class ScoreEntry(Base):
     score_type: Mapped[Literal["true_false", "float_scale", "unknown"]] = mapped_column(String, nullable=False)
     score_category: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     score_rationale = mapped_column(String, nullable=True)
-    score_metadata: Mapped[dict[str, Union[str, int, float]]] = mapped_column(JSON)
+    score_metadata: Mapped[Optional[dict[str, Union[str, int, float]]]] = mapped_column(JSON, nullable=True)
     scorer_class_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
     timestamp = mapped_column(DateTime, nullable=False)
@@ -557,11 +553,11 @@ class SeedEntry(Base):
     source = mapped_column(String, nullable=True)
     date_added = mapped_column(DateTime, nullable=False)
     added_by = mapped_column(String, nullable=False)
-    prompt_metadata: Mapped[dict[str, Union[str, int]]] = mapped_column(JSON, nullable=True)
+    prompt_metadata: Mapped[Optional[dict[str, Union[str, int]]]] = mapped_column(JSON, nullable=True)
     parameters: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     prompt_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(CustomUUID, nullable=True)
     sequence: Mapped[Optional[int]] = mapped_column(INTEGER, nullable=True)
-    role: Mapped[ChatMessageRole] = mapped_column(String, nullable=True)
+    role: Mapped[Optional[ChatMessageRole]] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
 
     def __init__(self, *, entry: Seed) -> None:
@@ -585,7 +581,7 @@ class SeedEntry(Base):
         self.data_type = entry.data_type
         self.name = entry.name
         self.dataset_name = entry.dataset_name
-        self.harm_categories = entry.harm_categories
+        self.harm_categories = list(entry.harm_categories) if entry.harm_categories else None
         self.description = entry.description
         self.authors = list(entry.authors) if entry.authors else None
         self.groups = list(entry.groups) if entry.groups else None
@@ -1013,6 +1009,8 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
+        if entry.objective_target_identifier is None:
+            raise ValueError("ScenarioResult.objective_target_identifier is required for database storage")
         self.objective_target_identifier = entry.objective_target_identifier.to_dict(
             max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
         )
@@ -1103,7 +1101,7 @@ class ScenarioResultEntry(Base):
             scenario_identifier=scenario_identifier,
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
-            objective_scorer_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
+            objective_scorer_identifier=scorer_identifier,
             scenario_run_state=self.scenario_run_state,
             labels=self.labels,
             creation_time=self.timestamp,
