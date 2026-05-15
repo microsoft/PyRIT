@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.utils import combine_dict
 from pyrit.models.message_piece import MessagePiece
@@ -285,27 +285,40 @@ class Message:
 
     def to_dict(self) -> dict[str, object]:
         """
-        Convert the message to a dictionary representation.
+        Convert the message to a dictionary representation including all piece details.
+
+        Serializes each piece individually via MessagePiece.to_dict(). This is the format
+        expected by from_dict().
 
         Returns:
-            dict: A dictionary with 'role', 'converted_value', 'conversation_id', 'sequence',
-                and 'converted_value_data_type' keys.
-
+            dict[str, object]: Dictionary with 'role', 'is_simulated', 'conversation_id',
+                'sequence', and 'pieces' (list of MessagePiece.to_dict() dicts).
         """
-        if len(self.message_pieces) == 1:
-            converted_value: str | list[str] = self.message_pieces[0].converted_value
-            converted_value_data_type: str | list[str] = self.message_pieces[0].converted_value_data_type
-        else:
-            converted_value = [piece.converted_value for piece in self.message_pieces]
-            converted_value_data_type = [piece.converted_value_data_type for piece in self.message_pieces]
-
         return {
             "role": self.api_role,
-            "converted_value": converted_value,
+            "is_simulated": self.is_simulated,
             "conversation_id": self.conversation_id,
             "sequence": self.sequence,
-            "converted_value_data_type": converted_value_data_type,
+            "pieces": [piece.to_dict() for piece in self.message_pieces],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Message:
+        """
+        Reconstruct a Message from a dictionary.
+
+        Expects the format produced by to_dict(), which includes a 'pieces' key
+        containing a list of MessagePiece dictionaries.
+
+        Args:
+            data (dict[str, Any]): Dictionary as produced by to_dict().
+
+        Returns:
+            Message: Reconstructed instance.
+        """
+        pieces_data = data.get("pieces", [])
+        message_pieces = [MessagePiece.from_dict(p) for p in pieces_data]
+        return cls(message_pieces, skip_validation=True)
 
     @staticmethod
     def get_all_values(messages: Sequence[Message]) -> list[str]:
