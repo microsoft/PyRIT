@@ -244,11 +244,11 @@ class PrettyScorerPrinter(ScorerPrinterBase):
 
         return "".join(lines)
 
-    async def write_async(
+    async def render_async(
         self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
-    ) -> None:
+    ) -> str:
         """
-        Render and write scorer information to the configured sink.
+        Render scorer information and return it as a string.
 
         Auto-detects scorer type: if harm_category is provided, renders harm
         metrics; otherwise renders objective metrics.
@@ -256,6 +256,9 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
             harm_category (str | None): The harm category. None for objective scorers.
+
+        Returns:
+            str: The rendered scorer information text.
         """
         from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
 
@@ -273,7 +276,7 @@ class PrettyScorerPrinter(ScorerPrinterBase):
             metrics = self._get_objective_metrics(eval_hash=eval_hash)
             lines.append(self._render_objective_metrics(metrics))
 
-        await self._write_async("".join(lines))
+        return "".join(lines)
 
 
 class PrettyScorerMemoryPrinter(PrettyScorerPrinter):

@@ -3,6 +3,7 @@
 
 import json
 import textwrap
+import warnings
 from datetime import datetime, timezone
 from typing import Any
 
@@ -54,16 +55,16 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             return f"{color_prefix}{text}{Style.RESET_ALL}\n"
         return f"{text}\n"
 
-    async def write_async(
+    async def render_async(
         self,
         result: AttackResult,
         *,
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
-    ) -> None:
+    ) -> str:
         """
-        Render and write the complete attack result to the sink.
+        Render the complete attack result and return it as a string.
 
         Args:
             result (AttackResult): The attack result to render.
@@ -71,6 +72,9 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
+
+        Returns:
+            str: The rendered attack result text.
         """
         lines: list[str] = []
         lines.append(self._render_header(result))
@@ -84,7 +88,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         if result.metadata:
             lines.append(self._render_metadata(result.metadata))
         lines.append(self._render_footer())
-        await self._write_async("".join(lines))
+        return "".join(lines)
 
     async def print_result_async(
         self,
@@ -95,6 +99,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """Deprecated. Use write_async instead."""
+        warnings.warn("print_result_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(
             result,
             include_auxiliary_scores=include_auxiliary_scores,
@@ -136,6 +141,9 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> None:
         """Deprecated. Use write_async instead."""
+        warnings.warn(
+            "print_conversation_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
+        )
         content = await self._render_conversation_async(
             result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -256,6 +264,9 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_reasoning_trace: bool = False,
     ) -> None:
         """Deprecated. Use write_async instead."""
+        warnings.warn(
+            "print_messages_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
+        )
         content = await self._render_messages_async(
             messages=messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -338,6 +349,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """Deprecated. Use write_async instead."""
+        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         content = await self._render_summary_async(result)
         await self._write_async(content)
 

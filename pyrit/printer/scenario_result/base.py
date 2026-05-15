@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import warnings
 from abc import abstractmethod
 
 from pyrit.models.scenario_result import ScenarioResult
@@ -16,12 +17,15 @@ class ScenarioResultPrinterBase(PrinterBase):
     """
 
     @abstractmethod
-    async def write_async(self, result: ScenarioResult) -> None:
+    async def render_async(self, result: ScenarioResult) -> str:
         """
-        Render and write a scenario result summary to the configured sink.
+        Render a scenario result summary and return it as a string.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
+
+        Returns:
+            str: The rendered scenario result text.
         """
 
     async def print_summary_async(self, result: ScenarioResult) -> None:
@@ -31,4 +35,5 @@ class ScenarioResultPrinterBase(PrinterBase):
         Args:
             result (ScenarioResult): The scenario result to summarize.
         """
+        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(result)

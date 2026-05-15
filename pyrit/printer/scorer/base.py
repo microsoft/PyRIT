@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import warnings
 from abc import abstractmethod
 from typing import Any
 
@@ -17,24 +18,24 @@ class ScorerPrinterBase(PrinterBase):
     """
 
     @abstractmethod
-    def _get_objective_metrics(self, *, eval_hash: str) -> Any:
+    def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier) -> Any:
         """
         Fetch objective scorer evaluation metrics.
 
         Args:
-            eval_hash (str): The evaluation hash to look up.
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
 
         Returns:
             The metrics object, or None if not found.
         """
 
     @abstractmethod
-    def _get_harm_metrics(self, *, eval_hash: str, harm_category: str) -> Any:
+    def _get_harm_metrics(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> Any:
         """
         Fetch harm scorer evaluation metrics.
 
         Args:
-            eval_hash (str): The evaluation hash to look up.
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
             harm_category (str): The harm category to look up.
 
         Returns:
@@ -42,11 +43,11 @@ class ScorerPrinterBase(PrinterBase):
         """
 
     @abstractmethod
-    async def write_async(
+    async def render_async(
         self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
-    ) -> None:
+    ) -> str:
         """
-        Render and write scorer information to the configured sink.
+        Render scorer information and return it as a string.
 
         Auto-detects scorer type: if harm_category is provided, renders harm
         metrics; otherwise renders objective metrics.
@@ -54,6 +55,9 @@ class ScorerPrinterBase(PrinterBase):
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
             harm_category (str | None): The harm category. None for objective scorers.
+
+        Returns:
+            str: The rendered scorer information text.
         """
 
     async def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
@@ -63,6 +67,9 @@ class ScorerPrinterBase(PrinterBase):
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
         """
+        warnings.warn(
+            "print_objective_scorer is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
+        )
         await self.write_async(scorer_identifier=scorer_identifier)
 
     async def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
@@ -73,4 +80,5 @@ class ScorerPrinterBase(PrinterBase):
             scorer_identifier (ComponentIdentifier): The scorer identifier.
             harm_category (str): The harm category.
         """
+        warnings.warn("print_harm_scorer is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)

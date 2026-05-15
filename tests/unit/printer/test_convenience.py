@@ -79,7 +79,7 @@ async def test_print_attack_result_async_to_file(mock_cls):
         path = Path(f.name)
 
     try:
-        await print_attack_result_async(result, to=path)
+        await print_attack_result_async(result, sink=path)
         call_kwargs = mock_cls.call_args[1]
         assert isinstance(call_kwargs["sink"], FileSink)
     finally:

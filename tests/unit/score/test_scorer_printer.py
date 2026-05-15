@@ -50,10 +50,10 @@ def test_scorer_printer_complete_subclass_can_be_instantiated():
         def _get_harm_metrics(self, *, eval_hash: str, harm_category: str):
             return None
 
-        async def write_async(
+        async def render_async(
             self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
-        ) -> None:
-            pass
+        ) -> str:
+            return ""
 
     printer = CompletePrinter()
     assert isinstance(printer, ScorerPrinter)

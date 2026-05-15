@@ -10,9 +10,9 @@ class PrinterBase(ABC):
     """
     Abstract base class for all printers.
 
-    Provides a sink for output routing. Subclasses must implement
-    ``write_async`` as their public entry point, and use ``_write_async``
-    to send rendered text to the sink.
+    Subclasses implement ``render_async`` to produce formatted text.
+    ``write_async`` is concrete: it calls ``render_async`` then routes
+    the result through the configured sink.
     """
 
     def __init__(self, *, sink: Sink | None = None) -> None:
@@ -25,13 +25,23 @@ class PrinterBase(ABC):
         self._sink = sink or StdoutSink()
 
     @abstractmethod
-    async def write_async(self, *args, **kwargs) -> None:
+    async def render_async(self, *args, **kwargs) -> str:
         """
-        Render and write output to the configured sink.
+        Render output and return it as a string.
 
         Subclasses define the specific signature (e.g., scorer_identifier,
-        result, etc.).
+        result, messages, etc.).
         """
+
+    async def write_async(self, *args, **kwargs) -> None:
+        """
+        Render output and write it to the configured sink.
+
+        Calls ``render_async`` with all arguments, then writes the result
+        through the sink. Subclasses should not override this method.
+        """
+        content = await self.render_async(*args, **kwargs)
+        await self._write_async(content)
 
     async def _write_async(self, data: str) -> None:
         """

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import textwrap
+import warnings
 
 from colorama import Fore, Style
 
@@ -123,15 +124,19 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             return str(Fore.CYAN)
         return str(Fore.GREEN)
 
-    async def write_async(self, result: ScenarioResult) -> None:
+    async def render_async(self, result: ScenarioResult) -> str:
         """
-        Render and write the scenario result summary to the configured sink.
+        Render the scenario result summary and return it as a string.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
-        """
-        lines: list[str] = []
 
+        Returns:
+            str: The rendered scenario result text.
+        """
+        parts: list[str] = []
+
+        lines: list[str] = []
         lines.append(self._render_header(result))
 
         lines.append(self._render_section_header("Scenario Information"))
@@ -166,15 +171,12 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target_type}", Fore.CYAN))
         lines.append(self._format_colored(f"{self._indent * 2}• Target Model: {target_model}", Fore.CYAN))
         lines.append(self._format_colored(f"{self._indent * 2}• Target Endpoint: {target_endpoint}", Fore.CYAN))
-
-        # Write what we have so far, then let the scorer printer write its own section
-        await self._write_async("".join(lines))
+        parts.append("".join(lines))
 
         scorer_identifier = result.objective_scorer_identifier
         if scorer_identifier:
-            await self._scorer_printer.write_async(scorer_identifier=scorer_identifier)
+            parts.append(await self._scorer_printer.render_async(scorer_identifier=scorer_identifier))
 
-        # Continue with stats
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
         total_results = sum(len(results) for results in result.attack_results.values())
@@ -212,7 +214,9 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             ))
 
         lines.append(self._render_footer())
-        await self._write_async("".join(lines))
+        parts.append("".join(lines))
+
+        return "".join(parts)
 
     async def print_summary_async(self, result: ScenarioResult) -> None:
         """
@@ -221,6 +225,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         Args:
             result (ScenarioResult): The scenario result to summarize.
         """
+        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(result)
 
 

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+import warnings
 from datetime import datetime, timezone
 
 from pyrit.models import AttackResult, ConversationType, Message, MessagePiece, Score
@@ -68,16 +69,16 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
         return "\n".join(lines)
 
-    async def write_async(
+    async def render_async(
         self,
         result: AttackResult,
         *,
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
-    ) -> None:
+    ) -> str:
         """
-        Render and write the complete attack result as markdown to the sink.
+        Render the complete attack result as markdown and return it as a string.
 
         Args:
             result (AttackResult): The attack result to render.
@@ -85,6 +86,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
+
+        Returns:
+            str: The rendered markdown text.
         """
         markdown_lines: list[str] = []
 
@@ -125,7 +129,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
         markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
-        await self._write_async("\n".join(markdown_lines))
+        return "\n".join(markdown_lines)
 
     async def print_result_async(
         self,
@@ -136,6 +140,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """Deprecated. Use write_async instead."""
+        warnings.warn("print_result_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         await self.write_async(
             result,
             include_auxiliary_scores=include_auxiliary_scores,
@@ -144,12 +149,16 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         )
 
     async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
-        """Deprecated. Use _get_conversation_markdown_async and _write_async instead."""
+        """Deprecated. Use write_async instead."""
+        warnings.warn(
+            "print_conversation_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
+        )
         markdown_lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
         await self._write_async("\n".join(markdown_lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
-        """Deprecated. Use _get_summary_markdown_async and _write_async instead."""
+        """Deprecated. Use write_async instead."""
+        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
         markdown_lines = await self._get_summary_markdown_async(result)
         await self._write_async("\n".join(markdown_lines))
 
