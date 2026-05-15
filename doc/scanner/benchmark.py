@@ -19,7 +19,7 @@
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
+from pyrit.output import print_scenario_result_async
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets
@@ -43,6 +43,4 @@ baseline_result = await benchmark_scenario.run_async()  # type: ignore
 # up where this run left off (constructor args must match the original run).
 print(f"Scenario result id: {baseline_result.id}")
 
-printer = ConsoleScenarioResultPrinter()
-
-await printer.print_summary_async(baseline_result)  # type: ignore
+await print_scenario_result_async(baseline_result)

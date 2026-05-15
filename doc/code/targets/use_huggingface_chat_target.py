@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -43,7 +44,6 @@ import time
 
 from pyrit.executor.attack import (
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_target import HuggingFaceChatTarget
@@ -90,7 +90,7 @@ try:
 
     # Print the conversations
     for result in responses:
-        await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+        await print_attack_result_async(result)
 
 except Exception as e:
     print(f"An error occurred with model {model_id}: {e}\n")

@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -26,7 +27,6 @@ from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget
@@ -128,4 +128,4 @@ attack = RedTeamingAttack(
 )
 
 result = await attack.execute_async(objective=conversation_objective)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)

@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -47,7 +48,6 @@ import textwrap
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
 )
 from pyrit.prompt_target import GandalfLevel, GandalfTarget, OpenAIChatTarget
@@ -91,4 +91,4 @@ red_teaming_attack = RedTeamingAttack(
 
 # Once the agents are set up, we can start the conversation.
 result = await red_teaming_attack.execute_async(objective=attack_strategy)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)

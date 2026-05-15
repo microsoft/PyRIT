@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -17,7 +18,6 @@
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ChunkedRequestAttack,
-    ConsoleAttackResultPrinter,
 )
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
@@ -41,7 +41,7 @@ scoring_config = AttackScoringConfig(
 attack = ChunkedRequestAttack(objective_target=objective_target, attack_scoring_config=scoring_config, total_length=500)
 
 result = await attack.execute_async(objective=objective)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # Access the combined chunks from metadata
 print(f"\nCombined chunks: {result.metadata.get('combined_chunks', '')}")

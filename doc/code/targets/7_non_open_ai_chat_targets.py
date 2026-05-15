@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -41,7 +42,7 @@
 # parameters that can be set per model can usually be found in the 'Consume' tab when you navigate to your endpoint in AML Studio.
 
 # %%
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.prompt_target import AzureMLChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -53,7 +54,7 @@ azure_ml_chat_target = AzureMLChatTarget()
 attack = PromptSendingAttack(objective_target=azure_ml_chat_target)
 
 result = await attack.execute_async(objective="Hello! Describe yourself and the company who developed you.")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 #

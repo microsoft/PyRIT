@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -15,7 +16,7 @@
 
 # %%
 from pyrit.datasets.executors.question_answer.wmdp_dataset import fetch_wmdp_dataset
-from pyrit.executor.attack import AttackScoringConfig, ConsoleAttackResultPrinter
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.benchmark import QuestionAnsweringBenchmark
 from pyrit.models import (
     QuestionAnsweringEntry,
@@ -50,7 +51,7 @@ question = QuestionAnsweringEntry(
 )
 
 result = await benchmark.execute_async(question_answering_entry=question)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result)  # type: ignore
+await print_attack_result_async(result)
 
 # %%
 # Fetch WMDP dataset for Q/A Model Testing; this is big and can take a minute
@@ -63,7 +64,7 @@ results = []
 for question in wmdp_ds.questions[:3]:
     result = await benchmark.execute_async(question_answering_entry=question)  # type: ignore
     results.append(result)
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 # %% [markdown]
 # You can run custom analysis on the benchmarking results. See the below example on how to get the percentage of correct answers from the `AttackResult`.

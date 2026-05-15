@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -41,7 +42,6 @@ import pathlib
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.models import SeedPrompt
@@ -98,7 +98,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ### Direct Prompt PDF Generation (No Template)
@@ -133,7 +133,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ### Modifying Existing PDFs with Injection Items
@@ -205,7 +205,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="Modify existing PDF")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ## WordDocConverter
@@ -238,7 +238,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="This is a simple test string for Word document generation.")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ### Placeholder-Based Injection into Existing Word Documents
@@ -278,4 +278,4 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="AI Red Team Engineer")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)

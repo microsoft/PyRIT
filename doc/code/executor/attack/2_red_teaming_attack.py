@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -63,7 +64,6 @@ import logging
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
@@ -101,7 +101,7 @@ red_teaming_attack = RedTeamingAttack(
 
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ## Setting System Prompt of Objective Target
@@ -180,7 +180,7 @@ result = await red_teaming_attack.execute_async(  # type: ignore
     prepended_conversation=prepended_conversation,
 )
 
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ## Parallel Example using Converters
@@ -227,7 +227,7 @@ for objective in objectives:
         memory_labels={"harm_category": "illegal"},
     )
 
-    await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 # How to call AttackExecutor's method if not changing the attack configuration for each objective
 """
@@ -258,7 +258,6 @@ import logging
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
@@ -294,22 +293,22 @@ red_teaming_attack = RedTeamingAttack(
 )
 
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(  # type: ignore
+await print_attack_result_async().print_result_async(  # type: ignore
     result=result, include_adversarial_conversation=True
 )
 
 # %% [markdown]
 # ## Displaying Results with Better Formatting
 #
-# While `ConsoleAttackResultPrinter` works well for console output, Jupyter notebooks can display rich content more effectively.
-# The `MarkdownAttackResultPrinter` provides enhanced formatting capabilities, including proper inline display of generated images
-# and better visual organization of attack results. Note that for documentation builds, `ConsoleAttackResultPrinter` is preferred
+# While `print_attack_result_async` works well for console output, Jupyter notebooks can display rich content more effectively.
+# The `print_attack_result_async (format="markdown")` provides enhanced formatting capabilities, including proper inline display of generated images
+# and better visual organization of attack results. Note that for documentation builds, `print_attack_result_async` is preferred
 # to avoid broken image references when notebook outputs are committed.
 
 # %%
-# Note: MarkdownAttackResultPrinter displays images inline using markdown, which looks great in notebooks.
-# However, for documentation builds, use ConsoleAttackResultPrinter to avoid broken image references.
-await ConsoleAttackResultPrinter().print_result_async(result=result, include_auxiliary_scores=True)  # type: ignore
+# Note: print_attack_result_async (format="markdown") displays images inline using markdown, which looks great in notebooks.
+# However, for documentation builds, use print_attack_result_async to avoid broken image references.
+await print_attack_result_async(result, include_auxiliary_scores=True)
 
 # %% [markdown]
 # ## Other Multi-Turn Attacks

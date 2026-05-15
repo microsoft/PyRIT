@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -28,7 +29,6 @@
 # %%
 from pyrit.executor.attack import (
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget
@@ -47,8 +47,7 @@ scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
 attack = PromptSendingAttack(objective_target=target, attack_scoring_config=scoring_config)
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # Next, let's apply a GCG suffix trained on Phi-3-mini to the base prompt using the `SuffixAppendConverter`.
@@ -73,4 +72,4 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=objective)  # type: ignore
-await printer.print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)

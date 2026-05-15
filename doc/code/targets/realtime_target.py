@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -45,7 +46,6 @@ from pathlib import Path
 from pyrit.executor.attack import (
     AttackExecutor,
     AttackParameters,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
@@ -75,7 +75,7 @@ context: SingleTurnAttackContext = SingleTurnAttackContext(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_with_context_async(context=context)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 await target.cleanup_target()  # type: ignore
 
 # %% [markdown]
@@ -86,7 +86,6 @@ await target.cleanup_target()  # type: ignore
 # %%
 from pyrit.executor.attack import (
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 
@@ -101,7 +100,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 # %% [markdown]
 # ## MULTITURN:
@@ -112,7 +111,6 @@ import logging
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
@@ -152,4 +150,4 @@ red_teaming_attack = RedTeamingAttack(
 
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)

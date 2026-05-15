@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -37,7 +38,6 @@
 # %%
 from pyrit.executor.attack import (
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.memory import CentralMemory
@@ -69,7 +69,7 @@ attack = PromptSendingAttack(
     attack_scoring_config=scoring_config,
 )
 result = await attack.execute_async(objective=example_prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # Fetch prompts to score by conversation ID
 memory = CentralMemory.get_memory_instance()

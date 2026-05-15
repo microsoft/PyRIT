@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -27,7 +28,6 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import (
     AttackExecutor,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
@@ -69,7 +69,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
     objectives=objectives,
 )
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
     print(result.last_response.converted_value)
 
 # %% [markdown]
@@ -109,5 +109,5 @@ result = await edit_attack.execute_async(
     objective=seed_group.prompts[0].value,
     next_message=seed_group.next_message,
 )  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 print(result.last_response.converted_value)

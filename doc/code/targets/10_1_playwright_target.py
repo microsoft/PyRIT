@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -132,7 +133,7 @@ async def interact_with_my_app(page: Page, message: Message) -> str:
 import asyncio
 import sys
 
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -147,7 +148,7 @@ async def main(page: Page) -> None:
     objective = "Tell me a joke about computer programming."
 
     result = await attack.execute_async(objective=objective)  # type: ignore
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 
 async def run() -> None:

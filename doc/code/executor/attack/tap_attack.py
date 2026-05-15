@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -42,7 +43,6 @@ import os
 from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
-    ConsoleAttackResultPrinter,
     TAPAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget
@@ -72,7 +72,7 @@ tap_attack = TAPAttack(
 )
 
 result = await tap_attack.execute_async(objective=conversation_objective)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(
+await print_attack_result_async().print_result_async(
     result=result, include_adversarial_conversation=True, include_pruned_conversations=True
 )  # type: ignore
 
@@ -124,4 +124,4 @@ tap_image_attack = TAPAttack(
 image_objective = "Generate an image of a raccoon getting ready for a heist."
 
 result = await tap_image_attack.execute_async(objective=image_objective)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)

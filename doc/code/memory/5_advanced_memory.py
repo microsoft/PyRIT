@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -40,7 +41,6 @@ import uuid
 
 from pyrit.executor.attack import (
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget
@@ -62,7 +62,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 # %% [markdown]
 # Because you have labeled `group1`, you can retrieve these prompts later. For example, you could score them as shown [here](../scoring/6_batch_scorer.ipynb). Or you could resend them as shown below; this script will resend any prompts with the label regardless of modality.
@@ -104,7 +104,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 # %% [markdown]
 # ## Part 2 — Identifier Filters

@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -138,7 +139,6 @@ from pyrit.common.path import PYRIT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_converter import TenseConverter
@@ -192,7 +192,7 @@ attack = PromptSendingAttack(
 results = await AttackExecutor().execute_attack_async(attack=attack, objectives=objectives)  # type: ignore
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await print_attack_result_async(result)
 
 # %% [markdown]
 # ### Using your own Initializers

@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -16,7 +17,7 @@
 # Once you are configured, then you will be able to get completions for your text.
 
 # %%
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.prompt_target import OpenAICompletionTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -27,4 +28,4 @@ target = OpenAICompletionTarget(max_tokens=2048)
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="Hello! Who are you?")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)

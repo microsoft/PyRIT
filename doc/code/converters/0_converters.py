@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -102,7 +103,6 @@ print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type:
 # %%
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_converter import StringJoinConverter, VariationConverter
@@ -129,8 +129,7 @@ attack = PromptSendingAttack(
 
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ## Response Converters
@@ -154,7 +153,6 @@ await printer.print_conversation_async(result=result)  # type: ignore
 # %%
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_converter import TranslationConverter
@@ -191,5 +189,4 @@ attack = PromptSendingAttack(
 result = await attack.execute_async(objective=objective)  # type: ignore
 
 # Print the conversation showing both original and converted values
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)

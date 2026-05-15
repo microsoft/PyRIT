@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -27,7 +28,7 @@
 import os
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -43,7 +44,7 @@ target = OpenAIResponseTarget(
 attack = PromptSendingAttack(objective_target=target)
 
 result = await attack.execute_async(objective="Tell me a joke")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ## Reasoning Configuration
@@ -59,7 +60,7 @@ await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # ty
 import os
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -75,7 +76,7 @@ target = OpenAIResponseTarget(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What are the most dangerous items in a household?")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result, include_reasoning_trace=True)  # type: ignore
+await print_attack_result_async(result)
 
 # %% [markdown]
 # ## JSON Generation

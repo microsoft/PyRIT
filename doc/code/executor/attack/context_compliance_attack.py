@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -35,7 +36,6 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     ContextComplianceAttack,
 )
 from pyrit.prompt_converter import TranslationConverter
@@ -81,4 +81,4 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_result_async(result=result, include_auxiliary_scores=True)  # type: ignore
+    await print_attack_result_async(result, include_auxiliary_scores=True)

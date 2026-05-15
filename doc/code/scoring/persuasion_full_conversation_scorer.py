@@ -1,3 +1,4 @@
+from pyrit.output import print_attack_result_async
 # ---
 # jupyter:
 #   jupytext:
@@ -28,7 +29,6 @@ from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, HARM_DEFINITION_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
 )
 from pyrit.memory import CentralMemory
@@ -98,7 +98,7 @@ result = await red_teaming_attack.execute_async(  # type: ignore
     memory_labels={"harm_category": "illegal"},
 )
 
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await print_attack_result_async(result)
 
 # Retrieve the completed conversation and hand to ConversationScorer
 memory = CentralMemory.get_memory_instance()
