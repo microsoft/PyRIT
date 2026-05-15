@@ -132,7 +132,7 @@ Start the local web app and give it a try:
 ```bash
 pyrit_backend # serves webapp on http://localhost:8000/
 ```
-![copyrit-demo](copyrit-demo.gif)
+![copyrit-demo](copyrit-demo.png)
 
 For more details, see the [GUI](gui/0_gui) page.
 :::
