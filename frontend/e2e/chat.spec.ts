@@ -137,7 +137,7 @@ async function activateMockTarget(page: Page) {
 
   // Return to Chat view
   await page.getByTitle("Chat").click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -153,8 +153,8 @@ test.describe("Application Smoke Tests", () => {
     await expect(page.locator("body")).toBeVisible();
   });
 
-  test("should display PyRIT header", async ({ page }) => {
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+  test("should display chat ribbon", async ({ page }) => {
+    await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
@@ -169,7 +169,7 @@ test.describe("Application Smoke Tests", () => {
 test.describe("Theme Toggle", () => {
   test("should toggle dark/light theme", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
 
     // The app defaults to dark mode, so the toggle button title should say "Light Mode"
     const themeBtn = page.getByTitle("Light Mode");

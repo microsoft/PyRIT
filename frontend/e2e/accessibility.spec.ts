@@ -146,17 +146,17 @@ test.describe("Visual Consistency", () => {
     await page.goto("/");
 
     // Wait for initial render
-    await expect(page.getByText("PyRIT Attack")).toBeVisible();
+    const anchor = page.getByTestId("new-attack-btn");
+    await expect(anchor).toBeVisible();
 
     // Take measurements
-    const header = page.getByText("PyRIT Attack");
-    const initialBox = await header.boundingBox();
+    const initialBox = await anchor.boundingBox();
 
     // Wait a moment for any delayed renders
     await page.waitForTimeout(500);
 
     // Verify position hasn't changed
-    const finalBox = await header.boundingBox();
+    const finalBox = await anchor.boundingBox();
 
     if (initialBox && finalBox) {
       expect(finalBox.x).toBe(initialBox.x);
